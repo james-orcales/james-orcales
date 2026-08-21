@@ -5,8 +5,8 @@ import (
 	"local/james-orcales/shared/bytes"
 	"local/james-orcales/shared/crypto/sha512"
 	"local/james-orcales/shared/encoding/binary"
-	"local/james-orcales/shared/invariant/default"
 	"local/james-orcales/shared/math/bits"
+	"local/james-orcales/shared/simulation/aver/default"
 )
 
 // SEED_SIZE is the RFC 8032 private seed width.
@@ -37,16 +37,16 @@ const SIGNATURE_UNVALIDATED_SIZE_MAXIMUM = SIGNATURE_SIZE + binary.UINT_8_SIZE
 type Seed [SEED_SIZE]byte
 
 // Seed_Invariants fixes private input width.
-func Seed_Invariants(value Seed, _ invariant.Namespace) {
-	invariant.Always(len(value) == SEED_SIZE, "An Ed25519 seed has fixed width.")
+func Seed_Invariants(value Seed, _ aver.Namespace) {
+	aver.Always(len(value) == SEED_SIZE, "An Ed25519 seed has fixed width.")
 }
 
 // Private_Key stores the authoritative seed without redundant public bytes.
 type Private_Key [PRIVATE_KEY_SIZE]byte
 
 // Private_Key_Invariants fixes caller-owned private storage width.
-func Private_Key_Invariants(value Private_Key, _ invariant.Namespace) {
-	invariant.Always(
+func Private_Key_Invariants(value Private_Key, _ aver.Namespace) {
+	aver.Always(
 		len(value) == PRIVATE_KEY_SIZE,
 		"An Ed25519 private key has fixed seed width.",
 	)
@@ -57,9 +57,9 @@ type Private_Key_Destination *Private_Key
 
 // Private_Key_Destination_Invariants proves caller storage exists.
 func Private_Key_Destination_Invariants(
-	value Private_Key_Destination, _ invariant.Namespace,
+	value Private_Key_Destination, _ aver.Namespace,
 ) {
-	invariant.Always(value != nil, "An Ed25519 private key destination exists.")
+	aver.Always(value != nil, "An Ed25519 private key destination exists.")
 }
 
 // Private_Key_Handle is a nonnil caller-owned signing key.
@@ -67,9 +67,9 @@ type Private_Key_Handle *Private_Key
 
 // Private_Key_Handle_Invariants proves the key exists and composes its fixed storage.
 func Private_Key_Handle_Invariants(
-	value Private_Key_Handle, namespace invariant.Namespace,
+	value Private_Key_Handle, namespace aver.Namespace,
 ) {
-	invariant.Always(value != nil, "An Ed25519 private key handle exists.")
+	aver.Always(value != nil, "An Ed25519 private key handle exists.")
 	Private_Key_Invariants(*value, namespace)
 }
 
@@ -77,16 +77,16 @@ func Private_Key_Handle_Invariants(
 type Public_Key [PUBLIC_KEY_SIZE]byte
 
 // Public_Key_Invariants fixes public input width.
-func Public_Key_Invariants(value Public_Key, _ invariant.Namespace) {
-	invariant.Always(len(value) == PUBLIC_KEY_SIZE, "An Ed25519 public key has fixed width.")
+func Public_Key_Invariants(value Public_Key, _ aver.Namespace) {
+	aver.Always(len(value) == PUBLIC_KEY_SIZE, "An Ed25519 public key has fixed width.")
 }
 
 // Signature is one fixed-width RFC 8032 signature.
 type Signature [SIGNATURE_SIZE]byte
 
 // Signature_Invariants fixes caller-owned signature width.
-func Signature_Invariants(value Signature, _ invariant.Namespace) {
-	invariant.Always(len(value) == SIGNATURE_SIZE, "An Ed25519 signature has fixed width.")
+func Signature_Invariants(value Signature, _ aver.Namespace) {
+	aver.Always(len(value) == SIGNATURE_SIZE, "An Ed25519 signature has fixed width.")
 }
 
 // Signature_Destination is nonnil caller-owned signature storage.
@@ -94,17 +94,17 @@ type Signature_Destination *Signature
 
 // Signature_Destination_Invariants proves caller storage exists.
 func Signature_Destination_Invariants(
-	value Signature_Destination, _ invariant.Namespace,
+	value Signature_Destination, _ aver.Namespace,
 ) {
-	invariant.Always(value != nil, "An Ed25519 signature destination exists.")
+	aver.Always(value != nil, "An Ed25519 signature destination exists.")
 }
 
 // Message is one bounded message.
 type Message []byte
 
 // Message_Invariants bounds both signing passes.
-func Message_Invariants(value Message, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Message_Invariants(value Message, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), MESSAGE_SIZE_MINIMUM, MESSAGE_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -114,9 +114,9 @@ type Signature_Unvalidated []byte
 
 // Signature_Unvalidated_Invariants bounds verification parsing work.
 func Signature_Unvalidated_Invariants(
-	value Signature_Unvalidated, namespace invariant.Namespace,
+	value Signature_Unvalidated, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(
 			len(value), SIGNATURE_UNVALIDATED_SIZE_MINIMUM,
 			SIGNATURE_UNVALIDATED_SIZE_MAXIMUM,
@@ -128,8 +128,8 @@ func Signature_Unvalidated_Invariants(
 type Verification bool
 
 // Verification_Invariants covers accepted and refused signatures.
-func Verification_Invariants(value Verification, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Verification_Invariants(value Verification, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Sometimes(bool(value), "An Ed25519 signature verifies.").
 		Ensure()
 }
@@ -575,7 +575,7 @@ func point_base() (point [POINT_COORDINATE_COUNT][FIELD_LIMB_COUNT]uint64) {
 		0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66,
 	}
 	valid := point_decode(&point, &encoding)
-	invariant.Always(
+	aver.Always(
 		valid[bits.BIT_COUNT_MINIMUM] == binary.UINT_8_SIZE,
 		"The RFC 8032 base point encoding is valid.",
 	)

@@ -4,8 +4,8 @@ package sha256
 import (
 	"local/james-orcales/shared/bytes"
 	"local/james-orcales/shared/encoding/binary"
-	"local/james-orcales/shared/invariant/default"
 	"local/james-orcales/shared/math/bits"
+	"local/james-orcales/shared/simulation/aver/default"
 )
 
 // STATE_LANE_COUNT stores full SHA-2 chaining state.
@@ -138,8 +138,8 @@ const ROUND_CONSTANT_WORD_COUNT = binary.UINT_8_SIZE
 type Source []byte
 
 // Source_Invariants binds one call to repository byte boundary.
-func Source_Invariants(value Source, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Source_Invariants(value Source, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), SOURCE_SIZE_MINIMUM, SOURCE_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -148,11 +148,11 @@ func Source_Invariants(value Source, namespace invariant.Namespace) {
 type Blocks []byte
 
 // Blocks_Invariants excludes empty and partial compression input.
-func Blocks_Invariants(value Blocks, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Blocks_Invariants(value Blocks, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), BLOCK_SIZE, SOURCE_SIZE_MAXIMUM).
 		Ensure()
-	invariant.Always(
+	aver.Always(
 		len(value)%BLOCK_SIZE == SOURCE_SIZE_MINIMUM,
 		"SHA-256 compression input contains complete blocks.",
 	)
@@ -162,16 +162,16 @@ func Blocks_Invariants(value Blocks, namespace invariant.Namespace) {
 type Block []byte
 
 // Block_Invariants fixes schedule input to one block.
-func Block_Invariants(value Block, _ invariant.Namespace) {
-	invariant.Always(len(value) == BLOCK_SIZE, "SHA-256 schedule input equals one block.")
+func Block_Invariants(value Block, _ aver.Namespace) {
+	aver.Always(len(value) == BLOCK_SIZE, "SHA-256 schedule input equals one block.")
 }
 
 // Destination is bounded caller-owned output storage.
 type Destination []byte
 
 // Destination_Invariants binds output to repository byte boundary.
-func Destination_Invariants(value Destination, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Destination_Invariants(value Destination, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), DESTINATION_SIZE_MINIMUM, DESTINATION_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -180,8 +180,8 @@ func Destination_Invariants(value Destination, namespace invariant.Namespace) {
 type Count int
 
 // Count_Invariants covers complete source count.
-func Count_Invariants(value Count, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Count_Invariants(value Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), COUNT_MINIMUM, COUNT_MAXIMUM).
 		Ensure()
 }
@@ -190,8 +190,8 @@ func Count_Invariants(value Count, namespace invariant.Namespace) {
 type Output_Count uint8
 
 // Output_Count_Invariants admits both selected digest widths.
-func Output_Count_Invariants(value Output_Count, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Output_Count_Invariants(value Output_Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_Uint8(
 			uint8(value), uint8(OUTPUT_COUNT_224_REQUIRED),
 			uint8(OUTPUT_COUNT_256_REQUIRED),
@@ -203,8 +203,8 @@ func Output_Count_Invariants(value Output_Count, namespace invariant.Namespace) 
 type Output_Status uint8
 
 // Output_Status_Invariants covers complete and short output.
-func Output_Status_Invariants(value Output_Status, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Output_Status_Invariants(value Output_Status, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_Uint8(uint8(value), uint8(OUTPUT_STATUS_OK), uint8(OUTPUT_STATUS_TOO_SMALL)).
 		Ensure()
 }
@@ -213,8 +213,8 @@ func Output_Status_Invariants(value Output_Status, namespace invariant.Namespace
 type Kind uint8
 
 // Kind_Invariants admits two FIPS 180-4 functions.
-func Kind_Invariants(value Kind, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Kind_Invariants(value Kind, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_Uint8(uint8(value), uint8(KIND_SHA_224), uint8(KIND_SHA_256)).
 		Ensure()
 }
@@ -223,8 +223,8 @@ func Kind_Invariants(value Kind, namespace invariant.Namespace) {
 type Buffer_Count uint8
 
 // Buffer_Count_Invariants excludes complete blocks.
-func Buffer_Count_Invariants(value Buffer_Count, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Buffer_Count_Invariants(value Buffer_Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint8(uint8(value), BUFFER_COUNT_MINIMUM, BUFFER_COUNT_MAXIMUM).
 		Ensure()
 }
@@ -233,8 +233,8 @@ func Buffer_Count_Invariants(value Buffer_Count, namespace invariant.Namespace) 
 type Message_Size uint64
 
 // Message_Size_Invariants preserves exact final bit-count encoding.
-func Message_Size_Invariants(value Message_Size, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Message_Size_Invariants(value Message_Size, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint64(uint64(value), MESSAGE_SIZE_MINIMUM, MESSAGE_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -243,8 +243,8 @@ func Message_Size_Invariants(value Message_Size, namespace invariant.Namespace) 
 type State [STATE_WORD_COUNT]uint32
 
 // State_Invariants fixes compression state and identity storage width.
-func State_Invariants(value State, _ invariant.Namespace) {
-	invariant.Always(
+func State_Invariants(value State, _ aver.Namespace) {
+	aver.Always(
 		len(value) == STATE_WORD_COUNT,
 		"SHA-256 state storage has fixed width.",
 	)
@@ -254,8 +254,8 @@ func State_Invariants(value State, _ invariant.Namespace) {
 type Round_Index uint8
 
 // Round_Index_Invariants covers every compression step.
-func Round_Index_Invariants(value Round_Index, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Round_Index_Invariants(value Round_Index, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint8(uint8(value), ROUND_INDEX_MINIMUM, ROUND_INDEX_MAXIMUM).
 		Ensure()
 }
@@ -264,8 +264,8 @@ func Round_Index_Invariants(value Round_Index, namespace invariant.Namespace) {
 type Round_Quarter_Index uint8
 
 // Round_Quarter_Index_Invariants covers every quarter-local step.
-func Round_Quarter_Index_Invariants(value Round_Quarter_Index, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Round_Quarter_Index_Invariants(value Round_Quarter_Index, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint8(
 			uint8(value), ROUND_QUARTER_INDEX_MINIMUM, ROUND_QUARTER_INDEX_MAXIMUM,
 		).
@@ -276,8 +276,8 @@ func Round_Quarter_Index_Invariants(value Round_Quarter_Index, namespace invaria
 type Round_Constant [ROUND_CONSTANT_WORD_COUNT]uint32
 
 // Round_Constant_Invariants fixes one-word constant storage.
-func Round_Constant_Invariants(value Round_Constant, _ invariant.Namespace) {
-	invariant.Always(
+func Round_Constant_Invariants(value Round_Constant, _ aver.Namespace) {
+	aver.Always(
 		len(value) == ROUND_CONSTANT_WORD_COUNT,
 		"SHA-256 round constant occupies one word.",
 	)
@@ -287,16 +287,16 @@ func Round_Constant_Invariants(value Round_Constant, _ invariant.Namespace) {
 type Schedule [ROUND_COUNT]uint32
 
 // Schedule_Invariants fixes one expanded block width.
-func Schedule_Invariants(value Schedule, _ invariant.Namespace) {
-	invariant.Always(len(value) == int(ROUND_COUNT), "SHA-256 schedule has derived width.")
+func Schedule_Invariants(value Schedule, _ aver.Namespace) {
+	aver.Always(len(value) == int(ROUND_COUNT), "SHA-256 schedule has derived width.")
 }
 
 // Size is one supported digest width.
 type Size int
 
 // Size_Invariants admits SHA-224 and SHA-256 widths.
-func Size_Invariants(value Size, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Size_Invariants(value Size, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_Int(int(value), DIGEST_224_SIZE, DIGEST_256_SIZE).
 		Ensure()
 }
@@ -305,8 +305,8 @@ func Size_Invariants(value Size, namespace invariant.Namespace) {
 type Block_Size int
 
 // Block_Size_Invariants fixes shared compression-block width.
-func Block_Size_Invariants(value Block_Size, _ invariant.Namespace) {
-	invariant.Always(
+func Block_Size_Invariants(value Block_Size, _ aver.Namespace) {
+	aver.Always(
 		int(value) == BLOCK_SIZE,
 		"SHA-256 block size equals compression width.",
 	)
@@ -316,16 +316,16 @@ func Block_Size_Invariants(value Block_Size, _ invariant.Namespace) {
 type Value_224 [DIGEST_224_SIZE]byte
 
 // Value_224_Invariants fixes SHA-224 storage width.
-func Value_224_Invariants(value Value_224, _ invariant.Namespace) {
-	invariant.Always(len(value) == DIGEST_224_SIZE, "SHA-224 digest has derived width.")
+func Value_224_Invariants(value Value_224, _ aver.Namespace) {
+	aver.Always(len(value) == DIGEST_224_SIZE, "SHA-224 digest has derived width.")
 }
 
 // Value_256 is one SHA-256 digest in wire byte order.
 type Value_256 [DIGEST_256_SIZE]byte
 
 // Value_256_Invariants fixes SHA-256 storage width.
-func Value_256_Invariants(value Value_256, _ invariant.Namespace) {
-	invariant.Always(len(value) == DIGEST_256_SIZE, "SHA-256 digest has derived width.")
+func Value_256_Invariants(value Value_256, _ aver.Namespace) {
+	aver.Always(len(value) == DIGEST_256_SIZE, "SHA-256 digest has derived width.")
 }
 
 // Digest is caller-owned SHA-224 or SHA-256 state.
@@ -343,12 +343,12 @@ type Digest struct {
 }
 
 // Digest_Invariants composes selected function and partial-block relation.
-func Digest_Invariants(value Digest, namespace invariant.Namespace) {
+func Digest_Invariants(value Digest, namespace aver.Namespace) {
 	State_Invariants(value.State, namespace)
 	Buffer_Count_Invariants(value.Buffer_Count, namespace)
 	Message_Size_Invariants(value.Message_Size, namespace)
 	Kind_Invariants(value.Kind, namespace)
-	invariant.Always(
+	aver.Always(
 		uint64(value.Buffer_Count) == uint64(value.Message_Size)%BLOCK_SIZE,
 		"Partial SHA-256 block equals message remainder.",
 	)
@@ -361,11 +361,11 @@ func Digest_Init(digest *Digest, kind Kind) {
 	digest.Kind = kind
 	digest_reset(digest)
 	State_Invariants(digest.State, "Digest_Init.digest.state.output")
-	invariant.Always(
+	aver.Always(
 		digest.Buffer_Count == BUFFER_COUNT_MINIMUM,
 		"Fresh SHA-256 state has no buffered bytes.",
 	)
-	invariant.Always(
+	aver.Always(
 		uint64(digest.Message_Size) == MESSAGE_SIZE_MINIMUM,
 		"Fresh SHA-256 state has no accepted bytes.",
 	)
@@ -378,11 +378,11 @@ func Digest_Reset(digest *Digest) {
 	digest_require(digest)
 	digest_reset(digest)
 	State_Invariants(digest.State, "Digest_Reset.digest.state.output")
-	invariant.Always(
+	aver.Always(
 		digest.Buffer_Count == BUFFER_COUNT_MINIMUM,
 		"Fresh reset SHA-256 state has no buffered bytes.",
 	)
-	invariant.Always(
+	aver.Always(
 		uint64(digest.Message_Size) == MESSAGE_SIZE_MINIMUM,
 		"Fresh reset SHA-256 state has no accepted bytes.",
 	)
@@ -575,11 +575,11 @@ func digest_reset(digest *Digest) {
 	digest.Buffer_Count = BUFFER_COUNT_MINIMUM
 	digest.Message_Size = Message_Size(MESSAGE_SIZE_MINIMUM)
 	State_Invariants(digest.State, "digest_reset.digest.state.output")
-	invariant.Always(
+	aver.Always(
 		digest.Buffer_Count == BUFFER_COUNT_MINIMUM,
 		"Reset SHA-256 state has no buffered bytes.",
 	)
-	invariant.Always(
+	aver.Always(
 		uint64(digest.Message_Size) == MESSAGE_SIZE_MINIMUM,
 		"Reset SHA-256 state has no accepted bytes.",
 	)
@@ -774,7 +774,7 @@ func round_constant_48_63(index Round_Quarter_Index) (constant Round_Constant) {
 
 func digest_require(digest *Digest) {
 	Digest_Invariants(*digest, "digest_require.digest")
-	invariant.Always(
+	aver.Always(
 		digest.State[STATE_READY_INDEX] == STATE_READY_MARKER,
 		"SHA-256 operations require Digest_Init.",
 	)
@@ -787,7 +787,7 @@ func digest_require_kind(digest *Digest, kind Kind) {
 	Digest_Invariants(*digest, "digest_require_kind.digest")
 	Kind_Invariants(kind, "digest_require_kind.kind")
 	digest_require(digest)
-	invariant.Always(digest.Kind == kind, "Digest output kind must match initialized kind.")
+	aver.Always(digest.Kind == kind, "Digest output kind must match initialized kind.")
 	if digest.Kind != kind {
 		panic("sha256: digest kind does not match output")
 	}

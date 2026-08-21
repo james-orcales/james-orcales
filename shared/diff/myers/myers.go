@@ -2,7 +2,7 @@
 package myers
 
 import (
-	"local/james-orcales/shared/invariant/default"
+	"local/james-orcales/shared/simulation/aver/default"
 	"local/james-orcales/shared/strings"
 	"local/james-orcales/shared/unicode/utf8"
 )
@@ -73,8 +73,8 @@ const STATUS_OUTPUT_TOO_SMALL Status = 3
 type Prepare_Status uint8
 
 // Prepare_Status_Invariants lists preparation outcomes.
-func Prepare_Status_Invariants(value Prepare_Status, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Prepare_Status_Invariants(value Prepare_Status, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_3_Uint8(
 			uint8(value), uint8(PREPARE_STATUS_OK),
 			uint8(PREPARE_STATUS_INPUT_INVALID),
@@ -96,8 +96,8 @@ const PREPARE_STATUS_WORKSPACE_TOO_SMALL Prepare_Status = 2
 type Render_Status bool
 
 // Render_Status_Invariants requires fitting and overflowing renders.
-func Render_Status_Invariants(value Render_Status, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Render_Status_Invariants(value Render_Status, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Sometimes(bool(value), "Caller output is too small.").
 		Ensure()
 }
@@ -118,8 +118,8 @@ const EDIT_NONE Open_Edit_Kind = 0
 type Status uint8
 
 // Status_Invariants lists every operation outcome.
-func Status_Invariants(value Status, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Status_Invariants(value Status, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_4_Uint8(
 			uint8(value),
 			uint8(STATUS_OK),
@@ -134,8 +134,8 @@ func Status_Invariants(value Status, namespace invariant.Namespace) {
 type Edit_Kind uint8
 
 // Edit_Kind_Invariants lists three script operations.
-func Edit_Kind_Invariants(value Edit_Kind, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Edit_Kind_Invariants(value Edit_Kind, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_3_Uint8(
 			uint8(value), uint8(EDIT_RETAIN), uint8(EDIT_DELETE), uint8(EDIT_INSERT),
 		).
@@ -146,8 +146,8 @@ func Edit_Kind_Invariants(value Edit_Kind, namespace invariant.Namespace) {
 type Count int
 
 // Count_Invariants bounds character diff output count.
-func Count_Invariants(value Count, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Count_Invariants(value Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Holed_Int(
 			int(value), strings.TEXT_SIZE_MINIMUM, DIFF_SIZE_UNREPRESENTABLE,
 			1, 2, 3, 3,
@@ -159,8 +159,8 @@ func Count_Invariants(value Count, namespace invariant.Namespace) {
 type Line_Count int
 
 // Line_Count_Invariants bounds line diff output count.
-func Line_Count_Invariants(value Line_Count, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Line_Count_Invariants(value Line_Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Holed_Int(
 			int(value), strings.TEXT_SIZE_MINIMUM, LINE_DIFF_SIZE_UNREPRESENTABLE,
 			1, 1, 1, 1,
@@ -172,8 +172,8 @@ func Line_Count_Invariants(value Line_Count, namespace invariant.Namespace) {
 type Diff_Position int
 
 // Diff_Position_Invariants bounds every intermediate character position.
-func Diff_Position_Invariants(value Diff_Position, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Diff_Position_Invariants(value Diff_Position, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), strings.TEXT_SIZE_MINIMUM, DIFF_SIZE_UNREPRESENTABLE).
 		Ensure()
 }
@@ -182,8 +182,8 @@ func Diff_Position_Invariants(value Diff_Position, namespace invariant.Namespace
 type Line_Position int
 
 // Line_Position_Invariants bounds every intermediate line position.
-func Line_Position_Invariants(value Line_Position, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Line_Position_Invariants(value Line_Position, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), strings.TEXT_SIZE_MINIMUM, LINE_DIFF_SIZE_UNREPRESENTABLE).
 		Ensure()
 }
@@ -192,8 +192,8 @@ func Line_Position_Invariants(value Line_Position, namespace invariant.Namespace
 type Output []byte
 
 // Output_Invariants bounds caller-owned character output.
-func Output_Invariants(value Output, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Output_Invariants(value Output, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), strings.TEXT_SIZE_MINIMUM, DIFF_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -202,8 +202,8 @@ func Output_Invariants(value Output, namespace invariant.Namespace) {
 type Line_Output []byte
 
 // Line_Output_Invariants bounds caller-owned line output.
-func Line_Output_Invariants(value Line_Output, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Line_Output_Invariants(value Line_Output, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), strings.TEXT_SIZE_MINIMUM, LINE_DIFF_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -213,9 +213,9 @@ type Old_Text_Unvalidated string
 
 // Old_Text_Unvalidated_Invariants admits first rejected source byte.
 func Old_Text_Unvalidated_Invariants(
-	value Old_Text_Unvalidated, namespace invariant.Namespace,
+	value Old_Text_Unvalidated, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(len(value), strings.TEXT_SIZE_MINIMUM, TEXT_SIZE_UNVALIDATED_MAXIMUM).
 		Ensure()
 }
@@ -225,9 +225,9 @@ type New_Text_Unvalidated string
 
 // New_Text_Unvalidated_Invariants admits first rejected destination byte.
 func New_Text_Unvalidated_Invariants(
-	value New_Text_Unvalidated, namespace invariant.Namespace,
+	value New_Text_Unvalidated, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(len(value), strings.TEXT_SIZE_MINIMUM, TEXT_SIZE_UNVALIDATED_MAXIMUM).
 		Ensure()
 }
@@ -236,8 +236,8 @@ func New_Text_Unvalidated_Invariants(
 type Old_Rune_Storage []rune
 
 // Old_Rune_Storage_Invariants bounds source storage.
-func Old_Rune_Storage_Invariants(value Old_Rune_Storage, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Old_Rune_Storage_Invariants(value Old_Rune_Storage, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), strings.TEXT_SIZE_MINIMUM, RUNE_STORAGE_COUNT_REQUIRED).
 		Ensure()
 }
@@ -246,8 +246,8 @@ func Old_Rune_Storage_Invariants(value Old_Rune_Storage, namespace invariant.Nam
 type New_Rune_Storage []rune
 
 // New_Rune_Storage_Invariants bounds destination storage.
-func New_Rune_Storage_Invariants(value New_Rune_Storage, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func New_Rune_Storage_Invariants(value New_Rune_Storage, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), strings.TEXT_SIZE_MINIMUM, RUNE_STORAGE_COUNT_REQUIRED).
 		Ensure()
 }
@@ -256,8 +256,8 @@ func New_Rune_Storage_Invariants(value New_Rune_Storage, namespace invariant.Nam
 type Matrix_Storage []int
 
 // Matrix_Storage_Invariants bounds quadratic scratch storage.
-func Matrix_Storage_Invariants(value Matrix_Storage, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Matrix_Storage_Invariants(value Matrix_Storage, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), strings.TEXT_SIZE_MINIMUM, MATRIX_STORAGE_COUNT_REQUIRED).
 		Ensure()
 }
@@ -266,8 +266,8 @@ func Matrix_Storage_Invariants(value Matrix_Storage, namespace invariant.Namespa
 type Rune_Bytes [utf8.CHARACTER_SIZE_MAXIMUM]byte
 
 // Rune_Bytes_Invariants fixes maximum UTF-8 character width.
-func Rune_Bytes_Invariants(value Rune_Bytes, _ invariant.Namespace) {
-	invariant.Always(
+func Rune_Bytes_Invariants(value Rune_Bytes, _ aver.Namespace) {
+	aver.Always(
 		len(value) == utf8.CHARACTER_SIZE_MAXIMUM,
 		"Rune byte workspace holds widest UTF-8 character.",
 	)
@@ -286,7 +286,7 @@ type Workspace struct {
 }
 
 // Workspace_Invariants composes caller-owned scratch storage.
-func Workspace_Invariants(value Workspace, namespace invariant.Namespace) {
+func Workspace_Invariants(value Workspace, namespace aver.Namespace) {
 	Old_Rune_Storage_Invariants(value.Old_Runes, namespace)
 	New_Rune_Storage_Invariants(value.New_Runes, namespace)
 	Matrix_Storage_Invariants(value.Matrix, namespace)
@@ -306,7 +306,7 @@ type Diff_Input struct {
 }
 
 // Diff_Input_Invariants composes character diff boundaries.
-func Diff_Input_Invariants(value Diff_Input, namespace invariant.Namespace) {
+func Diff_Input_Invariants(value Diff_Input, namespace aver.Namespace) {
 	Output_Invariants(value.Output, namespace)
 	Workspace_Invariants(*value.Workspace, namespace)
 	Old_Text_Unvalidated_Invariants(value.Old, namespace)
@@ -317,8 +317,8 @@ func Diff_Input_Invariants(value Diff_Input, namespace invariant.Namespace) {
 type Old_Count int
 
 // Old_Count_Invariants bounds decoded source count.
-func Old_Count_Invariants(value Old_Count, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Old_Count_Invariants(value Old_Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), strings.TEXT_SIZE_MINIMUM, RUNE_COUNT_MAXIMUM).
 		Ensure()
 }
@@ -327,8 +327,8 @@ func Old_Count_Invariants(value Old_Count, namespace invariant.Namespace) {
 type New_Count int
 
 // New_Count_Invariants bounds decoded destination count.
-func New_Count_Invariants(value New_Count, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func New_Count_Invariants(value New_Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), strings.TEXT_SIZE_MINIMUM, RUNE_COUNT_MAXIMUM).
 		Ensure()
 }
@@ -337,8 +337,8 @@ func New_Count_Invariants(value New_Count, namespace invariant.Namespace) {
 type Column_Count int
 
 // Column_Count_Invariants bounds matrix row width.
-func Column_Count_Invariants(value Column_Count, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Column_Count_Invariants(value Column_Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), MATRIX_COLUMN_COUNT_MINIMUM, MATRIX_SIDE_COUNT).
 		Ensure()
 }
@@ -350,8 +350,8 @@ const RUNE_MATRIX_SIDE_COUNT = RUNE_COUNT_MAXIMUM + 1
 type Rune_Column_Count int
 
 // Rune_Column_Count_Invariants bounds character matrix row width.
-func Rune_Column_Count_Invariants(value Rune_Column_Count, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Rune_Column_Count_Invariants(value Rune_Column_Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), MATRIX_COLUMN_COUNT_MINIMUM, RUNE_MATRIX_SIDE_COUNT).
 		Ensure()
 }
@@ -360,8 +360,8 @@ func Rune_Column_Count_Invariants(value Rune_Column_Count, namespace invariant.N
 type Validated_Old_Text string
 
 // Validated_Old_Text_Invariants bounds accepted source text.
-func Validated_Old_Text_Invariants(value Validated_Old_Text, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Validated_Old_Text_Invariants(value Validated_Old_Text, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), strings.TEXT_SIZE_MINIMUM, TEXT_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -370,8 +370,8 @@ func Validated_Old_Text_Invariants(value Validated_Old_Text, namespace invariant
 type Validated_New_Text string
 
 // Validated_New_Text_Invariants bounds accepted destination text.
-func Validated_New_Text_Invariants(value Validated_New_Text, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Validated_New_Text_Invariants(value Validated_New_Text, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), strings.TEXT_SIZE_MINIMUM, TEXT_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -380,8 +380,8 @@ func Validated_New_Text_Invariants(value Validated_New_Text, namespace invariant
 type Prepared_Matrix []int
 
 // Prepared_Matrix_Invariants requires an empty-prefix cell.
-func Prepared_Matrix_Invariants(value Prepared_Matrix, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Prepared_Matrix_Invariants(value Prepared_Matrix, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), MATRIX_COLUMN_COUNT_MINIMUM, MATRIX_STORAGE_COUNT_REQUIRED).
 		Ensure()
 }
@@ -411,7 +411,7 @@ type Diff_State struct {
 }
 
 // Diff_State_Invariants composes prepared character diff state.
-func Diff_State_Invariants(value Diff_State, namespace invariant.Namespace) {
+func Diff_State_Invariants(value Diff_State, namespace aver.Namespace) {
 	Output_Invariants(value.Output, namespace)
 	Old_Rune_Storage_Invariants(value.Old_Runes, namespace)
 	New_Rune_Storage_Invariants(value.New_Runes, namespace)
@@ -438,7 +438,7 @@ type Diff_Prepare_State struct {
 
 // Diff_Prepare_State_Invariants composes partial preparation state.
 func Diff_Prepare_State_Invariants(
-	value Diff_Prepare_State, namespace invariant.Namespace,
+	value Diff_Prepare_State, namespace aver.Namespace,
 ) {
 	Diff_Input_Invariants(value.Input, namespace)
 	Old_Count_Invariants(value.Old_Count, namespace)
@@ -450,8 +450,8 @@ func Diff_Prepare_State_Invariants(
 type Overflow bool
 
 // Overflow_Invariants requires fitting and overflowing writes.
-func Overflow_Invariants(value Overflow, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Overflow_Invariants(value Overflow, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Sometimes(bool(value), "Character diff output overflows.").
 		Ensure()
 }
@@ -460,8 +460,8 @@ func Overflow_Invariants(value Overflow, namespace invariant.Namespace) {
 type Open_Edit_Kind uint8
 
 // Open_Edit_Kind_Invariants lists writer states.
-func Open_Edit_Kind_Invariants(value Open_Edit_Kind, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Open_Edit_Kind_Invariants(value Open_Edit_Kind, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_4_Uint8(
 			uint8(value),
 			uint8(EDIT_NONE),
@@ -476,8 +476,8 @@ func Open_Edit_Kind_Invariants(value Open_Edit_Kind, namespace invariant.Namespa
 type Byte uint8
 
 // Byte_Invariants covers complete byte domain.
-func Byte_Invariants(value Byte, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Byte_Invariants(value Byte, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint8(uint8(value), strings.BYTE_MINIMUM, strings.BYTE_MAXIMUM).
 		Ensure()
 }
@@ -486,8 +486,8 @@ func Byte_Invariants(value Byte, namespace invariant.Namespace) {
 type Line_Prefix uint8
 
 // Line_Prefix_Invariants lists line operations.
-func Line_Prefix_Invariants(value Line_Prefix, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Line_Prefix_Invariants(value Line_Prefix, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_3_Uint8(
 			uint8(value), uint8(LINE_PREFIX_RETAIN),
 			uint8(LINE_PREFIX_INSERT), uint8(LINE_PREFIX_DELETE),
@@ -519,7 +519,7 @@ type Diff_Writer struct {
 }
 
 // Diff_Writer_Invariants composes character rendering state.
-func Diff_Writer_Invariants(value Diff_Writer, namespace invariant.Namespace) {
+func Diff_Writer_Invariants(value Diff_Writer, namespace aver.Namespace) {
 	Output_Invariants(value.Output, namespace)
 	Rune_Bytes_Invariants(*value.Rune_Bytes, namespace)
 	Diff_Position_Invariants(value.Position, namespace)
@@ -728,9 +728,9 @@ type Line_Old_Text_Unvalidated string
 
 // Line_Old_Text_Unvalidated_Invariants admits first rejected source byte.
 func Line_Old_Text_Unvalidated_Invariants(
-	value Line_Old_Text_Unvalidated, namespace invariant.Namespace,
+	value Line_Old_Text_Unvalidated, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(len(value), strings.TEXT_SIZE_MINIMUM, TEXT_SIZE_UNVALIDATED_MAXIMUM).
 		Ensure()
 }
@@ -740,9 +740,9 @@ type Line_New_Text_Unvalidated string
 
 // Line_New_Text_Unvalidated_Invariants admits first rejected destination byte.
 func Line_New_Text_Unvalidated_Invariants(
-	value Line_New_Text_Unvalidated, namespace invariant.Namespace,
+	value Line_New_Text_Unvalidated, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(len(value), strings.TEXT_SIZE_MINIMUM, TEXT_SIZE_UNVALIDATED_MAXIMUM).
 		Ensure()
 }
@@ -760,7 +760,7 @@ type Line_Diff_Input struct {
 }
 
 // Line_Diff_Input_Invariants composes line diff boundaries.
-func Line_Diff_Input_Invariants(value Line_Diff_Input, namespace invariant.Namespace) {
+func Line_Diff_Input_Invariants(value Line_Diff_Input, namespace aver.Namespace) {
 	Line_Output_Invariants(value.Output, namespace)
 	Workspace_Invariants(*value.Workspace, namespace)
 	Line_Old_Text_Unvalidated_Invariants(value.Old, namespace)
@@ -771,8 +771,8 @@ func Line_Diff_Input_Invariants(value Line_Diff_Input, namespace invariant.Names
 type Old_Line_Count int
 
 // Old_Line_Count_Invariants bounds source lines.
-func Old_Line_Count_Invariants(value Old_Line_Count, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Old_Line_Count_Invariants(value Old_Line_Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), strings.TEXT_SIZE_MINIMUM, LINE_COUNT_MAXIMUM).
 		Ensure()
 }
@@ -781,8 +781,8 @@ func Old_Line_Count_Invariants(value Old_Line_Count, namespace invariant.Namespa
 type New_Line_Count int
 
 // New_Line_Count_Invariants bounds destination lines.
-func New_Line_Count_Invariants(value New_Line_Count, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func New_Line_Count_Invariants(value New_Line_Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), strings.TEXT_SIZE_MINIMUM, LINE_COUNT_MAXIMUM).
 		Ensure()
 }
@@ -810,7 +810,7 @@ type Line_State struct {
 }
 
 // Line_State_Invariants composes prepared line state.
-func Line_State_Invariants(value Line_State, namespace invariant.Namespace) {
+func Line_State_Invariants(value Line_State, namespace aver.Namespace) {
 	Line_Output_Invariants(value.Output, namespace)
 	Old_Rune_Storage_Invariants(value.Old_Runes, namespace)
 	New_Rune_Storage_Invariants(value.New_Runes, namespace)
@@ -836,7 +836,7 @@ type Line_Prepare_State struct {
 
 // Line_Prepare_State_Invariants composes partial preparation state.
 func Line_Prepare_State_Invariants(
-	value Line_Prepare_State, namespace invariant.Namespace,
+	value Line_Prepare_State, namespace aver.Namespace,
 ) {
 	Line_Diff_Input_Invariants(value.Input, namespace)
 	Old_Line_Count_Invariants(value.Old_Count, namespace)
@@ -848,8 +848,8 @@ func Line_Prepare_State_Invariants(
 type Old_Line_Index int
 
 // Old_Line_Index_Invariants bounds source line index.
-func Old_Line_Index_Invariants(value Old_Line_Index, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Old_Line_Index_Invariants(value Old_Line_Index, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), strings.TEXT_SIZE_MINIMUM, RUNE_COUNT_MAXIMUM).
 		Ensure()
 }
@@ -858,8 +858,8 @@ func Old_Line_Index_Invariants(value Old_Line_Index, namespace invariant.Namespa
 type New_Line_Index int
 
 // New_Line_Index_Invariants bounds destination line index.
-func New_Line_Index_Invariants(value New_Line_Index, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func New_Line_Index_Invariants(value New_Line_Index, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), strings.TEXT_SIZE_MINIMUM, RUNE_COUNT_MAXIMUM).
 		Ensure()
 }
@@ -868,8 +868,8 @@ func New_Line_Index_Invariants(value New_Line_Index, namespace invariant.Namespa
 type Line_Equal bool
 
 // Line_Equal_Invariants requires equal and different line coverage.
-func Line_Equal_Invariants(value Line_Equal, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Line_Equal_Invariants(value Line_Equal, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Sometimes(bool(value), "Compared lines are equal.").
 		Ensure()
 }
@@ -879,9 +879,9 @@ type Compared_Old_Runes []rune
 
 // Compared_Old_Runes_Invariants bounds prepared source starts.
 func Compared_Old_Runes_Invariants(
-	value Compared_Old_Runes, namespace invariant.Namespace,
+	value Compared_Old_Runes, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(len(value), MATRIX_COLUMN_COUNT_MINIMUM, LINE_COUNT_MAXIMUM).
 		Ensure()
 }
@@ -891,9 +891,9 @@ type Compared_New_Runes []rune
 
 // Compared_New_Runes_Invariants bounds prepared destination starts.
 func Compared_New_Runes_Invariants(
-	value Compared_New_Runes, namespace invariant.Namespace,
+	value Compared_New_Runes, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(len(value), MATRIX_COLUMN_COUNT_MINIMUM, LINE_COUNT_MAXIMUM).
 		Ensure()
 }
@@ -903,9 +903,9 @@ type Compared_Old_Text string
 
 // Compared_Old_Text_Invariants bounds comparable source text.
 func Compared_Old_Text_Invariants(
-	value Compared_Old_Text, namespace invariant.Namespace,
+	value Compared_Old_Text, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(len(value), TEXT_SIZE_NONEMPTY_MINIMUM, TEXT_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -915,9 +915,9 @@ type Compared_New_Text string
 
 // Compared_New_Text_Invariants bounds comparable destination text.
 func Compared_New_Text_Invariants(
-	value Compared_New_Text, namespace invariant.Namespace,
+	value Compared_New_Text, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(len(value), TEXT_SIZE_NONEMPTY_MINIMUM, TEXT_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -927,9 +927,9 @@ type Compared_Old_Count int
 
 // Compared_Old_Count_Invariants bounds comparable source lines.
 func Compared_Old_Count_Invariants(
-	value Compared_Old_Count, namespace invariant.Namespace,
+	value Compared_Old_Count, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(int(value), MATRIX_COLUMN_COUNT_MINIMUM, LINE_COUNT_MAXIMUM).
 		Ensure()
 }
@@ -939,9 +939,9 @@ type Compared_New_Count int
 
 // Compared_New_Count_Invariants bounds comparable destination lines.
 func Compared_New_Count_Invariants(
-	value Compared_New_Count, namespace invariant.Namespace,
+	value Compared_New_Count, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(int(value), MATRIX_COLUMN_COUNT_MINIMUM, LINE_COUNT_MAXIMUM).
 		Ensure()
 }
@@ -963,7 +963,7 @@ type Lines_Equal_State struct {
 }
 
 // Lines_Equal_State_Invariants composes comparable line state.
-func Lines_Equal_State_Invariants(value Lines_Equal_State, namespace invariant.Namespace) {
+func Lines_Equal_State_Invariants(value Lines_Equal_State, namespace aver.Namespace) {
 	Compared_Old_Runes_Invariants(value.Old_Runes, namespace)
 	Compared_New_Runes_Invariants(value.New_Runes, namespace)
 	Compared_Old_Text_Invariants(value.Old, namespace)
@@ -976,8 +976,8 @@ func Lines_Equal_State_Invariants(value Lines_Equal_State, namespace invariant.N
 type Line_Overflow bool
 
 // Line_Overflow_Invariants requires fitting and overflowing line writes.
-func Line_Overflow_Invariants(value Line_Overflow, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Line_Overflow_Invariants(value Line_Overflow, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Sometimes(bool(value), "Line diff output overflows.").
 		Ensure()
 }
@@ -986,8 +986,8 @@ func Line_Overflow_Invariants(value Line_Overflow, namespace invariant.Namespace
 type First_Line bool
 
 // First_Line_Invariants requires first and later line writes.
-func First_Line_Invariants(value First_Line, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func First_Line_Invariants(value First_Line, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Sometimes(bool(value), "Line writer has emitted no line.").
 		Ensure()
 }
@@ -1005,7 +1005,7 @@ type Line_Writer struct {
 }
 
 // Line_Writer_Invariants composes line rendering state.
-func Line_Writer_Invariants(value Line_Writer, namespace invariant.Namespace) {
+func Line_Writer_Invariants(value Line_Writer, namespace aver.Namespace) {
 	Line_Output_Invariants(value.Output, namespace)
 	Line_Position_Invariants(value.Position, namespace)
 	Line_Overflow_Invariants(value.Overflow, namespace)
@@ -1016,8 +1016,8 @@ func Line_Writer_Invariants(value Line_Writer, namespace invariant.Namespace) {
 type Line_Text string
 
 // Line_Text_Invariants bounds borrowed line source.
-func Line_Text_Invariants(value Line_Text, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Line_Text_Invariants(value Line_Text, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), strings.TEXT_SIZE_MINIMUM, TEXT_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -1026,8 +1026,8 @@ func Line_Text_Invariants(value Line_Text, namespace invariant.Namespace) {
 type Line_Start int
 
 // Line_Start_Invariants bounds inclusive byte boundary.
-func Line_Start_Invariants(value Line_Start, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Line_Start_Invariants(value Line_Start, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), strings.TEXT_SIZE_MINIMUM, TEXT_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -1036,8 +1036,8 @@ func Line_Start_Invariants(value Line_Start, namespace invariant.Namespace) {
 type Line_End int
 
 // Line_End_Invariants bounds exclusive byte boundary.
-func Line_End_Invariants(value Line_End, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Line_End_Invariants(value Line_End, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), strings.TEXT_SIZE_MINIMUM, TEXT_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -1057,7 +1057,7 @@ type Line_Write_Input struct {
 }
 
 // Line_Write_Input_Invariants composes one line write.
-func Line_Write_Input_Invariants(value Line_Write_Input, namespace invariant.Namespace) {
+func Line_Write_Input_Invariants(value Line_Write_Input, namespace aver.Namespace) {
 	Line_Writer_Invariants(*value.Writer, namespace)
 	Line_Prefix_Invariants(value.Prefix, namespace)
 	Line_Text_Invariants(value.Text, namespace)
@@ -1079,7 +1079,7 @@ type Completed_Line_Writer struct {
 
 // Completed_Line_Writer_Invariants composes completed writer state.
 func Completed_Line_Writer_Invariants(
-	value Completed_Line_Writer, namespace invariant.Namespace,
+	value Completed_Line_Writer, namespace aver.Namespace,
 ) {
 	Line_Output_Invariants(value.Output, namespace)
 	Line_Count_Invariants(value.Position, namespace)
@@ -1411,8 +1411,8 @@ func line_render(state Line_State) (count Line_Count, status Render_Status) {
 type Runes []rune
 
 // Runes_Invariants bounds borrowed result.
-func Runes_Invariants(value Runes, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Runes_Invariants(value Runes, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), strings.TEXT_SIZE_MINIMUM, RUNE_COUNT_MAXIMUM).
 		Ensure()
 }
@@ -1421,8 +1421,8 @@ func Runes_Invariants(value Runes, namespace invariant.Namespace) {
 type Left_Runes []rune
 
 // Left_Runes_Invariants bounds first helper operand.
-func Left_Runes_Invariants(value Left_Runes, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Left_Runes_Invariants(value Left_Runes, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), strings.TEXT_SIZE_MINIMUM, RUNE_COUNT_MAXIMUM).
 		Ensure()
 }
@@ -1431,8 +1431,8 @@ func Left_Runes_Invariants(value Left_Runes, namespace invariant.Namespace) {
 type Right_Runes []rune
 
 // Right_Runes_Invariants bounds second helper operand.
-func Right_Runes_Invariants(value Right_Runes, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Right_Runes_Invariants(value Right_Runes, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), strings.TEXT_SIZE_MINIMUM, RUNE_COUNT_MAXIMUM).
 		Ensure()
 }
@@ -1447,7 +1447,7 @@ type Find_Common_Prefix_Input struct {
 
 // Find_Common_Prefix_Input_Invariants composes prefix operands.
 func Find_Common_Prefix_Input_Invariants(
-	value Find_Common_Prefix_Input, namespace invariant.Namespace,
+	value Find_Common_Prefix_Input, namespace aver.Namespace,
 ) {
 	Left_Runes_Invariants(value.Left, namespace)
 	Right_Runes_Invariants(value.Right, namespace)
@@ -1476,7 +1476,7 @@ type Find_Common_Suffix_Input struct {
 
 // Find_Common_Suffix_Input_Invariants composes suffix operands.
 func Find_Common_Suffix_Input_Invariants(
-	value Find_Common_Suffix_Input, namespace invariant.Namespace,
+	value Find_Common_Suffix_Input, namespace aver.Namespace,
 ) {
 	Left_Runes_Invariants(value.Left, namespace)
 	Right_Runes_Invariants(value.Right, namespace)
@@ -1507,7 +1507,7 @@ type Find_Common_Run_Input struct {
 
 // Find_Common_Run_Input_Invariants composes run operands.
 func Find_Common_Run_Input_Invariants(
-	value Find_Common_Run_Input, namespace invariant.Namespace,
+	value Find_Common_Run_Input, namespace aver.Namespace,
 ) {
 	Left_Runes_Invariants(value.Left, namespace)
 	Right_Runes_Invariants(value.Right, namespace)
@@ -1551,8 +1551,8 @@ func Find_Common_Run(input Find_Common_Run_Input) (result Runes) {
 type Boolean bool
 
 // Boolean_Invariants requires both predicate outcomes.
-func Boolean_Invariants(value Boolean, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Boolean_Invariants(value Boolean, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Sometimes(bool(value), "Rune predicate reports true.").
 		Ensure()
 }
@@ -1561,8 +1561,8 @@ func Boolean_Invariants(value Boolean, namespace invariant.Namespace) {
 type String_Runes []rune
 
 // String_Runes_Invariants bounds searched run.
-func String_Runes_Invariants(value String_Runes, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func String_Runes_Invariants(value String_Runes, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), strings.TEXT_SIZE_MINIMUM, RUNE_COUNT_MAXIMUM).
 		Ensure()
 }
@@ -1571,8 +1571,8 @@ func String_Runes_Invariants(value String_Runes, namespace invariant.Namespace) 
 type Expected_Runes []rune
 
 // Expected_Runes_Invariants bounds expected run.
-func Expected_Runes_Invariants(value Expected_Runes, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Expected_Runes_Invariants(value Expected_Runes, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), strings.TEXT_SIZE_MINIMUM, RUNE_COUNT_MAXIMUM).
 		Ensure()
 }
@@ -1587,7 +1587,7 @@ type Runes_Have_Prefix_Input struct {
 
 // Runes_Have_Prefix_Input_Invariants composes predicate operands.
 func Runes_Have_Prefix_Input_Invariants(
-	value Runes_Have_Prefix_Input, namespace invariant.Namespace,
+	value Runes_Have_Prefix_Input, namespace aver.Namespace,
 ) {
 	String_Runes_Invariants(value.String, namespace)
 	Expected_Runes_Invariants(value.Expect, namespace)
@@ -1621,7 +1621,7 @@ type Runes_Have_Suffix_Input struct {
 
 // Runes_Have_Suffix_Input_Invariants composes predicate operands.
 func Runes_Have_Suffix_Input_Invariants(
-	value Runes_Have_Suffix_Input, namespace invariant.Namespace,
+	value Runes_Have_Suffix_Input, namespace aver.Namespace,
 ) {
 	String_Runes_Invariants(value.String, namespace)
 	Expected_Runes_Invariants(value.Expect, namespace)

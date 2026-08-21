@@ -7,8 +7,8 @@
 package fixedpoint
 
 import (
-	"local/james-orcales/shared/invariant/default"
 	"local/james-orcales/shared/math/bits"
+	"local/james-orcales/shared/simulation/aver/default"
 )
 
 // FRACTION_DIGITS_MAXIMUM is how many fraction digits a parse reads. Ten digits scaled by
@@ -35,8 +35,8 @@ const DECIMAL_VALUE_MINIMUM int64 = 0
 type Unsigned_Value uint64
 
 // Unsigned_Value_Invariants states the complete unsigned 64-bit domain.
-func Unsigned_Value_Invariants(value Unsigned_Value, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Unsigned_Value_Invariants(value Unsigned_Value, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint64(uint64(value), bits.WORD_64_MINIMUM, bits.WORD_64_MAXIMUM).
 		Ensure()
 }
@@ -48,8 +48,8 @@ type Decimal_Text string
 // Decimal_Text_Invariants bounds the digits a parse accepts. Text longer than the largest
 // unsigned value needs cannot name an integer this storage holds, thus the caller answers
 // it before the parse runs.
-func Decimal_Text_Invariants(value Decimal_Text, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Decimal_Text_Invariants(value Decimal_Text, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), DECIMAL_TEXT_SIZE_MINIMUM, DECIMAL_TEXT_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -59,8 +59,8 @@ func Decimal_Text_Invariants(value Decimal_Text, namespace invariant.Namespace) 
 type Decimal_Value int64
 
 // Decimal_Value_Invariants bounds a parsed value to the nonnegative integers.
-func Decimal_Value_Invariants(value Decimal_Value, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Decimal_Value_Invariants(value Decimal_Value, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int64(int64(value), DECIMAL_VALUE_MINIMUM, bits.INTEGER_64_MAXIMUM).
 		Ensure()
 }
@@ -69,8 +69,8 @@ func Decimal_Value_Invariants(value Decimal_Value, namespace invariant.Namespace
 type Decimal_Digit_Count int
 
 // Decimal_Digit_Count_Invariants makes each digit walk bounded by unsigned storage width.
-func Decimal_Digit_Count_Invariants(value Decimal_Digit_Count, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Decimal_Digit_Count_Invariants(value Decimal_Digit_Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), DECIMAL_DIGITS_SIZE_MINIMUM, DECIMAL_TEXT_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -79,8 +79,8 @@ func Decimal_Digit_Count_Invariants(value Decimal_Digit_Count, namespace invaria
 type Decimal_Digits []byte
 
 // Decimal_Digits_Invariants prevents internal writer from exceeding unsigned decimal width.
-func Decimal_Digits_Invariants(value Decimal_Digits, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Decimal_Digits_Invariants(value Decimal_Digits, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), DECIMAL_DIGITS_SIZE_MINIMUM, DECIMAL_TEXT_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -251,8 +251,8 @@ const FRACTION_UNIT_NEGATIVE_ONE int64 = -1
 type Number int64
 
 // Number_Invariants states the complete fixed-point storage domain.
-func Number_Invariants(value Number, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Number_Invariants(value Number, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int64(int64(value), bits.INTEGER_64_MINIMUM, bits.INTEGER_64_MAXIMUM).
 		Ensure()
 }
@@ -263,8 +263,8 @@ func Number_Invariants(value Number, namespace invariant.Namespace) {
 type Ratio int64
 
 // Ratio_Invariants states the complete ratio storage domain.
-func Ratio_Invariants(value Ratio, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Ratio_Invariants(value Ratio, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int64(int64(value), bits.INTEGER_64_MINIMUM, bits.INTEGER_64_MAXIMUM).
 		Ensure()
 }
@@ -273,8 +273,8 @@ func Ratio_Invariants(value Ratio, namespace invariant.Namespace) {
 type Numerator int64
 
 // Numerator_Invariants states the complete signed 64-bit domain.
-func Numerator_Invariants(value Numerator, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Numerator_Invariants(value Numerator, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int64(int64(value), bits.INTEGER_64_MINIMUM, bits.INTEGER_64_MAXIMUM).
 		Ensure()
 }
@@ -283,8 +283,8 @@ func Numerator_Invariants(value Numerator, namespace invariant.Namespace) {
 type Denominator int64
 
 // Denominator_Invariants states the complete signed 64-bit domain.
-func Denominator_Invariants(value Denominator, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Denominator_Invariants(value Denominator, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int64(int64(value), bits.INTEGER_64_MINIMUM, bits.INTEGER_64_MAXIMUM).
 		Ensure()
 }
@@ -293,8 +293,8 @@ func Denominator_Invariants(value Denominator, namespace invariant.Namespace) {
 type Multiplicand Number
 
 // Multiplicand_Invariants states the complete fixed-point storage domain.
-func Multiplicand_Invariants(value Multiplicand, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Multiplicand_Invariants(value Multiplicand, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int64(int64(value), bits.INTEGER_64_MINIMUM, bits.INTEGER_64_MAXIMUM).
 		Ensure()
 }
@@ -303,8 +303,8 @@ func Multiplicand_Invariants(value Multiplicand, namespace invariant.Namespace) 
 type Multiplier Number
 
 // Multiplier_Invariants states the complete fixed-point storage domain.
-func Multiplier_Invariants(value Multiplier, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Multiplier_Invariants(value Multiplier, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int64(int64(value), bits.INTEGER_64_MINIMUM, bits.INTEGER_64_MAXIMUM).
 		Ensure()
 }
@@ -313,8 +313,8 @@ func Multiplier_Invariants(value Multiplier, namespace invariant.Namespace) {
 type Dividend Number
 
 // Dividend_Invariants states the complete fixed-point storage domain.
-func Dividend_Invariants(value Dividend, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Dividend_Invariants(value Dividend, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int64(int64(value), bits.INTEGER_64_MINIMUM, bits.INTEGER_64_MAXIMUM).
 		Ensure()
 }
@@ -323,8 +323,8 @@ func Dividend_Invariants(value Dividend, namespace invariant.Namespace) {
 type Divisor Number
 
 // Divisor_Invariants states the complete fixed-point storage domain.
-func Divisor_Invariants(value Divisor, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Divisor_Invariants(value Divisor, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int64(int64(value), bits.INTEGER_64_MINIMUM, bits.INTEGER_64_MAXIMUM).
 		Ensure()
 }
@@ -333,8 +333,8 @@ func Divisor_Invariants(value Divisor, namespace invariant.Namespace) {
 type Whole_Integer int64
 
 // Whole_Integer_Invariants bounds an integer to the fixed-point whole-number domain.
-func Whole_Integer_Invariants(value Whole_Integer, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Whole_Integer_Invariants(value Whole_Integer, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int64(int64(value), WHOLE_INTEGER_MINIMUM, WHOLE_INTEGER_MAXIMUM).
 		Ensure()
 }
@@ -343,12 +343,12 @@ func Whole_Integer_Invariants(value Whole_Integer, namespace invariant.Namespace
 type Integer_Number Number
 
 // Integer_Number_Invariants bounds the fixed-point whole-number domain.
-func Integer_Number_Invariants(value Integer_Number, namespace invariant.Namespace) {
-	invariant.Always(
+func Integer_Number_Invariants(value Integer_Number, namespace aver.Namespace) {
+	aver.Always(
 		int64(value)%SCALE == 0,
 		"An Integer_Number has no fractional units.",
 	)
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Holed_Int64(
 			int64(value), INTEGER_NUMBER_MINIMUM, INTEGER_NUMBER_MAXIMUM,
 			FRACTION_UNIT_NEGATIVE_ONE, FRACTION_UNIT_ONE,
@@ -361,8 +361,8 @@ func Integer_Number_Invariants(value Integer_Number, namespace invariant.Namespa
 type Radicand int64
 
 // Radicand_Invariants states the complete signed 64-bit domain.
-func Radicand_Invariants(value Radicand, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Radicand_Invariants(value Radicand, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int64(int64(value), bits.INTEGER_64_MINIMUM, bits.INTEGER_64_MAXIMUM).
 		Ensure()
 }
@@ -371,8 +371,8 @@ func Radicand_Invariants(value Radicand, namespace invariant.Namespace) {
 type Number_Root Number
 
 // Number_Root_Invariants bounds a root to the Number radicand domain.
-func Number_Root_Invariants(value Number_Root, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Number_Root_Invariants(value Number_Root, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Holed_Int64(
 			int64(value), NUMBER_ROOT_MINIMUM, NUMBER_ROOT_MAXIMUM,
 			FRACTION_UNIT_ONE, FRACTION_UNIT_TWO,
@@ -385,8 +385,8 @@ func Number_Root_Invariants(value Number_Root, namespace invariant.Namespace) {
 type Scaled_Root Number
 
 // Scaled_Root_Invariants bounds a root to the signed integer radicand domain.
-func Scaled_Root_Invariants(value Scaled_Root, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Scaled_Root_Invariants(value Scaled_Root, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Holed_Int64(
 			int64(value), SCALED_ROOT_MINIMUM, SCALED_ROOT_MAXIMUM,
 			FRACTION_UNIT_ONE, FRACTION_UNIT_TWO,
@@ -399,8 +399,8 @@ func Scaled_Root_Invariants(value Scaled_Root, namespace invariant.Namespace) {
 type Root_Integer int64
 
 // Root_Integer_Invariants bounds a root to the admitted 128-bit radicand domain.
-func Root_Integer_Invariants(value Root_Integer, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Root_Integer_Invariants(value Root_Integer, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int64(int64(value), ROOT_INTEGER_MINIMUM, ROOT_INTEGER_MAXIMUM).
 		Ensure()
 }
@@ -409,8 +409,8 @@ func Root_Integer_Invariants(value Root_Integer, namespace invariant.Namespace) 
 type Sine Number
 
 // Sine_Invariants bounds a sine to the unit interval.
-func Sine_Invariants(value Sine, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Sine_Invariants(value Sine, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Holed_Int64(
 			int64(value), SINE_MINIMUM, SINE_MAXIMUM,
 			FRACTION_UNIT_NEGATIVE_ONE, FRACTION_UNIT_ONE,
@@ -423,8 +423,8 @@ func Sine_Invariants(value Sine, namespace invariant.Namespace) {
 type High_Word uint64
 
 // High_Word_Invariants keeps the root in the signed 64-bit result domain.
-func High_Word_Invariants(value High_Word, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func High_Word_Invariants(value High_Word, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint64(uint64(value), bits.WORD_64_MINIMUM, HIGH_WORD_MAXIMUM).
 		Ensure()
 }
@@ -433,8 +433,8 @@ func High_Word_Invariants(value High_Word, namespace invariant.Namespace) {
 type Low_Word uint64
 
 // Low_Word_Invariants states the complete unsigned 64-bit domain.
-func Low_Word_Invariants(value Low_Word, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Low_Word_Invariants(value Low_Word, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint64(uint64(value), bits.WORD_64_MINIMUM, bits.WORD_64_MAXIMUM).
 		Ensure()
 }
@@ -443,8 +443,8 @@ func Low_Word_Invariants(value Low_Word, namespace invariant.Namespace) {
 type Digit_Count int
 
 // Digit_Count_Invariants keeps decimal scaling in the signed 64-bit domain.
-func Digit_Count_Invariants(value Digit_Count, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Digit_Count_Invariants(value Digit_Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), DIGIT_COUNT_MINIMUM, DIGIT_COUNT_MAXIMUM).
 		Ensure()
 }
@@ -453,8 +453,8 @@ func Digit_Count_Invariants(value Digit_Count, namespace invariant.Namespace) {
 type Boolean bool
 
 // Boolean_Invariants records both Boolean states.
-func Boolean_Invariants(value Boolean, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Boolean_Invariants(value Boolean, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Sometimes(bool(value), "A Boolean value is true.").
 		Ensure()
 }
@@ -463,8 +463,8 @@ func Boolean_Invariants(value Boolean, namespace invariant.Namespace) {
 type Text_Unvalidated string
 
 // Text_Unvalidated_Invariants caps work before syntax scanning.
-func Text_Unvalidated_Invariants(value Text_Unvalidated, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Text_Unvalidated_Invariants(value Text_Unvalidated, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(
 			len(value), JSON_TEXT_UNVALIDATED_SIZE_MINIMUM,
 			JSON_TEXT_UNVALIDATED_SIZE_MAXIMUM,
@@ -476,8 +476,8 @@ func Text_Unvalidated_Invariants(value Text_Unvalidated, namespace invariant.Nam
 type Text string
 
 // Text_Invariants makes syntax work proportional only to package bound.
-func Text_Invariants(value Text, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Text_Invariants(value Text, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), JSON_TEXT_SIZE_MINIMUM, JSON_TEXT_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -486,8 +486,8 @@ func Text_Invariants(value Text, namespace invariant.Namespace) {
 type Digits []byte
 
 // Digits_Invariants prevents caller storage from expanding package work bound.
-func Digits_Invariants(value Digits, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Digits_Invariants(value Digits, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), TEXT_SIZE_MINIMUM, TEXT_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -496,8 +496,8 @@ func Digits_Invariants(value Digits, namespace invariant.Namespace) {
 type Text_Count int
 
 // Text_Count_Invariants binds output count to caller storage bound.
-func Text_Count_Invariants(value Text_Count, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Text_Count_Invariants(value Text_Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), TEXT_SIZE_MINIMUM, TEXT_SIZE_MAXIMUM).
 		Ensure()
 }

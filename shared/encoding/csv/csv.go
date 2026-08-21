@@ -3,8 +3,8 @@ package csv
 
 import (
 	"local/james-orcales/shared/bytes"
-	"local/james-orcales/shared/invariant/default"
 	"local/james-orcales/shared/math/bits"
+	"local/james-orcales/shared/simulation/aver/default"
 	"local/james-orcales/shared/unicode/ucd"
 	"local/james-orcales/shared/unicode/utf8"
 )
@@ -120,9 +120,9 @@ type Delimiter_Character int32
 
 // Delimiter_Character_Invariants keeps accessor output inside Unicode scalar bounds.
 func Delimiter_Character_Invariants(
-	value Delimiter_Character, namespace invariant.Namespace,
+	value Delimiter_Character, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int32(
 			int32(value), DELIMITER_CHARACTER_MINIMUM,
 			utf8.DECODED_CHARACTER_MAXIMUM,
@@ -135,9 +135,9 @@ type Comment_Character int32
 
 // Comment_Character_Invariants keeps disabled and Unicode results bounded.
 func Comment_Character_Invariants(
-	value Comment_Character, namespace invariant.Namespace,
+	value Comment_Character, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int32(
 			int32(value), int32(bytes.SLICE_SIZE_MINIMUM),
 			utf8.DECODED_CHARACTER_MAXIMUM,
@@ -149,8 +149,8 @@ func Comment_Character_Invariants(
 type Delimiter int32
 
 // Delimiter_Invariants covers storage domain before validation.
-func Delimiter_Invariants(value Delimiter, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Delimiter_Invariants(value Delimiter, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int32(int32(value), bits.INTEGER_32_MINIMUM, bits.INTEGER_32_MAXIMUM).
 		Ensure()
 }
@@ -159,8 +159,8 @@ func Delimiter_Invariants(value Delimiter, namespace invariant.Namespace) {
 type Comment int32
 
 // Comment_Invariants covers storage domain before validation.
-func Comment_Invariants(value Comment, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Comment_Invariants(value Comment, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int32(int32(value), bits.INTEGER_32_MINIMUM, bits.INTEGER_32_MAXIMUM).
 		Ensure()
 }
@@ -169,8 +169,8 @@ func Comment_Invariants(value Comment, namespace invariant.Namespace) {
 type Boolean bool
 
 // Boolean_Invariants reaches both decision outcomes.
-func Boolean_Invariants(value Boolean, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Boolean_Invariants(value Boolean, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Sometimes(bool(value), "A CSV decision is positive.").
 		Ensure()
 }
@@ -179,8 +179,8 @@ func Boolean_Invariants(value Boolean, namespace invariant.Namespace) {
 type Lazy_Quotes bool
 
 // Lazy_Quotes_Invariants covers strict and permissive policy.
-func Lazy_Quotes_Invariants(value Lazy_Quotes, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Lazy_Quotes_Invariants(value Lazy_Quotes, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Sometimes(bool(value), "Lazy quote parsing is enabled.").
 		Ensure()
 }
@@ -190,9 +190,9 @@ type Trim_Leading_Space bool
 
 // Trim_Leading_Space_Invariants covers retained and removed prefixes.
 func Trim_Leading_Space_Invariants(
-	value Trim_Leading_Space, namespace invariant.Namespace,
+	value Trim_Leading_Space, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Sometimes(bool(value), "Leading space trimming is enabled.").
 		Ensure()
 }
@@ -201,8 +201,8 @@ func Trim_Leading_Space_Invariants(
 type Use_CRLF bool
 
 // Use_CRLF_Invariants covers LF and CRLF output.
-func Use_CRLF_Invariants(value Use_CRLF, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Use_CRLF_Invariants(value Use_CRLF, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Sometimes(bool(value), "CRLF encoding is enabled.").
 		Ensure()
 }
@@ -212,9 +212,9 @@ type Fields_Per_Record int
 
 // Fields_Per_Record_Invariants bounds width by maximum decoded field slots.
 func Fields_Per_Record_Invariants(
-	value Fields_Per_Record, namespace invariant.Namespace,
+	value Fields_Per_Record, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(
 			int(value), int(FIELDS_PER_RECORD_UNCHECKED), FIELD_COUNT_MAXIMUM,
 		).
@@ -239,7 +239,7 @@ type Configuration_Input struct {
 
 // Configuration_Input_Invariants composes complete unvalidated scalar domains.
 func Configuration_Input_Invariants(
-	value Configuration_Input, namespace invariant.Namespace,
+	value Configuration_Input, namespace aver.Namespace,
 ) {
 	Delimiter_Invariants(value.Delimiter, namespace)
 	Comment_Invariants(value.Comment, namespace)
@@ -253,8 +253,8 @@ func Configuration_Input_Invariants(
 type Delimiter_Storage [utf8.CHARACTER_SIZE_MAXIMUM]byte
 
 // Delimiter_Storage_Invariants fixes capacity while operations validate content.
-func Delimiter_Storage_Invariants(value Delimiter_Storage, _ invariant.Namespace) {
-	invariant.Always(
+func Delimiter_Storage_Invariants(value Delimiter_Storage, _ aver.Namespace) {
+	aver.Always(
 		len(value) == utf8.CHARACTER_SIZE_MAXIMUM,
 		"Delimiter storage holds one maximum UTF-8 encoding.",
 	)
@@ -264,8 +264,8 @@ func Delimiter_Storage_Invariants(value Delimiter_Storage, _ invariant.Namespace
 type Comment_Storage [utf8.CHARACTER_SIZE_MAXIMUM]byte
 
 // Comment_Storage_Invariants fixes capacity while operations validate content.
-func Comment_Storage_Invariants(value Comment_Storage, _ invariant.Namespace) {
-	invariant.Always(
+func Comment_Storage_Invariants(value Comment_Storage, _ aver.Namespace) {
+	aver.Always(
 		len(value) == utf8.CHARACTER_SIZE_MAXIMUM,
 		"Comment storage holds one maximum UTF-8 encoding.",
 	)
@@ -276,9 +276,9 @@ type Delimiter_Size_Storage [SCALAR_STORAGE_SIZE]uint8
 
 // Delimiter_Size_Storage_Invariants leaves content checks on operation paths.
 func Delimiter_Size_Storage_Invariants(
-	value Delimiter_Size_Storage, _ invariant.Namespace,
+	value Delimiter_Size_Storage, _ aver.Namespace,
 ) {
-	invariant.Always(
+	aver.Always(
 		len(value) == SCALAR_STORAGE_SIZE,
 		"Delimiter size storage keeps validity outside structural invariants.",
 	)
@@ -289,9 +289,9 @@ type Comment_Size_Storage [SCALAR_STORAGE_SIZE]uint8
 
 // Comment_Size_Storage_Invariants leaves content checks on operation paths.
 func Comment_Size_Storage_Invariants(
-	value Comment_Size_Storage, _ invariant.Namespace,
+	value Comment_Size_Storage, _ aver.Namespace,
 ) {
-	invariant.Always(
+	aver.Always(
 		len(value) == SCALAR_STORAGE_SIZE,
 		"Comment size storage keeps disabled state outside structural invariants.",
 	)
@@ -302,9 +302,9 @@ type Fields_Per_Record_Storage [SCALAR_STORAGE_SIZE]int
 
 // Fields_Per_Record_Storage_Invariants leaves content checks on operation paths.
 func Fields_Per_Record_Storage_Invariants(
-	value Fields_Per_Record_Storage, _ invariant.Namespace,
+	value Fields_Per_Record_Storage, _ aver.Namespace,
 ) {
-	invariant.Always(
+	aver.Always(
 		len(value) == SCALAR_STORAGE_SIZE,
 		"Record width storage keeps caller mutation status-reportable.",
 	)
@@ -315,9 +315,9 @@ type Lazy_Quotes_Storage [SCALAR_STORAGE_SIZE]bool
 
 // Lazy_Quotes_Storage_Invariants fixes visible policy storage shape.
 func Lazy_Quotes_Storage_Invariants(
-	value Lazy_Quotes_Storage, _ invariant.Namespace,
+	value Lazy_Quotes_Storage, _ aver.Namespace,
 ) {
-	invariant.Always(
+	aver.Always(
 		len(value) == SCALAR_STORAGE_SIZE,
 		"Lazy quote storage avoids hidden mutable policy.",
 	)
@@ -328,9 +328,9 @@ type Trim_Leading_Space_Storage [SCALAR_STORAGE_SIZE]bool
 
 // Trim_Leading_Space_Storage_Invariants fixes visible policy storage shape.
 func Trim_Leading_Space_Storage_Invariants(
-	value Trim_Leading_Space_Storage, _ invariant.Namespace,
+	value Trim_Leading_Space_Storage, _ aver.Namespace,
 ) {
-	invariant.Always(
+	aver.Always(
 		len(value) == SCALAR_STORAGE_SIZE,
 		"Trim storage avoids hidden mutable policy.",
 	)
@@ -341,9 +341,9 @@ type Use_CRLF_Storage [SCALAR_STORAGE_SIZE]bool
 
 // Use_CRLF_Storage_Invariants fixes visible policy storage shape.
 func Use_CRLF_Storage_Invariants(
-	value Use_CRLF_Storage, _ invariant.Namespace,
+	value Use_CRLF_Storage, _ aver.Namespace,
 ) {
-	invariant.Always(
+	aver.Always(
 		len(value) == SCALAR_STORAGE_SIZE,
 		"Line-ending storage avoids hidden mutable policy.",
 	)
@@ -370,7 +370,7 @@ type Configuration struct {
 }
 
 // Configuration_Invariants composes storage without assuming caller validity.
-func Configuration_Invariants(value Configuration, namespace invariant.Namespace) {
+func Configuration_Invariants(value Configuration, namespace aver.Namespace) {
 	Delimiter_Storage_Invariants(value.Delimiter, namespace)
 	Delimiter_Size_Storage_Invariants(value.Delimiter_Size, namespace)
 	Comment_Storage_Invariants(value.Comment, namespace)
@@ -386,9 +386,9 @@ type Configuration_Valid bool
 
 // Configuration_Valid_Invariants reaches valid and corrupted configurations.
 func Configuration_Valid_Invariants(
-	value Configuration_Valid, namespace invariant.Namespace,
+	value Configuration_Valid, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Sometimes(bool(value), "CSV configuration storage is valid.").
 		Ensure()
 }
@@ -398,9 +398,9 @@ type Configuration_Status uint8
 
 // Configuration_Status_Invariants lists both construction outcomes.
 func Configuration_Status_Invariants(
-	value Configuration_Status, namespace invariant.Namespace,
+	value Configuration_Status, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Enum_Uint8(
 			uint8(value), uint8(STATUS_OK), uint8(STATUS_CONFIGURATION_INVALID),
 		).
@@ -411,8 +411,8 @@ func Configuration_Status_Invariants(
 type Field_Value []byte
 
 // Field_Value_Invariants follows the repository byte-slice boundary.
-func Field_Value_Invariants(value Field_Value, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Field_Value_Invariants(value Field_Value, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(
 			len(value), bytes.SLICE_SIZE_MINIMUM, FIELD_VALUE_SIZE_MAXIMUM,
 		).
@@ -423,8 +423,8 @@ func Field_Value_Invariants(value Field_Value, namespace invariant.Namespace) {
 type Line int
 
 // Line_Invariants covers absent through final bounded input position.
-func Line_Invariants(value Line, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Line_Invariants(value Line, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), bytes.SLICE_SIZE_MINIMUM, LINE_MAXIMUM).
 		Ensure()
 }
@@ -433,8 +433,8 @@ func Line_Invariants(value Line, namespace invariant.Namespace) {
 type Column int
 
 // Column_Invariants covers absent through the boundary after bounded input.
-func Column_Invariants(value Column, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Column_Invariants(value Column, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), bytes.SLICE_SIZE_MINIMUM, COLUMN_MAXIMUM).
 		Ensure()
 }
@@ -450,7 +450,7 @@ type Field struct {
 }
 
 // Field_Invariants composes value and optional position.
-func Field_Invariants(value Field, namespace invariant.Namespace) {
+func Field_Invariants(value Field, namespace aver.Namespace) {
 	Field_Value_Invariants(value.Value, namespace)
 	Line_Invariants(value.Line, namespace)
 	Column_Invariants(value.Column, namespace)
@@ -460,8 +460,8 @@ func Field_Invariants(value Field, namespace invariant.Namespace) {
 type Fields []Field
 
 // Fields_Invariants follows the separator-derived maximum field count.
-func Fields_Invariants(value Fields, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Fields_Invariants(value Fields, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), bytes.SLICES_COUNT_MINIMUM, FIELD_COUNT_MAXIMUM).
 		Ensure()
 }
@@ -470,8 +470,8 @@ func Fields_Invariants(value Fields, namespace invariant.Namespace) {
 type Encoded []byte
 
 // Encoded_Invariants follows the repository byte-slice boundary.
-func Encoded_Invariants(value Encoded, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Encoded_Invariants(value Encoded, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), bytes.SLICE_SIZE_MINIMUM, ENCODED_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -480,8 +480,8 @@ func Encoded_Invariants(value Encoded, namespace invariant.Namespace) {
 type Decoded []byte
 
 // Decoded_Invariants follows the largest bounded input contraction.
-func Decoded_Invariants(value Decoded, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Decoded_Invariants(value Decoded, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), bytes.SLICE_SIZE_MINIMUM, DECODED_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -490,8 +490,8 @@ func Decoded_Invariants(value Decoded, namespace invariant.Namespace) {
 type Encoded_Count int
 
 // Encoded_Count_Invariants follows bounded output.
-func Encoded_Count_Invariants(value Encoded_Count, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Encoded_Count_Invariants(value Encoded_Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), bytes.SLICE_SIZE_MINIMUM, ENCODED_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -500,8 +500,8 @@ func Encoded_Count_Invariants(value Encoded_Count, namespace invariant.Namespace
 type Field_Count int
 
 // Field_Count_Invariants follows the separator-derived maximum.
-func Field_Count_Invariants(value Field_Count, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Field_Count_Invariants(value Field_Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), bytes.SLICES_COUNT_MINIMUM, FIELD_COUNT_MAXIMUM).
 		Ensure()
 }
@@ -510,8 +510,8 @@ func Field_Count_Invariants(value Field_Count, namespace invariant.Namespace) {
 type Consumed_Count int
 
 // Consumed_Count_Invariants follows bounded source.
-func Consumed_Count_Invariants(value Consumed_Count, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Consumed_Count_Invariants(value Consumed_Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), bytes.SLICE_SIZE_MINIMUM, ENCODED_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -525,7 +525,7 @@ type Parse_Position struct {
 }
 
 // Parse_Position_Invariants keeps absent and present coordinates bounded together.
-func Parse_Position_Invariants(value Parse_Position, namespace invariant.Namespace) {
+func Parse_Position_Invariants(value Parse_Position, namespace aver.Namespace) {
 	Line_Invariants(value.Line, namespace)
 	Column_Invariants(value.Column, namespace)
 }
@@ -535,9 +535,9 @@ type Expected_Fields_Per_Record_Storage [SCALAR_STORAGE_SIZE]int
 
 // Expected_Fields_Per_Record_Storage_Invariants leaves validity on decode paths.
 func Expected_Fields_Per_Record_Storage_Invariants(
-	value Expected_Fields_Per_Record_Storage, _ invariant.Namespace,
+	value Expected_Fields_Per_Record_Storage, _ aver.Namespace,
 ) {
-	invariant.Always(
+	aver.Always(
 		len(value) == SCALAR_STORAGE_SIZE,
 		"Learned record width storage keeps caller mutation status-reportable.",
 	)
@@ -547,8 +547,8 @@ func Expected_Fields_Per_Record_Storage_Invariants(
 type Next_Line_Storage [SCALAR_STORAGE_SIZE]int
 
 // Next_Line_Storage_Invariants leaves validity on decode paths.
-func Next_Line_Storage_Invariants(value Next_Line_Storage, _ invariant.Namespace) {
-	invariant.Always(
+func Next_Line_Storage_Invariants(value Next_Line_Storage, _ aver.Namespace) {
+	aver.Always(
 		len(value) == SCALAR_STORAGE_SIZE,
 		"Line storage keeps caller mutation status-reportable.",
 	)
@@ -565,8 +565,8 @@ type Decoder struct {
 }
 
 // Decoder_Invariants composes representable initialized and zero states.
-func Decoder_Invariants(value *Decoder, namespace invariant.Namespace) {
-	invariant.Always(value != nil, "Decoder storage exists.")
+func Decoder_Invariants(value *Decoder, namespace aver.Namespace) {
+	aver.Always(value != nil, "Decoder storage exists.")
 	Configuration_Invariants(value.Configuration, namespace)
 	Expected_Fields_Per_Record_Storage_Invariants(value.Fields_Per_Record, namespace)
 	Next_Line_Storage_Invariants(value.Next_Line, namespace)
@@ -576,8 +576,8 @@ func Decoder_Invariants(value *Decoder, namespace invariant.Namespace) {
 type Decoder_Status uint8
 
 // Decoder_Status_Invariants lists both construction outcomes.
-func Decoder_Status_Invariants(value Decoder_Status, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Decoder_Status_Invariants(value Decoder_Status, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_Uint8(
 			uint8(value), uint8(STATUS_OK), uint8(STATUS_CONFIGURATION_INVALID),
 		).
@@ -588,8 +588,8 @@ func Decoder_Status_Invariants(value Decoder_Status, namespace invariant.Namespa
 type Decoder_Valid bool
 
 // Decoder_Valid_Invariants covers usable and corrupt caller state.
-func Decoder_Valid_Invariants(value Decoder_Valid, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Decoder_Valid_Invariants(value Decoder_Valid, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Sometimes(bool(value), "Decoder storage is valid.").
 		Ensure()
 }
@@ -598,8 +598,8 @@ func Decoder_Valid_Invariants(value Decoder_Valid, namespace invariant.Namespace
 type Size_Status uint8
 
 // Size_Status_Invariants lists every sizing outcome.
-func Size_Status_Invariants(value Size_Status, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Size_Status_Invariants(value Size_Status, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_3_Uint8(
 			uint8(value), uint8(STATUS_OK), uint8(STATUS_CONFIGURATION_INVALID),
 			uint8(STATUS_RECORD_TOO_LARGE),
@@ -611,8 +611,8 @@ func Size_Status_Invariants(value Size_Status, namespace invariant.Namespace) {
 type Encode_Status uint8
 
 // Encode_Status_Invariants excludes decode-only outcomes from shared status values.
-func Encode_Status_Invariants(value Encode_Status, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Encode_Status_Invariants(value Encode_Status, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint8(uint8(value), uint8(STATUS_OK), uint8(STATUS_RECORD_TOO_LARGE)).
 		Ensure()
 }
@@ -621,8 +621,8 @@ func Encode_Status_Invariants(value Encode_Status, namespace invariant.Namespace
 type Decode_Status uint8
 
 // Decode_Status_Invariants covers its contiguous outcome range.
-func Decode_Status_Invariants(value Decode_Status, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Decode_Status_Invariants(value Decode_Status, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Holed_Uint8(
 			uint8(value), uint8(STATUS_OK), uint8(STATUS_FIELDS_TOO_SMALL),
 			uint8(STATUS_RECORD_TOO_LARGE), uint8(STATUS_RECORD_TOO_LARGE),
@@ -646,24 +646,24 @@ type Parser struct {
 }
 
 // Parser_Invariants fixes storage shape while public output checks scalar bounds.
-func Parser_Invariants(value Parser, _ invariant.Namespace) {
-	invariant.Always(
+func Parser_Invariants(value Parser, _ aver.Namespace) {
+	aver.Always(
 		len(value.Source_Position) == SCALAR_STORAGE_SIZE,
 		"Parser source position stays in caller-independent scalar storage.",
 	)
-	invariant.Always(
+	aver.Always(
 		len(value.Decoded_Count) == SCALAR_STORAGE_SIZE,
 		"Parser decoded position stays in caller-independent scalar storage.",
 	)
-	invariant.Always(
+	aver.Always(
 		len(value.Line) == SCALAR_STORAGE_SIZE,
 		"Parser line stays in caller-independent scalar storage.",
 	)
-	invariant.Always(
+	aver.Always(
 		len(value.Column) == SCALAR_STORAGE_SIZE,
 		"Parser column stays in caller-independent scalar storage.",
 	)
-	invariant.Always(
+	aver.Always(
 		len(value.Record_Done) == SCALAR_STORAGE_SIZE,
 		"Parser completion stays in caller-independent scalar storage.",
 	)
@@ -684,24 +684,24 @@ type Decode_Result struct {
 }
 
 // Decode_Result_Invariants fixes scalar storage shape before public conversion.
-func Decode_Result_Invariants(value Decode_Result, _ invariant.Namespace) {
-	invariant.Always(
+func Decode_Result_Invariants(value Decode_Result, _ aver.Namespace) {
+	aver.Always(
 		len(value.Field_Count) == SCALAR_STORAGE_SIZE,
 		"Decode field count stays in caller-independent scalar storage.",
 	)
-	invariant.Always(
+	aver.Always(
 		len(value.Consumed) == SCALAR_STORAGE_SIZE,
 		"Decode consumed count stays in caller-independent scalar storage.",
 	)
-	invariant.Always(
+	aver.Always(
 		len(value.Error_Line) == SCALAR_STORAGE_SIZE,
 		"Decode error line stays in caller-independent scalar storage.",
 	)
-	invariant.Always(
+	aver.Always(
 		len(value.Error_Column) == SCALAR_STORAGE_SIZE,
 		"Decode error column stays in caller-independent scalar storage.",
 	)
-	invariant.Always(
+	aver.Always(
 		len(value.Status) == SCALAR_STORAGE_SIZE,
 		"Decode status stays in caller-independent scalar storage.",
 	)
@@ -737,18 +737,18 @@ type Field_Decode_Result struct {
 
 // Field_Decode_Result_Invariants fixes storage shape between parser stages.
 func Field_Decode_Result_Invariants(
-	value Field_Decode_Result, namespace invariant.Namespace,
+	value Field_Decode_Result, namespace aver.Namespace,
 ) {
 	Parser_Invariants(value.Parser, namespace)
-	invariant.Always(
+	aver.Always(
 		len(value.Error_Line) == SCALAR_STORAGE_SIZE,
 		"Field error line stays in caller-independent scalar storage.",
 	)
-	invariant.Always(
+	aver.Always(
 		len(value.Error_Column) == SCALAR_STORAGE_SIZE,
 		"Field error column stays in caller-independent scalar storage.",
 	)
-	invariant.Always(
+	aver.Always(
 		len(value.Status) == SCALAR_STORAGE_SIZE,
 		"Field status stays in caller-independent scalar storage.",
 	)
@@ -829,7 +829,7 @@ func Standard_Configuration() (configuration Configuration) {
 	configuration, status := New_Configuration(Configuration_Input{
 		Delimiter: STANDARD_DELIMITER, Fields_Per_Record: FIELDS_PER_RECORD_INFERRED,
 	})
-	invariant.Always(status == STATUS_OK, "Standard CSV configuration is valid.")
+	aver.Always(status == STATUS_OK, "Standard CSV configuration is valid.")
 	return configuration
 }
 
@@ -841,7 +841,7 @@ func Configuration_Delimiter(
 		Delimiter_Character_Invariants(delimiter, "Configuration_Delimiter.delimiter")
 	}()
 	Configuration_Invariants(configuration, "Configuration_Delimiter.configuration")
-	invariant.Always(
+	aver.Always(
 		bool(configuration_valid(configuration)),
 		"Delimiter configuration is valid.",
 	)
@@ -858,7 +858,7 @@ func Configuration_Comment(configuration Configuration) (comment Comment_Charact
 		Comment_Character_Invariants(comment, "Configuration_Comment.comment")
 	}()
 	Configuration_Invariants(configuration, "Configuration_Comment.configuration")
-	invariant.Always(
+	aver.Always(
 		bool(configuration_valid(configuration)),
 		"Comment configuration is valid.",
 	)
@@ -1092,9 +1092,9 @@ type Delimiter_Tail_Zero_State bool
 
 // Delimiter_Tail_Zero_State_Invariants covers clean and corrupt storage.
 func Delimiter_Tail_Zero_State_Invariants(
-	value Delimiter_Tail_Zero_State, namespace invariant.Namespace,
+	value Delimiter_Tail_Zero_State, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Sometimes(bool(value), "Delimiter unused storage is zero.").
 		Ensure()
 }
@@ -1119,9 +1119,9 @@ type Comment_Tail_Zero_State bool
 
 // Comment_Tail_Zero_State_Invariants covers clean and corrupt storage.
 func Comment_Tail_Zero_State_Invariants(
-	value Comment_Tail_Zero_State, namespace invariant.Namespace,
+	value Comment_Tail_Zero_State, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Sometimes(bool(value), "Comment unused storage is zero.").
 		Ensure()
 }
@@ -1146,9 +1146,9 @@ type Line_Ending_Size_Count int
 
 // Line_Ending_Size_Count_Invariants covers LF and CRLF widths.
 func Line_Ending_Size_Count_Invariants(
-	value Line_Ending_Size_Count, namespace invariant.Namespace,
+	value Line_Ending_Size_Count, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Enum_Int(int(value), LINE_FEED_SIZE, CRLF_SIZE).
 		Ensure()
 }
@@ -1170,9 +1170,9 @@ type Encoded_Field_Size_Count int
 
 // Encoded_Field_Size_Count_Invariants bounds worst-case escaped field growth.
 func Encoded_Field_Size_Count_Invariants(
-	value Encoded_Field_Size_Count, namespace invariant.Namespace,
+	value Encoded_Field_Size_Count, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(
 			int(value), bytes.SLICE_SIZE_MINIMUM, ENCODED_FIELD_SIZE_MAXIMUM,
 		).
@@ -1265,7 +1265,7 @@ func encode_unchecked[
 	}
 	destination[position] = LINE_FEED
 	position++
-	invariant.Always(position == int(required), "CSV encoding writes its exact reported size.")
+	aver.Always(position == int(required), "CSV encoding writes its exact reported size.")
 }
 
 func encode_field[

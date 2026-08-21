@@ -9,8 +9,8 @@ import (
 	"local/james-orcales/shared/crypto/sha256"
 	"local/james-orcales/shared/encoding/asn1"
 	"local/james-orcales/shared/encoding/binary"
-	"local/james-orcales/shared/invariant/default"
 	"local/james-orcales/shared/math/bits"
+	"local/james-orcales/shared/simulation/aver/default"
 )
 
 // ENCODED_SIZE_MINIMUM admits empty hostile certificate input.
@@ -187,8 +187,8 @@ const DECISION_TRUE uint64 = DECISION_FALSE + binary.UINT_8_SIZE
 type Raw []byte
 
 // Raw_Invariants bounds complete borrowed certificate DER.
-func Raw_Invariants(value Raw, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Raw_Invariants(value Raw, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), ENCODED_SIZE_MINIMUM, ENCODED_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -197,8 +197,8 @@ func Raw_Invariants(value Raw, namespace invariant.Namespace) {
 type TBS []byte
 
 // TBS_Invariants bounds signed borrowed DER.
-func TBS_Invariants(value TBS, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func TBS_Invariants(value TBS, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), ENCODED_SIZE_MINIMUM, ENCODED_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -207,8 +207,8 @@ func TBS_Invariants(value TBS, namespace invariant.Namespace) {
 type Signature []byte
 
 // Signature_Invariants bounds the widest supported signature encoding.
-func Signature_Invariants(value Signature, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Signature_Invariants(value Signature, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), bytes.SLICE_SIZE_MINIMUM, SIGNATURE_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -217,8 +217,8 @@ func Signature_Invariants(value Signature, namespace invariant.Namespace) {
 type Issuer_Raw []byte
 
 // Issuer_Raw_Invariants follows the complete DER boundary.
-func Issuer_Raw_Invariants(value Issuer_Raw, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Issuer_Raw_Invariants(value Issuer_Raw, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), ENCODED_SIZE_MINIMUM, ENCODED_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -228,9 +228,9 @@ type Issuer_Common_Name []byte
 
 // Issuer_Common_Name_Invariants follows the reachable PKIX name ceiling.
 func Issuer_Common_Name_Invariants(
-	value Issuer_Common_Name, namespace invariant.Namespace,
+	value Issuer_Common_Name, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(
 			len(value), bytes.SLICE_SIZE_MINIMUM, COMMON_NAME_SIZE_MAXIMUM,
 		).
@@ -246,7 +246,7 @@ type Issuer struct {
 }
 
 // Issuer_Invariants composes issuer-specific borrowed types.
-func Issuer_Invariants(value Issuer, namespace invariant.Namespace) {
+func Issuer_Invariants(value Issuer, namespace aver.Namespace) {
 	Issuer_Raw_Invariants(value.Raw, namespace)
 	Issuer_Common_Name_Invariants(value.Common_Name, namespace)
 }
@@ -255,8 +255,8 @@ func Issuer_Invariants(value Issuer, namespace invariant.Namespace) {
 type Subject_Raw []byte
 
 // Subject_Raw_Invariants follows the complete DER boundary.
-func Subject_Raw_Invariants(value Subject_Raw, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Subject_Raw_Invariants(value Subject_Raw, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), ENCODED_SIZE_MINIMUM, ENCODED_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -266,9 +266,9 @@ type Subject_Common_Name []byte
 
 // Subject_Common_Name_Invariants follows the reachable PKIX name ceiling.
 func Subject_Common_Name_Invariants(
-	value Subject_Common_Name, namespace invariant.Namespace,
+	value Subject_Common_Name, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(
 			len(value), bytes.SLICE_SIZE_MINIMUM, COMMON_NAME_SIZE_MAXIMUM,
 		).
@@ -284,7 +284,7 @@ type Subject struct {
 }
 
 // Subject_Invariants composes subject-specific borrowed types.
-func Subject_Invariants(value Subject, namespace invariant.Namespace) {
+func Subject_Invariants(value Subject, namespace aver.Namespace) {
 	Subject_Raw_Invariants(value.Raw, namespace)
 	Subject_Common_Name_Invariants(value.Common_Name, namespace)
 }
@@ -294,9 +294,9 @@ type Public_Key_Algorithm uint8
 
 // Public_Key_Algorithm_Invariants covers all supported certificate key types.
 func Public_Key_Algorithm_Invariants(
-	value Public_Key_Algorithm, namespace invariant.Namespace,
+	value Public_Key_Algorithm, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Enum_3_Uint8(
 			uint8(value), uint8(PUBLIC_KEY_ALGORITHM_RSA),
 			uint8(PUBLIC_KEY_ALGORITHM_ECDSA), uint8(PUBLIC_KEY_ALGORITHM_ED25519),
@@ -309,9 +309,9 @@ type Signature_Algorithm uint8
 
 // Signature_Algorithm_Invariants covers all supported certificate signatures.
 func Signature_Algorithm_Invariants(
-	value Signature_Algorithm, namespace invariant.Namespace,
+	value Signature_Algorithm, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Enum_3_Uint8(
 			uint8(value), uint8(SIGNATURE_ALGORITHM_RSA_SHA_256),
 			uint8(SIGNATURE_ALGORITHM_ECDSA_SHA_256),
@@ -324,8 +324,8 @@ func Signature_Algorithm_Invariants(
 type Ready [READY_WORD_COUNT]byte
 
 // Ready_Invariants fixes certificate-state storage width.
-func Ready_Invariants(value Ready, _ invariant.Namespace) {
-	invariant.Always(len(value) == READY_WORD_COUNT, "X.509 state has fixed width.")
+func Ready_Invariants(value Ready, _ aver.Namespace) {
+	aver.Always(len(value) == READY_WORD_COUNT, "X.509 state has fixed width.")
 }
 
 // Certificate holds fixed keys and borrowed authenticated fields.
@@ -355,7 +355,7 @@ type Certificate struct {
 }
 
 // Certificate_Invariants composes every owned and borrowed certificate field.
-func Certificate_Invariants(value Certificate, namespace invariant.Namespace) {
+func Certificate_Invariants(value Certificate, namespace aver.Namespace) {
 	Raw_Invariants(value.Raw, namespace)
 	TBS_Invariants(value.TBS, namespace)
 	Signature_Invariants(value.Signature, namespace)
@@ -367,7 +367,7 @@ func Certificate_Invariants(value Certificate, namespace invariant.Namespace) {
 	ecdsa.Public_Key_Invariants(value.ECDSA_Public_Key, namespace)
 	ed25519.Public_Key_Invariants(value.Ed25519_Public_Key, namespace)
 	Ready_Invariants(value.Ready, namespace)
-	invariant.Always(
+	aver.Always(
 		value.Ready[READY_INDEX] <= READY_COMPLETE,
 		"An X.509 certificate has empty or complete state.",
 	)
@@ -399,29 +399,29 @@ type Parsed_Certificate struct {
 
 // Parsed_Certificate_Invariants composes fixed spans and fixed key storage.
 func Parsed_Certificate_Invariants(
-	value Parsed_Certificate, namespace invariant.Namespace,
+	value Parsed_Certificate, namespace aver.Namespace,
 ) {
-	invariant.Always(
+	aver.Always(
 		len(value.TBS) == SPAN_FIELD_COUNT,
 		"Parsed TBS span has both boundaries.",
 	)
-	invariant.Always(
+	aver.Always(
 		len(value.Signature) == SPAN_FIELD_COUNT,
 		"Parsed signature span has both boundaries.",
 	)
-	invariant.Always(
+	aver.Always(
 		len(value.Issuer_Raw) == SPAN_FIELD_COUNT,
 		"Parsed issuer span has both boundaries.",
 	)
-	invariant.Always(
+	aver.Always(
 		len(value.Issuer_Common_Name) == SPAN_FIELD_COUNT,
 		"Parsed issuer common-name span has both boundaries.",
 	)
-	invariant.Always(
+	aver.Always(
 		len(value.Subject_Raw) == SPAN_FIELD_COUNT,
 		"Parsed subject span has both boundaries.",
 	)
-	invariant.Always(
+	aver.Always(
 		len(value.Subject_Common_Name) == SPAN_FIELD_COUNT,
 		"Parsed subject common-name span has both boundaries.",
 	)
@@ -436,10 +436,10 @@ type Certificate_Destination *Certificate
 
 // Certificate_Destination_Invariants proves caller storage exists.
 func Certificate_Destination_Invariants(
-	value Certificate_Destination, namespace invariant.Namespace,
+	value Certificate_Destination, namespace aver.Namespace,
 ) {
-	invariant.Always(value != nil, "An X.509 certificate destination exists.")
-	invariant.Tree(value, namespace).
+	aver.Always(value != nil, "An X.509 certificate destination exists.")
+	aver.Tree(value, namespace).
 		Range_Int(len(value.Raw), ENCODED_SIZE_MINIMUM, ENCODED_SIZE_MAXIMUM).
 		Range_Int(len(value.TBS), ENCODED_SIZE_MINIMUM, ENCODED_SIZE_MAXIMUM).
 		Range_Int(
@@ -461,7 +461,7 @@ func Certificate_Destination_Invariants(
 	rsa.Public_Key_Invariants(value.RSA_Public_Key, namespace)
 	ecdsa.Public_Key_Invariants(value.ECDSA_Public_Key, namespace)
 	ed25519.Public_Key_Invariants(value.Ed25519_Public_Key, namespace)
-	invariant.Always(
+	aver.Always(
 		len(value.Ready) == READY_WORD_COUNT,
 		"An X.509 certificate destination has state storage.",
 	)
@@ -472,10 +472,10 @@ type Certificate_Handle *Certificate
 
 // Certificate_Handle_Invariants requires a complete parsed certificate.
 func Certificate_Handle_Invariants(
-	value Certificate_Handle, namespace invariant.Namespace,
+	value Certificate_Handle, namespace aver.Namespace,
 ) {
-	invariant.Always(value != nil, "An X.509 certificate handle exists.")
-	invariant.Tree(value, namespace).
+	aver.Always(value != nil, "An X.509 certificate handle exists.")
+	aver.Tree(value, namespace).
 		Range_Int(len(value.Raw), ENCODED_SIZE_MINIMUM, ENCODED_SIZE_MAXIMUM).
 		Range_Int(len(value.TBS), ENCODED_SIZE_MINIMUM, ENCODED_SIZE_MAXIMUM).
 		Range_Int(
@@ -497,11 +497,11 @@ func Certificate_Handle_Invariants(
 	rsa.Public_Key_Invariants(value.RSA_Public_Key, namespace)
 	ecdsa.Public_Key_Invariants(value.ECDSA_Public_Key, namespace)
 	ed25519.Public_Key_Invariants(value.Ed25519_Public_Key, namespace)
-	invariant.Always(
+	aver.Always(
 		len(value.Ready) == READY_WORD_COUNT,
 		"An X.509 certificate handle has state storage.",
 	)
-	invariant.Always(
+	aver.Always(
 		value.Ready[READY_INDEX] == READY_COMPLETE,
 		"An X.509 verification handle is completely parsed.",
 	)
@@ -511,8 +511,8 @@ func Certificate_Handle_Invariants(
 type Encoded []byte
 
 // Encoded_Invariants bounds parsing before DER access.
-func Encoded_Invariants(value Encoded, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Encoded_Invariants(value Encoded, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), ENCODED_SIZE_MINIMUM, ENCODED_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -521,8 +521,8 @@ func Encoded_Invariants(value Encoded, namespace invariant.Namespace) {
 type Parse_Status uint8
 
 // Parse_Status_Invariants covers both parser outcomes.
-func Parse_Status_Invariants(value Parse_Status, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Parse_Status_Invariants(value Parse_Status, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_Uint8(
 			uint8(value), uint8(PARSE_STATUS_OK), uint8(PARSE_STATUS_INPUT_INVALID),
 		).
@@ -533,8 +533,8 @@ func Parse_Status_Invariants(value Parse_Status, namespace invariant.Namespace) 
 type Verification bool
 
 // Verification_Invariants covers accepted and refused signatures.
-func Verification_Invariants(value Verification, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Verification_Invariants(value Verification, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Sometimes(bool(value), "An X.509 certificate signature verifies.").
 		Ensure()
 }

@@ -10,8 +10,8 @@ import (
 
 	"local/james-orcales/shared/bytes"
 	"local/james-orcales/shared/encoding/hex"
-	"local/james-orcales/shared/invariant/default"
 	"local/james-orcales/shared/math/bits"
+	"local/james-orcales/shared/simulation/aver/default"
 )
 
 // Test_Seed_Expands_To_State checks New is deterministic and seed-sensitive.
@@ -336,11 +336,11 @@ func counter_next(state unsafe.Pointer) (value Word) {
 // Exit for a panic — and silences the recorder's stderr — then recovers it, so the exit is
 // observable in-process. Exit and Output are restored before returning. Copied from prng's suite.
 func did_die(action func()) (died bool) {
-	exit, output := invariant.Default.Exit, invariant.Default.Output
-	invariant.Default.Exit = func(int) { panic(tripped_invariant{}) }
-	invariant.Default.Output = discard_writer{}
+	exit, output := aver.Default.Exit, aver.Default.Output
+	aver.Default.Exit = func(int) { panic(tripped_invariant{}) }
+	aver.Default.Output = discard_writer{}
 	defer func() {
-		invariant.Default.Exit, invariant.Default.Output = exit, output
+		aver.Default.Exit, aver.Default.Output = exit, output
 		if recover() != nil {
 			died = true
 		}

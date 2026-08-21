@@ -13,8 +13,8 @@ package xxhash
 import (
 	"local/james-orcales/shared/bytes"
 	"local/james-orcales/shared/encoding/binary"
-	"local/james-orcales/shared/invariant/default"
 	"local/james-orcales/shared/math/bits"
+	"local/james-orcales/shared/simulation/aver/default"
 )
 
 // PRIME64_1 is the primary multiplier, applied after every rotate to spread bits (xxHash spec).
@@ -54,8 +54,8 @@ const SOURCE_SIZE_MAXIMUM = bytes.SLICE_SIZE_MAXIMUM
 type Lane uint64
 
 // Lane_Invariants preserves complete input-word domain.
-func Lane_Invariants(value Lane, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Lane_Invariants(value Lane, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint64(uint64(value), bits.WORD_64_MINIMUM, bits.WORD_64_MAXIMUM).
 		Ensure()
 }
@@ -64,8 +64,8 @@ func Lane_Invariants(value Lane, namespace invariant.Namespace) {
 type Seed uint64
 
 // Seed_Invariants preserves complete seed domain.
-func Seed_Invariants(value Seed, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Seed_Invariants(value Seed, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint64(uint64(value), bits.WORD_64_MINIMUM, bits.WORD_64_MAXIMUM).
 		Ensure()
 }
@@ -74,8 +74,8 @@ func Seed_Invariants(value Seed, namespace invariant.Namespace) {
 type Value uint64
 
 // Value_Invariants preserves complete result domain.
-func Value_Invariants(value Value, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Value_Invariants(value Value, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint64(uint64(value), bits.WORD_64_MINIMUM, bits.WORD_64_MAXIMUM).
 		Ensure()
 }
@@ -84,8 +84,8 @@ func Value_Invariants(value Value, namespace invariant.Namespace) {
 type Accumulator uint64
 
 // Accumulator_Invariants preserves complete mixing-state domain.
-func Accumulator_Invariants(value Accumulator, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Accumulator_Invariants(value Accumulator, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint64(uint64(value), bits.WORD_64_MINIMUM, bits.WORD_64_MAXIMUM).
 		Ensure()
 }
@@ -118,8 +118,8 @@ const STATE_WORD_COUNT = STATE_BUFFER_FILL_INDEX + 1
 type Source []byte
 
 // Source_Invariants applies repository byte-call bound.
-func Source_Invariants(value Source, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Source_Invariants(value Source, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), SOURCE_SIZE_MINIMUM, SOURCE_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -128,8 +128,8 @@ func Source_Invariants(value Source, namespace invariant.Namespace) {
 type Tail []byte
 
 // Tail_Invariants binds final mixing to one incomplete stripe.
-func Tail_Invariants(value Tail, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Tail_Invariants(value Tail, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), BUFFER_FILL_MINIMUM, BUFFER_FILL_MAXIMUM).
 		Ensure()
 }
@@ -145,12 +145,12 @@ type Digest struct {
 }
 
 // Digest_Invariants composes caller-owned streaming state.
-func Digest_Invariants(value Digest, namespace invariant.Namespace) {
-	invariant.Always(
+func Digest_Invariants(value Digest, namespace aver.Namespace) {
+	aver.Always(
 		value.State[STATE_BUFFER_FILL_INDEX] <= BUFFER_FILL_MAXIMUM,
 		"Partial stripe fill cannot hold one complete stripe.",
 	)
-	invariant.Always(
+	aver.Always(
 		value.State[STATE_BUFFER_FILL_INDEX] <=
 			value.State[STATE_TOTAL_BYTES_INDEX],
 		"Partial stripe cannot contain more bytes than complete message.",

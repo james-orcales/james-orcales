@@ -3,8 +3,8 @@
 package ucd
 
 import (
-	"local/james-orcales/shared/invariant/default"
 	"local/james-orcales/shared/math/bits"
+	"local/james-orcales/shared/simulation/aver/default"
 )
 
 // VERSION is the Unicode edition from which the tables derive.
@@ -279,8 +279,8 @@ const HEXADECIMAL_LETTER_VALUE_OFFSET = 10
 type Character rune
 
 // Character_Invariants covers the complete rune storage domain.
-func Character_Invariants(value Character, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Character_Invariants(value Character, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int32(int32(value), CHARACTER_MINIMUM, CHARACTER_MAXIMUM).
 		Ensure()
 }
@@ -289,8 +289,8 @@ func Character_Invariants(value Character, namespace invariant.Namespace) {
 type Case_Character rune
 
 // Case_Character_Invariants excludes rune-storage values that no case range can contain.
-func Case_Character_Invariants(value Case_Character, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Case_Character_Invariants(value Case_Character, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int32(
 			int32(value), int32(CASE_RANGE_CODE_POINT_MINIMUM), int32(RUNE_MAX),
 		).
@@ -301,8 +301,8 @@ func Case_Character_Invariants(value Case_Character, namespace invariant.Namespa
 type Boolean bool
 
 // Boolean_Invariants requires both report values.
-func Boolean_Invariants(value Boolean, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Boolean_Invariants(value Boolean, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Sometimes(bool(value), "A Unicode report is true.").
 		Ensure()
 }
@@ -311,8 +311,8 @@ func Boolean_Invariants(value Boolean, namespace invariant.Namespace) {
 type Name string
 
 // Name_Invariants applies the Unicode name size limit.
-func Name_Invariants(value Name, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Name_Invariants(value Name, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), NAME_SIZE_MINIMUM, NAME_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -322,9 +322,9 @@ type Category_Alias_Name string
 
 // Category_Alias_Name_Invariants admits unknown names and two-character category names.
 func Category_Alias_Name_Invariants(
-	value Category_Alias_Name, namespace invariant.Namespace,
+	value Category_Alias_Name, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Enum_3_Int(
 			len(value),
 			NAME_SIZE_MINIMUM,
@@ -338,8 +338,8 @@ func Category_Alias_Name_Invariants(
 type Case int
 
 // Case_Invariants permits the three Unicode case mappings.
-func Case_Invariants(value Case, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Case_Invariants(value Case, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_3_Int(int(value), int(UPPER_CASE), int(LOWER_CASE), int(TITLE_CASE)).
 		Ensure()
 }
@@ -348,8 +348,8 @@ func Case_Invariants(value Case, namespace invariant.Namespace) {
 type Table_Kind int
 
 // Table_Kind_Invariants permits the five immutable table families.
-func Table_Kind_Invariants(value Table_Kind, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Table_Kind_Invariants(value Table_Kind, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), int(TABLE_KIND_MINIMUM), int(TABLE_KIND_MAXIMUM)).
 		Ensure()
 }
@@ -358,8 +358,8 @@ func Table_Kind_Invariants(value Table_Kind, namespace invariant.Namespace) {
 type Data_Position int
 
 // Data_Position_Invariants bounds a position by the encoded-data budget.
-func Data_Position_Invariants(value Data_Position, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Data_Position_Invariants(value Data_Position, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), DATA_POSITION_MINIMUM, DATA_POSITION_MAXIMUM).
 		Ensure()
 }
@@ -368,8 +368,8 @@ func Data_Position_Invariants(value Data_Position, namespace invariant.Namespace
 type Data_Count int
 
 // Data_Count_Invariants keeps an encoded item count inside its data budget.
-func Data_Count_Invariants(value Data_Count, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Data_Count_Invariants(value Data_Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), DATA_COUNT_MINIMUM, DATA_COUNT_MAXIMUM).
 		Ensure()
 }
@@ -378,8 +378,8 @@ func Data_Count_Invariants(value Data_Count, namespace invariant.Namespace) {
 type Encoded_Width int
 
 // Encoded_Width_Invariants permits the three encoded unsigned widths.
-func Encoded_Width_Invariants(value Encoded_Width, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Encoded_Width_Invariants(value Encoded_Width, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_3_Int(
 			int(value),
 			int(ENCODED_WIDTH_BYTE),
@@ -393,8 +393,8 @@ func Encoded_Width_Invariants(value Encoded_Width, namespace invariant.Namespace
 type Encoded_Number uint64
 
 // Encoded_Number_Invariants keeps a decoded number in 32-bit storage.
-func Encoded_Number_Invariants(value Encoded_Number, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Encoded_Number_Invariants(value Encoded_Number, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint64(uint64(value), ENCODED_NUMBER_MINIMUM, ENCODED_NUMBER_MAXIMUM).
 		Ensure()
 }
@@ -403,8 +403,8 @@ func Encoded_Number_Invariants(value Encoded_Number, namespace invariant.Namespa
 type Code_Point_16 uint16
 
 // Code_Point_16_Invariants covers the complete 16-bit code-point interval.
-func Code_Point_16_Invariants(value Code_Point_16, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Code_Point_16_Invariants(value Code_Point_16, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint16(uint16(value), RANGE_16_MINIMUM, RANGE_16_MAXIMUM).
 		Ensure()
 }
@@ -413,8 +413,8 @@ func Code_Point_16_Invariants(value Code_Point_16, namespace invariant.Namespace
 type Code_Point_32 uint32
 
 // Code_Point_32_Invariants covers the Unicode code points above 16-bit storage.
-func Code_Point_32_Invariants(value Code_Point_32, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Code_Point_32_Invariants(value Code_Point_32, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint32(uint32(value), RANGE_32_MINIMUM, RANGE_32_MAXIMUM).
 		Ensure()
 }
@@ -424,9 +424,9 @@ type Range_16_Minimum uint16
 
 // Range_16_Minimum_Invariants covers the complete 16-bit interval.
 func Range_16_Minimum_Invariants(
-	value Range_16_Minimum, namespace invariant.Namespace,
+	value Range_16_Minimum, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Uint16(uint16(value), RANGE_16_MINIMUM, RANGE_16_MAXIMUM).
 		Ensure()
 }
@@ -436,9 +436,9 @@ type Range_16_Maximum uint16
 
 // Range_16_Maximum_Invariants covers the complete 16-bit interval.
 func Range_16_Maximum_Invariants(
-	value Range_16_Maximum, namespace invariant.Namespace,
+	value Range_16_Maximum, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Uint16(uint16(value), RANGE_16_MINIMUM, RANGE_16_MAXIMUM).
 		Ensure()
 }
@@ -448,9 +448,9 @@ type Range_16_Stride uint16
 
 // Range_16_Stride_Invariants excludes a zero stride.
 func Range_16_Stride_Invariants(
-	value Range_16_Stride, namespace invariant.Namespace,
+	value Range_16_Stride, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Uint16(
 			uint16(value), RANGE_16_STRIDE_MINIMUM, RANGE_16_STRIDE_MAXIMUM,
 		).
@@ -468,11 +468,11 @@ type Range_16 struct {
 }
 
 // Range_16_Invariants verifies each bound, the stride, and the bound order.
-func Range_16_Invariants(value Range_16, namespace invariant.Namespace) {
+func Range_16_Invariants(value Range_16, namespace aver.Namespace) {
 	Range_16_Minimum_Invariants(value.Minimum, namespace)
 	Range_16_Maximum_Invariants(value.Maximum, namespace)
 	Range_16_Stride_Invariants(value.Stride, namespace)
-	invariant.Always(
+	aver.Always(
 		uint16(value.Minimum) <= uint16(value.Maximum),
 		"A 16-bit Unicode range minimum does not exceed its maximum.",
 	)
@@ -482,8 +482,8 @@ func Range_16_Invariants(value Range_16, namespace invariant.Namespace) {
 type Ranges_16 []Range_16
 
 // Ranges_16_Invariants bounds the collection by the largest native table.
-func Ranges_16_Invariants(value Ranges_16, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Ranges_16_Invariants(value Ranges_16, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(
 			len(value), RANGES_16_COUNT_MINIMUM, RANGES_16_COUNT_MAXIMUM,
 		).
@@ -495,9 +495,9 @@ type Range_32_Minimum uint32
 
 // Range_32_Minimum_Invariants covers the code points that need 32-bit storage.
 func Range_32_Minimum_Invariants(
-	value Range_32_Minimum, namespace invariant.Namespace,
+	value Range_32_Minimum, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Uint32(uint32(value), RANGE_32_MINIMUM, RANGE_32_MAXIMUM).
 		Ensure()
 }
@@ -507,9 +507,9 @@ type Range_32_Maximum uint32
 
 // Range_32_Maximum_Invariants covers the code points that need 32-bit storage.
 func Range_32_Maximum_Invariants(
-	value Range_32_Maximum, namespace invariant.Namespace,
+	value Range_32_Maximum, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Uint32(uint32(value), RANGE_32_MINIMUM, RANGE_32_MAXIMUM).
 		Ensure()
 }
@@ -519,9 +519,9 @@ type Range_32_Stride uint32
 
 // Range_32_Stride_Invariants excludes a zero stride.
 func Range_32_Stride_Invariants(
-	value Range_32_Stride, namespace invariant.Namespace,
+	value Range_32_Stride, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Uint32(
 			uint32(value), RANGE_32_STRIDE_MINIMUM, RANGE_32_STRIDE_MAXIMUM,
 		).
@@ -539,11 +539,11 @@ type Range_32 struct {
 }
 
 // Range_32_Invariants verifies each bound, the stride, and the bound order.
-func Range_32_Invariants(value Range_32, namespace invariant.Namespace) {
+func Range_32_Invariants(value Range_32, namespace aver.Namespace) {
 	Range_32_Minimum_Invariants(value.Minimum, namespace)
 	Range_32_Maximum_Invariants(value.Maximum, namespace)
 	Range_32_Stride_Invariants(value.Stride, namespace)
-	invariant.Always(
+	aver.Always(
 		uint32(value.Minimum) <= uint32(value.Maximum),
 		"A 32-bit Unicode range minimum does not exceed its maximum.",
 	)
@@ -553,8 +553,8 @@ func Range_32_Invariants(value Range_32, namespace invariant.Namespace) {
 type Ranges_32 []Range_32
 
 // Ranges_32_Invariants bounds the collection by the largest native table.
-func Ranges_32_Invariants(value Ranges_32, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Ranges_32_Invariants(value Ranges_32, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(
 			len(value), RANGES_32_COUNT_MINIMUM, RANGES_32_COUNT_MAXIMUM,
 		).
@@ -565,8 +565,8 @@ func Ranges_32_Invariants(value Ranges_32, namespace invariant.Namespace) {
 type Latin_Offset int
 
 // Latin_Offset_Invariants bounds the offset by the complete 16-bit collection.
-func Latin_Offset_Invariants(value Latin_Offset, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Latin_Offset_Invariants(value Latin_Offset, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), LATIN_OFFSET_MINIMUM, LATIN_OFFSET_MAXIMUM).
 		Ensure()
 }
@@ -582,11 +582,11 @@ type Range_Table struct {
 }
 
 // Range_Table_Invariants composes both range collections and the Latin offset.
-func Range_Table_Invariants(value Range_Table, namespace invariant.Namespace) {
+func Range_Table_Invariants(value Range_Table, namespace aver.Namespace) {
 	Ranges_16_Invariants(value.Ranges_16, namespace)
 	Ranges_32_Invariants(value.Ranges_32, namespace)
 	Latin_Offset_Invariants(value.Latin_Offset, namespace)
-	invariant.Always(
+	aver.Always(
 		int(value.Latin_Offset) <= len(value.Ranges_16),
 		"A Unicode Latin offset does not exceed its 16-bit range count.",
 	)
@@ -596,8 +596,8 @@ func Range_Table_Invariants(value Range_Table, namespace invariant.Namespace) {
 type Range_Tables []*Range_Table
 
 // Range_Tables_Invariants applies the caller-supplied table-count limit.
-func Range_Tables_Invariants(value Range_Tables, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Range_Tables_Invariants(value Range_Tables, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), RANGE_TABLES_COUNT_MINIMUM, RANGE_TABLES_COUNT_MAXIMUM).
 		Ensure()
 }
@@ -606,8 +606,8 @@ func Range_Tables_Invariants(value Range_Tables, namespace invariant.Namespace) 
 type Case_Delta [CASE_DELTA_COUNT]int32
 
 // Case_Delta_Invariants bounds each mapping delta and its sentinel.
-func Case_Delta_Invariants(value Case_Delta, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Case_Delta_Invariants(value Case_Delta, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int32(value[UPPER_CASE], CASE_DELTA_MINIMUM, CASE_DELTA_MAXIMUM).
 		Range_Int32(value[LOWER_CASE], CASE_DELTA_MINIMUM, CASE_DELTA_MAXIMUM).
 		Range_Int32(value[TITLE_CASE], CASE_DELTA_MINIMUM, CASE_DELTA_MAXIMUM).
@@ -619,9 +619,9 @@ type Case_Range_Minimum uint32
 
 // Case_Range_Minimum_Invariants covers all valid Unicode code points.
 func Case_Range_Minimum_Invariants(
-	value Case_Range_Minimum, namespace invariant.Namespace,
+	value Case_Range_Minimum, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Uint32(
 			uint32(value), CASE_RANGE_CODE_POINT_MINIMUM, RANGE_32_MAXIMUM,
 		).
@@ -633,9 +633,9 @@ type Case_Range_Maximum uint32
 
 // Case_Range_Maximum_Invariants covers all valid Unicode code points.
 func Case_Range_Maximum_Invariants(
-	value Case_Range_Maximum, namespace invariant.Namespace,
+	value Case_Range_Maximum, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Uint32(
 			uint32(value), CASE_RANGE_CODE_POINT_MINIMUM, RANGE_32_MAXIMUM,
 		).
@@ -653,11 +653,11 @@ type Case_Range struct {
 }
 
 // Case_Range_Invariants verifies the bounds, their order, and the mapping deltas.
-func Case_Range_Invariants(value Case_Range, namespace invariant.Namespace) {
+func Case_Range_Invariants(value Case_Range, namespace aver.Namespace) {
 	Case_Range_Minimum_Invariants(value.Minimum, namespace)
 	Case_Range_Maximum_Invariants(value.Maximum, namespace)
 	Case_Delta_Invariants(value.Deltas, namespace)
-	invariant.Always(
+	aver.Always(
 		uint32(value.Minimum) <= uint32(value.Maximum),
 		"A Unicode case range minimum does not exceed its maximum.",
 	)
@@ -667,8 +667,8 @@ func Case_Range_Invariants(value Case_Range, namespace invariant.Namespace) {
 type Native_Case_Range [NATIVE_CASE_RANGE_COUNT]Case_Range
 
 // Native_Case_Range_Invariants preserves the decoder result shape.
-func Native_Case_Range_Invariants(value Native_Case_Range, _ invariant.Namespace) {
-	invariant.Always(
+func Native_Case_Range_Invariants(value Native_Case_Range, _ aver.Namespace) {
+	aver.Always(
 		len(value) == NATIVE_CASE_RANGE_COUNT,
 		"A native Unicode case range contains one decoded range.",
 	)
@@ -678,8 +678,8 @@ func Native_Case_Range_Invariants(value Native_Case_Range, _ invariant.Namespace
 type Special_Case []Case_Range
 
 // Special_Case_Invariants applies the language-rule count limit.
-func Special_Case_Invariants(value Special_Case, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Special_Case_Invariants(value Special_Case, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), SPECIAL_CASE_COUNT_MINIMUM, SPECIAL_CASE_COUNT_MAXIMUM).
 		Ensure()
 }
@@ -688,8 +688,8 @@ func Special_Case_Invariants(value Special_Case, namespace invariant.Namespace) 
 type Language_Case []Case_Range
 
 // Language_Case_Invariants fixes the language override rule count.
-func Language_Case_Invariants(value Language_Case, _ invariant.Namespace) {
-	invariant.Always(
+func Language_Case_Invariants(value Language_Case, _ aver.Namespace) {
+	aver.Always(
 		len(value) == SPECIAL_CASE_COUNT_MAXIMUM,
 		"A Unicode language case contains four rules.",
 	)
@@ -1067,7 +1067,7 @@ func Special_Case_To_Title(
 func Turkish_Case(storage Special_Case) (special Language_Case) {
 	defer func() { Language_Case_Invariants(special, "turkish_case.special") }()
 	Special_Case_Invariants(storage, "turkish_case.storage")
-	invariant.Always(
+	aver.Always(
 		len(storage) == SPECIAL_CASE_COUNT_MAXIMUM,
 		"Caller storage holds every Turkish case rule.",
 	)
@@ -1373,7 +1373,7 @@ func decode_range_table[Data ~string](
 	Ranges_16_Invariants(ranges_16, "decode_range_table.ranges_16")
 	Ranges_32_Invariants(ranges_32, "decode_range_table.ranges_32")
 	range_16_count := int(encoded_number(data, 0, ENCODED_WIDTH_16))
-	invariant.Always(
+	aver.Always(
 		range_16_count <= len(ranges_16),
 		"Caller storage holds every decoded 16-bit Unicode range.",
 	)
@@ -1403,7 +1403,7 @@ func decode_range_table[Data ~string](
 	range_32_count := int(encoded_number(
 		data, Data_Position(position), ENCODED_WIDTH_16,
 	))
-	invariant.Always(
+	aver.Always(
 		range_32_count <= len(ranges_32),
 		"Caller storage holds every decoded 32-bit Unicode range.",
 	)

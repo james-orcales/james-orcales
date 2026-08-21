@@ -8,8 +8,8 @@ import (
 	"errors"
 	"unsafe"
 
-	"local/james-orcales/shared/invariant/default"
 	"local/james-orcales/shared/math/bits"
+	"local/james-orcales/shared/simulation/aver/default"
 	"local/james-orcales/shared/simulation/prng"
 	"local/james-orcales/shared/simulation/time"
 )
@@ -75,18 +75,18 @@ type IO struct {
 // backend, because flat operations read Storage.State and two backends composed into one IO
 // would close on one and leak on the other. A timeline is absent or complete, never partial.
 // Straight-line on purpose: a bundle carries no control flow, so every clause run every time.
-func IO_Invariants(loop IO, _ invariant.Namespace) {
+func IO_Invariants(loop IO, _ aver.Namespace) {
 	half := loop.Network.State == nil || loop.Storage.State == nil
-	invariant.Always(half || loop.Network.State == loop.Storage.State,
+	aver.Always(half || loop.Network.State == loop.Storage.State,
 		"An IO carries one backend across both transfer halves.")
 	empty := loop.Timeline.Submit == nil
-	invariant.Always((loop.Timeline.Open_Event == nil) == empty,
+	aver.Always((loop.Timeline.Open_Event == nil) == empty,
 		"An IO timeline opens a cross-thread event, or is absent.")
-	invariant.Always((loop.Timeline.Event_Listen == nil) == empty,
+	aver.Always((loop.Timeline.Event_Listen == nil) == empty,
 		"An IO timeline listens for that event, or is absent.")
-	invariant.Always((loop.Timeline.Event_Trigger == nil) == empty,
+	aver.Always((loop.Timeline.Event_Trigger == nil) == empty,
 		"An IO timeline triggers that event, or is absent.")
-	invariant.Always((loop.Timeline.Close_Event == nil) == empty,
+	aver.Always((loop.Timeline.Close_Event == nil) == empty,
 		"An IO timeline closes that event, or is absent.")
 }
 
@@ -461,12 +461,12 @@ func Storage_Get_Directory_Entries(
 	completion *Completion, directory File, buffer []byte, entries []Directory_Entry,
 	callback Callback,
 ) {
-	invariant.Always(len(buffer) >= DIRECTORY_BUFFER_SIZE_MINIMUM,
+	aver.Always(len(buffer) >= DIRECTORY_BUFFER_SIZE_MINIMUM,
 		"Directory entry buffer holds at least one byte.")
-	invariant.Always(len(buffer) <= DIRECTORY_BUFFER_SIZE_MAXIMUM,
+	aver.Always(len(buffer) <= DIRECTORY_BUFFER_SIZE_MAXIMUM,
 		"Directory entry buffer stays inside seam block budget.")
-	invariant.Always(len(entries) > 0, "Directory entry storage holds at least one result.")
-	invariant.Always(len(entries) <= DIRECTORY_BUFFER_SIZE_MAXIMUM,
+	aver.Always(len(entries) > 0, "Directory entry storage holds at least one result.")
+	aver.Always(len(entries) <= DIRECTORY_BUFFER_SIZE_MAXIMUM,
 		"Directory entry storage cannot exceed one result per record byte.")
 	storage.Get_Directory_Entries_Procedure(
 		storage.State, completion, directory, buffer, entries, callback,
@@ -1093,11 +1093,11 @@ const FILE_MODE_VALID = FILE_MODE_PERMISSIONS | FILE_MODE_DIRECTORY |
 	FILE_MODE_STICKY | FILE_MODE_IRREGULAR
 
 // File_Mode_Invariants rejects bits without repository meaning.
-func File_Mode_Invariants(value File_Mode, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func File_Mode_Invariants(value File_Mode, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint32(uint32(value), FILE_MODE_MINIMUM, FILE_MODE_MAXIMUM).
 		Ensure()
-	invariant.Always(value&^FILE_MODE_VALID == 0,
+	aver.Always(value&^FILE_MODE_VALID == 0,
 		"A portable file mode carries only representable bits.")
 }
 
@@ -1119,13 +1119,13 @@ const FILE_PERMISSIONS_MINIMUM uint32 = 0
 const FILE_PERMISSIONS_MAXIMUM uint32 = uint32(FILE_PERMISSIONS_VALID)
 
 // File_Permissions_Invariants rejects kind bits inside one creation operand.
-func File_Permissions_Invariants(value File_Permissions, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func File_Permissions_Invariants(value File_Permissions, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint32(
 			uint32(value), FILE_PERMISSIONS_MINIMUM, FILE_PERMISSIONS_MAXIMUM,
 		).
 		Ensure()
-	invariant.Always(value&^FILE_PERMISSIONS_VALID == 0,
+	aver.Always(value&^FILE_PERMISSIONS_VALID == 0,
 		"A creation permission operand carries no entry-kind bit.")
 }
 
@@ -1190,8 +1190,8 @@ const FILE_MODE_DECODED_MAXIMUM uint32 = uint32(
 )
 
 // Decoded_File_Mode_Invariants bounds one mode a platform word can produce.
-func Decoded_File_Mode_Invariants(value Decoded_File_Mode, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Decoded_File_Mode_Invariants(value Decoded_File_Mode, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint32(
 			uint32(value), FILE_MODE_DECODED_MINIMUM, FILE_MODE_DECODED_MAXIMUM,
 		).
@@ -1641,13 +1641,13 @@ type Sim struct {
 func New_Simulated_IO(
 	state *Sim, seed uint64, resolution time.Duration, memory Sim_Memory,
 ) (loop IO, driver Driver) {
-	invariant.Always(state != nil, "A simulated IO backend has caller-owned state.")
-	invariant.Always(len(memory.Nodes) > 0, "A simulated IO backend has node capacity.")
-	invariant.Always(len(memory.Descriptors) > 0,
+	aver.Always(state != nil, "A simulated IO backend has caller-owned state.")
+	aver.Always(len(memory.Nodes) > 0, "A simulated IO backend has node capacity.")
+	aver.Always(len(memory.Descriptors) > 0,
 		"A simulated IO backend has descriptor capacity.")
-	invariant.Always(len(memory.Operations) > 0,
+	aver.Always(len(memory.Operations) > 0,
 		"A simulated IO backend has operation capacity.")
-	invariant.Always(len(memory.Clocks) > 0, "A simulated IO backend has clock capacity.")
+	aver.Always(len(memory.Clocks) > 0, "A simulated IO backend has clock capacity.")
 	for index := range memory.Nodes {
 		memory.Nodes[index] = Sim_Node{}
 	}
@@ -1719,7 +1719,7 @@ func sim_watch_signal_procedure(
 	state_pointer unsafe.Pointer, completion *Completion, signal Signal,
 	deadline time.Duration, callback Signal_Callback,
 ) {
-	invariant.Always(deadline > 0, "A signal-watch deadline is positive and finite.")
+	aver.Always(deadline > 0, "A signal-watch deadline is positive and finite.")
 	sim_watch_signal((*Sim)(state_pointer), completion, signal, deadline, callback)
 }
 
@@ -1727,7 +1727,7 @@ func sim_spawn_procedure(
 	state_pointer unsafe.Pointer, completion *Completion, _ Process_Request,
 	deadline time.Duration, callback Process_Callback,
 ) {
-	invariant.Always(deadline > 0, "A spawn deadline is positive and finite.")
+	aver.Always(deadline > 0, "A spawn deadline is positive and finite.")
 	sim_spawn((*Sim)(state_pointer), completion, deadline, callback)
 }
 
@@ -1754,9 +1754,9 @@ func sim_watch_signal(
 
 func sim_signal_complete(completion *Completion) {
 	operation := (*Sim_Operation)(completion.Backend)
-	invariant.Always(operation != nil,
+	aver.Always(operation != nil,
 		"A simulated signal completion owns specialized operation state.")
-	invariant.Always(operation.Kind == SIM_OPERATION_KIND_SIGNAL,
+	aver.Always(operation.Kind == SIM_OPERATION_KIND_SIGNAL,
 		"A simulated signal completion owns signal state.")
 	callback := operation.Signal_Callback
 	signal := operation.Signal
@@ -1792,9 +1792,9 @@ func sim_spawn(
 
 func sim_process_complete(completion *Completion) {
 	operation := (*Sim_Operation)(completion.Backend)
-	invariant.Always(operation != nil,
+	aver.Always(operation != nil,
 		"A simulated process completion owns specialized operation state.")
-	invariant.Always(operation.Kind == SIM_OPERATION_KIND_PROCESS,
+	aver.Always(operation.Kind == SIM_OPERATION_KIND_PROCESS,
 		"A simulated process completion owns process state.")
 	callback := operation.Process_Callback
 	result := operation.Process
@@ -1823,7 +1823,7 @@ func sim_deinit_procedure(state_pointer unsafe.Pointer) {
 			open = true
 		}
 	}
-	invariant.Always(!open, "Every descriptor a simulated run opened is closed before Deinit.")
+	aver.Always(!open, "Every descriptor a simulated run opened is closed before Deinit.")
 }
 
 // Wire whole socket half of simulator onto network.
@@ -2051,7 +2051,7 @@ func sim_accept_procedure(
 	timeout time.Duration, callback Callback,
 ) {
 	state := (*Sim)(state_pointer)
-	invariant.Always(timeout > 0, "An accept timeout is positive and finite.")
+	aver.Always(timeout > 0, "An accept timeout is positive and finite.")
 	latency := sim_latency(state)
 	operation := sim_operation_acquire(state, completion, SIM_OPERATION_KIND_ACCEPT, callback)
 	operation.File = listener
@@ -2070,7 +2070,7 @@ func sim_connect_procedure(
 	timeout time.Duration, callback Callback,
 ) {
 	state := (*Sim)(state_pointer)
-	invariant.Always(timeout > 0, "A connect timeout is positive and finite.")
+	aver.Always(timeout > 0, "A connect timeout is positive and finite.")
 	operation := sim_operation_acquire(state, completion, SIM_OPERATION_KIND_CONNECT, callback)
 	operation.File = socket
 	operation.Address = address
@@ -2092,7 +2092,7 @@ func sim_receive_procedure(
 	timeout time.Duration, callback Callback,
 ) {
 	state := (*Sim)(state_pointer)
-	invariant.Always(timeout > 0, "A receive timeout is positive and finite.")
+	aver.Always(timeout > 0, "A receive timeout is positive and finite.")
 	operation := sim_operation_acquire(state, completion, SIM_OPERATION_KIND_RECEIVE, callback)
 	operation.File = socket
 	operation.Buffer = buffer
@@ -2111,7 +2111,7 @@ func sim_send_procedure(
 	timeout time.Duration, callback Callback,
 ) {
 	state := (*Sim)(state_pointer)
-	invariant.Always(timeout > 0, "A send timeout is positive and finite.")
+	aver.Always(timeout > 0, "A send timeout is positive and finite.")
 	operation := sim_operation_acquire(state, completion, SIM_OPERATION_KIND_SEND, callback)
 	operation.File = socket
 	operation.Buffer = buffer
@@ -2182,7 +2182,7 @@ func sim_open_at_procedure(
 	file_path string, options Open_At_Options, callback Callback,
 ) {
 	state := (*Sim)(state_pointer)
-	invariant.Always(options.Flags&^OPEN_AT_NO_FOLLOW == 0,
+	aver.Always(options.Flags&^OPEN_AT_NO_FOLLOW == 0,
 		"Open_At options contain only known flags.")
 	operation := sim_operation_acquire(state, completion, SIM_OPERATION_KIND_OPEN_AT, callback)
 	operation.Directory = directory
@@ -2217,10 +2217,10 @@ func sim_storage_read(
 	offset int64, timeout time.Duration, callback Callback,
 ) {
 	state := (*Sim)(state_pointer)
-	invariant.Always(timeout > 0, "A storage read timeout is positive and finite.")
+	aver.Always(timeout > 0, "A storage read timeout is positive and finite.")
 	descriptor := sim_descriptor_find(state, file)
-	invariant.Always(descriptor != nil, "A Storage read names an open descriptor.")
-	invariant.Always(!descriptor.Socket, "A Storage read names an open file.")
+	aver.Always(descriptor != nil, "A Storage read names an open descriptor.")
+	aver.Always(!descriptor.Socket, "A Storage read names an open file.")
 	operation := sim_operation_acquire(state, completion, SIM_OPERATION_KIND_READ, callback)
 	operation.File = file
 	operation.Node = descriptor.Node
@@ -2245,10 +2245,10 @@ func sim_storage_write(
 	offset int64, timeout time.Duration, callback Callback,
 ) {
 	state := (*Sim)(state_pointer)
-	invariant.Always(timeout > 0, "A storage write timeout is positive and finite.")
+	aver.Always(timeout > 0, "A storage write timeout is positive and finite.")
 	descriptor := sim_descriptor_find(state, file)
-	invariant.Always(descriptor != nil, "A Storage write names an open descriptor.")
-	invariant.Always(!descriptor.Socket, "A Storage write names an open file.")
+	aver.Always(descriptor != nil, "A Storage write names an open descriptor.")
+	aver.Always(!descriptor.Socket, "A Storage write names an open file.")
 	operation := sim_operation_acquire(state, completion, SIM_OPERATION_KIND_WRITE, callback)
 	operation.File = file
 	operation.Node = descriptor.Node
@@ -2273,10 +2273,10 @@ func sim_storage_fsync(
 	timeout time.Duration, callback Callback,
 ) {
 	state := (*Sim)(state_pointer)
-	invariant.Always(timeout > 0, "A storage fsync timeout is positive and finite.")
+	aver.Always(timeout > 0, "A storage fsync timeout is positive and finite.")
 	descriptor := sim_descriptor_find(state, file)
-	invariant.Always(descriptor != nil, "A Storage fsync names an open descriptor.")
-	invariant.Always(!descriptor.Socket, "A Storage fsync names an open file.")
+	aver.Always(descriptor != nil, "A Storage fsync names an open descriptor.")
+	aver.Always(!descriptor.Socket, "A Storage fsync names an open file.")
 	operation := sim_operation_acquire(state, completion, SIM_OPERATION_KIND_FSYNC, callback)
 	operation.File = file
 	sim_operation_borrow(operation)
@@ -2334,8 +2334,8 @@ func sim_read_link_procedure(
 // Close cannot release descriptor while any submitted operation still holds it.
 func sim_assert_file_drained(state *Sim, file File) {
 	descriptor := sim_descriptor_find(state, file)
-	invariant.Always(descriptor != nil, "A Close names an open descriptor.")
-	invariant.Always(descriptor.Borrowed == 0,
+	aver.Always(descriptor != nil, "A Close names an open descriptor.")
+	aver.Always(descriptor.Borrowed == 0,
 		"A descriptor is drained before Close releases it.")
 }
 
@@ -2408,7 +2408,7 @@ func sim_resolve_no_follow(state *Sim, path string) (node_index int, found bool)
 func sim_walk(
 	state *Sim, start_node int, path string, follow_final bool, hops int,
 ) (node_index int, found bool) {
-	invariant.Always(len(path) <= SIM_PATH_TEXT_BYTES_MAXIMUM,
+	aver.Always(len(path) <= SIM_PATH_TEXT_BYTES_MAXIMUM,
 		"A simulated path stays inside the repository text budget.")
 	type walk_frame struct {
 		Path         string
@@ -2484,7 +2484,7 @@ func sim_symbolic_link_target(node *Sim_Node) (target string, found bool) {
 		return "", false
 	}
 	target = unsafe.String(&node.Contents[0], node.Contents_Count)
-	invariant.Always(
+	aver.Always(
 		len(target) <= SIM_PATH_TEXT_BYTES_MAXIMUM,
 		"A simulated symbolic-link target stays inside path budget.",
 	)
@@ -2546,7 +2546,7 @@ func sim_path_leaf_start(path string) (leaf_start int) {
 func sim_path_parent(
 	state *Sim, path string,
 ) (parent int, leaf string, found bool) {
-	invariant.Always(len(path) <= SIM_PATH_TEXT_BYTES_MAXIMUM,
+	aver.Always(len(path) <= SIM_PATH_TEXT_BYTES_MAXIMUM,
 		"A simulated parent path stays inside the repository text budget.")
 	leaf_start := -1
 	leaf_end := -1
@@ -2862,7 +2862,7 @@ func sim_generate_child(state *Sim, parent int, entry_index int, directory bool)
 	child, acquire_err := sim_generated_node_acquire(
 		state, parent, entry_index, sim_generate_mode(state, directory, entry_index),
 	)
-	invariant.Always(acquire_err == nil,
+	aver.Always(acquire_err == nil,
 		"Generated nodes fit reserved caller-owned node storage.")
 	node := &state.Nodes[child]
 	if File_Mode_Is_Symbolic_Link(node.Mode) {
@@ -2914,7 +2914,7 @@ func sim_generated_node_acquire(
 // Write one generated entry name into caller storage. Node naming and link targets share this
 // formatter, thus a generated link cannot name a sibling that naming never produces.
 func sim_generated_name(value int, storage []byte) (count int) {
-	invariant.Always(value >= 0, "A generated entry index is nonnegative.")
+	aver.Always(value >= 0, "A generated entry index is nonnegative.")
 	buffer := [bits.WORD_SIZE]byte{}
 	position_count := len(buffer) - 1
 	buffer[position_count] = byte(value%DECIMAL_RADIX) + '0'
@@ -3010,7 +3010,7 @@ func sim_peer_address(state *Sim, file File) (address Address) {
 func sim_operation_acquire(
 	state *Sim, completion *Completion, kind Sim_Operation_Kind, callback Callback,
 ) (operation *Sim_Operation) {
-	invariant.Always(completion.Backend == nil,
+	aver.Always(completion.Backend == nil,
 		"A simulated completion has no retained operation before submission.")
 	for index := range state.Operations {
 		if state.Operations[index].Kind != SIM_OPERATION_KIND_FREE {
@@ -3026,7 +3026,7 @@ func sim_operation_acquire(
 
 func sim_operation_borrow(operation *Sim_Operation) {
 	descriptor := sim_descriptor_find(operation.State, operation.File)
-	invariant.Always(descriptor != nil, "A simulated operation borrows an open descriptor.")
+	aver.Always(descriptor != nil, "A simulated operation borrows an open descriptor.")
 	descriptor.Borrowed++
 	operation.Borrowed = true
 }
@@ -3040,7 +3040,7 @@ func sim_operation_submit(
 // One static retirement callback decodes caller-owned state and frees it before user reentry.
 func sim_operation_complete(completion *Completion) {
 	operation := (*Sim_Operation)(completion.Backend)
-	invariant.Always(operation != nil, "A simulated retirement has operation state.")
+	aver.Always(operation != nil, "A simulated retirement has operation state.")
 	data := operation.Data
 	err := operation.Operation_Err
 	if err == nil {
@@ -3206,9 +3206,9 @@ func sim_operation_deliver(
 	callback := operation.Callback
 	if borrowed {
 		descriptor := sim_descriptor_find(state, file)
-		invariant.Always(descriptor != nil,
+		aver.Always(descriptor != nil,
 			"A simulated retirement releases a live descriptor.")
-		invariant.Always(descriptor.Borrowed > 0,
+		aver.Always(descriptor.Borrowed > 0,
 			"A simulated retirement releases one descriptor borrow.")
 		descriptor.Borrowed--
 	}
@@ -3255,7 +3255,7 @@ type Stream_Callback_Procedure func(
 
 // Stream_Callback_Call lets custom Stream procedures retire explicit callback state.
 func Stream_Callback_Call(callback Stream_Callback, completion *Completion) {
-	invariant.Always(callback.Procedure != nil, "A Stream callback has a procedure.")
+	aver.Always(callback.Procedure != nil, "A Stream callback has a procedure.")
 	callback.Procedure(callback.State, callback.Data, callback.Callback, completion)
 }
 
@@ -3501,8 +3501,8 @@ func stream_submit(
 	stream Stream, completion *Completion, mode Stream_Mode, buffer []byte,
 	offset int64, whence Seek_From, callback Stream_Callback,
 ) {
-	invariant.Always(completion != nil, "A Stream operation has a completion.")
-	invariant.Always(callback.Procedure != nil, "A Stream operation has a callback.")
+	aver.Always(completion != nil, "A Stream operation has a completion.")
+	aver.Always(callback.Procedure != nil, "A Stream operation has a callback.")
 	if stream.Procedure == nil {
 		stream_complete(completion, 0, Stream_Empty, callback)
 		return
@@ -3569,7 +3569,7 @@ type Stream_Memory struct {
 
 // Memory_To_Stream keeps storage ownership in the caller state.
 func Memory_To_Stream(state *Stream_Memory) (stream Stream) {
-	invariant.Always(state != nil, "A memory Stream has state.")
+	aver.Always(state != nil, "A memory Stream has state.")
 	return Stream{State: unsafe.Pointer(state), Procedure: stream_memory_procedure}
 }
 
@@ -3704,7 +3704,7 @@ type Stream_Discard struct {
 
 // Discard_To_Stream keeps lifecycle ownership in the caller state.
 func Discard_To_Stream(state *Stream_Discard) (stream Stream) {
-	invariant.Always(state != nil, "A discard Stream has state.")
+	aver.Always(state != nil, "A discard Stream has state.")
 	return Stream{State: unsafe.Pointer(state), Procedure: stream_discard_procedure}
 }
 
@@ -3770,7 +3770,7 @@ type Stream_Limit struct {
 
 // Limit_To_Stream keeps the inner Stream completion policy unchanged.
 func Limit_To_Stream(state *Stream_Limit) (stream Stream) {
-	invariant.Always(state != nil, "A limit Stream has state.")
+	aver.Always(state != nil, "A limit Stream has state.")
 	return Stream{State: unsafe.Pointer(state), Procedure: stream_limit_procedure}
 }
 
@@ -3863,7 +3863,7 @@ func stream_limit_write(
 func stream_limit_begin(
 	state *Stream_Limit, callback Stream_Callback, buffer_count int,
 ) {
-	invariant.Always(!state.Active, "A limit Stream has at most one operation in flight.")
+	aver.Always(!state.Active, "A limit Stream has at most one operation in flight.")
 	state.Active = true
 	state.Callback = callback
 	state.Buffer_Count = buffer_count
@@ -3932,7 +3932,7 @@ type Stream_Count struct {
 
 // Count_To_Stream keeps the inner Stream completion policy unchanged.
 func Count_To_Stream(state *Stream_Count) (stream Stream) {
-	invariant.Always(state != nil, "A count Stream has state.")
+	aver.Always(state != nil, "A count Stream has state.")
 	return Stream{State: unsafe.Pointer(state), Procedure: stream_count_procedure}
 }
 
@@ -4022,7 +4022,7 @@ func stream_count_transfer(
 	state *Stream_Count, completion *Completion, mode Stream_Mode, buffer []byte,
 	offset int64, callback Stream_Callback,
 ) {
-	invariant.Always(!state.Active, "A count Stream has at most one operation in flight.")
+	aver.Always(!state.Active, "A count Stream has at most one operation in flight.")
 	state.Active = true
 	state.Callback = callback
 	state.Mode = mode
@@ -4087,7 +4087,7 @@ type Stream_Tee struct {
 
 // Tee_To_Stream sequences the two Stream policies instead of selecting a third policy.
 func Tee_To_Stream(state *Stream_Tee) (stream Stream) {
-	invariant.Always(state != nil, "A tee Stream has state.")
+	aver.Always(state != nil, "A tee Stream has state.")
 	return Stream{State: unsafe.Pointer(state), Procedure: stream_tee_procedure}
 }
 
@@ -4141,7 +4141,7 @@ func stream_tee_begin(
 	state *Stream_Tee, completion *Completion, mode Stream_Mode, buffer []byte,
 	callback Stream_Callback,
 ) {
-	invariant.Always(!state.Active, "A tee Stream has at most one operation in flight.")
+	aver.Always(!state.Active, "A tee Stream has at most one operation in flight.")
 	state.Active = true
 	state.Callback = callback
 	state.Mode = mode
@@ -4277,12 +4277,12 @@ type Timeline struct {
 // Timeline_Invariants state every slot full. Timeline is vtable. Zero Timeline read as
 // Timeline, then panic on first use. Backend that fill four slots and forget fifth fail one
 // call later.
-func Timeline_Invariants(loop Timeline, namespace invariant.Namespace) {
-	invariant.Always(loop.Submit != nil, "A Timeline arms a completion.")
-	invariant.Always(loop.Open_Event != nil, "A Timeline opens a cross-thread event.")
-	invariant.Always(loop.Event_Listen != nil, "A Timeline listens for that event.")
-	invariant.Always(loop.Event_Trigger != nil, "A Timeline triggers that event.")
-	invariant.Always(loop.Close_Event != nil, "A Timeline closes that event.")
+func Timeline_Invariants(loop Timeline, namespace aver.Namespace) {
+	aver.Always(loop.Submit != nil, "A Timeline arms a completion.")
+	aver.Always(loop.Open_Event != nil, "A Timeline opens a cross-thread event.")
+	aver.Always(loop.Event_Listen != nil, "A Timeline listens for that event.")
+	aver.Always(loop.Event_Trigger != nil, "A Timeline triggers that event.")
+	aver.Always(loop.Close_Event != nil, "A Timeline closes that event.")
 }
 
 // Timeline_Submit passes loop state explicitly because a bound submitter would allocate.
@@ -4299,7 +4299,7 @@ func Timeline_Submit(
 func Timeline_Timeout(
 	loop Timeline, completion *Completion, duration time.Duration, callback Callback,
 ) {
-	invariant.Always(duration > 0, "A timeout duration is positive.")
+	aver.Always(duration > 0, "A timeout duration is positive.")
 	loop.Submit(loop.State, completion, duration, callback)
 }
 
@@ -4439,8 +4439,8 @@ type Sim_Clock struct {
 // Sim_Clock_To_Clock build a read-only Clock over one view. Three words, free to build, thus
 // nothing store it. Root call it once per application on `&state.Clocks[index]`.
 func Sim_Clock_To_Clock(view *Sim_Clock) (host time.Clock) {
-	invariant.Always(view != nil, "A simulated clock view has caller-owned state.")
-	invariant.Always(view.Timeline != nil, "A simulated clock view names its timeline.")
+	aver.Always(view != nil, "A simulated clock view has caller-owned state.")
+	aver.Always(view.Timeline != nil, "A simulated clock view names its timeline.")
 	host = time.Clock{
 		State:         unsafe.Pointer(view),
 		Now_Monotonic: sim_clock_now_monotonic,
@@ -4465,10 +4465,10 @@ func virtual_timeline_initialize(
 	state *Virtual_Timeline, resolution time.Duration, epoch time.Moment,
 	queue []*Completion, events []Virtual_Event,
 ) {
-	invariant.Always(len(queue) > 0, "A virtual timeline has queue capacity.")
-	invariant.Always(len(events) > 0, "A virtual timeline has event capacity.")
+	aver.Always(len(queue) > 0, "A virtual timeline has queue capacity.")
+	aver.Always(len(events) > 0, "A virtual timeline has event capacity.")
 	time.Duration_Invariants(resolution, "virtual_timeline_initialize.resolution")
-	invariant.Always(resolution > 0, "A virtual timeline advances on every tick.")
+	aver.Always(resolution > 0, "A virtual timeline advances on every tick.")
 	// Epoch carry no assertion: the seed draw it below SIM_EPOCH_SECONDS, so no caller can
 	// reach an edge of its domain, and an unreachable assertion is a permanent coverage gap.
 	for index := range queue {
@@ -4530,7 +4530,7 @@ func virtual_timeline_event_trigger(
 func virtual_timeline_close_event(state unsafe.Pointer, event Event) {
 	timeline := (*Virtual_Timeline)(state)
 	entry := virtual_event_entry(timeline, event)
-	invariant.Always(!entry.Armed, "An event listener is drained before close.")
+	aver.Always(!entry.Armed, "An event listener is drained before close.")
 	*entry = Virtual_Event{}
 }
 
@@ -4540,7 +4540,7 @@ func virtual_event_listen(
 	callback Callback,
 ) {
 	entry := virtual_event_entry(state, event)
-	invariant.Always(!entry.Armed, "An event has at most one armed listener.")
+	aver.Always(!entry.Armed, "An event has at most one armed listener.")
 	if entry.Triggered {
 		virtual_queue_has_capacity(state)
 	}
@@ -4562,7 +4562,7 @@ func virtual_event_trigger(state *Virtual_Timeline, event Event, completion *Com
 		entry.Triggered = true
 		return
 	}
-	invariant.Always(entry.Listener == completion,
+	aver.Always(entry.Listener == completion,
 		"A trigger names the completion its event armed.")
 	if entry.Ready {
 		entry.Triggered = true
@@ -4574,11 +4574,11 @@ func virtual_event_trigger(state *Virtual_Timeline, event Event, completion *Com
 }
 
 func virtual_event_entry(state *Virtual_Timeline, event Event) (entry *Virtual_Event) {
-	invariant.Always(event > 0, "A virtual event handle is never zero.")
-	invariant.Always(event <= Event(len(state.Events)),
+	aver.Always(event > 0, "A virtual event handle is never zero.")
+	aver.Always(event <= Event(len(state.Events)),
 		"A virtual event handle names caller-owned storage.")
 	entry = &state.Events[int(event)-1]
-	invariant.Always(entry.Open, "A virtual event operation names an open event.")
+	aver.Always(entry.Open, "A virtual event operation names an open event.")
 	return entry
 }
 
@@ -4604,10 +4604,10 @@ func virtual_submit(
 // Completion armed while armed panic on armed-to-armed edge.
 func virtual_arm(completion *Completion, callback Callback) {
 	original := completion.Self == nil || completion.Self == completion
-	invariant.Always(original,
+	aver.Always(original,
 		"A submitted completion is its own original, never a by-value copy.")
 	completion.Self = completion
-	invariant.Always(!completion.Armed, "An armed completion is never armed a second time.")
+	aver.Always(!completion.Armed, "An armed completion is never armed a second time.")
 	completion.Data = 0
 	completion.Error = nil
 	completion.Armed = true
@@ -4634,7 +4634,7 @@ func virtual_enqueue(state *Virtual_Timeline, completion *Completion) {
 
 // Capacity rejects new ownership before any caller or event state changes.
 func virtual_queue_has_capacity(state *Virtual_Timeline) {
-	invariant.Always(state.Queue_Count < len(state.Queue),
+	aver.Always(state.Queue_Count < len(state.Queue),
 		"A virtual timeline never exceed caller-owned queue capacity.")
 }
 
@@ -4653,7 +4653,7 @@ func virtual_step(state *Virtual_Timeline) (advanced bool) {
 	state.Queue_Count--
 	// Go back to idle before callback run. Callback can then submit own completion again.
 	// Repeating-timer pattern.
-	invariant.Always(completion.Armed, "A delivered completion was armed.")
+	aver.Always(completion.Armed, "A delivered completion was armed.")
 	completion.Armed = false
 	callback := completion.Callback
 	completion.Callback = nil
@@ -4700,7 +4700,7 @@ func virtual_run_for(state *Virtual_Timeline, duration time.Duration) {
 func virtual_run_until(
 	state *Virtual_Timeline, timeout time.Duration, done func() (finished bool),
 ) (completed bool) {
-	invariant.Always(timeout >= 0, "A Run_Until timeout is never negative.")
+	aver.Always(timeout >= 0, "A Run_Until timeout is never negative.")
 	deadline := virtual_now(state) + time.Monotonic_Moment(timeout)
 	for !done() {
 		if virtual_now(state) >= deadline {
@@ -4713,7 +4713,7 @@ func virtual_run_until(
 
 // Drive begin rejects reentrancy before any queue state can change.
 func virtual_drive_begin(state *Virtual_Timeline) {
-	invariant.Always(!state.Drive_Active,
+	aver.Always(!state.Drive_Active,
 		"A drive begins at top level, never from within a completion callback.")
 	state.Drive_Active = true
 }
@@ -4760,5 +4760,5 @@ func virtual_driver_run_until(
 }
 
 func virtual_driver_deinit(state unsafe.Pointer) {
-	invariant.Always(state != nil, "A virtual driver deinitializes caller-owned state.")
+	aver.Always(state != nil, "A virtual driver deinitializes caller-owned state.")
 }

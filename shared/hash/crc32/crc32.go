@@ -5,8 +5,8 @@ package crc32
 import (
 	"local/james-orcales/shared/bytes"
 	"local/james-orcales/shared/encoding/binary"
-	"local/james-orcales/shared/invariant/default"
 	"local/james-orcales/shared/math/bits"
+	"local/james-orcales/shared/simulation/aver/default"
 )
 
 // TABLE_ENTRY_COUNT covers every possible low checksum byte.
@@ -116,8 +116,8 @@ const STATE_COUNT_COMPLETE State_Count = State_Count(STATE_SIZE)
 type Polynomial uint32
 
 // Polynomial_Invariants keeps caller-selected polynomial inside one machine word.
-func Polynomial_Invariants(value Polynomial, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Polynomial_Invariants(value Polynomial, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint32(uint32(value), bits.WORD_32_MINIMUM, bits.WORD_32_MAXIMUM).
 		Ensure()
 }
@@ -126,8 +126,8 @@ func Polynomial_Invariants(value Polynomial, namespace invariant.Namespace) {
 type Source []byte
 
 // Source_Invariants binds one call to repository byte boundary.
-func Source_Invariants(value Source, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Source_Invariants(value Source, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), SOURCE_SIZE_MINIMUM, SOURCE_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -136,8 +136,8 @@ func Source_Invariants(value Source, namespace invariant.Namespace) {
 type Destination []byte
 
 // Destination_Invariants binds output to repository byte boundary.
-func Destination_Invariants(value Destination, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Destination_Invariants(value Destination, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), DESTINATION_SIZE_MINIMUM, DESTINATION_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -146,8 +146,8 @@ func Destination_Invariants(value Destination, namespace invariant.Namespace) {
 type Count int
 
 // Count_Invariants covers complete source count.
-func Count_Invariants(value Count, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Count_Invariants(value Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), COUNT_MINIMUM, COUNT_MAXIMUM).
 		Ensure()
 }
@@ -156,8 +156,8 @@ func Count_Invariants(value Count, namespace invariant.Namespace) {
 type Output_Count uint8
 
 // Output_Count_Invariants excludes partial checksum output.
-func Output_Count_Invariants(value Output_Count, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Output_Count_Invariants(value Output_Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_Uint8(
 			uint8(value), uint8(OUTPUT_COUNT_EMPTY), uint8(OUTPUT_COUNT_COMPLETE),
 		).
@@ -168,8 +168,8 @@ func Output_Count_Invariants(value Output_Count, namespace invariant.Namespace) 
 type Output_Status uint8
 
 // Output_Status_Invariants covers complete and short output.
-func Output_Status_Invariants(value Output_Status, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Output_Status_Invariants(value Output_Status, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_Uint8(uint8(value), uint8(OUTPUT_STATUS_OK), uint8(OUTPUT_STATUS_TOO_SMALL)).
 		Ensure()
 }
@@ -178,8 +178,8 @@ func Output_Status_Invariants(value Output_Status, namespace invariant.Namespace
 type Digest_Value uint32
 
 // Digest_Value_Invariants preserves every possible CRC-32 result.
-func Digest_Value_Invariants(value Digest_Value, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Digest_Value_Invariants(value Digest_Value, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint32(uint32(value), bits.WORD_32_MINIMUM, bits.WORD_32_MAXIMUM).
 		Ensure()
 }
@@ -188,7 +188,7 @@ func Digest_Value_Invariants(value Digest_Value, namespace invariant.Namespace) 
 type Table [TABLE_WORD_COUNT]uint32
 
 // Table_Invariants binds table identity to its construction polynomial.
-func Table_Invariants(value Table, namespace invariant.Namespace) {
+func Table_Invariants(value Table, namespace aver.Namespace) {
 	Polynomial_Invariants(Polynomial(value[TABLE_POLYNOMIAL_INDEX]), namespace)
 }
 
@@ -201,7 +201,7 @@ type Digest struct {
 }
 
 // Digest_Invariants composes current checksum with table identity.
-func Digest_Invariants(value Digest, namespace invariant.Namespace) {
+func Digest_Invariants(value Digest, namespace aver.Namespace) {
 	Digest_Value_Invariants(value.Checksum, namespace)
 	Table_Invariants(value.Table, namespace)
 }
@@ -210,8 +210,8 @@ func Digest_Invariants(value Digest, namespace invariant.Namespace) {
 type State_Count uint8
 
 // State_Count_Invariants excludes partial state.
-func State_Count_Invariants(value State_Count, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func State_Count_Invariants(value State_Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_Uint8(uint8(value), uint8(STATE_COUNT_EMPTY), uint8(STATE_COUNT_COMPLETE)).
 		Ensure()
 }
@@ -220,8 +220,8 @@ func State_Count_Invariants(value State_Count, namespace invariant.Namespace) {
 type State_Output_Status uint8
 
 // State_Output_Status_Invariants covers complete and short output.
-func State_Output_Status_Invariants(value State_Output_Status, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func State_Output_Status_Invariants(value State_Output_Status, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_Uint8(
 			uint8(value), uint8(STATE_OUTPUT_STATUS_OK),
 			uint8(STATE_OUTPUT_STATUS_TOO_SMALL),
@@ -233,8 +233,8 @@ func State_Output_Status_Invariants(value State_Output_Status, namespace invaria
 type State_Input_Status uint8
 
 // State_Input_Status_Invariants covers every state rejection.
-func State_Input_Status_Invariants(value State_Input_Status, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func State_Input_Status_Invariants(value State_Input_Status, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_4_Uint8(
 			uint8(value), uint8(STATE_INPUT_STATUS_OK),
 			uint8(STATE_INPUT_STATUS_SIZE_INVALID),
@@ -315,7 +315,7 @@ func Digest_Init(digest *Digest, table *Table) {
 	table_require(table)
 	digest.Checksum = 0
 	digest.Table = *table
-	invariant.Always(digest.Checksum == 0, "Fresh CRC-32 state starts at zero.")
+	aver.Always(digest.Checksum == 0, "Fresh CRC-32 state starts at zero.")
 	Table_Invariants(digest.Table, "Digest_Init.digest.table.output")
 }
 
@@ -324,7 +324,7 @@ func Digest_Reset(digest *Digest) {
 	Digest_Invariants(*digest, "Digest_Reset.digest.input")
 	digest_require(digest)
 	digest.Checksum = 0
-	invariant.Always(digest.Checksum == 0, "Reset CRC-32 state starts at zero.")
+	aver.Always(digest.Checksum == 0, "Reset CRC-32 state starts at zero.")
 	Table_Invariants(digest.Table, "Digest_Reset.digest.table.output")
 }
 
@@ -480,7 +480,7 @@ func Digest_Unmarshal(digest *Digest, source Source) (status State_Input_Status)
 // Table and digest readiness prevent zero caller storage from becoming attacker-selected state.
 func table_require(table *Table) {
 	Table_Invariants(*table, "table_require.table")
-	invariant.Always(
+	aver.Always(
 		table[TABLE_READY_INDEX] == TABLE_READY_MARKER,
 		"CRC-32 table operations require Table_Make_Into.",
 	)
@@ -492,7 +492,7 @@ func table_require(table *Table) {
 func digest_require(digest *Digest) {
 	Digest_Invariants(*digest, "digest_require.digest")
 	ready := digest.Table[TABLE_READY_INDEX] == TABLE_READY_MARKER
-	invariant.Always(
+	aver.Always(
 		ready,
 		"CRC-32 digest operations require Digest_Init.",
 	)

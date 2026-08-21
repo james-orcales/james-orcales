@@ -6,8 +6,8 @@ import (
 	"local/james-orcales/shared/crypto/elliptic"
 	"local/james-orcales/shared/crypto/prng"
 	"local/james-orcales/shared/encoding/binary"
-	"local/james-orcales/shared/invariant/default"
 	"local/james-orcales/shared/math/bits"
+	"local/james-orcales/shared/simulation/aver/default"
 )
 
 // SCALAR_SIZE is the P-256 group-order width.
@@ -77,8 +77,8 @@ const CONDITION_LIMB_COUNT = binary.UINT_8_SIZE
 type Ready [READY_WORD_COUNT]byte
 
 // Ready_Invariants fixes key-state storage width.
-func Ready_Invariants(value Ready, _ invariant.Namespace) {
-	invariant.Always(len(value) == READY_WORD_COUNT, "ECDSA key state has fixed width.")
+func Ready_Invariants(value Ready, _ aver.Namespace) {
+	aver.Always(len(value) == READY_WORD_COUNT, "ECDSA key state has fixed width.")
 }
 
 // Private_Key stores one canonical scalar and its validation state.
@@ -90,18 +90,18 @@ type Private_Key struct {
 }
 
 // Private_Key_Invariants relates completed storage to canonical nonzero scalar form.
-func Private_Key_Invariants(value Private_Key, namespace invariant.Namespace) {
-	invariant.Always(
+func Private_Key_Invariants(value Private_Key, namespace aver.Namespace) {
+	aver.Always(
 		len(value.Scalar) == PRIVATE_KEY_SIZE,
 		"An ECDSA private scalar has P-256 width.",
 	)
 	Ready_Invariants(value.Ready, namespace)
-	invariant.Always(
+	aver.Always(
 		value.Ready[READY_INDEX] <= READY_COMPLETE,
 		"An ECDSA private key has empty or complete state.",
 	)
 	valid := scalar_encoding_valid(&value.Scalar)
-	invariant.Always(
+	aver.Always(
 		uint64(value.Ready[READY_INDEX])&valid[bits.BIT_COUNT_MINIMUM] ==
 			uint64(value.Ready[READY_INDEX]),
 		"A completed ECDSA private key is canonical and nonzero.",
@@ -113,10 +113,10 @@ type Private_Key_Destination *Private_Key
 
 // Private_Key_Destination_Invariants proves caller storage exists.
 func Private_Key_Destination_Invariants(
-	value Private_Key_Destination, _ invariant.Namespace,
+	value Private_Key_Destination, _ aver.Namespace,
 ) {
-	invariant.Always(value != nil, "An ECDSA private key destination exists.")
-	invariant.Always(
+	aver.Always(value != nil, "An ECDSA private key destination exists.")
+	aver.Always(
 		len(value.Ready) == READY_WORD_COUNT,
 		"An ECDSA private key destination has state storage.",
 	)
@@ -131,10 +131,10 @@ type Public_Key struct {
 }
 
 // Public_Key_Invariants relates completed storage to a finite curve point.
-func Public_Key_Invariants(value Public_Key, namespace invariant.Namespace) {
+func Public_Key_Invariants(value Public_Key, namespace aver.Namespace) {
 	elliptic.Point_Invariants(value.Point, namespace)
 	Ready_Invariants(value.Ready, namespace)
-	invariant.Always(
+	aver.Always(
 		value.Ready[READY_INDEX] <= READY_COMPLETE,
 		"An ECDSA public key has empty or complete state.",
 	)
@@ -144,7 +144,7 @@ func Public_Key_Invariants(value Public_Key, namespace invariant.Namespace) {
 		value.Point.Z[binary.UINT_16_SIZE+binary.UINT_8_SIZE]
 	finite := (finite_word | -finite_word) >>
 		(bits.BIT_COUNT_64_MAXIMUM - binary.UINT_8_SIZE)
-	invariant.Always(
+	aver.Always(
 		uint64(value.Ready[READY_INDEX])&finite ==
 			uint64(value.Ready[READY_INDEX]),
 		"A completed ECDSA public key is finite.",
@@ -156,11 +156,11 @@ type Public_Key_Destination *Public_Key
 
 // Public_Key_Destination_Invariants proves caller storage exists.
 func Public_Key_Destination_Invariants(
-	value Public_Key_Destination, namespace invariant.Namespace,
+	value Public_Key_Destination, namespace aver.Namespace,
 ) {
-	invariant.Always(value != nil, "An ECDSA public key destination exists.")
+	aver.Always(value != nil, "An ECDSA public key destination exists.")
 	elliptic.Point_Invariants(value.Point, namespace)
-	invariant.Always(
+	aver.Always(
 		len(value.Ready) == READY_WORD_COUNT,
 		"An ECDSA public key destination has state storage.",
 	)
@@ -170,8 +170,8 @@ func Public_Key_Destination_Invariants(
 type Public_Key_Encoding [PUBLIC_KEY_SIZE]byte
 
 // Public_Key_Encoding_Invariants fixes public output width.
-func Public_Key_Encoding_Invariants(value Public_Key_Encoding, _ invariant.Namespace) {
-	invariant.Always(
+func Public_Key_Encoding_Invariants(value Public_Key_Encoding, _ aver.Namespace) {
+	aver.Always(
 		len(value) == PUBLIC_KEY_SIZE,
 		"An ECDSA public key encoding has P-256 width.",
 	)
@@ -182,17 +182,17 @@ type Public_Key_Encoding_Destination *Public_Key_Encoding
 
 // Public_Key_Encoding_Destination_Invariants proves caller storage exists.
 func Public_Key_Encoding_Destination_Invariants(
-	value Public_Key_Encoding_Destination, _ invariant.Namespace,
+	value Public_Key_Encoding_Destination, _ aver.Namespace,
 ) {
-	invariant.Always(value != nil, "An ECDSA public key encoding destination exists.")
+	aver.Always(value != nil, "An ECDSA public key encoding destination exists.")
 }
 
 // Signature stores fixed-width IEEE P1363 r and s scalars.
 type Signature [SIGNATURE_SIZE]byte
 
 // Signature_Invariants fixes caller-owned output width.
-func Signature_Invariants(value Signature, _ invariant.Namespace) {
-	invariant.Always(len(value) == SIGNATURE_SIZE, "An ECDSA signature has fixed width.")
+func Signature_Invariants(value Signature, _ aver.Namespace) {
+	aver.Always(len(value) == SIGNATURE_SIZE, "An ECDSA signature has fixed width.")
 }
 
 // Signature_Destination is nonnil caller-owned signature storage.
@@ -200,9 +200,9 @@ type Signature_Destination *Signature
 
 // Signature_Destination_Invariants proves caller storage exists.
 func Signature_Destination_Invariants(
-	value Signature_Destination, _ invariant.Namespace,
+	value Signature_Destination, _ aver.Namespace,
 ) {
-	invariant.Always(value != nil, "An ECDSA signature destination exists.")
+	aver.Always(value != nil, "An ECDSA signature destination exists.")
 }
 
 // Private_Key_Unvalidated is one bounded hostile private-key encoding.
@@ -210,9 +210,9 @@ type Private_Key_Unvalidated []byte
 
 // Private_Key_Unvalidated_Invariants bounds private-key parsing work.
 func Private_Key_Unvalidated_Invariants(
-	value Private_Key_Unvalidated, namespace invariant.Namespace,
+	value Private_Key_Unvalidated, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(
 			len(value), PRIVATE_KEY_UNVALIDATED_SIZE_MINIMUM,
 			PRIVATE_KEY_UNVALIDATED_SIZE_MAXIMUM,
@@ -225,9 +225,9 @@ type Public_Key_Unvalidated []byte
 
 // Public_Key_Unvalidated_Invariants bounds public-key parsing work.
 func Public_Key_Unvalidated_Invariants(
-	value Public_Key_Unvalidated, namespace invariant.Namespace,
+	value Public_Key_Unvalidated, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(
 			len(value), PUBLIC_KEY_UNVALIDATED_SIZE_MINIMUM,
 			PUBLIC_KEY_UNVALIDATED_SIZE_MAXIMUM,
@@ -240,9 +240,9 @@ type Signature_Unvalidated []byte
 
 // Signature_Unvalidated_Invariants bounds verification parsing work.
 func Signature_Unvalidated_Invariants(
-	value Signature_Unvalidated, namespace invariant.Namespace,
+	value Signature_Unvalidated, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(
 			len(value), SIGNATURE_UNVALIDATED_SIZE_MINIMUM,
 			SIGNATURE_UNVALIDATED_SIZE_MAXIMUM,
@@ -254,16 +254,16 @@ func Signature_Unvalidated_Invariants(
 type Digest [SCALAR_SIZE]byte
 
 // Digest_Invariants fixes the P-256 digest width.
-func Digest_Invariants(value Digest, _ invariant.Namespace) {
-	invariant.Always(len(value) == SCALAR_SIZE, "An ECDSA digest has SHA-256 width.")
+func Digest_Invariants(value Digest, _ aver.Namespace) {
+	aver.Always(len(value) == SCALAR_SIZE, "An ECDSA digest has SHA-256 width.")
 }
 
 // Key_Status reports bounded key parsing.
 type Key_Status uint8
 
 // Key_Status_Invariants covers complete and refused key input.
-func Key_Status_Invariants(value Key_Status, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Key_Status_Invariants(value Key_Status, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_Uint8(uint8(value), uint8(KEY_STATUS_OK), uint8(KEY_STATUS_INPUT_INVALID)).
 		Ensure()
 }
@@ -272,8 +272,8 @@ func Key_Status_Invariants(value Key_Status, namespace invariant.Namespace) {
 type Sign_Status uint8
 
 // Sign_Status_Invariants covers committed and exhausted signing.
-func Sign_Status_Invariants(value Sign_Status, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Sign_Status_Invariants(value Sign_Status, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_Uint8(
 			uint8(value), uint8(SIGN_STATUS_OK), uint8(SIGN_STATUS_ENTROPY_EXHAUSTED),
 		).
@@ -284,8 +284,8 @@ func Sign_Status_Invariants(value Sign_Status, namespace invariant.Namespace) {
 type Verification bool
 
 // Verification_Invariants covers accepted and refused signatures.
-func Verification_Invariants(value Verification, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Verification_Invariants(value Verification, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Sometimes(bool(value), "An ECDSA signature verifies.").
 		Ensure()
 }
@@ -322,7 +322,7 @@ func Private_Key_Set_Bytes(
 func Public_Key_From_Private(private_key Private_Key) (public_key Public_Key) {
 	defer func() { Public_Key_Invariants(public_key, "Public_Key_From_Private.public_key") }()
 	Private_Key_Invariants(private_key, "Public_Key_From_Private.private_key")
-	invariant.Always(
+	aver.Always(
 		private_key.Ready[READY_INDEX] == READY_COMPLETE,
 		"Public derivation receives a ready ECDSA private key.",
 	)
@@ -331,7 +331,7 @@ func Public_Key_From_Private(private_key Private_Key) (public_key Public_Key) {
 	}
 	var point elliptic.Point
 	status := elliptic.Point_Scalar_Base_Multiply(&point, private_key.Scalar[:])
-	invariant.Always(status == elliptic.SCALAR_STATUS_OK, "A private scalar has exact width.")
+	aver.Always(status == elliptic.SCALAR_STATUS_OK, "A private scalar has exact width.")
 	return Public_Key{Point: point, Ready: Ready{READY_COMPLETE}}
 }
 
@@ -379,7 +379,7 @@ func Public_Key_Bytes_Into(
 		destination, "Public_Key_Bytes_Into.destination",
 	)
 	Public_Key_Invariants(public_key, "Public_Key_Bytes_Into.public_key")
-	invariant.Always(
+	aver.Always(
 		public_key.Ready[READY_INDEX] == READY_COMPLETE,
 		"Public encoding receives a ready ECDSA public key.",
 	)
@@ -389,11 +389,11 @@ func Public_Key_Bytes_Into(
 	count, status := elliptic.Point_Bytes_Into(
 		destination[:], &public_key.Point, elliptic.ENCODING_UNCOMPRESSED,
 	)
-	invariant.Always(
+	aver.Always(
 		status == elliptic.OUTPUT_STATUS_OK,
 		"Fixed public-key storage receives a complete point.",
 	)
-	invariant.Always(
+	aver.Always(
 		count == elliptic.COUNT_UNCOMPRESSED,
 		"A finite public key uses uncompressed P-256 width.",
 	)
@@ -417,7 +417,7 @@ func Sign(
 	if generator.State == nil {
 		panic("ecdsa: generator is nil")
 	}
-	invariant.Always(
+	aver.Always(
 		private_key.Ready[READY_INDEX] == READY_COMPLETE,
 		"Signing receives a ready ECDSA private key.",
 	)
@@ -459,7 +459,7 @@ func sign_candidate(
 	elliptic_status := elliptic.Point_Scalar_Base_Multiply(
 		&nonce_point, nonce_encoding[:],
 	)
-	invariant.Always(
+	aver.Always(
 		elliptic_status == elliptic.SCALAR_STATUS_OK,
 		"A nonce candidate has exact P-256 width.",
 	)
@@ -467,7 +467,7 @@ func sign_candidate(
 	_, point_status := elliptic.Point_Bytes_Into(
 		point_encoding[:], &nonce_point, elliptic.ENCODING_UNCOMPRESSED,
 	)
-	invariant.Always(
+	aver.Always(
 		point_status == elliptic.OUTPUT_STATUS_OK,
 		"A nonzero nonce produces a finite point.",
 	)
@@ -506,7 +506,7 @@ func Verify(
 	Public_Key_Invariants(public_key, "Verify.public_key")
 	Digest_Invariants(digest, "Verify.digest")
 	Signature_Unvalidated_Invariants(signature, "Verify.signature")
-	invariant.Always(
+	aver.Always(
 		public_key.Ready[READY_INDEX] == READY_COMPLETE,
 		"Verification receives a ready ECDSA public key.",
 	)

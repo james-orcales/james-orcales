@@ -5,13 +5,13 @@ import (
 	"testing"
 
 	"local/james-orcales/shared/cli"
-	"local/james-orcales/shared/invariant/default"
+	"local/james-orcales/shared/simulation/aver/default"
 	"local/james-orcales/shared/snap/default"
 	"local/james-orcales/shared/strings"
 )
 
 func TestMain(m *testing.M) {
-	invariant.Run_Test_Main(m)
+	aver.Run_Test_Main(m)
 }
 
 type output_buffer struct {

@@ -5,8 +5,8 @@ package fnv
 import (
 	"local/james-orcales/shared/bytes"
 	"local/james-orcales/shared/encoding/binary"
-	"local/james-orcales/shared/invariant/default"
 	"local/james-orcales/shared/math/bits"
+	"local/james-orcales/shared/simulation/aver/default"
 )
 
 // DIGEST_32_SIZE is one 32-bit value in bytes.
@@ -166,8 +166,8 @@ const STATE_128_COUNT_COMPLETE State_128_Count = State_128_Count(STATE_128_SIZE)
 type State_Identity string
 
 // State_Identity_Invariants fixes the standard prefix width.
-func State_Identity_Invariants(value State_Identity, _ invariant.Namespace) {
-	invariant.Always(
+func State_Identity_Invariants(value State_Identity, _ aver.Namespace) {
+	aver.Always(
 		len(value) == STATE_IDENTITY_SIZE,
 		"FNV state identity has standard width.",
 	)
@@ -177,8 +177,8 @@ func State_Identity_Invariants(value State_Identity, _ invariant.Namespace) {
 type Kind uint8
 
 // Kind_Invariants admits exactly FNV-1 and FNV-1a.
-func Kind_Invariants(value Kind, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Kind_Invariants(value Kind, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_Uint8(uint8(value), uint8(KIND_1), uint8(KIND_1A)).
 		Ensure()
 }
@@ -187,8 +187,8 @@ func Kind_Invariants(value Kind, namespace invariant.Namespace) {
 type Source []byte
 
 // Source_Invariants binds one call to repository byte boundary.
-func Source_Invariants(value Source, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Source_Invariants(value Source, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), SOURCE_SIZE_MINIMUM, SOURCE_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -197,8 +197,8 @@ func Source_Invariants(value Source, namespace invariant.Namespace) {
 type Destination []byte
 
 // Destination_Invariants binds output to repository byte boundary.
-func Destination_Invariants(value Destination, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Destination_Invariants(value Destination, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), DESTINATION_SIZE_MINIMUM, DESTINATION_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -207,8 +207,8 @@ func Destination_Invariants(value Destination, namespace invariant.Namespace) {
 type Count int
 
 // Count_Invariants covers complete source count.
-func Count_Invariants(value Count, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Count_Invariants(value Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), COUNT_MINIMUM, COUNT_MAXIMUM).
 		Ensure()
 }
@@ -217,8 +217,8 @@ func Count_Invariants(value Count, namespace invariant.Namespace) {
 type Output_32_Count uint8
 
 // Output_32_Count_Invariants excludes partial output.
-func Output_32_Count_Invariants(value Output_32_Count, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Output_32_Count_Invariants(value Output_32_Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_Uint8(
 			uint8(value), uint8(OUTPUT_32_COUNT_EMPTY), uint8(OUTPUT_32_COUNT_COMPLETE),
 		).
@@ -229,8 +229,8 @@ func Output_32_Count_Invariants(value Output_32_Count, namespace invariant.Names
 type Output_64_Count uint8
 
 // Output_64_Count_Invariants excludes partial output.
-func Output_64_Count_Invariants(value Output_64_Count, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Output_64_Count_Invariants(value Output_64_Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_Uint8(
 			uint8(value), uint8(OUTPUT_64_COUNT_EMPTY), uint8(OUTPUT_64_COUNT_COMPLETE),
 		).
@@ -241,8 +241,8 @@ func Output_64_Count_Invariants(value Output_64_Count, namespace invariant.Names
 type Output_128_Count uint8
 
 // Output_128_Count_Invariants excludes partial output.
-func Output_128_Count_Invariants(value Output_128_Count, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Output_128_Count_Invariants(value Output_128_Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_Uint8(
 			uint8(value), uint8(OUTPUT_128_COUNT_EMPTY),
 			uint8(OUTPUT_128_COUNT_COMPLETE),
@@ -254,8 +254,8 @@ func Output_128_Count_Invariants(value Output_128_Count, namespace invariant.Nam
 type Output_Status uint8
 
 // Output_Status_Invariants covers complete and short output.
-func Output_Status_Invariants(value Output_Status, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Output_Status_Invariants(value Output_Status, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_Uint8(uint8(value), uint8(OUTPUT_STATUS_OK), uint8(OUTPUT_STATUS_TOO_SMALL)).
 		Ensure()
 }
@@ -264,8 +264,8 @@ func Output_Status_Invariants(value Output_Status, namespace invariant.Namespace
 type Value_32 uint32
 
 // Value_32_Invariants preserves every possible state.
-func Value_32_Invariants(value Value_32, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Value_32_Invariants(value Value_32, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint32(uint32(value), bits.WORD_32_MINIMUM, bits.WORD_32_MAXIMUM).
 		Ensure()
 }
@@ -274,8 +274,8 @@ func Value_32_Invariants(value Value_32, namespace invariant.Namespace) {
 type Value_64 uint64
 
 // Value_64_Invariants preserves every possible state.
-func Value_64_Invariants(value Value_64, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Value_64_Invariants(value Value_64, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint64(uint64(value), bits.WORD_64_MINIMUM, bits.WORD_64_MAXIMUM).
 		Ensure()
 }
@@ -284,8 +284,8 @@ func Value_64_Invariants(value Value_64, namespace invariant.Namespace) {
 type High uint64
 
 // High_Invariants preserves every possible high word.
-func High_Invariants(value High, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func High_Invariants(value High, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint64(uint64(value), bits.WORD_64_MINIMUM, bits.WORD_64_MAXIMUM).
 		Ensure()
 }
@@ -294,8 +294,8 @@ func High_Invariants(value High, namespace invariant.Namespace) {
 type Low uint64
 
 // Low_Invariants preserves every possible low word.
-func Low_Invariants(value Low, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Low_Invariants(value Low, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint64(uint64(value), bits.WORD_64_MINIMUM, bits.WORD_64_MAXIMUM).
 		Ensure()
 }
@@ -309,7 +309,7 @@ type Value_128 struct {
 }
 
 // Value_128_Invariants composes both independently full-width words.
-func Value_128_Invariants(value Value_128, namespace invariant.Namespace) {
+func Value_128_Invariants(value Value_128, namespace aver.Namespace) {
 	High_Invariants(value.High, namespace)
 	Low_Invariants(value.Low, namespace)
 }
@@ -324,8 +324,8 @@ const READY_COMPLETE Ready = READY_EMPTY + 1
 type Ready uint8
 
 // Ready_Invariants admits zero storage and initialized state.
-func Ready_Invariants(value Ready, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Ready_Invariants(value Ready, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_Uint8(uint8(value), uint8(READY_EMPTY), uint8(READY_COMPLETE)).
 		Ensure()
 }
@@ -341,7 +341,7 @@ type Digest_32 struct {
 }
 
 // Digest_32_Invariants composes algorithm identity with current state.
-func Digest_32_Invariants(value Digest_32, namespace invariant.Namespace) {
+func Digest_32_Invariants(value Digest_32, namespace aver.Namespace) {
 	Kind_Invariants(value.Kind, namespace)
 	Value_32_Invariants(value.Value, namespace)
 	Ready_Invariants(value.Ready, namespace)
@@ -358,7 +358,7 @@ type Digest_64 struct {
 }
 
 // Digest_64_Invariants composes algorithm identity with current state.
-func Digest_64_Invariants(value Digest_64, namespace invariant.Namespace) {
+func Digest_64_Invariants(value Digest_64, namespace aver.Namespace) {
 	Kind_Invariants(value.Kind, namespace)
 	Value_64_Invariants(value.Value, namespace)
 	Ready_Invariants(value.Ready, namespace)
@@ -375,7 +375,7 @@ type Digest_128 struct {
 }
 
 // Digest_128_Invariants composes algorithm identity with current state.
-func Digest_128_Invariants(value Digest_128, namespace invariant.Namespace) {
+func Digest_128_Invariants(value Digest_128, namespace aver.Namespace) {
 	Kind_Invariants(value.Kind, namespace)
 	Value_128_Invariants(value.Value, namespace)
 	Ready_Invariants(value.Ready, namespace)
@@ -385,8 +385,8 @@ func Digest_128_Invariants(value Digest_128, namespace invariant.Namespace) {
 type State_32_Count uint8
 
 // State_32_Count_Invariants excludes partial state.
-func State_32_Count_Invariants(value State_32_Count, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func State_32_Count_Invariants(value State_32_Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_Uint8(
 			uint8(value), uint8(STATE_32_COUNT_EMPTY), uint8(STATE_32_COUNT_COMPLETE),
 		).
@@ -397,8 +397,8 @@ func State_32_Count_Invariants(value State_32_Count, namespace invariant.Namespa
 type State_64_Count uint8
 
 // State_64_Count_Invariants excludes partial state.
-func State_64_Count_Invariants(value State_64_Count, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func State_64_Count_Invariants(value State_64_Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_Uint8(
 			uint8(value), uint8(STATE_64_COUNT_EMPTY), uint8(STATE_64_COUNT_COMPLETE),
 		).
@@ -409,8 +409,8 @@ func State_64_Count_Invariants(value State_64_Count, namespace invariant.Namespa
 type State_128_Count uint8
 
 // State_128_Count_Invariants excludes partial state.
-func State_128_Count_Invariants(value State_128_Count, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func State_128_Count_Invariants(value State_128_Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_Uint8(
 			uint8(value), uint8(STATE_128_COUNT_EMPTY), uint8(STATE_128_COUNT_COMPLETE),
 		).
@@ -421,8 +421,8 @@ func State_128_Count_Invariants(value State_128_Count, namespace invariant.Names
 type State_Output_Status uint8
 
 // State_Output_Status_Invariants covers complete and short output.
-func State_Output_Status_Invariants(value State_Output_Status, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func State_Output_Status_Invariants(value State_Output_Status, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_Uint8(
 			uint8(value), uint8(STATE_OUTPUT_STATUS_OK),
 			uint8(STATE_OUTPUT_STATUS_TOO_SMALL),
@@ -434,8 +434,8 @@ func State_Output_Status_Invariants(value State_Output_Status, namespace invaria
 type State_Input_Status uint8
 
 // State_Input_Status_Invariants covers every state rejection.
-func State_Input_Status_Invariants(value State_Input_Status, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func State_Input_Status_Invariants(value State_Input_Status, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_3_Uint8(
 			uint8(value), uint8(STATE_INPUT_STATUS_OK),
 			uint8(STATE_INPUT_STATUS_SIZE_INVALID),
@@ -452,11 +452,11 @@ func Digest_32_Init(digest *Digest_32, kind Kind) {
 	digest.Kind = kind
 	digest.Value = OFFSET_32
 	digest.Ready = READY_COMPLETE
-	invariant.Always(
+	aver.Always(
 		digest.Kind == kind,
 		"Initialized FNV-32 retains caller Kind.",
 	)
-	invariant.Always(
+	aver.Always(
 		digest.Value == OFFSET_32,
 		"Initialized FNV-32 uses offset basis.",
 	)
@@ -467,7 +467,7 @@ func Digest_32_Reset(digest *Digest_32) {
 	Digest_32_Invariants(*digest, "Digest_32_Reset.digest.input")
 	digest_32_require(digest)
 	digest.Value = OFFSET_32
-	invariant.Always(
+	aver.Always(
 		digest.Value == OFFSET_32,
 		"Reset FNV-32 uses offset basis.",
 	)
@@ -550,11 +550,11 @@ func Digest_64_Init(digest *Digest_64, kind Kind) {
 	digest.Kind = kind
 	digest.Value = OFFSET_64
 	digest.Ready = READY_COMPLETE
-	invariant.Always(
+	aver.Always(
 		digest.Kind == kind,
 		"Initialized FNV-64 retains caller Kind.",
 	)
-	invariant.Always(
+	aver.Always(
 		digest.Value == OFFSET_64,
 		"Initialized FNV-64 uses offset basis.",
 	)
@@ -565,7 +565,7 @@ func Digest_64_Reset(digest *Digest_64) {
 	Digest_64_Invariants(*digest, "Digest_64_Reset.digest.input")
 	digest_64_require(digest)
 	digest.Value = OFFSET_64
-	invariant.Always(
+	aver.Always(
 		digest.Value == OFFSET_64,
 		"Reset FNV-64 uses offset basis.",
 	)
@@ -648,15 +648,15 @@ func Digest_128_Init(digest *Digest_128, kind Kind) {
 	digest.Kind = kind
 	digest.Value = Value_128{High: OFFSET_128_HIGH, Low: OFFSET_128_LOW}
 	digest.Ready = READY_COMPLETE
-	invariant.Always(
+	aver.Always(
 		digest.Kind == kind,
 		"Initialized FNV-128 retains caller Kind.",
 	)
-	invariant.Always(
+	aver.Always(
 		digest.Value.High == OFFSET_128_HIGH,
 		"Initialized FNV-128 uses high offset basis.",
 	)
-	invariant.Always(
+	aver.Always(
 		digest.Value.Low == OFFSET_128_LOW,
 		"Initialized FNV-128 uses low offset basis.",
 	)
@@ -667,11 +667,11 @@ func Digest_128_Reset(digest *Digest_128) {
 	Digest_128_Invariants(*digest, "Digest_128_Reset.digest.input")
 	digest_128_require(digest)
 	digest.Value = Value_128{High: OFFSET_128_HIGH, Low: OFFSET_128_LOW}
-	invariant.Always(
+	aver.Always(
 		digest.Value.High == OFFSET_128_HIGH,
 		"Reset FNV-128 uses high offset basis.",
 	)
-	invariant.Always(
+	aver.Always(
 		digest.Value.Low == OFFSET_128_LOW,
 		"Reset FNV-128 uses low offset basis.",
 	)
@@ -948,7 +948,7 @@ func Digest_128_Unmarshal(digest *Digest_128, source Source) (status State_Input
 func kind_require(kind Kind) {
 	Kind_Invariants(kind, "kind_require.kind")
 	valid := kind == KIND_1 || kind == KIND_1A
-	invariant.Always(valid, "FNV Kind is FNV-1 or FNV-1a.")
+	aver.Always(valid, "FNV Kind is FNV-1 or FNV-1a.")
 	if !valid {
 		panic("fnv: kind is invalid")
 	}
@@ -957,7 +957,7 @@ func kind_require(kind Kind) {
 func digest_32_require(digest *Digest_32) {
 	Digest_32_Invariants(*digest, "digest_32_require.digest")
 	kind_require(digest.Kind)
-	invariant.Always(
+	aver.Always(
 		digest.Ready == READY_COMPLETE,
 		"FNV-32 operations require Digest_32_Init.",
 	)
@@ -969,7 +969,7 @@ func digest_32_require(digest *Digest_32) {
 func digest_64_require(digest *Digest_64) {
 	Digest_64_Invariants(*digest, "digest_64_require.digest")
 	kind_require(digest.Kind)
-	invariant.Always(
+	aver.Always(
 		digest.Ready == READY_COMPLETE,
 		"FNV-64 operations require Digest_64_Init.",
 	)
@@ -981,7 +981,7 @@ func digest_64_require(digest *Digest_64) {
 func digest_128_require(digest *Digest_128) {
 	Digest_128_Invariants(*digest, "digest_128_require.digest")
 	kind_require(digest.Kind)
-	invariant.Always(
+	aver.Always(
 		digest.Ready == READY_COMPLETE,
 		"FNV-128 operations require Digest_128_Init.",
 	)

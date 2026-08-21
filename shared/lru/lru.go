@@ -32,8 +32,9 @@ package lru
 import (
 	"unsafe"
 
-	"local/james-orcales/shared/invariant/default"
 	"local/james-orcales/shared/math/fixedpoint"
+	"local/james-orcales/shared/simulation/aver/default"
+	"local/james-orcales/shared/simulation/nbio"
 	"local/james-orcales/shared/simulation/time"
 	"local/james-orcales/shared/slices"
 )
@@ -52,8 +53,8 @@ type Value_Kind interface {
 type Count int
 
 // Count_Invariants bounds cache quantities to repository slice limit.
-func Count_Invariants(count Count, namespace invariant.Namespace) {
-	invariant.Tree(count, namespace).
+func Count_Invariants(count Count, namespace aver.Namespace) {
+	aver.Tree(count, namespace).
 		Range_Int(int(count), int(COUNT_MINIMUM), int(COUNT_MAXIMUM)).
 		Ensure()
 }
@@ -74,8 +75,8 @@ const POSITION_MAXIMUM = COUNT_MAXIMUM - 1
 type Status bool
 
 // Status_Invariants requires both predicate results.
-func Status_Invariants(status Status, namespace invariant.Namespace) {
-	invariant.Tree(status, namespace).
+func Status_Invariants(status Status, namespace aver.Namespace) {
+	aver.Tree(status, namespace).
 		Sometimes(bool(status), "Cache predicate is true.").
 		Ensure()
 }
@@ -84,8 +85,8 @@ func Status_Invariants(status Status, namespace invariant.Namespace) {
 type Position int
 
 // Position_Invariants bounds node handles to backing pool positions.
-func Position_Invariants(position Position, namespace invariant.Namespace) {
-	invariant.Tree(position, namespace).
+func Position_Invariants(position Position, namespace aver.Namespace) {
+	aver.Tree(position, namespace).
 		Range_Int(int(position), POSITION_MINIMUM, POSITION_MAXIMUM).
 		Ensure()
 }
@@ -103,8 +104,8 @@ const BUCKET_INDEX_MAXIMUM = BUCKET_COUNT - 1
 type Bucket_Index uint8
 
 // Bucket_Index_Invariants bounds bucket handles to expiry ring.
-func Bucket_Index_Invariants(index Bucket_Index, namespace invariant.Namespace) {
-	invariant.Tree(index, namespace).
+func Bucket_Index_Invariants(index Bucket_Index, namespace aver.Namespace) {
+	aver.Tree(index, namespace).
 		Range_Uint8(uint8(index), BUCKET_INDEX_MINIMUM, BUCKET_INDEX_MAXIMUM).
 		Ensure()
 }
@@ -113,8 +114,8 @@ func Bucket_Index_Invariants(index Bucket_Index, namespace invariant.Namespace) 
 type Key_Count int
 
 // Key_Count_Invariants bounds caller key output.
-func Key_Count_Invariants(count Key_Count, namespace invariant.Namespace) {
-	invariant.Tree(count, namespace).
+func Key_Count_Invariants(count Key_Count, namespace aver.Namespace) {
+	aver.Tree(count, namespace).
 		Range_Int(int(count), COUNT_MINIMUM, COUNT_MAXIMUM).
 		Ensure()
 }
@@ -128,17 +129,17 @@ type Keys[K Key_Kind] struct {
 }
 
 // Keys_Invariants requires storage and bounds requested writes.
-func Keys_Invariants[K Key_Kind](keys Keys[K], namespace invariant.Namespace) {
+func Keys_Invariants[K Key_Kind](keys Keys[K], namespace aver.Namespace) {
 	Key_Count_Invariants(keys.Count, namespace)
-	invariant.Always(keys.Storage != nil, "Key output has caller storage.")
+	aver.Always(keys.Storage != nil, "Key output has caller storage.")
 }
 
 // Value_Count is maximum value quantity one call writes.
 type Value_Count int
 
 // Value_Count_Invariants bounds caller value output.
-func Value_Count_Invariants(count Value_Count, namespace invariant.Namespace) {
-	invariant.Tree(count, namespace).
+func Value_Count_Invariants(count Value_Count, namespace aver.Namespace) {
+	aver.Tree(count, namespace).
 		Range_Int(int(count), COUNT_MINIMUM, COUNT_MAXIMUM).
 		Ensure()
 }
@@ -152,17 +153,17 @@ type Values[V Value_Kind] struct {
 }
 
 // Values_Invariants requires storage and bounds requested writes.
-func Values_Invariants[V Value_Kind](values Values[V], namespace invariant.Namespace) {
+func Values_Invariants[V Value_Kind](values Values[V], namespace aver.Namespace) {
 	Value_Count_Invariants(values.Count, namespace)
-	invariant.Always(values.Storage != nil, "Value output has caller storage.")
+	aver.Always(values.Storage != nil, "Value output has caller storage.")
 }
 
 // Capacity is immutable cache entry limit, or zero before initialization.
 type Capacity int
 
 // Capacity_Invariants admits caller-owned zero storage before New initializes it.
-func Capacity_Invariants(capacity Capacity, namespace invariant.Namespace) {
-	invariant.Tree(capacity, namespace).
+func Capacity_Invariants(capacity Capacity, namespace aver.Namespace) {
+	aver.Tree(capacity, namespace).
 		Range_Int(int(capacity), CAPACITY_MINIMUM, CAPACITY_MAXIMUM).
 		Ensure()
 }
@@ -180,8 +181,8 @@ const CAPACITY_MAXIMUM = COUNT_MAXIMUM
 type Entry_Count int
 
 // Entry_Count_Invariants bounds active node quantity.
-func Entry_Count_Invariants(count Entry_Count, namespace invariant.Namespace) {
-	invariant.Tree(count, namespace).
+func Entry_Count_Invariants(count Entry_Count, namespace aver.Namespace) {
+	aver.Tree(count, namespace).
 		Range_Int(int(count), int(COUNT_MINIMUM), int(COUNT_MAXIMUM)).
 		Ensure()
 }
@@ -190,8 +191,8 @@ func Entry_Count_Invariants(count Entry_Count, namespace invariant.Namespace) {
 type Node_Capacity int
 
 // Node_Capacity_Invariants bounds initialized node storage.
-func Node_Capacity_Invariants(capacity Node_Capacity, namespace invariant.Namespace) {
-	invariant.Tree(capacity, namespace).
+func Node_Capacity_Invariants(capacity Node_Capacity, namespace aver.Namespace) {
+	aver.Tree(capacity, namespace).
 		Range_Int(int(capacity), CAPACITY_MINIMUM, CAPACITY_MAXIMUM).
 		Ensure()
 }
@@ -200,8 +201,8 @@ func Node_Capacity_Invariants(capacity Node_Capacity, namespace invariant.Namesp
 type Free_Position Position
 
 // Free_Position_Invariants bounds free-chain head.
-func Free_Position_Invariants(position Free_Position, namespace invariant.Namespace) {
-	invariant.Tree(position, namespace).
+func Free_Position_Invariants(position Free_Position, namespace aver.Namespace) {
+	aver.Tree(position, namespace).
 		Range_Int(int(position), POSITION_MINIMUM, POSITION_MAXIMUM).
 		Ensure()
 }
@@ -210,8 +211,8 @@ func Free_Position_Invariants(position Free_Position, namespace invariant.Namesp
 type Front_Position Position
 
 // Front_Position_Invariants bounds recency-chain head.
-func Front_Position_Invariants(position Front_Position, namespace invariant.Namespace) {
-	invariant.Tree(position, namespace).
+func Front_Position_Invariants(position Front_Position, namespace aver.Namespace) {
+	aver.Tree(position, namespace).
 		Range_Int(int(position), POSITION_MINIMUM, POSITION_MAXIMUM).
 		Ensure()
 }
@@ -220,8 +221,8 @@ func Front_Position_Invariants(position Front_Position, namespace invariant.Name
 type Back_Position Position
 
 // Back_Position_Invariants bounds recency-chain tail.
-func Back_Position_Invariants(position Back_Position, namespace invariant.Namespace) {
-	invariant.Tree(position, namespace).
+func Back_Position_Invariants(position Back_Position, namespace aver.Namespace) {
+	aver.Tree(position, namespace).
 		Range_Int(int(position), POSITION_MINIMUM, POSITION_MAXIMUM).
 		Ensure()
 }
@@ -231,9 +232,9 @@ type Buckets[K Key_Kind, V Value_Kind] [BUCKET_COUNT]Expirable_Bucket[K, V]
 
 // Buckets_Invariants fixes expiry-ring size.
 func Buckets_Invariants[K Key_Kind, V Value_Kind](
-	buckets Buckets[K, V], _ invariant.Namespace,
+	buckets Buckets[K, V], _ aver.Namespace,
 ) {
-	invariant.Always(
+	aver.Always(
 		len(buckets) == BUCKET_COUNT,
 		"Expiry cache owns one complete bucket ring.",
 	)
@@ -272,7 +273,7 @@ type Entry[K Key_Kind, V Value_Kind] struct {
 }
 
 // Entry_Invariants composes node handles, status, time, and bucket.
-func Entry_Invariants[K Key_Kind, V Value_Kind](entry Entry[K, V], namespace invariant.Namespace) {
+func Entry_Invariants[K Key_Kind, V Value_Kind](entry Entry[K, V], namespace aver.Namespace) {
 	Position_Invariants(entry.Next, namespace)
 	Position_Invariants(entry.Previous, namespace)
 	Status_Invariants(entry.Used, namespace)
@@ -286,8 +287,8 @@ func Entry_Invariants[K Key_Kind, V Value_Kind](entry Entry[K, V], namespace inv
 type Nodes[K Key_Kind, V Value_Kind] [COUNT_MAXIMUM]Entry[K, V]
 
 // Nodes_Invariants admits nil before initialization and fixed storage afterward.
-func Nodes_Invariants[K Key_Kind, V Value_Kind](nodes *Nodes[K, V], _ invariant.Namespace) {
-	invariant.Always(len(nodes) == COUNT_MAXIMUM, "Node storage has fixed bound.")
+func Nodes_Invariants[K Key_Kind, V Value_Kind](nodes *Nodes[K, V], _ aver.Namespace) {
+	aver.Always(len(nodes) == COUNT_MAXIMUM, "Node storage has fixed bound.")
 }
 
 // List is fixed-capacity doubly-linked metadata over caller-owned Nodes. Positions replace
@@ -309,18 +310,18 @@ type List[K Key_Kind, V Value_Kind] struct {
 }
 
 // List_Invariants composes pool state and node handles.
-func List_Invariants[K Key_Kind, V Value_Kind](list List[K, V], namespace invariant.Namespace) {
+func List_Invariants[K Key_Kind, V Value_Kind](list List[K, V], namespace aver.Namespace) {
 	Nodes_Invariants(list.Nodes, namespace)
 	Node_Capacity_Invariants(list.Capacity, namespace)
 	Free_Position_Invariants(list.Free, namespace)
 	Front_Position_Invariants(list.Front, namespace)
 	Back_Position_Invariants(list.Back, namespace)
 	Entry_Count_Invariants(list.Count, namespace)
-	invariant.Always(
+	aver.Always(
 		(list.Capacity == 0) == (list.Nodes == nil),
 		"List capacity and node ownership share initialization state.",
 	)
-	invariant.Always(
+	aver.Always(
 		list.Count <= Entry_Count(list.Capacity),
 		"List live count does not exceed initialized storage.",
 	)
@@ -333,7 +334,7 @@ func list_initialize[K Key_Kind, V Value_Kind](
 	List_Invariants(*l, "list_initialize.list")
 	Nodes_Invariants(nodes, "list_initialize.nodes")
 	Count_Invariants(capacity_count, "list_initialize.capacity_count")
-	invariant.Always(nodes != nil, "List initialization has node storage.")
+	aver.Always(nodes != nil, "List initialization has node storage.")
 	*nodes = Nodes[K, V]{}
 	l.Nodes = nodes
 	l.Capacity = Node_Capacity(capacity_count)
@@ -541,11 +542,11 @@ type Simple[K Key_Kind, V Value_Kind] struct {
 
 // Simple_Invariants composes capacity, list, and key index.
 func Simple_Invariants[K Key_Kind, V Value_Kind](
-	cache *Simple[K, V], namespace invariant.Namespace,
+	cache *Simple[K, V], namespace aver.Namespace,
 ) {
 	Capacity_Invariants(cache.Capacity, namespace)
 	List_Invariants(cache.Evict_List, namespace)
-	invariant.Always(
+	aver.Always(
 		cache.Capacity == Capacity(cache.Evict_List.Capacity),
 		"Simple capacity matches list storage.",
 	)
@@ -560,7 +561,7 @@ func New_Simple[K Key_Kind, V Value_Kind](
 	Simple_Invariants(c, "new_simple.cache")
 	Nodes_Invariants(nodes, "new_simple.nodes")
 	Capacity_Invariants(capacity_count, "new_simple.capacity_count")
-	invariant.Always(capacity_count > 0, "A Simple cache has positive capacity.")
+	aver.Always(capacity_count > 0, "A Simple cache has positive capacity.")
 	*c = Simple[K, V]{Capacity: capacity_count, On_Evict: on_evict}
 	list_initialize(&c.Evict_List, nodes, Count(capacity_count))
 }
@@ -571,7 +572,7 @@ func New_Simple[K Key_Kind, V Value_Kind](
 func Simple_Add[K Key_Kind, V Value_Kind](c *Simple[K, V], key K, value V) (evicted Status) {
 	defer func() { Status_Invariants(evicted, "simple_add.evicted") }()
 	Simple_Invariants(c, "simple_add.cache")
-	invariant.Always(c.Capacity > CAPACITY_MINIMUM, "Simple add cache is initialized.")
+	aver.Always(c.Capacity > CAPACITY_MINIMUM, "Simple add cache is initialized.")
 	if ent, found := list_find(&c.Evict_List, key); found {
 		list_move_to_front(&c.Evict_List, ent)
 		c.Evict_List.Nodes[ent].Value = value
@@ -590,7 +591,7 @@ func Simple_Add[K Key_Kind, V Value_Kind](c *Simple[K, V], key K, value V) (evic
 func Simple_Get[K Key_Kind, V Value_Kind](c *Simple[K, V], key K) (value V, ok Status) {
 	defer func() { Status_Invariants(ok, "simple_get.ok") }()
 	Simple_Invariants(c, "simple_get.cache")
-	invariant.Always(c.Capacity > CAPACITY_MINIMUM, "Simple get cache is initialized.")
+	aver.Always(c.Capacity > CAPACITY_MINIMUM, "Simple get cache is initialized.")
 	ent, found := list_find(&c.Evict_List, key)
 	if found {
 		list_move_to_front(&c.Evict_List, ent)
@@ -603,7 +604,7 @@ func Simple_Get[K Key_Kind, V Value_Kind](c *Simple[K, V], key K) (value V, ok S
 func Simple_Contains[K Key_Kind, V Value_Kind](c *Simple[K, V], key K) (ok Status) {
 	defer func() { Status_Invariants(ok, "simple_contains.ok") }()
 	Simple_Invariants(c, "simple_contains.cache")
-	invariant.Always(c.Capacity > CAPACITY_MINIMUM, "Simple contains cache is initialized.")
+	aver.Always(c.Capacity > CAPACITY_MINIMUM, "Simple contains cache is initialized.")
 	_, found := list_find(&c.Evict_List, key)
 	ok = Status(found)
 	return ok
@@ -614,7 +615,7 @@ func Simple_Contains[K Key_Kind, V Value_Kind](c *Simple[K, V], key K) (ok Statu
 func Simple_Peek[K Key_Kind, V Value_Kind](c *Simple[K, V], key K) (value V, ok Status) {
 	defer func() { Status_Invariants(ok, "simple_peek.ok") }()
 	Simple_Invariants(c, "simple_peek.cache")
-	invariant.Always(c.Capacity > CAPACITY_MINIMUM, "Simple peek cache is initialized.")
+	aver.Always(c.Capacity > CAPACITY_MINIMUM, "Simple peek cache is initialized.")
 	ent, found := list_find(&c.Evict_List, key)
 	if found {
 		return c.Evict_List.Nodes[ent].Value, true
@@ -632,7 +633,7 @@ func Simple_Contains_Or_Add[K Key_Kind, V Value_Kind](
 		Status_Invariants(evicted, "simple_contains_or_add.evicted")
 	}()
 	Simple_Invariants(c, "simple_contains_or_add.cache")
-	invariant.Always(
+	aver.Always(
 		c.Capacity > CAPACITY_MINIMUM,
 		"Simple contains or add cache is initialized.",
 	)
@@ -654,7 +655,7 @@ func Simple_Peek_Or_Add[K Key_Kind, V Value_Kind](
 		Status_Invariants(evicted, "simple_peek_or_add.evicted")
 	}()
 	Simple_Invariants(c, "simple_peek_or_add.cache")
-	invariant.Always(c.Capacity > CAPACITY_MINIMUM, "Simple peek or add cache is initialized.")
+	aver.Always(c.Capacity > CAPACITY_MINIMUM, "Simple peek or add cache is initialized.")
 	previous, present = Simple_Peek(c, key)
 	if present {
 		return previous, true, false
@@ -667,7 +668,7 @@ func Simple_Peek_Or_Add[K Key_Kind, V Value_Kind](
 func Simple_Remove[K Key_Kind, V Value_Kind](c *Simple[K, V], key K) (present Status) {
 	defer func() { Status_Invariants(present, "simple_remove.present") }()
 	Simple_Invariants(c, "simple_remove.cache")
-	invariant.Always(c.Capacity > CAPACITY_MINIMUM, "Simple remove cache is initialized.")
+	aver.Always(c.Capacity > CAPACITY_MINIMUM, "Simple remove cache is initialized.")
 	ent, found := list_find(&c.Evict_List, key)
 	if found {
 		simple_remove_element(c, ent)
@@ -681,7 +682,7 @@ func Simple_Remove[K Key_Kind, V Value_Kind](c *Simple[K, V], key K) (present St
 func Simple_Remove_Oldest[K Key_Kind, V Value_Kind](c *Simple[K, V]) (key K, value V, ok Status) {
 	defer func() { Status_Invariants(ok, "simple_remove_oldest.ok") }()
 	Simple_Invariants(c, "simple_remove_oldest.cache")
-	invariant.Always(
+	aver.Always(
 		c.Capacity > CAPACITY_MINIMUM,
 		"Simple remove oldest cache is initialized.",
 	)
@@ -700,7 +701,7 @@ func Simple_Remove_Oldest[K Key_Kind, V Value_Kind](c *Simple[K, V]) (key K, val
 func Simple_Get_Oldest[K Key_Kind, V Value_Kind](c *Simple[K, V]) (key K, value V, ok Status) {
 	defer func() { Status_Invariants(ok, "simple_get_oldest.ok") }()
 	Simple_Invariants(c, "simple_get_oldest.cache")
-	invariant.Always(c.Capacity > CAPACITY_MINIMUM, "Simple get oldest cache is initialized.")
+	aver.Always(c.Capacity > CAPACITY_MINIMUM, "Simple get oldest cache is initialized.")
 	ent := list_back(&c.Evict_List)
 	if ent != POSITION_NONE {
 		return c.Evict_List.Nodes[ent].Key, c.Evict_List.Nodes[ent].Value, true
@@ -715,7 +716,7 @@ func Simple_Keys[K Key_Kind, V Value_Kind](c *Simple[K, V], buffer Keys[K]) (cou
 	defer func() { Count_Invariants(count, "simple_keys.count") }()
 	Simple_Invariants(c, "simple_keys.cache")
 	Keys_Invariants(buffer, "simple_keys.buffer")
-	invariant.Always(c.Capacity > CAPACITY_MINIMUM, "Simple keys cache is initialized.")
+	aver.Always(c.Capacity > CAPACITY_MINIMUM, "Simple keys cache is initialized.")
 	for ent := list_back(&c.Evict_List); ent != POSITION_NONE; {
 		if count >= Count(buffer.Count) {
 			break
@@ -733,7 +734,7 @@ func Simple_Values[K Key_Kind, V Value_Kind](c *Simple[K, V], buffer Values[V]) 
 	defer func() { Count_Invariants(count, "simple_values.count") }()
 	Simple_Invariants(c, "simple_values.cache")
 	Values_Invariants(buffer, "simple_values.buffer")
-	invariant.Always(c.Capacity > CAPACITY_MINIMUM, "Simple values cache is initialized.")
+	aver.Always(c.Capacity > CAPACITY_MINIMUM, "Simple values cache is initialized.")
 	for ent := list_back(&c.Evict_List); ent != POSITION_NONE; {
 		if count >= Count(buffer.Count) {
 			break
@@ -749,7 +750,7 @@ func Simple_Values[K Key_Kind, V Value_Kind](c *Simple[K, V], buffer Values[V]) 
 func Simple_Count[K Key_Kind, V Value_Kind](c *Simple[K, V]) (count Count) {
 	defer func() { Count_Invariants(count, "simple_count.count") }()
 	Simple_Invariants(c, "simple_count.cache")
-	invariant.Always(c.Capacity > CAPACITY_MINIMUM, "Simple count cache is initialized.")
+	aver.Always(c.Capacity > CAPACITY_MINIMUM, "Simple count cache is initialized.")
 	return Count(c.Evict_List.Count)
 }
 
@@ -757,7 +758,7 @@ func Simple_Count[K Key_Kind, V Value_Kind](c *Simple[K, V]) (count Count) {
 func Simple_Cap[K Key_Kind, V Value_Kind](c *Simple[K, V]) (capacity Capacity) {
 	defer func() { Capacity_Invariants(capacity, "simple_cap.capacity") }()
 	Simple_Invariants(c, "simple_cap.cache")
-	invariant.Always(c.Capacity > CAPACITY_MINIMUM, "Simple cap cache is initialized.")
+	aver.Always(c.Capacity > CAPACITY_MINIMUM, "Simple cap cache is initialized.")
 	return c.Capacity
 }
 
@@ -765,7 +766,7 @@ func Simple_Cap[K Key_Kind, V Value_Kind](c *Simple[K, V]) (capacity Capacity) {
 // node to the pool.
 func Simple_Purge[K Key_Kind, V Value_Kind](c *Simple[K, V]) {
 	Simple_Invariants(c, "simple_purge.cache")
-	invariant.Always(c.Capacity > CAPACITY_MINIMUM, "Simple purge cache is initialized.")
+	aver.Always(c.Capacity > CAPACITY_MINIMUM, "Simple purge cache is initialized.")
 	if c.On_Evict != nil {
 		for position := c.Evict_List.Back; position != Back_Position(POSITION_NONE); {
 			entry := c.Evict_List.Nodes[position]
@@ -819,8 +820,8 @@ const CONFIGURED_RATIO_MINIMUM = (RATIO_MAXIMUM + int64(COUNT_MAXIMUM) - 1) / in
 type Ratio fixedpoint.Ratio
 
 // Ratio_Invariants bounds scaling from zero through one whole.
-func Ratio_Invariants(ratio Ratio, namespace invariant.Namespace) {
-	invariant.Tree(ratio, namespace).
+func Ratio_Invariants(ratio Ratio, namespace aver.Namespace) {
+	aver.Tree(ratio, namespace).
 		Range_Int64(int64(ratio), RATIO_MINIMUM, RATIO_MAXIMUM).
 		Ensure()
 }
@@ -829,8 +830,8 @@ func Ratio_Invariants(ratio Ratio, namespace invariant.Namespace) {
 type Recent_Ratio fixedpoint.Ratio
 
 // Recent_Ratio_Invariants bounds recent capacity share.
-func Recent_Ratio_Invariants(ratio Recent_Ratio, namespace invariant.Namespace) {
-	invariant.Tree(ratio, namespace).
+func Recent_Ratio_Invariants(ratio Recent_Ratio, namespace aver.Namespace) {
+	aver.Tree(ratio, namespace).
 		Range_Int64(int64(ratio), RATIO_MINIMUM, RATIO_MAXIMUM).
 		Ensure()
 }
@@ -839,8 +840,8 @@ func Recent_Ratio_Invariants(ratio Recent_Ratio, namespace invariant.Namespace) 
 type Ghost_Ratio fixedpoint.Ratio
 
 // Ghost_Ratio_Invariants bounds ghost capacity share.
-func Ghost_Ratio_Invariants(ratio Ghost_Ratio, namespace invariant.Namespace) {
-	invariant.Tree(ratio, namespace).
+func Ghost_Ratio_Invariants(ratio Ghost_Ratio, namespace aver.Namespace) {
+	aver.Tree(ratio, namespace).
 		Range_Int64(int64(ratio), RATIO_MINIMUM, RATIO_MAXIMUM).
 		Ensure()
 }
@@ -849,8 +850,8 @@ func Ghost_Ratio_Invariants(ratio Ghost_Ratio, namespace invariant.Namespace) {
 type Recent_Ratio_Input fixedpoint.Ratio
 
 // Recent_Ratio_Input_Invariants bounds recent ratio request.
-func Recent_Ratio_Input_Invariants(ratio Recent_Ratio_Input, namespace invariant.Namespace) {
-	invariant.Tree(ratio, namespace).
+func Recent_Ratio_Input_Invariants(ratio Recent_Ratio_Input, namespace aver.Namespace) {
+	aver.Tree(ratio, namespace).
 		Range_Int64(int64(ratio), RATIO_MINIMUM, RATIO_MAXIMUM).
 		Ensure()
 }
@@ -859,8 +860,8 @@ func Recent_Ratio_Input_Invariants(ratio Recent_Ratio_Input, namespace invariant
 type Ghost_Ratio_Input fixedpoint.Ratio
 
 // Ghost_Ratio_Input_Invariants bounds ghost ratio request.
-func Ghost_Ratio_Input_Invariants(ratio Ghost_Ratio_Input, namespace invariant.Namespace) {
-	invariant.Tree(ratio, namespace).
+func Ghost_Ratio_Input_Invariants(ratio Ghost_Ratio_Input, namespace aver.Namespace) {
+	aver.Tree(ratio, namespace).
 		Range_Int64(int64(ratio), RATIO_MINIMUM, RATIO_MAXIMUM).
 		Ensure()
 }
@@ -889,7 +890,7 @@ type Two_Queue[K Key_Kind, V Value_Kind] struct {
 
 // Two_Queue_Invariants composes fixed split and owned stores.
 func Two_Queue_Invariants[K Key_Kind, V Value_Kind](
-	cache *Two_Queue[K, V], namespace invariant.Namespace,
+	cache *Two_Queue[K, V], namespace aver.Namespace,
 ) {
 	Capacity_Invariants(cache.Capacity, namespace)
 	Count_Invariants(cache.Recent_Size, namespace)
@@ -897,29 +898,29 @@ func Two_Queue_Invariants[K Key_Kind, V Value_Kind](
 	Ghost_Ratio_Invariants(cache.Ghost_Ratio, namespace)
 	Live_Caches_Invariants(cache.Live, namespace)
 	Ghost_Caches_Invariants(cache.Ghost, namespace)
-	invariant.Always(
+	aver.Always(
 		cache.Live[0].Capacity == cache.Capacity,
 		"Recent storage matches Two_Queue capacity.",
 	)
-	invariant.Always(
+	aver.Always(
 		cache.Live[1].Capacity == cache.Capacity,
 		"Frequent storage matches Two_Queue capacity.",
 	)
-	invariant.Always(
+	aver.Always(
 		(cache.Ghost[0].Capacity > CAPACITY_MINIMUM) ==
 			(cache.Capacity > CAPACITY_MINIMUM),
 		"Ghost storage shares Two_Queue initialization state.",
 	)
-	invariant.Always(
+	aver.Always(
 		cache.Recent_Size <= Count(cache.Capacity),
 		"Recent limit does not exceed Two_Queue capacity.",
 	)
-	invariant.Always(
+	aver.Always(
 		(cache.Recent_Ratio >= Recent_Ratio(CONFIGURED_RATIO_MINIMUM)) ==
 			(cache.Capacity > CAPACITY_MINIMUM),
 		"Recent ratio shares Two_Queue initialization state.",
 	)
-	invariant.Always(
+	aver.Always(
 		(cache.Ghost_Ratio >= Ghost_Ratio(CONFIGURED_RATIO_MINIMUM)) ==
 			(cache.Capacity > CAPACITY_MINIMUM),
 		"Ghost ratio shares Two_Queue initialization state.",
@@ -934,13 +935,13 @@ type Live_Caches[K Key_Kind, V Value_Kind] [LIVE_CACHE_COUNT]Simple[K, V]
 
 // Live_Caches_Invariants fixes live-cache pair and requires both stores.
 func Live_Caches_Invariants[K Key_Kind, V Value_Kind](
-	caches Live_Caches[K, V], _ invariant.Namespace,
+	caches Live_Caches[K, V], _ aver.Namespace,
 ) {
-	invariant.Always(
+	aver.Always(
 		caches[0].Capacity >= CAPACITY_MINIMUM,
 		"Recent storage has valid zero state.",
 	)
-	invariant.Always(
+	aver.Always(
 		caches[1].Capacity >= CAPACITY_MINIMUM,
 		"Frequent storage has valid zero state.",
 	)
@@ -953,8 +954,8 @@ const GHOST_CACHE_COUNT = 1
 type Ghost_Caches[K Key_Kind] [GHOST_CACHE_COUNT]Simple[K, struct{}]
 
 // Ghost_Caches_Invariants requires ghost storage.
-func Ghost_Caches_Invariants[K Key_Kind](caches Ghost_Caches[K], _ invariant.Namespace) {
-	invariant.Always(
+func Ghost_Caches_Invariants[K Key_Kind](caches Ghost_Caches[K], _ aver.Namespace) {
+	aver.Always(
 		caches[0].Capacity >= CAPACITY_MINIMUM,
 		"Ghost storage has valid zero state.",
 	)
@@ -970,9 +971,9 @@ type Two_Queue_Nodes[K Key_Kind, V Value_Kind] struct {
 
 // Two_Queue_Nodes_Invariants requires caller storage.
 func Two_Queue_Nodes_Invariants[K Key_Kind, V Value_Kind](
-	nodes *Two_Queue_Nodes[K, V], _ invariant.Namespace,
+	nodes *Two_Queue_Nodes[K, V], _ aver.Namespace,
 ) {
-	invariant.Always(nodes != nil, "Two_Queue has caller-owned node storage.")
+	aver.Always(nodes != nil, "Two_Queue has caller-owned node storage.")
 }
 
 // Two_Queue_Input configures New_Two_Queue. It is not generic: neither the capacity nor the ratios
@@ -989,7 +990,7 @@ type Two_Queue_Input struct {
 }
 
 // Two_Queue_Input_Invariants composes requested capacity split.
-func Two_Queue_Input_Invariants(input Two_Queue_Input, namespace invariant.Namespace) {
+func Two_Queue_Input_Invariants(input Two_Queue_Input, namespace aver.Namespace) {
 	Capacity_Invariants(input.Capacity, namespace)
 	Recent_Ratio_Input_Invariants(input.Recent_Ratio, namespace)
 	Ghost_Ratio_Input_Invariants(input.Ghost_Ratio, namespace)
@@ -1013,20 +1014,20 @@ func New_Two_Queue[K Key_Kind, V Value_Kind](
 	if ghost_ratio == 0 {
 		ghost_ratio = DEFAULT_GHOST_RATIO
 	}
-	invariant.Always(input.Capacity > 0, "A Two_Queue cache has positive capacity.")
-	invariant.Always(
+	aver.Always(input.Capacity > 0, "A Two_Queue cache has positive capacity.")
+	aver.Always(
 		recent_ratio >= Recent_Ratio(CONFIGURED_RATIO_MINIMUM),
 		"A recent ratio gives storage at maximum capacity.",
 	)
-	invariant.Always(recent_ratio <= fixedpoint.SCALE, "A recent ratio does not exceed one.")
-	invariant.Always(
+	aver.Always(recent_ratio <= fixedpoint.SCALE, "A recent ratio does not exceed one.")
+	aver.Always(
 		ghost_ratio >= Ghost_Ratio(CONFIGURED_RATIO_MINIMUM),
 		"A ghost ratio gives storage at maximum capacity.",
 	)
-	invariant.Always(ghost_ratio <= fixedpoint.SCALE, "A ghost ratio does not exceed one.")
+	aver.Always(ghost_ratio <= fixedpoint.SCALE, "A ghost ratio does not exceed one.")
 	recent_size := ratio_of(Count(input.Capacity), Ratio(recent_ratio))
 	evict_size := ratio_of(Count(input.Capacity), Ratio(ghost_ratio))
-	invariant.Always(evict_size > 0, "A ghost ratio gives at least one ghost entry.")
+	aver.Always(evict_size > 0, "A ghost ratio gives at least one ghost entry.")
 	*c = Two_Queue[K, V]{
 		Capacity:     input.Capacity,
 		Recent_Size:  recent_size,
@@ -1043,7 +1044,7 @@ func New_Two_Queue[K Key_Kind, V Value_Kind](
 func Two_Queue_Get[K Key_Kind, V Value_Kind](c *Two_Queue[K, V], key K) (value V, ok Status) {
 	defer func() { Status_Invariants(ok, "two_queue_get.ok") }()
 	Two_Queue_Invariants(c, "two_queue_get.cache")
-	invariant.Always(c.Capacity > CAPACITY_MINIMUM, "Two queue get cache is initialized.")
+	aver.Always(c.Capacity > CAPACITY_MINIMUM, "Two queue get cache is initialized.")
 	value, ok = Simple_Get(&c.Live[1], key)
 	if ok {
 		return value, ok
@@ -1062,7 +1063,7 @@ func Two_Queue_Get[K Key_Kind, V Value_Kind](c *Two_Queue[K, V], key K) (value V
 // promoted to frequent, a ghost key returns as frequent, and a brand-new key lands in recent.
 func Two_Queue_Add[K Key_Kind, V Value_Kind](c *Two_Queue[K, V], key K, value V) {
 	Two_Queue_Invariants(c, "two_queue_add.cache")
-	invariant.Always(c.Capacity > CAPACITY_MINIMUM, "Two queue add cache is initialized.")
+	aver.Always(c.Capacity > CAPACITY_MINIMUM, "Two queue add cache is initialized.")
 	if Simple_Contains(&c.Live[1], key) {
 		Simple_Add(&c.Live[1], key, value)
 		return
@@ -1089,7 +1090,7 @@ func Two_Queue_Add[K Key_Kind, V Value_Kind](c *Two_Queue[K, V], key K, value V)
 func Two_Queue_Contains[K Key_Kind, V Value_Kind](c *Two_Queue[K, V], key K) (ok Status) {
 	defer func() { Status_Invariants(ok, "two_queue_contains.ok") }()
 	Two_Queue_Invariants(c, "two_queue_contains.cache")
-	invariant.Always(c.Capacity > CAPACITY_MINIMUM, "Two queue contains cache is initialized.")
+	aver.Always(c.Capacity > CAPACITY_MINIMUM, "Two queue contains cache is initialized.")
 	if Simple_Contains(&c.Live[1], key) {
 		return true
 	}
@@ -1101,7 +1102,7 @@ func Two_Queue_Contains[K Key_Kind, V Value_Kind](c *Two_Queue[K, V], key K) (ok
 func Two_Queue_Peek[K Key_Kind, V Value_Kind](c *Two_Queue[K, V], key K) (value V, ok Status) {
 	defer func() { Status_Invariants(ok, "two_queue_peek.ok") }()
 	Two_Queue_Invariants(c, "two_queue_peek.cache")
-	invariant.Always(c.Capacity > CAPACITY_MINIMUM, "Two queue peek cache is initialized.")
+	aver.Always(c.Capacity > CAPACITY_MINIMUM, "Two queue peek cache is initialized.")
 	value, ok = Simple_Peek(&c.Live[1], key)
 	if ok {
 		return value, ok
@@ -1112,7 +1113,7 @@ func Two_Queue_Peek[K Key_Kind, V Value_Kind](c *Two_Queue[K, V], key K) (value 
 // Two_Queue_Remove deletes key from whichever of the frequent, recent, or ghost lists holds it.
 func Two_Queue_Remove[K Key_Kind, V Value_Kind](c *Two_Queue[K, V], key K) {
 	Two_Queue_Invariants(c, "two_queue_remove.cache")
-	invariant.Always(c.Capacity > CAPACITY_MINIMUM, "Two queue remove cache is initialized.")
+	aver.Always(c.Capacity > CAPACITY_MINIMUM, "Two queue remove cache is initialized.")
 	if Simple_Remove(&c.Live[1], key) {
 		return
 	}
@@ -1128,7 +1129,7 @@ func Two_Queue_Keys[K Key_Kind, V Value_Kind](c *Two_Queue[K, V], buffer Keys[K]
 	defer func() { Count_Invariants(count, "two_queue_keys.count") }()
 	Two_Queue_Invariants(c, "two_queue_keys.cache")
 	Keys_Invariants(buffer, "two_queue_keys.buffer")
-	invariant.Always(c.Capacity > CAPACITY_MINIMUM, "Two queue keys cache is initialized.")
+	aver.Always(c.Capacity > CAPACITY_MINIMUM, "Two queue keys cache is initialized.")
 	for live_index := LIVE_CACHE_COUNT - 1; live_index >= 0; live_index-- {
 		list := &c.Live[live_index].Evict_List
 		for position := list_back(list); position != POSITION_NONE; {
@@ -1151,7 +1152,7 @@ func Two_Queue_Values[K Key_Kind, V Value_Kind](
 	defer func() { Count_Invariants(count, "two_queue_values.count") }()
 	Two_Queue_Invariants(c, "two_queue_values.cache")
 	Values_Invariants(buffer, "two_queue_values.buffer")
-	invariant.Always(c.Capacity > CAPACITY_MINIMUM, "Two queue values cache is initialized.")
+	aver.Always(c.Capacity > CAPACITY_MINIMUM, "Two queue values cache is initialized.")
 	for live_index := LIVE_CACHE_COUNT - 1; live_index >= 0; live_index-- {
 		list := &c.Live[live_index].Evict_List
 		for position := list_back(list); position != POSITION_NONE; {
@@ -1170,7 +1171,7 @@ func Two_Queue_Values[K Key_Kind, V Value_Kind](
 func Two_Queue_Count[K Key_Kind, V Value_Kind](c *Two_Queue[K, V]) (count Count) {
 	defer func() { Count_Invariants(count, "two_queue_count.count") }()
 	Two_Queue_Invariants(c, "two_queue_count.cache")
-	invariant.Always(c.Capacity > CAPACITY_MINIMUM, "Two queue count cache is initialized.")
+	aver.Always(c.Capacity > CAPACITY_MINIMUM, "Two queue count cache is initialized.")
 	return Simple_Count(&c.Live[1]) + Simple_Count(&c.Live[0])
 }
 
@@ -1178,14 +1179,14 @@ func Two_Queue_Count[K Key_Kind, V Value_Kind](c *Two_Queue[K, V]) (count Count)
 func Two_Queue_Cap[K Key_Kind, V Value_Kind](c *Two_Queue[K, V]) (capacity Capacity) {
 	defer func() { Capacity_Invariants(capacity, "two_queue_cap.capacity") }()
 	Two_Queue_Invariants(c, "two_queue_cap.cache")
-	invariant.Always(c.Capacity > CAPACITY_MINIMUM, "Two queue cap cache is initialized.")
+	aver.Always(c.Capacity > CAPACITY_MINIMUM, "Two queue cap cache is initialized.")
 	return c.Capacity
 }
 
 // Two_Queue_Purge empties the frequent, recent, and ghost lists.
 func Two_Queue_Purge[K Key_Kind, V Value_Kind](c *Two_Queue[K, V]) {
 	Two_Queue_Invariants(c, "two_queue_purge.cache")
-	invariant.Always(c.Capacity > CAPACITY_MINIMUM, "Two queue purge cache is initialized.")
+	aver.Always(c.Capacity > CAPACITY_MINIMUM, "Two queue purge cache is initialized.")
 	Simple_Purge(&c.Live[0])
 	Simple_Purge(&c.Live[1])
 	Simple_Purge(&c.Ghost[0])
@@ -1242,8 +1243,8 @@ const BUCKET_COUNT = 100
 type TTL time.Duration
 
 // TTL_Invariants keeps expiry addition inside bounded monotonic time.
-func TTL_Invariants(ttl TTL, namespace invariant.Namespace) {
-	invariant.Tree(ttl, namespace).
+func TTL_Invariants(ttl TTL, namespace aver.Namespace) {
+	aver.Tree(ttl, namespace).
 		Range_Int64(int64(ttl), int64(TTL_MINIMUM), int64(TTL_MAXIMUM)).
 		Ensure()
 }
@@ -1261,8 +1262,8 @@ const TTL_MAXIMUM = TTL(time.MONOTONIC_MOMENT_MAXIMUM)
 type Cleanup_Interval time.Duration
 
 // Cleanup_Interval_Invariants bounds one ring step by largest TTL divided across the ring.
-func Cleanup_Interval_Invariants(interval Cleanup_Interval, namespace invariant.Namespace) {
-	invariant.Tree(interval, namespace).
+func Cleanup_Interval_Invariants(interval Cleanup_Interval, namespace aver.Namespace) {
+	aver.Tree(interval, namespace).
 		Range_Int64(
 			int64(interval),
 			int64(CLEANUP_INTERVAL_MINIMUM),
@@ -1290,7 +1291,7 @@ type Expirable_Bucket[K Key_Kind, V Value_Kind] struct {
 
 // Expirable_Bucket_Invariants composes chain head and expiry bound.
 func Expirable_Bucket_Invariants[K Key_Kind, V Value_Kind](
-	bucket Expirable_Bucket[K, V], namespace invariant.Namespace,
+	bucket Expirable_Bucket[K, V], namespace aver.Namespace,
 ) {
 	Position_Invariants(bucket.Head, namespace)
 	time.Monotonic_Moment_Invariants(bucket.Newest_Entry, namespace)
@@ -1300,40 +1301,36 @@ func Expirable_Bucket_Invariants[K Key_Kind, V Value_Kind](
 type Cache_Clock time.Clock
 
 // Cache_Clock_Invariants admits zero storage and complete initialized clock.
-func Cache_Clock_Invariants(clock Cache_Clock, _ invariant.Namespace) {
-	invariant.Always(
+func Cache_Clock_Invariants(clock Cache_Clock, _ aver.Namespace) {
+	aver.Always(
 		(clock.Now_Monotonic == nil) == (clock.Now_Realtime == nil),
 		"A cache clock is empty or complete.",
 	)
 }
 
 // Cache_Timeline is zero before initialization or one complete injected timeline.
-type Cache_Timeline time.Timeline
+type Cache_Timeline nbio.Timeline
 
 // Cache_Timeline_Invariants admits zero storage and complete timeline vtable.
-func Cache_Timeline_Invariants(timeline Cache_Timeline, _ invariant.Namespace) {
+func Cache_Timeline_Invariants(timeline Cache_Timeline, _ aver.Namespace) {
 	empty := timeline.Submit == nil
-	invariant.Always(
+	aver.Always(
 		(timeline.Timeout == nil) == empty,
 		"A cache timeline timeout matches initialization state.",
 	)
-	invariant.Always(
-		(timeline.Stop_Timer == nil) == empty,
-		"A cache timeline timer stop matches initialization state.",
-	)
-	invariant.Always(
+	aver.Always(
 		(timeline.Open_Event == nil) == empty,
 		"A cache timeline event opener matches initialization state.",
 	)
-	invariant.Always(
+	aver.Always(
 		(timeline.Event_Listen == nil) == empty,
 		"A cache timeline event listener matches initialization state.",
 	)
-	invariant.Always(
+	aver.Always(
 		(timeline.Event_Trigger == nil) == empty,
 		"A cache timeline event trigger matches initialization state.",
 	)
-	invariant.Always(
+	aver.Always(
 		(timeline.Close_Event == nil) == empty,
 		"A cache timeline event closer matches initialization state.",
 	)
@@ -1342,13 +1339,13 @@ func Cache_Timeline_Invariants(timeline Cache_Timeline, _ invariant.Namespace) {
 // Cleanup owns callback state beside Completion, whose address reaches this wrapper.
 type Cleanup struct {
 	// Completion must stay first so callback can recover Cleanup without pointer arithmetic.
-	Completion time.Completion
+	Completion nbio.Completion
 	// Due records one fired timeout until cache access performs bounded generic cleanup.
 	Due Status
 }
 
 // Cleanup_Invariants admits zero storage and complete initialized callback state.
-func Cleanup_Invariants(cleanup Cleanup, namespace invariant.Namespace) {
+func Cleanup_Invariants(cleanup Cleanup, namespace aver.Namespace) {
 	Status_Invariants(cleanup.Due, namespace)
 }
 
@@ -1380,7 +1377,7 @@ type Expirable[K Key_Kind, V Value_Kind] struct {
 
 // Expirable_Invariants composes cache storage and injected timeline.
 func Expirable_Invariants[K Key_Kind, V Value_Kind](
-	cache *Expirable[K, V], namespace invariant.Namespace,
+	cache *Expirable[K, V], namespace aver.Namespace,
 ) {
 	Capacity_Invariants(cache.Capacity, namespace)
 	TTL_Invariants(cache.TTL, namespace)
@@ -1390,21 +1387,21 @@ func Expirable_Invariants[K Key_Kind, V Value_Kind](
 	List_Invariants(cache.Evict_List, namespace)
 	Buckets_Invariants(cache.Buckets, namespace)
 	Bucket_Index_Invariants(cache.Next_Cleanup_Bucket, namespace)
-	invariant.Always(
+	aver.Always(
 		cache.Capacity == Capacity(cache.Evict_List.Capacity),
 		"Expirable capacity matches list storage.",
 	)
-	invariant.Always(
+	aver.Always(
 		(cache.TTL >= TTL_INITIALIZED_MINIMUM) ==
 			(cache.Capacity > CAPACITY_MINIMUM),
 		"TTL shares Expirable initialization state.",
 	)
-	invariant.Always(
+	aver.Always(
 		(cache.Clock.Now_Monotonic != nil) ==
 			(cache.Capacity > CAPACITY_MINIMUM),
 		"Clock shares Expirable initialization state.",
 	)
-	invariant.Always(
+	aver.Always(
 		(cache.Timeline.Timeout != nil) ==
 			(cache.Capacity > CAPACITY_MINIMUM),
 		"Timeline shares Expirable initialization state.",
@@ -1420,19 +1417,19 @@ type Expirable_Input[K Key_Kind, V Value_Kind] struct {
 	// Clock is the injected time source expiry is measured against; required.
 	Clock time.Clock
 	// Timeline is the injected timer the cleanup sweep rides; required.
-	Timeline time.Timeline
+	Timeline nbio.Timeline
 	// On_Evict, when non-nil, runs for every entry the cache discards.
 	On_Evict Evict_Callback[K, V]
 }
 
 // Expirable_Input_Invariants composes cache bounds and injected timeline.
 func Expirable_Input_Invariants[K Key_Kind, V Value_Kind](
-	input Expirable_Input[K, V], namespace invariant.Namespace,
+	input Expirable_Input[K, V], namespace aver.Namespace,
 ) {
 	Capacity_Invariants(input.Capacity, namespace)
 	TTL_Invariants(input.TTL, namespace)
 	time.Clock_Invariants(input.Clock, namespace)
-	time.Timeline_Invariants(input.Timeline, namespace)
+	nbio.Timeline_Invariants(input.Timeline, namespace)
 }
 
 // New_Expirable initializes caller cache and node storage, then arms cleanup timer. Positive
@@ -1444,17 +1441,17 @@ func New_Expirable[K Key_Kind, V Value_Kind](
 	Expirable_Invariants(c, "new_expirable.cache")
 	Nodes_Invariants(nodes, "new_expirable.nodes")
 	Expirable_Input_Invariants(input, "new_expirable.input")
-	invariant.Always(
+	aver.Always(
 		!c.Cleanup.Completion.Armed,
 		"Expirable initialization does not replace armed cleanup.",
 	)
-	invariant.Always(input.Capacity > 0, "An Expirable cache has positive capacity.")
-	invariant.Always(
+	aver.Always(input.Capacity > 0, "An Expirable cache has positive capacity.")
+	aver.Always(
 		input.TTL >= TTL_INITIALIZED_MINIMUM,
 		"An Expirable cache has positive TTL.",
 	)
-	invariant.Always(input.Clock.Now_Monotonic != nil, "An Expirable cache has a clock.")
-	invariant.Always(input.Timeline.Timeout != nil, "An Expirable cache has a timeline.")
+	aver.Always(input.Clock.Now_Monotonic != nil, "An Expirable cache has a clock.")
+	aver.Always(input.Timeline.Timeout != nil, "An Expirable cache has a timeline.")
 	*c = Expirable[K, V]{
 		Capacity: input.Capacity,
 		TTL:      input.TTL,
@@ -1475,9 +1472,10 @@ func New_Expirable[K Key_Kind, V Value_Kind](
 func Expirable_Add[K Key_Kind, V Value_Kind](c *Expirable[K, V], key K, value V) (evicted Status) {
 	defer func() { Status_Invariants(evicted, "expirable_add.evicted") }()
 	Expirable_Invariants(c, "expirable_add.cache")
-	invariant.Always(c.Capacity > CAPACITY_MINIMUM, "Expirable add cache is initialized.")
+	aver.Always(c.Capacity > CAPACITY_MINIMUM, "Expirable add cache is initialized.")
 	expirable_reap_due(c)
-	expires_at := time.Clock_Now_Monotonic(time.Clock(c.Clock)) + time.Monotonic_Moment(c.TTL)
+	now := time.Clock_Now_Monotonic(time.Clock(c.Clock))
+	expires_at := now + time.Monotonic_Moment(c.TTL)
 	if ent, found := list_find(&c.Evict_List, key); found {
 		list_move_to_front(&c.Evict_List, ent)
 		// The renewed expiry belongs in a different bucket, so refile it.
@@ -1501,7 +1499,7 @@ func Expirable_Add[K Key_Kind, V Value_Kind](c *Expirable[K, V], key K, value V)
 func Expirable_Get[K Key_Kind, V Value_Kind](c *Expirable[K, V], key K) (value V, ok Status) {
 	defer func() { Status_Invariants(ok, "expirable_get.ok") }()
 	Expirable_Invariants(c, "expirable_get.cache")
-	invariant.Always(c.Capacity > CAPACITY_MINIMUM, "Expirable get cache is initialized.")
+	aver.Always(c.Capacity > CAPACITY_MINIMUM, "Expirable get cache is initialized.")
 	expirable_reap_due(c)
 	ent, found := list_find(&c.Evict_List, key)
 	if !found {
@@ -1521,7 +1519,7 @@ func Expirable_Get[K Key_Kind, V Value_Kind](c *Expirable[K, V], key K) (value V
 func Expirable_Contains[K Key_Kind, V Value_Kind](c *Expirable[K, V], key K) (ok Status) {
 	defer func() { Status_Invariants(ok, "expirable_contains.ok") }()
 	Expirable_Invariants(c, "expirable_contains.cache")
-	invariant.Always(c.Capacity > CAPACITY_MINIMUM, "Expirable contains cache is initialized.")
+	aver.Always(c.Capacity > CAPACITY_MINIMUM, "Expirable contains cache is initialized.")
 	expirable_reap_due(c)
 	_, found := list_find(&c.Evict_List, key)
 	ok = Status(found)
@@ -1533,7 +1531,7 @@ func Expirable_Contains[K Key_Kind, V Value_Kind](c *Expirable[K, V], key K) (ok
 func Expirable_Peek[K Key_Kind, V Value_Kind](c *Expirable[K, V], key K) (value V, ok Status) {
 	defer func() { Status_Invariants(ok, "expirable_peek.ok") }()
 	Expirable_Invariants(c, "expirable_peek.cache")
-	invariant.Always(c.Capacity > CAPACITY_MINIMUM, "Expirable peek cache is initialized.")
+	aver.Always(c.Capacity > CAPACITY_MINIMUM, "Expirable peek cache is initialized.")
 	expirable_reap_due(c)
 	ent, found := list_find(&c.Evict_List, key)
 	if !found {
@@ -1549,7 +1547,7 @@ func Expirable_Peek[K Key_Kind, V Value_Kind](c *Expirable[K, V], key K) (value 
 func Expirable_Remove[K Key_Kind, V Value_Kind](c *Expirable[K, V], key K) (present Status) {
 	defer func() { Status_Invariants(present, "expirable_remove.present") }()
 	Expirable_Invariants(c, "expirable_remove.cache")
-	invariant.Always(c.Capacity > CAPACITY_MINIMUM, "Expirable remove cache is initialized.")
+	aver.Always(c.Capacity > CAPACITY_MINIMUM, "Expirable remove cache is initialized.")
 	expirable_reap_due(c)
 	ent, found := list_find(&c.Evict_List, key)
 	if found {
@@ -1566,7 +1564,7 @@ func Expirable_Remove_Oldest[K Key_Kind, V Value_Kind](
 ) (key K, value V, ok Status) {
 	defer func() { Status_Invariants(ok, "expirable_remove_oldest.ok") }()
 	Expirable_Invariants(c, "expirable_remove_oldest.cache")
-	invariant.Always(
+	aver.Always(
 		c.Capacity > CAPACITY_MINIMUM,
 		"Expirable remove oldest cache is initialized.",
 	)
@@ -1588,7 +1586,7 @@ func Expirable_Get_Oldest[K Key_Kind, V Value_Kind](
 ) (key K, value V, ok Status) {
 	defer func() { Status_Invariants(ok, "expirable_get_oldest.ok") }()
 	Expirable_Invariants(c, "expirable_get_oldest.cache")
-	invariant.Always(
+	aver.Always(
 		c.Capacity > CAPACITY_MINIMUM,
 		"Expirable get oldest cache is initialized.",
 	)
@@ -1606,7 +1604,7 @@ func Expirable_Keys[K Key_Kind, V Value_Kind](c *Expirable[K, V], buffer Keys[K]
 	defer func() { Count_Invariants(count, "expirable_keys.count") }()
 	Expirable_Invariants(c, "expirable_keys.cache")
 	Keys_Invariants(buffer, "expirable_keys.buffer")
-	invariant.Always(c.Capacity > CAPACITY_MINIMUM, "Expirable keys cache is initialized.")
+	aver.Always(c.Capacity > CAPACITY_MINIMUM, "Expirable keys cache is initialized.")
 	expirable_reap_due(c)
 	now := time.Clock_Now_Monotonic(time.Clock(c.Clock))
 	for ent := list_back(&c.Evict_List); ent != POSITION_NONE; {
@@ -1632,7 +1630,7 @@ func Expirable_Values[K Key_Kind, V Value_Kind](
 	defer func() { Count_Invariants(count, "expirable_values.count") }()
 	Expirable_Invariants(c, "expirable_values.cache")
 	Values_Invariants(buffer, "expirable_values.buffer")
-	invariant.Always(c.Capacity > CAPACITY_MINIMUM, "Expirable values cache is initialized.")
+	aver.Always(c.Capacity > CAPACITY_MINIMUM, "Expirable values cache is initialized.")
 	expirable_reap_due(c)
 	now := time.Clock_Now_Monotonic(time.Clock(c.Clock))
 	for ent := list_back(&c.Evict_List); ent != POSITION_NONE; {
@@ -1655,7 +1653,7 @@ func Expirable_Values[K Key_Kind, V Value_Kind](
 func Expirable_Count[K Key_Kind, V Value_Kind](c *Expirable[K, V]) (count Count) {
 	defer func() { Count_Invariants(count, "expirable_count.count") }()
 	Expirable_Invariants(c, "expirable_count.cache")
-	invariant.Always(c.Capacity > CAPACITY_MINIMUM, "Expirable count cache is initialized.")
+	aver.Always(c.Capacity > CAPACITY_MINIMUM, "Expirable count cache is initialized.")
 	expirable_reap_due(c)
 	return Count(c.Evict_List.Count)
 }
@@ -1664,7 +1662,7 @@ func Expirable_Count[K Key_Kind, V Value_Kind](c *Expirable[K, V]) (count Count)
 func Expirable_Cap[K Key_Kind, V Value_Kind](c *Expirable[K, V]) (capacity Capacity) {
 	defer func() { Capacity_Invariants(capacity, "expirable_cap.capacity") }()
 	Expirable_Invariants(c, "expirable_cap.cache")
-	invariant.Always(c.Capacity > CAPACITY_MINIMUM, "Expirable cap cache is initialized.")
+	aver.Always(c.Capacity > CAPACITY_MINIMUM, "Expirable cap cache is initialized.")
 	expirable_reap_due(c)
 	return c.Capacity
 }
@@ -1673,7 +1671,7 @@ func Expirable_Cap[K Key_Kind, V Value_Kind](c *Expirable[K, V]) (capacity Capac
 // returns every node to the pool.
 func Expirable_Purge[K Key_Kind, V Value_Kind](c *Expirable[K, V]) {
 	Expirable_Invariants(c, "expirable_purge.cache")
-	invariant.Always(c.Capacity > CAPACITY_MINIMUM, "Expirable purge cache is initialized.")
+	aver.Always(c.Capacity > CAPACITY_MINIMUM, "Expirable purge cache is initialized.")
 	expirable_reap_due(c)
 	if c.On_Evict != nil {
 		for position := c.Evict_List.Back; position != Back_Position(POSITION_NONE); {
@@ -1694,8 +1692,8 @@ func Expirable_Purge[K Key_Kind, V Value_Kind](c *Expirable[K, V]) {
 // timeout carries error and leaves cleanup idle.
 func expirable_arm_cleanup[K Key_Kind, V Value_Kind](c *Expirable[K, V]) {
 	Expirable_Invariants(c, "expirable_arm_cleanup.cache")
-	time.Timeline_Timeout(
-		time.Timeline(c.Timeline),
+	nbio.Timeline_Timeout(
+		nbio.Timeline(c.Timeline),
 		&c.Cleanup.Completion,
 		time.Duration(expirable_cleanup_interval(c)),
 		expirable_cleanup_callback,
@@ -1703,7 +1701,7 @@ func expirable_arm_cleanup[K Key_Kind, V Value_Kind](c *Expirable[K, V]) {
 }
 
 // Expirable cleanup callback recovers wrapper because Completion is its first field.
-func expirable_cleanup_callback(completion *time.Completion) {
+func expirable_cleanup_callback(completion *nbio.Completion) {
 	cleanup := (*Cleanup)(unsafe.Pointer(completion))
 	if completion.Error != nil {
 		return

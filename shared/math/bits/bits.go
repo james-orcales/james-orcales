@@ -6,7 +6,7 @@
 package bits
 
 import (
-	"local/james-orcales/shared/invariant/default"
+	"local/james-orcales/shared/simulation/aver/default"
 )
 
 // WORD_SIZE is the bit width of a machine word. This repository builds for 64-bit targets
@@ -190,8 +190,8 @@ const DIVISION_REMAINDER_WORD_MAXIMUM uint = PRODUCT_HIGH_WORD_MAXIMUM
 type Word_8 uint8
 
 // Word_8_Invariants states the complete 8-bit word domain.
-func Word_8_Invariants(value Word_8, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Word_8_Invariants(value Word_8, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint8(uint8(value), WORD_8_MINIMUM, WORD_8_MAXIMUM).
 		Ensure()
 }
@@ -200,8 +200,8 @@ func Word_8_Invariants(value Word_8, namespace invariant.Namespace) {
 type Word_16 uint16
 
 // Word_16_Invariants states the complete 16-bit word domain.
-func Word_16_Invariants(value Word_16, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Word_16_Invariants(value Word_16, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint16(uint16(value), WORD_16_MINIMUM, WORD_16_MAXIMUM).
 		Ensure()
 }
@@ -210,8 +210,8 @@ func Word_16_Invariants(value Word_16, namespace invariant.Namespace) {
 type Word_32 uint32
 
 // Word_32_Invariants states the complete 32-bit word domain.
-func Word_32_Invariants(value Word_32, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Word_32_Invariants(value Word_32, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint32(uint32(value), WORD_32_MINIMUM, WORD_32_MAXIMUM).
 		Ensure()
 }
@@ -220,8 +220,8 @@ func Word_32_Invariants(value Word_32, namespace invariant.Namespace) {
 type Word_64 uint64
 
 // Word_64_Invariants states the complete 64-bit word domain.
-func Word_64_Invariants(value Word_64, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Word_64_Invariants(value Word_64, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint64(uint64(value), WORD_64_MINIMUM, WORD_64_MAXIMUM).
 		Ensure()
 }
@@ -230,8 +230,8 @@ func Word_64_Invariants(value Word_64, namespace invariant.Namespace) {
 type Word uint
 
 // Word_Invariants states the complete machine-word domain.
-func Word_Invariants(value Word, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Word_Invariants(value Word, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint(uint(value), WORD_MINIMUM, WORD_MAXIMUM).
 		Ensure()
 }
@@ -240,8 +240,8 @@ func Word_Invariants(value Word, namespace invariant.Namespace) {
 type Bit_Count_8 int
 
 // Bit_Count_8_Invariants bounds a count to the 8-bit operand width.
-func Bit_Count_8_Invariants(value Bit_Count_8, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Bit_Count_8_Invariants(value Bit_Count_8, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), BIT_COUNT_MINIMUM, BIT_COUNT_8_MAXIMUM).
 		Ensure()
 }
@@ -250,8 +250,8 @@ func Bit_Count_8_Invariants(value Bit_Count_8, namespace invariant.Namespace) {
 type Bit_Count_16 int
 
 // Bit_Count_16_Invariants bounds a count to the 16-bit operand width.
-func Bit_Count_16_Invariants(value Bit_Count_16, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Bit_Count_16_Invariants(value Bit_Count_16, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), BIT_COUNT_MINIMUM, BIT_COUNT_16_MAXIMUM).
 		Ensure()
 }
@@ -260,8 +260,8 @@ func Bit_Count_16_Invariants(value Bit_Count_16, namespace invariant.Namespace) 
 type Bit_Count_32 int
 
 // Bit_Count_32_Invariants bounds a count to the 32-bit operand width.
-func Bit_Count_32_Invariants(value Bit_Count_32, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Bit_Count_32_Invariants(value Bit_Count_32, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), BIT_COUNT_MINIMUM, BIT_COUNT_32_MAXIMUM).
 		Ensure()
 }
@@ -270,8 +270,8 @@ func Bit_Count_32_Invariants(value Bit_Count_32, namespace invariant.Namespace) 
 type Bit_Count_64 int
 
 // Bit_Count_64_Invariants bounds a count to the 64-bit operand width.
-func Bit_Count_64_Invariants(value Bit_Count_64, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Bit_Count_64_Invariants(value Bit_Count_64, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), BIT_COUNT_MINIMUM, BIT_COUNT_64_MAXIMUM).
 		Ensure()
 }
@@ -280,8 +280,8 @@ func Bit_Count_64_Invariants(value Bit_Count_64, namespace invariant.Namespace) 
 type Bit_Count_Word int
 
 // Bit_Count_Word_Invariants bounds a count to the machine-word width.
-func Bit_Count_Word_Invariants(value Bit_Count_Word, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Bit_Count_Word_Invariants(value Bit_Count_Word, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), BIT_COUNT_MINIMUM, BIT_COUNT_WORD_MAXIMUM).
 		Ensure()
 }
@@ -291,8 +291,8 @@ type Rotation int
 
 // Rotation_Invariants bounds a rotation distance. The operation masks the distance to the
 // operand width, thus the bound keeps the value readable and rejects nothing real.
-func Rotation_Invariants(value Rotation, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Rotation_Invariants(value Rotation, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), ROTATION_MINIMUM, ROTATION_MAXIMUM).
 		Ensure()
 }
@@ -301,8 +301,8 @@ func Rotation_Invariants(value Rotation, namespace invariant.Namespace) {
 type Carry_In uint64
 
 // Carry_In_Invariants bounds an entering carry to zero or one.
-func Carry_In_Invariants(value Carry_In, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Carry_In_Invariants(value Carry_In, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_Uint64(uint64(value), CARRY_MINIMUM, CARRY_MAXIMUM).
 		Ensure()
 }
@@ -311,8 +311,8 @@ func Carry_In_Invariants(value Carry_In, namespace invariant.Namespace) {
 type Carry_Output uint64
 
 // Carry_Output_Invariants bounds a leaving carry to zero or one.
-func Carry_Output_Invariants(value Carry_Output, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Carry_Output_Invariants(value Carry_Output, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_Uint64(uint64(value), CARRY_MINIMUM, CARRY_MAXIMUM).
 		Ensure()
 }
@@ -321,8 +321,8 @@ func Carry_Output_Invariants(value Carry_Output, namespace invariant.Namespace) 
 type Borrow_In uint64
 
 // Borrow_In_Invariants bounds an entering borrow to zero or one.
-func Borrow_In_Invariants(value Borrow_In, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Borrow_In_Invariants(value Borrow_In, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_Uint64(uint64(value), CARRY_MINIMUM, CARRY_MAXIMUM).
 		Ensure()
 }
@@ -331,8 +331,8 @@ func Borrow_In_Invariants(value Borrow_In, namespace invariant.Namespace) {
 type Borrow_Output uint64
 
 // Borrow_Output_Invariants bounds a leaving borrow to zero or one.
-func Borrow_Output_Invariants(value Borrow_Output, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Borrow_Output_Invariants(value Borrow_Output, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_Uint64(uint64(value), CARRY_MINIMUM, CARRY_MAXIMUM).
 		Ensure()
 }
@@ -341,8 +341,8 @@ func Borrow_Output_Invariants(value Borrow_Output, namespace invariant.Namespace
 type Addend_32 uint32
 
 // Addend_32_Invariants states the complete 32-bit word domain.
-func Addend_32_Invariants(value Addend_32, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Addend_32_Invariants(value Addend_32, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint32(uint32(value), WORD_32_MINIMUM, WORD_32_MAXIMUM).
 		Ensure()
 }
@@ -351,8 +351,8 @@ func Addend_32_Invariants(value Addend_32, namespace invariant.Namespace) {
 type Addend_64 uint64
 
 // Addend_64_Invariants states the complete 64-bit word domain.
-func Addend_64_Invariants(value Addend_64, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Addend_64_Invariants(value Addend_64, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint64(uint64(value), WORD_64_MINIMUM, WORD_64_MAXIMUM).
 		Ensure()
 }
@@ -361,8 +361,8 @@ func Addend_64_Invariants(value Addend_64, namespace invariant.Namespace) {
 type Addend_Word uint
 
 // Addend_Word_Invariants states the complete machine-word domain.
-func Addend_Word_Invariants(value Addend_Word, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Addend_Word_Invariants(value Addend_Word, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint(uint(value), WORD_MINIMUM, WORD_MAXIMUM).
 		Ensure()
 }
@@ -371,8 +371,8 @@ func Addend_Word_Invariants(value Addend_Word, namespace invariant.Namespace) {
 type Subtrahend_32 uint32
 
 // Subtrahend_32_Invariants states the complete 32-bit word domain.
-func Subtrahend_32_Invariants(value Subtrahend_32, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Subtrahend_32_Invariants(value Subtrahend_32, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint32(uint32(value), WORD_32_MINIMUM, WORD_32_MAXIMUM).
 		Ensure()
 }
@@ -381,8 +381,8 @@ func Subtrahend_32_Invariants(value Subtrahend_32, namespace invariant.Namespace
 type Subtrahend_64 uint64
 
 // Subtrahend_64_Invariants states the complete 64-bit word domain.
-func Subtrahend_64_Invariants(value Subtrahend_64, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Subtrahend_64_Invariants(value Subtrahend_64, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint64(uint64(value), WORD_64_MINIMUM, WORD_64_MAXIMUM).
 		Ensure()
 }
@@ -391,8 +391,8 @@ func Subtrahend_64_Invariants(value Subtrahend_64, namespace invariant.Namespace
 type Subtrahend_Word uint
 
 // Subtrahend_Word_Invariants states the complete machine-word domain.
-func Subtrahend_Word_Invariants(value Subtrahend_Word, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Subtrahend_Word_Invariants(value Subtrahend_Word, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint(uint(value), WORD_MINIMUM, WORD_MAXIMUM).
 		Ensure()
 }
@@ -401,8 +401,8 @@ func Subtrahend_Word_Invariants(value Subtrahend_Word, namespace invariant.Names
 type Multiplier_32 uint32
 
 // Multiplier_32_Invariants states the complete 32-bit word domain.
-func Multiplier_32_Invariants(value Multiplier_32, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Multiplier_32_Invariants(value Multiplier_32, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint32(uint32(value), WORD_32_MINIMUM, WORD_32_MAXIMUM).
 		Ensure()
 }
@@ -411,8 +411,8 @@ func Multiplier_32_Invariants(value Multiplier_32, namespace invariant.Namespace
 type Multiplier_64 uint64
 
 // Multiplier_64_Invariants states the complete 64-bit word domain.
-func Multiplier_64_Invariants(value Multiplier_64, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Multiplier_64_Invariants(value Multiplier_64, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint64(uint64(value), WORD_64_MINIMUM, WORD_64_MAXIMUM).
 		Ensure()
 }
@@ -421,8 +421,8 @@ func Multiplier_64_Invariants(value Multiplier_64, namespace invariant.Namespace
 type Multiplier_Word uint
 
 // Multiplier_Word_Invariants states the complete machine-word domain.
-func Multiplier_Word_Invariants(value Multiplier_Word, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Multiplier_Word_Invariants(value Multiplier_Word, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint(uint(value), WORD_MINIMUM, WORD_MAXIMUM).
 		Ensure()
 }
@@ -432,8 +432,8 @@ type Product_High_32 uint32
 
 // Product_High_32_Invariants bounds the high word of a product. The largest product falls
 // two words short of the full double width, thus the high word stops one short.
-func Product_High_32_Invariants(value Product_High_32, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Product_High_32_Invariants(value Product_High_32, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint32(uint32(value), WORD_32_MINIMUM, PRODUCT_HIGH_32_MAXIMUM).
 		Ensure()
 }
@@ -442,8 +442,8 @@ func Product_High_32_Invariants(value Product_High_32, namespace invariant.Names
 type Product_High_64 uint64
 
 // Product_High_64_Invariants bounds the high word of a product.
-func Product_High_64_Invariants(value Product_High_64, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Product_High_64_Invariants(value Product_High_64, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint64(uint64(value), WORD_64_MINIMUM, PRODUCT_HIGH_64_MAXIMUM).
 		Ensure()
 }
@@ -452,8 +452,8 @@ func Product_High_64_Invariants(value Product_High_64, namespace invariant.Names
 type Product_High_Word uint
 
 // Product_High_Word_Invariants bounds the high word of a product.
-func Product_High_Word_Invariants(value Product_High_Word, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Product_High_Word_Invariants(value Product_High_Word, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint(uint(value), WORD_MINIMUM, PRODUCT_HIGH_WORD_MAXIMUM).
 		Ensure()
 }
@@ -462,8 +462,8 @@ func Product_High_Word_Invariants(value Product_High_Word, namespace invariant.N
 type Product_Low_32 uint32
 
 // Product_Low_32_Invariants states the complete 32-bit word domain.
-func Product_Low_32_Invariants(value Product_Low_32, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Product_Low_32_Invariants(value Product_Low_32, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint32(uint32(value), WORD_32_MINIMUM, WORD_32_MAXIMUM).
 		Ensure()
 }
@@ -472,8 +472,8 @@ func Product_Low_32_Invariants(value Product_Low_32, namespace invariant.Namespa
 type Product_Low_64 uint64
 
 // Product_Low_64_Invariants states the complete 64-bit word domain.
-func Product_Low_64_Invariants(value Product_Low_64, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Product_Low_64_Invariants(value Product_Low_64, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint64(uint64(value), WORD_64_MINIMUM, WORD_64_MAXIMUM).
 		Ensure()
 }
@@ -482,8 +482,8 @@ func Product_Low_64_Invariants(value Product_Low_64, namespace invariant.Namespa
 type Product_Low_Word uint
 
 // Product_Low_Word_Invariants states the complete machine-word domain.
-func Product_Low_Word_Invariants(value Product_Low_Word, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Product_Low_Word_Invariants(value Product_Low_Word, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint(uint(value), WORD_MINIMUM, WORD_MAXIMUM).
 		Ensure()
 }
@@ -493,8 +493,8 @@ type Dividend_High_32 uint32
 
 // Dividend_High_32_Invariants bounds the high word to the one-word quotient domain. The
 // high word must stay below the divisor, thus it never reaches the largest word.
-func Dividend_High_32_Invariants(value Dividend_High_32, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Dividend_High_32_Invariants(value Dividend_High_32, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint32(uint32(value), WORD_32_MINIMUM, DIVIDEND_HIGH_32_MAXIMUM).
 		Ensure()
 }
@@ -503,8 +503,8 @@ func Dividend_High_32_Invariants(value Dividend_High_32, namespace invariant.Nam
 type Dividend_High_64 uint64
 
 // Dividend_High_64_Invariants bounds the high word to the one-word quotient domain.
-func Dividend_High_64_Invariants(value Dividend_High_64, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Dividend_High_64_Invariants(value Dividend_High_64, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint64(uint64(value), WORD_64_MINIMUM, DIVIDEND_HIGH_64_MAXIMUM).
 		Ensure()
 }
@@ -514,9 +514,9 @@ type Dividend_High_Word uint
 
 // Dividend_High_Word_Invariants bounds the high word to the one-word quotient domain.
 func Dividend_High_Word_Invariants(
-	value Dividend_High_Word, namespace invariant.Namespace,
+	value Dividend_High_Word, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Uint(uint(value), WORD_MINIMUM, DIVIDEND_HIGH_WORD_MAXIMUM).
 		Ensure()
 }
@@ -525,8 +525,8 @@ func Dividend_High_Word_Invariants(
 type Dividend_Low_32 uint32
 
 // Dividend_Low_32_Invariants states the complete 32-bit word domain.
-func Dividend_Low_32_Invariants(value Dividend_Low_32, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Dividend_Low_32_Invariants(value Dividend_Low_32, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint32(uint32(value), WORD_32_MINIMUM, WORD_32_MAXIMUM).
 		Ensure()
 }
@@ -535,8 +535,8 @@ func Dividend_Low_32_Invariants(value Dividend_Low_32, namespace invariant.Names
 type Dividend_Low_64 uint64
 
 // Dividend_Low_64_Invariants states the complete 64-bit word domain.
-func Dividend_Low_64_Invariants(value Dividend_Low_64, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Dividend_Low_64_Invariants(value Dividend_Low_64, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint64(uint64(value), WORD_64_MINIMUM, WORD_64_MAXIMUM).
 		Ensure()
 }
@@ -545,8 +545,8 @@ func Dividend_Low_64_Invariants(value Dividend_Low_64, namespace invariant.Names
 type Dividend_Low_Word uint
 
 // Dividend_Low_Word_Invariants states the complete machine-word domain.
-func Dividend_Low_Word_Invariants(value Dividend_Low_Word, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Dividend_Low_Word_Invariants(value Dividend_Low_Word, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint(uint(value), WORD_MINIMUM, WORD_MAXIMUM).
 		Ensure()
 }
@@ -556,8 +556,8 @@ type High_Word_32 uint32
 
 // High_Word_32_Invariants states the complete 32-bit word domain. A remainder admits any
 // high word, thus this domain is wider than the one-word quotient domain.
-func High_Word_32_Invariants(value High_Word_32, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func High_Word_32_Invariants(value High_Word_32, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint32(uint32(value), WORD_32_MINIMUM, WORD_32_MAXIMUM).
 		Ensure()
 }
@@ -566,8 +566,8 @@ func High_Word_32_Invariants(value High_Word_32, namespace invariant.Namespace) 
 type High_Word_64 uint64
 
 // High_Word_64_Invariants states the complete 64-bit word domain.
-func High_Word_64_Invariants(value High_Word_64, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func High_Word_64_Invariants(value High_Word_64, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint64(uint64(value), WORD_64_MINIMUM, WORD_64_MAXIMUM).
 		Ensure()
 }
@@ -576,8 +576,8 @@ func High_Word_64_Invariants(value High_Word_64, namespace invariant.Namespace) 
 type High_Word uint
 
 // High_Word_Invariants states the complete machine-word domain.
-func High_Word_Invariants(value High_Word, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func High_Word_Invariants(value High_Word, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint(uint(value), WORD_MINIMUM, WORD_MAXIMUM).
 		Ensure()
 }
@@ -586,8 +586,8 @@ func High_Word_Invariants(value High_Word, namespace invariant.Namespace) {
 type Low_Word_32 uint32
 
 // Low_Word_32_Invariants states the complete 32-bit word domain.
-func Low_Word_32_Invariants(value Low_Word_32, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Low_Word_32_Invariants(value Low_Word_32, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint32(uint32(value), WORD_32_MINIMUM, WORD_32_MAXIMUM).
 		Ensure()
 }
@@ -596,8 +596,8 @@ func Low_Word_32_Invariants(value Low_Word_32, namespace invariant.Namespace) {
 type Low_Word_64 uint64
 
 // Low_Word_64_Invariants states the complete 64-bit word domain.
-func Low_Word_64_Invariants(value Low_Word_64, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Low_Word_64_Invariants(value Low_Word_64, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint64(uint64(value), WORD_64_MINIMUM, WORD_64_MAXIMUM).
 		Ensure()
 }
@@ -606,8 +606,8 @@ func Low_Word_64_Invariants(value Low_Word_64, namespace invariant.Namespace) {
 type Low_Word uint
 
 // Low_Word_Invariants states the complete machine-word domain.
-func Low_Word_Invariants(value Low_Word, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Low_Word_Invariants(value Low_Word, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint(uint(value), WORD_MINIMUM, WORD_MAXIMUM).
 		Ensure()
 }
@@ -617,8 +617,8 @@ type Divisor_32 uint32
 
 // Divisor_32_Invariants keeps a divisor away from zero. A zero divisor has no quotient,
 // thus the domain starts at one.
-func Divisor_32_Invariants(value Divisor_32, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Divisor_32_Invariants(value Divisor_32, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint32(uint32(value), DIVISOR_MINIMUM, WORD_32_MAXIMUM).
 		Ensure()
 }
@@ -627,8 +627,8 @@ func Divisor_32_Invariants(value Divisor_32, namespace invariant.Namespace) {
 type Divisor_64 uint64
 
 // Divisor_64_Invariants keeps a divisor away from zero.
-func Divisor_64_Invariants(value Divisor_64, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Divisor_64_Invariants(value Divisor_64, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint64(uint64(value), DIVISOR_MINIMUM, WORD_64_MAXIMUM).
 		Ensure()
 }
@@ -637,8 +637,8 @@ func Divisor_64_Invariants(value Divisor_64, namespace invariant.Namespace) {
 type Divisor_Word uint
 
 // Divisor_Word_Invariants keeps a divisor away from zero.
-func Divisor_Word_Invariants(value Divisor_Word, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Divisor_Word_Invariants(value Divisor_Word, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint(uint(value), DIVISOR_MINIMUM, WORD_MAXIMUM).
 		Ensure()
 }
@@ -649,9 +649,9 @@ type Division_Remainder_32 uint32
 // Division_Remainder_32_Invariants bounds a remainder. A remainder stays below its
 // divisor, thus it never reaches the largest word.
 func Division_Remainder_32_Invariants(
-	value Division_Remainder_32, namespace invariant.Namespace,
+	value Division_Remainder_32, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Uint32(uint32(value), WORD_32_MINIMUM, DIVISION_REMAINDER_32_MAXIMUM).
 		Ensure()
 }
@@ -661,9 +661,9 @@ type Division_Remainder_64 uint64
 
 // Division_Remainder_64_Invariants bounds a remainder below the largest word.
 func Division_Remainder_64_Invariants(
-	value Division_Remainder_64, namespace invariant.Namespace,
+	value Division_Remainder_64, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Uint64(uint64(value), WORD_64_MINIMUM, DIVISION_REMAINDER_64_MAXIMUM).
 		Ensure()
 }
@@ -673,9 +673,9 @@ type Division_Remainder_Word uint
 
 // Division_Remainder_Word_Invariants bounds a remainder below the largest word.
 func Division_Remainder_Word_Invariants(
-	value Division_Remainder_Word, namespace invariant.Namespace,
+	value Division_Remainder_Word, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Uint(uint(value), WORD_MINIMUM, DIVISION_REMAINDER_WORD_MAXIMUM).
 		Ensure()
 }
@@ -1183,7 +1183,7 @@ func Divide_64(
 	Dividend_High_64_Invariants(high, "divide_64.high")
 	Dividend_Low_64_Invariants(low, "divide_64.low")
 	Divisor_64_Invariants(divisor, "divide_64.divisor")
-	invariant.Always(
+	aver.Always(
 		uint64(high) < uint64(divisor),
 		"A quotient of a 128-bit dividend must fit one word.",
 	)
@@ -1272,7 +1272,7 @@ func Divide_32(
 	Dividend_High_32_Invariants(high, "divide_32.high")
 	Dividend_Low_32_Invariants(low, "divide_32.low")
 	Divisor_32_Invariants(divisor, "divide_32.divisor")
-	invariant.Always(
+	aver.Always(
 		uint32(high) < uint32(divisor),
 		"A quotient of a 64-bit dividend must fit one word.",
 	)

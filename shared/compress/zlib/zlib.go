@@ -1,7 +1,7 @@
 // Package zlib decodes zlib streams into fixed caller storage.
 package zlib
 
-import "local/james-orcales/shared/invariant/default"
+import "local/james-orcales/shared/simulation/aver/default"
 
 // DEFLATE_METHOD is zlib compression-method identifier.
 const DEFLATE_METHOD = 8
@@ -160,8 +160,8 @@ const STORED_COUNT_MAXIMUM = 1<<16 - 1
 type Status uint8
 
 // Status_Invariants states every decode result.
-func Status_Invariants(value Status, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Status_Invariants(value Status, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_3_Uint8(
 			uint8(value), uint8(STATUS_OK), uint8(STATUS_INPUT_INVALID),
 			uint8(STATUS_OUTPUT_TOO_SMALL),
@@ -182,8 +182,8 @@ const STATUS_OUTPUT_TOO_SMALL Status = 2
 type Destination []byte
 
 // Destination_Invariants bounds one decoded stream.
-func Destination_Invariants(value Destination, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Destination_Invariants(value Destination, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), BYTE_COUNT_MINIMUM, BYTE_COUNT_MAXIMUM).
 		Ensure()
 }
@@ -192,8 +192,8 @@ func Destination_Invariants(value Destination, namespace invariant.Namespace) {
 type Compressed []byte
 
 // Compressed_Invariants bounds one encoded stream.
-func Compressed_Invariants(value Compressed, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Compressed_Invariants(value Compressed, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), BYTE_COUNT_MINIMUM, BYTE_COUNT_MAXIMUM).
 		Ensure()
 }
@@ -202,8 +202,8 @@ func Compressed_Invariants(value Compressed, namespace invariant.Namespace) {
 type Count int
 
 // Count_Invariants bounds one decoded stream count.
-func Count_Invariants(value Count, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Count_Invariants(value Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), BYTE_COUNT_MINIMUM, BYTE_COUNT_MAXIMUM).
 		Ensure()
 }
@@ -213,9 +213,9 @@ type Stored_Destination []byte
 
 // Stored_Destination_Invariants bounds remaining caller storage.
 func Stored_Destination_Invariants(
-	value Stored_Destination, namespace invariant.Namespace,
+	value Stored_Destination, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(len(value), BYTE_COUNT_MINIMUM, BYTE_COUNT_MAXIMUM).
 		Ensure()
 }
@@ -224,8 +224,8 @@ func Stored_Destination_Invariants(
 type Stored_Count int
 
 // Stored_Count_Invariants bounds one stored block's unsigned length.
-func Stored_Count_Invariants(value Stored_Count, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Stored_Count_Invariants(value Stored_Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), BYTE_COUNT_MINIMUM, STORED_COUNT_MAXIMUM).
 		Ensure()
 }
@@ -234,8 +234,8 @@ func Stored_Count_Invariants(value Stored_Count, namespace invariant.Namespace) 
 type Boolean bool
 
 // Boolean_Invariants states both report values.
-func Boolean_Invariants(value Boolean, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Boolean_Invariants(value Boolean, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Sometimes(bool(value), "The decoder report is true.").
 		Ensure()
 }
@@ -244,8 +244,8 @@ func Boolean_Invariants(value Boolean, namespace invariant.Namespace) {
 type Code_Size_Position int
 
 // Code_Size_Position_Invariants bounds encoded code-size order.
-func Code_Size_Position_Invariants(value Code_Size_Position, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Code_Size_Position_Invariants(value Code_Size_Position, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), CODE_SIZE_POSITION_MINIMUM, CODE_SIZE_POSITION_MAXIMUM).
 		Ensure()
 }
@@ -255,9 +255,9 @@ type Ordered_Code_Size_Position int
 
 // Ordered_Code_Size_Position_Invariants bounds canonical code-size order.
 func Ordered_Code_Size_Position_Invariants(
-	value Ordered_Code_Size_Position, namespace invariant.Namespace,
+	value Ordered_Code_Size_Position, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(int(value), CODE_SIZE_POSITION_MINIMUM, CODE_SIZE_POSITION_MAXIMUM).
 		Ensure()
 }
@@ -266,8 +266,8 @@ func Ordered_Code_Size_Position_Invariants(
 type Huffman_Symbol uint16
 
 // Huffman_Symbol_Invariants bounds the largest DEFLATE alphabet.
-func Huffman_Symbol_Invariants(value Huffman_Symbol, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Huffman_Symbol_Invariants(value Huffman_Symbol, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint16(uint16(value), HUFFMAN_SYMBOL_MINIMUM, HUFFMAN_SYMBOL_MAXIMUM).
 		Ensure()
 }
@@ -276,8 +276,8 @@ func Huffman_Symbol_Invariants(value Huffman_Symbol, namespace invariant.Namespa
 type Match_Symbol uint16
 
 // Match_Symbol_Invariants bounds the length alphabet.
-func Match_Symbol_Invariants(value Match_Symbol, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Match_Symbol_Invariants(value Match_Symbol, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint16(uint16(value), MATCH_SYMBOL_MINIMUM, MATCH_SYMBOL_MAXIMUM).
 		Ensure()
 }
@@ -286,8 +286,8 @@ func Match_Symbol_Invariants(value Match_Symbol, namespace invariant.Namespace) 
 type Distance_Symbol uint16
 
 // Distance_Symbol_Invariants bounds the legal distance alphabet.
-func Distance_Symbol_Invariants(value Distance_Symbol, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Distance_Symbol_Invariants(value Distance_Symbol, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint16(uint16(value), DISTANCE_SYMBOL_MINIMUM, DISTANCE_SYMBOL_MAXIMUM).
 		Ensure()
 }
@@ -296,8 +296,8 @@ func Distance_Symbol_Invariants(value Distance_Symbol, namespace invariant.Names
 type Match_Size int
 
 // Match_Size_Invariants bounds one DEFLATE match.
-func Match_Size_Invariants(value Match_Size, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Match_Size_Invariants(value Match_Size, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), MATCH_SIZE_MINIMUM, MATCH_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -306,8 +306,8 @@ func Match_Size_Invariants(value Match_Size, namespace invariant.Namespace) {
 type Distance_Base int
 
 // Distance_Base_Invariants bounds one DEFLATE distance base.
-func Distance_Base_Invariants(value Distance_Base, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Distance_Base_Invariants(value Distance_Base, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), DISTANCE_MINIMUM, DISTANCE_BASE_MAXIMUM).
 		Ensure()
 }
@@ -316,8 +316,8 @@ func Distance_Base_Invariants(value Distance_Base, namespace invariant.Namespace
 type Extra_Bit_Count uint
 
 // Extra_Bit_Count_Invariants bounds a DEFLATE suffix width.
-func Extra_Bit_Count_Invariants(value Extra_Bit_Count, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Extra_Bit_Count_Invariants(value Extra_Bit_Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint(uint(value), EXTRA_BIT_COUNT_MINIMUM, EXTRA_BIT_COUNT_MAXIMUM).
 		Ensure()
 }
@@ -327,9 +327,9 @@ type Match_Extra_Bit_Count uint
 
 // Match_Extra_Bit_Count_Invariants bounds a match suffix width.
 func Match_Extra_Bit_Count_Invariants(
-	value Match_Extra_Bit_Count, namespace invariant.Namespace,
+	value Match_Extra_Bit_Count, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Uint(
 			uint(value), EXTRA_BIT_COUNT_MINIMUM, MATCH_EXTRA_BIT_COUNT_MAXIMUM,
 		).
@@ -340,8 +340,8 @@ func Match_Extra_Bit_Count_Invariants(
 type Bit_Read_Count uint
 
 // Bit_Read_Count_Invariants bounds one reader request.
-func Bit_Read_Count_Invariants(value Bit_Read_Count, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Bit_Read_Count_Invariants(value Bit_Read_Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint(uint(value), BIT_READ_COUNT_MINIMUM, BIT_READ_COUNT_MAXIMUM).
 		Ensure()
 }
@@ -350,8 +350,8 @@ func Bit_Read_Count_Invariants(value Bit_Read_Count, namespace invariant.Namespa
 type Bit_Value uint32
 
 // Bit_Value_Invariants bounds one reader result.
-func Bit_Value_Invariants(value Bit_Value, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Bit_Value_Invariants(value Bit_Value, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint32(uint32(value), BIT_VALUE_MINIMUM, BIT_VALUE_MAXIMUM).
 		Ensure()
 }
@@ -360,8 +360,8 @@ func Bit_Value_Invariants(value Bit_Value, namespace invariant.Namespace) {
 type Code_Sizes []uint8
 
 // Code_Sizes_Invariants bounds the largest canonical alphabet.
-func Code_Sizes_Invariants(value Code_Sizes, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Code_Sizes_Invariants(value Code_Sizes, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), CODE_SIZES_MINIMUM, CODE_SIZES_MAXIMUM).
 		Ensure()
 }
@@ -370,8 +370,8 @@ func Code_Sizes_Invariants(value Code_Sizes, namespace invariant.Namespace) {
 type Dynamic_Sizes []uint8
 
 // Dynamic_Sizes_Invariants bounds a dynamic block's combined alphabets.
-func Dynamic_Sizes_Invariants(value Dynamic_Sizes, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Dynamic_Sizes_Invariants(value Dynamic_Sizes, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), DYNAMIC_SIZES_MINIMUM, DYNAMIC_SIZES_MAXIMUM).
 		Ensure()
 }
@@ -380,8 +380,8 @@ func Dynamic_Sizes_Invariants(value Dynamic_Sizes, namespace invariant.Namespace
 type Literal_Count int
 
 // Literal_Count_Invariants bounds one dynamic literal alphabet.
-func Literal_Count_Invariants(value Literal_Count, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Literal_Count_Invariants(value Literal_Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), LITERAL_COUNT_MINIMUM, LITERAL_COUNT_MAXIMUM).
 		Ensure()
 }
@@ -390,8 +390,8 @@ func Literal_Count_Invariants(value Literal_Count, namespace invariant.Namespace
 type Distance_Count int
 
 // Distance_Count_Invariants bounds one dynamic distance alphabet.
-func Distance_Count_Invariants(value Distance_Count, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Distance_Count_Invariants(value Distance_Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), DISTANCE_COUNT_MINIMUM, DISTANCE_COUNT_MAXIMUM).
 		Ensure()
 }
@@ -400,8 +400,8 @@ func Distance_Count_Invariants(value Distance_Count, namespace invariant.Namespa
 type Checksum [CHECKSUM_SIZE]byte
 
 // Checksum_Invariants fixes Adler-32 storage width.
-func Checksum_Invariants(value Checksum, namespace invariant.Namespace) {
-	invariant.Always(
+func Checksum_Invariants(value Checksum, namespace aver.Namespace) {
+	aver.Always(
 		len(value) == CHECKSUM_SIZE,
 		"An Adler checksum occupies exactly four bytes.",
 	)
@@ -412,9 +412,9 @@ type Compressed_Payload []byte
 
 // Compressed_Payload_Invariants bounds remaining encoded bytes.
 func Compressed_Payload_Invariants(
-	value Compressed_Payload, namespace invariant.Namespace,
+	value Compressed_Payload, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(
 			len(value), COMPRESSED_PAYLOAD_SIZE_MINIMUM,
 			COMPRESSED_PAYLOAD_SIZE_MAXIMUM,
@@ -426,8 +426,8 @@ func Compressed_Payload_Invariants(
 type Bit_Buffer uint64
 
 // Bit_Buffer_Invariants bounds the remainder after one reader operation.
-func Bit_Buffer_Invariants(value Bit_Buffer, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Bit_Buffer_Invariants(value Bit_Buffer, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint64(uint64(value), BIT_BUFFER_MINIMUM, BIT_BUFFER_MAXIMUM).
 		Ensure()
 }
@@ -436,8 +436,8 @@ func Bit_Buffer_Invariants(value Bit_Buffer, namespace invariant.Namespace) {
 type Bit_Count uint
 
 // Bit_Count_Invariants bounds the remainder after one reader operation.
-func Bit_Count_Invariants(value Bit_Count, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Bit_Count_Invariants(value Bit_Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint(uint(value), BIT_COUNT_MINIMUM, BIT_COUNT_MAXIMUM).
 		Ensure()
 }
@@ -453,7 +453,7 @@ type Bit_Reader struct {
 }
 
 // Bit_Reader_Invariants composes bounded reader storage.
-func Bit_Reader_Invariants(value *Bit_Reader, namespace invariant.Namespace) {
+func Bit_Reader_Invariants(value *Bit_Reader, namespace aver.Namespace) {
 	Compressed_Payload_Invariants(value.Source, namespace)
 	Bit_Buffer_Invariants(value.Bits, namespace)
 	Bit_Count_Invariants(value.Bits_Count, namespace)
@@ -463,8 +463,8 @@ func Bit_Reader_Invariants(value *Bit_Reader, namespace invariant.Namespace) {
 type Stored_Reader Bit_Reader
 
 // Stored_Reader_Invariants keeps stored-block state inside reader storage.
-func Stored_Reader_Invariants(value Stored_Reader, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Stored_Reader_Invariants(value Stored_Reader, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(
 			len(value.Source), BLOCK_SOURCE_SIZE_MINIMUM, BLOCK_SOURCE_SIZE_MAXIMUM,
 		).
@@ -477,8 +477,8 @@ func Stored_Reader_Invariants(value Stored_Reader, namespace invariant.Namespace
 type Dynamic_Reader Bit_Reader
 
 // Dynamic_Reader_Invariants keeps dynamic-tree state inside reader storage.
-func Dynamic_Reader_Invariants(value Dynamic_Reader, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Dynamic_Reader_Invariants(value Dynamic_Reader, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(
 			len(value.Source), BLOCK_SOURCE_SIZE_MINIMUM, BLOCK_SOURCE_SIZE_MAXIMUM,
 		).
@@ -492,9 +492,9 @@ type Dynamic_Size_Reader Bit_Reader
 
 // Dynamic_Size_Reader_Invariants bounds state entering dynamic alphabet widths.
 func Dynamic_Size_Reader_Invariants(
-	value Dynamic_Size_Reader, namespace invariant.Namespace,
+	value Dynamic_Size_Reader, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(
 			len(value.Source), DYNAMIC_SIZE_SOURCE_SIZE_MINIMUM,
 			DYNAMIC_SIZE_SOURCE_SIZE_MAXIMUM,
@@ -508,8 +508,8 @@ func Dynamic_Size_Reader_Invariants(
 type Huffman_Reader Bit_Reader
 
 // Huffman_Reader_Invariants keeps Huffman state inside reader storage.
-func Huffman_Reader_Invariants(value Huffman_Reader, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Huffman_Reader_Invariants(value Huffman_Reader, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(
 			len(value.Source), COMPRESSED_PAYLOAD_SIZE_MINIMUM,
 			BLOCK_SOURCE_SIZE_MAXIMUM,
@@ -524,9 +524,9 @@ type Symbol_Reader Bit_Reader
 
 // Symbol_Reader_Invariants bounds state entering one symbol read.
 func Symbol_Reader_Invariants(
-	value Symbol_Reader, namespace invariant.Namespace,
+	value Symbol_Reader, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(
 			len(value.Source), COMPRESSED_PAYLOAD_SIZE_MINIMUM,
 			BLOCK_SOURCE_SIZE_MAXIMUM,
@@ -546,9 +546,9 @@ type Huffman_Decoder struct {
 
 // Huffman_Decoder_Invariants bounds the fixed canonical tables.
 func Huffman_Decoder_Invariants(
-	value *Huffman_Decoder, namespace invariant.Namespace,
+	value *Huffman_Decoder, namespace aver.Namespace,
 ) {
-	invariant.Always(
+	aver.Always(
 		value.Counts[0] <= HUFFMAN_SYMBOL_COUNT_MAXIMUM,
 		"A Huffman decoder counts no more symbols than its fixed table holds.",
 	)
@@ -800,9 +800,9 @@ func fixed_decoders(
 		distance_sizes[index] = 5
 	}
 	literal_valid := huffman_build(literal_decoder, literal_sizes[:])
-	invariant.Always(bool(literal_valid), "The fixed literal table is canonical.")
+	aver.Always(bool(literal_valid), "The fixed literal table is canonical.")
 	distance_valid := huffman_build(distance_decoder, distance_sizes[:])
-	invariant.Always(bool(distance_valid), "The fixed distance table is canonical.")
+	aver.Always(bool(distance_valid), "The fixed distance table is canonical.")
 }
 
 func dynamic_decoders(

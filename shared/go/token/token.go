@@ -4,7 +4,7 @@
 package token
 
 import (
-	"local/james-orcales/shared/invariant/default"
+	"local/james-orcales/shared/simulation/aver/default"
 )
 
 // SOURCE_SIZE_MINIMUM admits the empty source, which scans to KIND_END_OF_FILE at once.
@@ -387,8 +387,8 @@ const OPERATOR_KIND_1_MAXIMUM = int(KIND_TILDE)
 type Kind uint8
 
 // Kind_Invariants states the complete lexical class domain.
-func Kind_Invariants(value Kind, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Kind_Invariants(value Kind, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint8(uint8(value), KIND_MINIMUM, KIND_MAXIMUM).
 		Ensure()
 }
@@ -397,8 +397,8 @@ func Kind_Invariants(value Kind, namespace invariant.Namespace) {
 type Scanned_Kind int
 
 // Scanned_Kind_Invariants excludes the kind that no source byte spells.
-func Scanned_Kind_Invariants(value Scanned_Kind, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Scanned_Kind_Invariants(value Scanned_Kind, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), SCANNED_KIND_MINIMUM, SCANNED_KIND_MAXIMUM).
 		Ensure()
 }
@@ -407,8 +407,8 @@ func Scanned_Kind_Invariants(value Scanned_Kind, namespace invariant.Namespace) 
 type Word_Kind int
 
 // Word_Kind_Invariants states the identifier and keyword block.
-func Word_Kind_Invariants(value Word_Kind, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Word_Kind_Invariants(value Word_Kind, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), WORD_KIND_MINIMUM, WORD_KIND_MAXIMUM).
 		Ensure()
 }
@@ -417,8 +417,8 @@ func Word_Kind_Invariants(value Word_Kind, namespace invariant.Namespace) {
 type Keyword_Kind int
 
 // Keyword_Kind_Invariants states the keyword block alone.
-func Keyword_Kind_Invariants(value Keyword_Kind, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Keyword_Kind_Invariants(value Keyword_Kind, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), KEYWORD_KIND_MINIMUM, KEYWORD_KIND_MAXIMUM).
 		Ensure()
 }
@@ -427,8 +427,8 @@ func Keyword_Kind_Invariants(value Keyword_Kind, namespace invariant.Namespace) 
 type Number_Kind int
 
 // Number_Kind_Invariants states the three numeric classes.
-func Number_Kind_Invariants(value Number_Kind, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Number_Kind_Invariants(value Number_Kind, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_3_Int(int(value), int(KIND_INTEGER), int(KIND_FLOAT), int(KIND_IMAGINARY)).
 		Ensure()
 }
@@ -437,8 +437,8 @@ func Number_Kind_Invariants(value Number_Kind, namespace invariant.Namespace) {
 type Quoted_Kind int
 
 // Quoted_Kind_Invariants states the two closed literal classes and the unclosed one.
-func Quoted_Kind_Invariants(value Quoted_Kind, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Quoted_Kind_Invariants(value Quoted_Kind, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_3_Int(int(value), int(KIND_ILLEGAL), int(KIND_CHARACTER), int(KIND_STRING)).
 		Ensure()
 }
@@ -447,8 +447,8 @@ func Quoted_Kind_Invariants(value Quoted_Kind, namespace invariant.Namespace) {
 type Operator_Kind int
 
 // Operator_Kind_Invariants states the whole operator block.
-func Operator_Kind_Invariants(value Operator_Kind, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Operator_Kind_Invariants(value Operator_Kind, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), OPERATOR_KIND_MINIMUM, OPERATOR_KIND_MAXIMUM).
 		Ensure()
 }
@@ -457,8 +457,8 @@ func Operator_Kind_Invariants(value Operator_Kind, namespace invariant.Namespace
 type Operator_Kind_1 int
 
 // Operator_Kind_1_Invariants states the one-byte operator block.
-func Operator_Kind_1_Invariants(value Operator_Kind_1, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Operator_Kind_1_Invariants(value Operator_Kind_1, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), OPERATOR_KIND_1_MINIMUM, OPERATOR_KIND_1_MAXIMUM).
 		Ensure()
 }
@@ -467,8 +467,8 @@ func Operator_Kind_1_Invariants(value Operator_Kind_1, namespace invariant.Names
 type Operator_Kind_2 int
 
 // Operator_Kind_2_Invariants states the two-byte operator block.
-func Operator_Kind_2_Invariants(value Operator_Kind_2, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Operator_Kind_2_Invariants(value Operator_Kind_2, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), OPERATOR_KIND_2_MINIMUM, OPERATOR_KIND_2_MAXIMUM).
 		Ensure()
 }
@@ -477,8 +477,8 @@ func Operator_Kind_2_Invariants(value Operator_Kind_2, namespace invariant.Names
 type Operator_Kind_3 int
 
 // Operator_Kind_3_Invariants states the four three-byte operators.
-func Operator_Kind_3_Invariants(value Operator_Kind_3, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Operator_Kind_3_Invariants(value Operator_Kind_3, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_4_Int(
 			int(value), int(KIND_SHIFT_LEFT_ASSIGN), int(KIND_SHIFT_RIGHT_ASSIGN),
 			int(KIND_AND_NOT_ASSIGN), int(KIND_ELLIPSIS),
@@ -490,8 +490,8 @@ func Operator_Kind_3_Invariants(value Operator_Kind_3, namespace invariant.Names
 type Operator_Size int
 
 // Operator_Size_Invariants states the three legal operator widths.
-func Operator_Size_Invariants(value Operator_Size, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Operator_Size_Invariants(value Operator_Size, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_3_Int(int(value), OPERATOR_SIZE_ONE, OPERATOR_SIZE_TWO, OPERATOR_SIZE_THREE).
 		Ensure()
 }
@@ -501,8 +501,8 @@ func Operator_Size_Invariants(value Operator_Size, namespace invariant.Namespace
 type Blank_Count uint8
 
 // Blank_Count_Invariants states the saturating empty line count.
-func Blank_Count_Invariants(value Blank_Count, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Blank_Count_Invariants(value Blank_Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint8(uint8(value), BLANK_COUNT_MINIMUM, BLANK_COUNT_MAXIMUM).
 		Ensure()
 }
@@ -511,8 +511,8 @@ func Blank_Count_Invariants(value Blank_Count, namespace invariant.Namespace) {
 type Boolean bool
 
 // Boolean_Invariants states both scan reports as obligations.
-func Boolean_Invariants(value Boolean, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Boolean_Invariants(value Boolean, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Sometimes(bool(value), "The token scan report is true.").
 		Ensure()
 }
@@ -522,8 +522,8 @@ func Boolean_Invariants(value Boolean, namespace invariant.Namespace) {
 type Offset int32
 
 // Offset_Invariants admits the position one past the final byte, which ends every scan.
-func Offset_Invariants(value Offset, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Offset_Invariants(value Offset, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int32(int32(value), OFFSET_MINIMUM, OFFSET_MAXIMUM).
 		Ensure()
 }
@@ -533,8 +533,8 @@ func Offset_Invariants(value Offset, namespace invariant.Namespace) {
 type Size int32
 
 // Size_Invariants admits the zero width of an inserted semicolon.
-func Size_Invariants(value Size, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Size_Invariants(value Size, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int32(int32(value), SIZE_MINIMUM, SIZE_MAXIMUM).
 		Ensure()
 }
@@ -543,8 +543,8 @@ func Size_Invariants(value Size, namespace invariant.Namespace) {
 type Token_Size int
 
 // Token_Size_Invariants excludes the zero width that no source byte can produce.
-func Token_Size_Invariants(value Token_Size, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Token_Size_Invariants(value Token_Size, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), TOKEN_SIZE_MINIMUM, TOKEN_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -553,8 +553,8 @@ func Token_Size_Invariants(value Token_Size, namespace invariant.Namespace) {
 type Comment_Size int
 
 // Comment_Size_Invariants counts the two bytes that every comment opener holds.
-func Comment_Size_Invariants(value Comment_Size, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Comment_Size_Invariants(value Comment_Size, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), COMMENT_SIZE_MINIMUM, COMMENT_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -563,8 +563,8 @@ func Comment_Size_Invariants(value Comment_Size, namespace invariant.Namespace) 
 type Source []byte
 
 // Source_Invariants caps the source so a hostile file is refused before the first read.
-func Source_Invariants(value Source, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Source_Invariants(value Source, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), SOURCE_SIZE_MINIMUM, SOURCE_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -573,8 +573,8 @@ func Source_Invariants(value Source, namespace invariant.Namespace) {
 type Tail []byte
 
 // Tail_Invariants excludes the exhausted source, which opens no token.
-func Tail_Invariants(value Tail, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Tail_Invariants(value Tail, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), TAIL_SIZE_MINIMUM, SOURCE_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -583,8 +583,8 @@ func Tail_Invariants(value Tail, namespace invariant.Namespace) {
 type Comment_Tail []byte
 
 // Comment_Tail_Invariants states that both opener bytes are present.
-func Comment_Tail_Invariants(value Comment_Tail, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Comment_Tail_Invariants(value Comment_Tail, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), COMMENT_TAIL_SIZE_MINIMUM, SOURCE_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -593,8 +593,8 @@ func Comment_Tail_Invariants(value Comment_Tail, namespace invariant.Namespace) 
 type Operator_Tail_2 []byte
 
 // Operator_Tail_2_Invariants states that both operator bytes are present.
-func Operator_Tail_2_Invariants(value Operator_Tail_2, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Operator_Tail_2_Invariants(value Operator_Tail_2, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), OPERATOR_SIZE_TWO, SOURCE_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -603,8 +603,8 @@ func Operator_Tail_2_Invariants(value Operator_Tail_2, namespace invariant.Names
 type Operator_Tail_3 []byte
 
 // Operator_Tail_3_Invariants states that all three operator bytes are present.
-func Operator_Tail_3_Invariants(value Operator_Tail_3, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Operator_Tail_3_Invariants(value Operator_Tail_3, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), OPERATOR_SIZE_THREE, SOURCE_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -613,8 +613,8 @@ func Operator_Tail_3_Invariants(value Operator_Tail_3, namespace invariant.Names
 type Exponent_Text []byte
 
 // Exponent_Text_Invariants states that a sign is judged against one byte alone.
-func Exponent_Text_Invariants(value Exponent_Text, namespace invariant.Namespace) {
-	invariant.Always(
+func Exponent_Text_Invariants(value Exponent_Text, namespace aver.Namespace) {
+	aver.Always(
 		len(value) == EXPONENT_TEXT_SIZE,
 		"An exponent test reads the one byte before the sign.",
 	)
@@ -624,8 +624,8 @@ func Exponent_Text_Invariants(value Exponent_Text, namespace invariant.Namespace
 type Token_Text []byte
 
 // Token_Text_Invariants excludes the empty run, which spells no token.
-func Token_Text_Invariants(value Token_Text, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Token_Text_Invariants(value Token_Text, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), TAIL_SIZE_MINIMUM, SOURCE_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -646,7 +646,7 @@ type Token struct {
 }
 
 // Token_Invariants composes the class, the position, and the width of one token.
-func Token_Invariants(value Token, namespace invariant.Namespace) {
+func Token_Invariants(value Token, namespace aver.Namespace) {
 	Offset_Invariants(value.Offset, namespace)
 	Size_Invariants(value.Size, namespace)
 	Kind_Invariants(value.Kind, namespace)
@@ -657,8 +657,8 @@ func Token_Invariants(value Token, namespace invariant.Namespace) {
 type Line int32
 
 // Line_Invariants states every line one index names.
-func Line_Invariants(value Line, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Line_Invariants(value Line, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int32(int32(value), LINE_MINIMUM, LINE_MAXIMUM).
 		Ensure()
 }
@@ -668,8 +668,8 @@ func Line_Invariants(value Line, namespace invariant.Namespace) {
 type Column int32
 
 // Column_Invariants states every column one line holds.
-func Column_Invariants(value Column, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Column_Invariants(value Column, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int32(int32(value), COLUMN_MINIMUM, COLUMN_MAXIMUM).
 		Ensure()
 }
@@ -678,8 +678,8 @@ func Column_Invariants(value Column, namespace invariant.Namespace) {
 type Line_Count int32
 
 // Line_Count_Invariants states every count one index holds.
-func Line_Count_Invariants(value Line_Count, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Line_Count_Invariants(value Line_Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int32(int32(value), LINE_COUNT_MINIMUM, LINE_COUNT_MAXIMUM).
 		Ensure()
 }
@@ -696,8 +696,8 @@ type Line_Index struct {
 }
 
 // Line_Index_Invariants states the storage the caller supplies.
-func Line_Index_Invariants(subject *Line_Index, namespace invariant.Namespace) {
-	invariant.Always(
+func Line_Index_Invariants(subject *Line_Index, namespace aver.Namespace) {
+	aver.Always(
 		len(subject.Starts) == LINE_COUNT_MAXIMUM,
 		"A line index holds one slot for every admitted line.",
 	)
@@ -770,7 +770,7 @@ type Scanner struct {
 }
 
 // Scanner_Invariants composes the text, the position, and the insertion state of one cursor.
-func Scanner_Invariants(subject *Scanner, namespace invariant.Namespace) {
+func Scanner_Invariants(subject *Scanner, namespace aver.Namespace) {
 	Source_Invariants(subject.Source, namespace)
 	Offset_Invariants(subject.Offset, namespace)
 	Kind_Invariants(subject.Previous, namespace)

@@ -6,8 +6,8 @@
 package sort
 
 import (
-	"local/james-orcales/shared/invariant/default"
 	"local/james-orcales/shared/math/bits"
+	"local/james-orcales/shared/simulation/aver/default"
 	"local/james-orcales/shared/slices"
 )
 
@@ -93,8 +93,8 @@ const MERGE_STACK_COUNT_MAXIMUM = bits.BIT_COUNT_WORD_MAXIMUM
 type Count int
 
 // Count_Invariants states complete bounded count domain.
-func Count_Invariants(value Count, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Count_Invariants(value Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), COUNT_MINIMUM, COUNT_MAXIMUM).
 		Ensure()
 }
@@ -103,8 +103,8 @@ func Count_Invariants(value Count, namespace invariant.Namespace) {
 type Position int
 
 // Position_Invariants states complete bounded position domain.
-func Position_Invariants(value Position, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Position_Invariants(value Position, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), POSITION_MINIMUM, POSITION_MAXIMUM).
 		Ensure()
 }
@@ -113,8 +113,8 @@ func Position_Invariants(value Position, namespace invariant.Namespace) {
 type Boolean bool
 
 // Boolean_Invariants states both report results as obligations.
-func Boolean_Invariants(value Boolean, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Boolean_Invariants(value Boolean, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Sometimes(bool(value), "The sort report is true.").
 		Ensure()
 }
@@ -166,7 +166,7 @@ func Search[State any](
 ) (position Position) {
 	defer func() { Position_Invariants(position, "search.position") }()
 	Count_Invariants(count, "search.count")
-	invariant.Always(predicate != nil, "A Search defines its predicate.")
+	aver.Always(predicate != nil, "A Search defines its predicate.")
 	left, right := 0, int(count)
 	for left < right {
 		middle := int(uint(left+right) >> 1)
@@ -188,7 +188,7 @@ func Find[State any](
 		Boolean_Invariants(found, "find.found")
 	}()
 	Count_Invariants(count, "find.count")
-	invariant.Always(comparison != nil, "A Find defines its comparison.")
+	aver.Always(comparison != nil, "A Find defines its comparison.")
 	left, right := 0, int(count)
 	for left < right {
 		middle := int(uint(left+right) >> 1)
@@ -208,11 +208,11 @@ func Find[State any](
 func enforce_elements[S ~[]E, E any](
 	elements S, comparison slices.Comparison_Function[E, E],
 ) {
-	invariant.Always(
+	aver.Always(
 		len(elements) <= ELEMENT_COUNT_MAXIMUM,
 		"A sort input admits at most ELEMENT_COUNT_MAXIMUM elements.",
 	)
-	invariant.Always(comparison != nil, "A sort input defines its comparison.")
+	aver.Always(comparison != nil, "A sort input defines its comparison.")
 }
 
 func pdq_sort[S ~[]E, E any](

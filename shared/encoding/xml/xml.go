@@ -3,7 +3,7 @@ package xml
 
 import (
 	"local/james-orcales/shared/bytes"
-	"local/james-orcales/shared/invariant/default"
+	"local/james-orcales/shared/simulation/aver/default"
 	"local/james-orcales/shared/unicode/utf8"
 )
 
@@ -84,8 +84,8 @@ const STATUS_OUTPUT_TOO_LARGE = STATUS_STORAGE_INVALID + 1
 type Document []byte
 
 // Document_Invariants enforces the shared source boundary.
-func Document_Invariants(value Document, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Document_Invariants(value Document, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), bytes.SLICE_SIZE_MINIMUM, DOCUMENT_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -94,8 +94,8 @@ func Document_Invariants(value Document, namespace invariant.Namespace) {
 type Text []byte
 
 // Text_Invariants enforces the shared text boundary.
-func Text_Invariants(value Text, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Text_Invariants(value Text, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), bytes.SLICE_SIZE_MINIMUM, TEXT_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -104,8 +104,8 @@ func Text_Invariants(value Text, namespace invariant.Namespace) {
 type Escaped []byte
 
 // Escaped_Invariants enforces the shared encoded boundary.
-func Escaped_Invariants(value Escaped, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Escaped_Invariants(value Escaped, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), bytes.SLICE_SIZE_MINIMUM, TEXT_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -114,8 +114,8 @@ func Escaped_Invariants(value Escaped, namespace invariant.Namespace) {
 type Output []byte
 
 // Output_Invariants enforces the shared destination boundary.
-func Output_Invariants(value Output, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Output_Invariants(value Output, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), bytes.SLICE_SIZE_MINIMUM, OUTPUT_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -124,8 +124,8 @@ func Output_Invariants(value Output, namespace invariant.Namespace) {
 type Count int
 
 // Count_Invariants keeps results inside caller output.
-func Count_Invariants(value Count, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Count_Invariants(value Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), bytes.SLICE_SIZE_MINIMUM, OUTPUT_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -134,8 +134,8 @@ func Count_Invariants(value Count, namespace invariant.Namespace) {
 type Position int
 
 // Position_Invariants includes unexpected end after maximum input.
-func Position_Invariants(value Position, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Position_Invariants(value Position, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), bytes.SLICE_SIZE_MINIMUM, POSITION_MAXIMUM).
 		Ensure()
 }
@@ -144,8 +144,8 @@ func Position_Invariants(value Position, namespace invariant.Namespace) {
 type Boolean bool
 
 // Boolean_Invariants covers both parser outcomes.
-func Boolean_Invariants(value Boolean, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Boolean_Invariants(value Boolean, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Sometimes(bool(value), "An XML parser decision is positive.").
 		Ensure()
 }
@@ -155,9 +155,9 @@ type Entity_Size_Count uint8
 
 // Entity_Size_Count_Invariants covers invalidity and every UTF-8 width.
 func Entity_Size_Count_Invariants(
-	value Entity_Size_Count, namespace invariant.Namespace,
+	value Entity_Size_Count, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Uint8(
 			uint8(value), uint8(utf8.DECODED_SIZE_MINIMUM),
 			uint8(utf8.CHARACTER_SIZE_MAXIMUM),
@@ -170,9 +170,9 @@ type Escaped_Character_Size_Count uint8
 
 // Escaped_Character_Size_Count_Invariants covers direct and replacement widths.
 func Escaped_Character_Size_Count_Invariants(
-	value Escaped_Character_Size_Count, namespace invariant.Namespace,
+	value Escaped_Character_Size_Count, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Uint8(
 			uint8(value), uint8(utf8.CHARACTER_SIZE_MINIMUM),
 			uint8(ESCAPED_CHARACTER_SIZE_MAXIMUM),
@@ -185,9 +185,9 @@ type Encoded_Entity_Size_Count uint8
 
 // Encoded_Entity_Size_Count_Invariants excludes invalid entity width.
 func Encoded_Entity_Size_Count_Invariants(
-	value Encoded_Entity_Size_Count, namespace invariant.Namespace,
+	value Encoded_Entity_Size_Count, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Enum_4_Uint8(
 			uint8(value), uint8(utf8.CHARACTER_SIZE_MINIMUM),
 			uint8(utf8.CHARACTER_SIZE_TWO), uint8(utf8.CHARACTER_SIZE_THREE),
@@ -200,8 +200,8 @@ func Encoded_Entity_Size_Count_Invariants(
 type Validate_Status uint8
 
 // Validate_Status_Invariants covers both validation outcomes.
-func Validate_Status_Invariants(value Validate_Status, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Validate_Status_Invariants(value Validate_Status, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_Uint8(uint8(value), STATUS_OK, STATUS_INPUT_INVALID).
 		Ensure()
 }
@@ -211,9 +211,9 @@ type Escape_Size_Status uint8
 
 // Escape_Size_Status_Invariants lists successful and oversized text.
 func Escape_Size_Status_Invariants(
-	value Escape_Size_Status, namespace invariant.Namespace,
+	value Escape_Size_Status, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Enum_Uint8(uint8(value), STATUS_OK, STATUS_OUTPUT_TOO_LARGE).
 		Ensure()
 }
@@ -222,8 +222,8 @@ func Escape_Size_Status_Invariants(
 type Escape_Status uint8
 
 // Escape_Status_Invariants lists every escape outcome.
-func Escape_Status_Invariants(value Escape_Status, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Escape_Status_Invariants(value Escape_Status, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_4_Uint8(
 			uint8(value), STATUS_OK, STATUS_OUTPUT_TOO_SMALL,
 			STATUS_STORAGE_INVALID, STATUS_OUTPUT_TOO_LARGE,
@@ -236,9 +236,9 @@ type Unescape_Size_Status uint8
 
 // Unescape_Size_Status_Invariants covers both sizing outcomes.
 func Unescape_Size_Status_Invariants(
-	value Unescape_Size_Status, namespace invariant.Namespace,
+	value Unescape_Size_Status, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Enum_Uint8(uint8(value), STATUS_OK, STATUS_INPUT_INVALID).
 		Ensure()
 }
@@ -247,8 +247,8 @@ func Unescape_Size_Status_Invariants(
 type Unescape_Status uint8
 
 // Unescape_Status_Invariants lists every unescape outcome.
-func Unescape_Status_Invariants(value Unescape_Status, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Unescape_Status_Invariants(value Unescape_Status, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_4_Uint8(
 			uint8(value), STATUS_OK, STATUS_INPUT_INVALID,
 			STATUS_OUTPUT_TOO_SMALL, STATUS_STORAGE_INVALID,

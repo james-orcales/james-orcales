@@ -4,7 +4,7 @@ import (
 	"testing"
 	standard_tabwriter "text/tabwriter"
 
-	"local/james-orcales/shared/invariant/default"
+	"local/james-orcales/shared/simulation/aver/default"
 	"local/james-orcales/shared/strconv"
 	"local/james-orcales/shared/testify"
 	"local/james-orcales/shared/text/tabwriter"
@@ -13,7 +13,7 @@ import (
 
 // TestMain keeps allocation probes on production assertion paths.
 func TestMain(m *testing.M) {
-	invariant.Run_Test_Main(m)
+	aver.Run_Test_Main(m)
 }
 
 type standard_output struct {

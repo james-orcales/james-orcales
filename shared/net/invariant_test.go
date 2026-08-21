@@ -6,8 +6,8 @@ import (
 	"testing"
 
 	"local/james-orcales/shared/crypto/prng"
-	"local/james-orcales/shared/invariant/default"
 	"local/james-orcales/shared/net"
+	"local/james-orcales/shared/simulation/aver/default"
 	"local/james-orcales/shared/simulation/nbio"
 	"local/james-orcales/shared/simulation/time"
 )
@@ -194,11 +194,11 @@ func resolver_fixture_init(fixture *resolver_fixture, family nbio.Address_Family
 // The recorder exits on failure. Replacing Exit exposes the boundary without a subprocess and
 // restores global state before another invariant runs.
 func did_die(action func()) (died bool) {
-	exit, output := invariant.Default.Exit, invariant.Default.Output
-	invariant.Default.Exit = func(int) { panic(tripped_invariant{}) }
-	invariant.Default.Output = discard_writer{}
+	exit, output := aver.Default.Exit, aver.Default.Output
+	aver.Default.Exit = func(int) { panic(tripped_invariant{}) }
+	aver.Default.Output = discard_writer{}
 	defer func() {
-		invariant.Default.Exit, invariant.Default.Output = exit, output
+		aver.Default.Exit, aver.Default.Output = exit, output
 		if recover() != nil {
 			died = true
 		}

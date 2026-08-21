@@ -5,8 +5,8 @@
 package integer
 
 import (
-	"local/james-orcales/shared/invariant/default"
 	"local/james-orcales/shared/math/bits"
+	"local/james-orcales/shared/simulation/aver/default"
 )
 
 // LIMB_BIT_COUNT is the bit width of one limb.
@@ -110,8 +110,8 @@ const DIGIT_VALUE_ABSENT = -1
 type Limb uint64
 
 // Limb_Invariants states the complete limb domain.
-func Limb_Invariants(value Limb, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Limb_Invariants(value Limb, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint64(uint64(value), LIMB_MINIMUM, LIMB_MAXIMUM).
 		Ensure()
 }
@@ -120,8 +120,8 @@ func Limb_Invariants(value Limb, namespace invariant.Namespace) {
 type Limb_Index int
 
 // Limb_Index_Invariants states the complete limb position domain.
-func Limb_Index_Invariants(value Limb_Index, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Limb_Index_Invariants(value Limb_Index, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), LIMB_INDEX_MINIMUM, LIMB_INDEX_MAXIMUM).
 		Ensure()
 }
@@ -130,8 +130,8 @@ func Limb_Index_Invariants(value Limb_Index, namespace invariant.Namespace) {
 type Bit_Count int
 
 // Bit_Count_Invariants admits the zero length of zero itself.
-func Bit_Count_Invariants(value Bit_Count, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Bit_Count_Invariants(value Bit_Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), BIT_COUNT_MINIMUM, BIT_COUNT_MAXIMUM).
 		Ensure()
 }
@@ -140,8 +140,8 @@ func Bit_Count_Invariants(value Bit_Count, namespace invariant.Namespace) {
 type Shift_Count int
 
 // Shift_Count_Invariants admits a count past the width, which empties the value.
-func Shift_Count_Invariants(value Shift_Count, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Shift_Count_Invariants(value Shift_Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), SHIFT_COUNT_MINIMUM, SHIFT_COUNT_MAXIMUM).
 		Ensure()
 }
@@ -150,8 +150,8 @@ func Shift_Count_Invariants(value Shift_Count, namespace invariant.Namespace) {
 type Order int
 
 // Order_Invariants states the three standings two values can hold.
-func Order_Invariants(value Order, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Order_Invariants(value Order, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_3_Int(int(value), int(ORDER_BEFORE), int(ORDER_SAME), int(ORDER_AFTER)).
 		Ensure()
 }
@@ -160,8 +160,8 @@ func Order_Invariants(value Order, namespace invariant.Namespace) {
 type Int_64 int64
 
 // Int_64_Invariants states the complete machine integer domain.
-func Int_64_Invariants(value Int_64, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Int_64_Invariants(value Int_64, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int64(int64(value), INT_64_MINIMUM, INT_64_MAXIMUM).
 		Ensure()
 }
@@ -170,8 +170,8 @@ func Int_64_Invariants(value Int_64, namespace invariant.Namespace) {
 type Boolean bool
 
 // Boolean_Invariants states both value reports as obligations.
-func Boolean_Invariants(value Boolean, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Boolean_Invariants(value Boolean, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Sometimes(bool(value), "The integer report is true.").
 		Ensure()
 }
@@ -180,8 +180,8 @@ func Boolean_Invariants(value Boolean, namespace invariant.Namespace) {
 type Base int
 
 // Base_Invariants states the four bases a Go literal names.
-func Base_Invariants(value Base, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Base_Invariants(value Base, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_4_Int(int(value), BASE_BINARY, BASE_OCTAL, DECIMAL_BASE, BASE_HEXADECIMAL).
 		Ensure()
 }
@@ -190,8 +190,8 @@ func Base_Invariants(value Base, namespace invariant.Namespace) {
 type Digit_Byte byte
 
 // Digit_Byte_Invariants states the complete byte domain, because a literal carries any byte.
-func Digit_Byte_Invariants(value Digit_Byte, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Digit_Byte_Invariants(value Digit_Byte, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint8(uint8(value), DIGIT_BYTE_MINIMUM, DIGIT_BYTE_MAXIMUM).
 		Ensure()
 }
@@ -200,8 +200,8 @@ func Digit_Byte_Invariants(value Digit_Byte, namespace invariant.Namespace) {
 type Digit_Value int
 
 // Digit_Value_Invariants admits the absent value, which marks a byte that spells no digit.
-func Digit_Value_Invariants(value Digit_Value, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Digit_Value_Invariants(value Digit_Value, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), DIGIT_VALUE_ABSENT, DIGIT_VALUE_MAXIMUM).
 		Ensure()
 }
@@ -210,8 +210,8 @@ func Digit_Value_Invariants(value Digit_Value, namespace invariant.Namespace) {
 type Text string
 
 // Text_Invariants caps a literal so a hostile one is refused before the first digit.
-func Text_Invariants(value Text, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Text_Invariants(value Text, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), TEXT_SIZE_MINIMUM, TEXT_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -220,8 +220,8 @@ func Text_Invariants(value Text, namespace invariant.Namespace) {
 type Digits []byte
 
 // Digits_Invariants states the storage the longest decimal form needs.
-func Digits_Invariants(value Digits, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Digits_Invariants(value Digits, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), DIGIT_COUNT_MINIMUM, TEXT_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -230,8 +230,8 @@ func Digits_Invariants(value Digits, namespace invariant.Namespace) {
 type Digit_Count int
 
 // Digit_Count_Invariants states the byte count of the longest decimal form.
-func Digit_Count_Invariants(value Digit_Count, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Digit_Count_Invariants(value Digit_Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), DIGIT_COUNT_MINIMUM, DIGIT_COUNT_MAXIMUM).
 		Ensure()
 }
@@ -244,8 +244,8 @@ type Integer struct {
 }
 
 // Integer_Invariants states the width every value holds.
-func Integer_Invariants(value Integer, namespace invariant.Namespace) {
-	invariant.Always(
+func Integer_Invariants(value Integer, namespace aver.Namespace) {
+	aver.Always(
 		len(value.Limbs) == LIMB_COUNT,
 		"An integer holds one limb for every piece of its width.",
 	)

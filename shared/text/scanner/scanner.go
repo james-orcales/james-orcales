@@ -2,8 +2,8 @@
 package scanner
 
 import (
-	"local/james-orcales/shared/invariant/default"
 	"local/james-orcales/shared/math/bits"
+	"local/james-orcales/shared/simulation/aver/default"
 	"local/james-orcales/shared/strconv"
 	"local/james-orcales/shared/strings"
 	"local/james-orcales/shared/unicode/ucd"
@@ -285,8 +285,8 @@ const DEFAULT_FILENAME = "<input>"
 type Source_Unvalidated string
 
 // Source_Unvalidated_Invariants bounds validation work itself.
-func Source_Unvalidated_Invariants(value Source_Unvalidated, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Source_Unvalidated_Invariants(value Source_Unvalidated, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), SOURCE_SIZE_MINIMUM, SOURCE_SIZE_UNVALIDATED_MAXIMUM).
 		Ensure()
 }
@@ -295,8 +295,8 @@ func Source_Unvalidated_Invariants(value Source_Unvalidated, namespace invariant
 type Source string
 
 // Source_Invariants keeps every scan inside text boundary.
-func Source_Invariants(value Source, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Source_Invariants(value Source, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), SOURCE_SIZE_MINIMUM, SOURCE_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -305,8 +305,8 @@ func Source_Invariants(value Source, namespace invariant.Namespace) {
 type Text string
 
 // Text_Invariants keeps returned view inside source boundary.
-func Text_Invariants(value Text, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Text_Invariants(value Text, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), SOURCE_SIZE_MINIMUM, SOURCE_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -315,8 +315,8 @@ func Text_Invariants(value Text, namespace invariant.Namespace) {
 type Number_Literal string
 
 // Number_Literal_Invariants keeps separator validation on numeric token bounds.
-func Number_Literal_Invariants(value Number_Literal, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Number_Literal_Invariants(value Number_Literal, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), NUMBER_LITERAL_SIZE_MINIMUM, SOURCE_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -325,8 +325,8 @@ func Number_Literal_Invariants(value Number_Literal, namespace invariant.Namespa
 type Filename string
 
 // Filename_Invariants keeps position formatting bounded.
-func Filename_Invariants(value Filename, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Filename_Invariants(value Filename, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), FILENAME_SIZE_MINIMUM, FILENAME_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -335,8 +335,8 @@ func Filename_Invariants(value Filename, namespace invariant.Namespace) {
 type Offset int
 
 // Offset_Invariants includes boundary after maximum source.
-func Offset_Invariants(value Offset, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Offset_Invariants(value Offset, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), OFFSET_MINIMUM, OFFSET_MAXIMUM).
 		Ensure()
 }
@@ -345,8 +345,8 @@ func Offset_Invariants(value Offset, namespace invariant.Namespace) {
 type Line int
 
 // Line_Invariants includes invalid state and maximum trailing line.
-func Line_Invariants(value Line, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Line_Invariants(value Line, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), LINE_INVALID, LINE_MAXIMUM).
 		Ensure()
 }
@@ -355,8 +355,8 @@ func Line_Invariants(value Line, namespace invariant.Namespace) {
 type Column int
 
 // Column_Invariants includes invalid state and maximum trailing boundary.
-func Column_Invariants(value Column, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Column_Invariants(value Column, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), COLUMN_INVALID, COLUMN_MAXIMUM).
 		Ensure()
 }
@@ -365,8 +365,8 @@ func Column_Invariants(value Column, namespace invariant.Namespace) {
 type Character_Index int
 
 // Character_Index_Invariants follows one character per source byte.
-func Character_Index_Invariants(value Character_Index, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Character_Index_Invariants(value Character_Index, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), CHARACTER_INDEX_MINIMUM, CHARACTER_INDEX_MAXIMUM).
 		Ensure()
 }
@@ -512,8 +512,8 @@ const EXPONENT_ACTION_ABSENT = EXPONENT_ACTION_WRONG_MANTISSA +
 type Base int
 
 // Base_Invariants lists scanner literal bases.
-func Base_Invariants(value Base, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Base_Invariants(value Base, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_4_Int(
 			int(value), BASE_BINARY, BASE_OCTAL, BASE_DECIMAL, BASE_HEXADECIMAL,
 		).
@@ -524,8 +524,8 @@ func Base_Invariants(value Base, namespace invariant.Namespace) {
 type Escape_Base int
 
 // Escape_Base_Invariants excludes numeric literal bases unused by escapes.
-func Escape_Base_Invariants(value Escape_Base, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Escape_Base_Invariants(value Escape_Base, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_Int(int(value), BASE_OCTAL, BASE_HEXADECIMAL).
 		Ensure()
 }
@@ -534,8 +534,8 @@ func Escape_Base_Invariants(value Escape_Base, namespace invariant.Namespace) {
 type Quote rune
 
 // Quote_Invariants lists both quoted literal delimiters.
-func Quote_Invariants(value Quote, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Quote_Invariants(value Quote, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_Int32(int32(value), QUOTE_STRING, QUOTE_CHARACTER).
 		Ensure()
 }
@@ -544,8 +544,8 @@ func Quote_Invariants(value Quote, namespace invariant.Namespace) {
 type Decimal_Character rune
 
 // Decimal_Character_Invariants excludes non-decimal number starts.
-func Decimal_Character_Invariants(value Decimal_Character, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Decimal_Character_Invariants(value Decimal_Character, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int32(int32(value), DECIMAL_CHARACTER_MINIMUM, DECIMAL_CHARACTER_MAXIMUM).
 		Ensure()
 }
@@ -554,8 +554,8 @@ func Decimal_Character_Invariants(value Decimal_Character, namespace invariant.N
 type Invalid_Digit int
 
 // Invalid_Digit_Invariants bounds deferred invalid-digit reporting.
-func Invalid_Digit_Invariants(value Invalid_Digit, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Invalid_Digit_Invariants(value Invalid_Digit, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), INVALID_DIGIT_MINIMUM, INVALID_DIGIT_MAXIMUM).
 		Ensure()
 }
@@ -564,8 +564,8 @@ func Invalid_Digit_Invariants(value Invalid_Digit, namespace invariant.Namespace
 type Number_Token rune
 
 // Number_Token_Invariants lists both numeric token kinds.
-func Number_Token_Invariants(value Number_Token, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Number_Token_Invariants(value Number_Token, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_Int32(int32(value), int32(TOKEN_FLOAT), int32(TOKEN_INTEGER)).
 		Ensure()
 }
@@ -574,8 +574,8 @@ func Number_Token_Invariants(value Number_Token, namespace invariant.Namespace) 
 type Exponent_Action uint8
 
 // Exponent_Action_Invariants lists every exponent scan outcome.
-func Exponent_Action_Invariants(value Exponent_Action, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Exponent_Action_Invariants(value Exponent_Action, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_4_Uint8(
 			uint8(value),
 			EXPONENT_ACTION_NONE,
@@ -590,8 +590,8 @@ func Exponent_Action_Invariants(value Exponent_Action, namespace invariant.Names
 type Slash_Token rune
 
 // Slash_Token_Invariants lists both slash scan outcomes.
-func Slash_Token_Invariants(value Slash_Token, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Slash_Token_Invariants(value Slash_Token, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_Int32(int32(value), int32(TOKEN_COMMENT), SLASH_TOKEN).
 		Ensure()
 }
@@ -600,8 +600,8 @@ func Slash_Token_Invariants(value Slash_Token, namespace invariant.Namespace) {
 type Digit_Flags uint8
 
 // Digit_Flags_Invariants lists both independent presence bits.
-func Digit_Flags_Invariants(value Digit_Flags, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Digit_Flags_Invariants(value Digit_Flags, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_4_Uint8(
 			uint8(value),
 			DIGIT_FLAGS_NONE,
@@ -617,9 +617,9 @@ type Radix_Digit_Flags uint8
 
 // Radix_Digit_Flags_Invariants excludes separator states before digit scanning.
 func Radix_Digit_Flags_Invariants(
-	value Radix_Digit_Flags, namespace invariant.Namespace,
+	value Radix_Digit_Flags, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Enum_Uint8(uint8(value), DIGIT_FLAGS_NONE, DIGIT_FLAGS_DIGIT).
 		Ensure()
 }
@@ -628,8 +628,8 @@ func Radix_Digit_Flags_Invariants(
 type Character_Count int
 
 // Character_Count_Invariants follows one character per source byte.
-func Character_Count_Invariants(value Character_Count, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Character_Count_Invariants(value Character_Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), CHARACTER_COUNT_MINIMUM, CHARACTER_COUNT_MAXIMUM).
 		Ensure()
 }
@@ -639,9 +639,9 @@ type Escape_Digit_Count int
 
 // Escape_Digit_Count_Invariants lists octal and Unicode escape widths.
 func Escape_Digit_Count_Invariants(
-	value Escape_Digit_Count, namespace invariant.Namespace,
+	value Escape_Digit_Count, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Enum_4_Int(
 			int(value),
 			ESCAPE_DIGIT_COUNT_HEXADECIMAL_BYTE,
@@ -656,8 +656,8 @@ func Escape_Digit_Count_Invariants(
 type Escape_Action uint8
 
 // Escape_Action_Invariants bounds every escape classification.
-func Escape_Action_Invariants(value Escape_Action, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Escape_Action_Invariants(value Escape_Action, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint8(uint8(value), ESCAPE_ACTION_INVALID, ESCAPE_ACTION_UNICODE_LONG).
 		Ensure()
 }
@@ -666,8 +666,8 @@ func Escape_Action_Invariants(value Escape_Action, namespace invariant.Namespace
 type Digit_Value int
 
 // Digit_Value_Invariants includes every hexadecimal value and sentinel.
-func Digit_Value_Invariants(value Digit_Value, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Digit_Value_Invariants(value Digit_Value, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), DIGIT_VALUE_MINIMUM, DIGIT_VALUE_MAXIMUM).
 		Ensure()
 }
@@ -676,8 +676,8 @@ func Digit_Value_Invariants(value Digit_Value, namespace invariant.Namespace) {
 type Separator_Index int
 
 // Separator_Index_Invariants includes absence and final source byte.
-func Separator_Index_Invariants(value Separator_Index, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Separator_Index_Invariants(value Separator_Index, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), SEPARATOR_INDEX_ABSENT, SEPARATOR_INDEX_MAXIMUM).
 		Ensure()
 }
@@ -686,8 +686,8 @@ func Separator_Index_Invariants(value Separator_Index, namespace invariant.Names
 type Character rune
 
 // Character_Invariants excludes lexical token markers from character results.
-func Character_Invariants(value Character, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Character_Invariants(value Character, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int32(int32(value), CHARACTER_MINIMUM, CHARACTER_MAXIMUM).
 		Ensure()
 }
@@ -696,8 +696,8 @@ func Character_Invariants(value Character, namespace invariant.Namespace) {
 type Source_Offset int
 
 // Source_Offset_Invariants stays inside source boundary.
-func Source_Offset_Invariants(value Source_Offset, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Source_Offset_Invariants(value Source_Offset, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), OFFSET_MINIMUM, OFFSET_MAXIMUM).
 		Ensure()
 }
@@ -706,8 +706,8 @@ func Source_Offset_Invariants(value Source_Offset, namespace invariant.Namespace
 type Source_Line int
 
 // Source_Line_Invariants includes zero storage and trailing line.
-func Source_Line_Invariants(value Source_Line, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Source_Line_Invariants(value Source_Line, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), LINE_INVALID, LINE_MAXIMUM).
 		Ensure()
 }
@@ -716,8 +716,8 @@ func Source_Line_Invariants(value Source_Line, namespace invariant.Namespace) {
 type Source_Column int
 
 // Source_Column_Invariants includes zero storage and trailing boundary.
-func Source_Column_Invariants(value Source_Column, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Source_Column_Invariants(value Source_Column, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), COLUMN_INVALID, COLUMN_MAXIMUM).
 		Ensure()
 }
@@ -727,9 +727,9 @@ type Look_Ahead_Character rune
 
 // Look_Ahead_Character_Invariants includes zero storage and runtime characters.
 func Look_Ahead_Character_Invariants(
-	value Look_Ahead_Character, namespace invariant.Namespace,
+	value Look_Ahead_Character, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int32(int32(value), CHARACTER_MINIMUM, CHARACTER_MAXIMUM).
 		Ensure()
 }
@@ -738,8 +738,8 @@ func Look_Ahead_Character_Invariants(
 type Character_Offset int
 
 // Character_Offset_Invariants stays inside source boundary.
-func Character_Offset_Invariants(value Character_Offset, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Character_Offset_Invariants(value Character_Offset, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), OFFSET_MINIMUM, OFFSET_MAXIMUM).
 		Ensure()
 }
@@ -748,8 +748,8 @@ func Character_Offset_Invariants(value Character_Offset, namespace invariant.Nam
 type Character_Line int
 
 // Character_Line_Invariants includes zero storage and trailing line.
-func Character_Line_Invariants(value Character_Line, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Character_Line_Invariants(value Character_Line, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), LINE_INVALID, LINE_MAXIMUM).
 		Ensure()
 }
@@ -758,8 +758,8 @@ func Character_Line_Invariants(value Character_Line, namespace invariant.Namespa
 type Character_Column int
 
 // Character_Column_Invariants includes zero storage and trailing boundary.
-func Character_Column_Invariants(value Character_Column, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Character_Column_Invariants(value Character_Column, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), COLUMN_INVALID, COLUMN_MAXIMUM).
 		Ensure()
 }
@@ -768,8 +768,8 @@ func Character_Column_Invariants(value Character_Column, namespace invariant.Nam
 type Token_Start int
 
 // Token_Start_Invariants stays inside source boundary.
-func Token_Start_Invariants(value Token_Start, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Token_Start_Invariants(value Token_Start, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), OFFSET_MINIMUM, OFFSET_MAXIMUM).
 		Ensure()
 }
@@ -778,8 +778,8 @@ func Token_Start_Invariants(value Token_Start, namespace invariant.Namespace) {
 type Token_End int
 
 // Token_End_Invariants stays inside source boundary.
-func Token_End_Invariants(value Token_End, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Token_End_Invariants(value Token_End, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), OFFSET_MINIMUM, OFFSET_MAXIMUM).
 		Ensure()
 }
@@ -788,8 +788,8 @@ func Token_End_Invariants(value Token_End, namespace invariant.Namespace) {
 type Look_Ahead bool
 
 // Look_Ahead_Invariants reaches absent and present look-ahead.
-func Look_Ahead_Invariants(value Look_Ahead, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Look_Ahead_Invariants(value Look_Ahead, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Sometimes(bool(value), "Scanner look-ahead is present.").
 		Ensure()
 }
@@ -798,8 +798,8 @@ func Look_Ahead_Invariants(value Look_Ahead, namespace invariant.Namespace) {
 type Initialization bool
 
 // Initialization_Invariants reaches zero and initialized scanner state.
-func Initialization_Invariants(value Initialization, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Initialization_Invariants(value Initialization, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Sometimes(bool(value), "Scanner state is initialized.").
 		Ensure()
 }
@@ -808,8 +808,8 @@ func Initialization_Invariants(value Initialization, namespace invariant.Namespa
 type Token rune
 
 // Token_Invariants spans predefined markers and Unicode characters.
-func Token_Invariants(value Token, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Token_Invariants(value Token, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int32(int32(value), TOKEN_MINIMUM, TOKEN_MAXIMUM).
 		Ensure()
 }
@@ -818,8 +818,8 @@ func Token_Invariants(value Token, namespace invariant.Namespace) {
 type Mode uint
 
 // Mode_Invariants rejects undefined configuration bits.
-func Mode_Invariants(value Mode, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Mode_Invariants(value Mode, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint(uint(value), MODE_VALUE_MINIMUM, MODE_VALUE_MAXIMUM).
 		Ensure()
 }
@@ -828,8 +828,8 @@ func Mode_Invariants(value Mode, namespace invariant.Namespace) {
 type Whitespace uint64
 
 // Whitespace_Invariants rejects bits outside standard Scanner contract.
-func Whitespace_Invariants(value Whitespace, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Whitespace_Invariants(value Whitespace, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint64(uint64(value), uint64(WHITESPACE_MINIMUM), uint64(WHITESPACE_MAXIMUM)).
 		Ensure()
 }
@@ -838,8 +838,8 @@ func Whitespace_Invariants(value Whitespace, namespace invariant.Namespace) {
 type Validation_Status uint8
 
 // Validation_Status_Invariants lists validation outcomes.
-func Validation_Status_Invariants(value Validation_Status, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Validation_Status_Invariants(value Validation_Status, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_Uint8(uint8(value), uint8(STATUS_OK), uint8(STATUS_INPUT_INVALID)).
 		Ensure()
 }
@@ -848,8 +848,8 @@ func Validation_Status_Invariants(value Validation_Status, namespace invariant.N
 type Status uint8
 
 // Status_Invariants lists formatter outcomes.
-func Status_Invariants(value Status, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Status_Invariants(value Status, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_Uint8(uint8(value), uint8(STATUS_OK), uint8(STATUS_OUTPUT_TOO_SMALL)).
 		Ensure()
 }
@@ -858,8 +858,8 @@ func Status_Invariants(value Status, namespace invariant.Namespace) {
 type Token_Output []byte
 
 // Token_Output_Invariants prevents token formatting into unrelated storage.
-func Token_Output_Invariants(value Token_Output, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Token_Output_Invariants(value Token_Output, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), strings.TEXT_SIZE_MINIMUM, TOKEN_TEXT_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -868,8 +868,8 @@ func Token_Output_Invariants(value Token_Output, namespace invariant.Namespace) 
 type Position_Output []byte
 
 // Position_Output_Invariants prevents position formatting into unrelated storage.
-func Position_Output_Invariants(value Position_Output, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Position_Output_Invariants(value Position_Output, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), strings.TEXT_SIZE_MINIMUM, POSITION_TEXT_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -878,8 +878,8 @@ func Position_Output_Invariants(value Position_Output, namespace invariant.Names
 type Token_Count int
 
 // Token_Count_Invariants stays inside longest token form.
-func Token_Count_Invariants(value Token_Count, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Token_Count_Invariants(value Token_Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), TOKEN_TEXT_SIZE_MINIMUM, TOKEN_TEXT_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -888,8 +888,8 @@ func Token_Count_Invariants(value Token_Count, namespace invariant.Namespace) {
 type Position_Count int
 
 // Position_Count_Invariants stays inside longest position form.
-func Position_Count_Invariants(value Position_Count, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Position_Count_Invariants(value Position_Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), POSITION_TEXT_SIZE_MINIMUM, POSITION_TEXT_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -898,8 +898,8 @@ func Position_Count_Invariants(value Position_Count, namespace invariant.Namespa
 type Error_Code uint8
 
 // Error_Code_Invariants includes zero report and every emitted code.
-func Error_Code_Invariants(value Error_Code, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Error_Code_Invariants(value Error_Code, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint8(uint8(value), ERROR_CODE_VALUE_MINIMUM, ERROR_CODE_VALUE_MAXIMUM).
 		Ensure()
 }
@@ -908,8 +908,8 @@ func Error_Code_Invariants(value Error_Code, namespace invariant.Namespace) {
 type Report_Code uint8
 
 // Report_Code_Invariants excludes zero no-report state.
-func Report_Code_Invariants(value Report_Code, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Report_Code_Invariants(value Report_Code, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint8(uint8(value), REPORT_CODE_VALUE_MINIMUM, REPORT_CODE_VALUE_MAXIMUM).
 		Ensure()
 }
@@ -919,9 +919,9 @@ type Lexical_Report_Code uint8
 
 // Lexical_Report_Code_Invariants excludes decoder-only encoding diagnostics.
 func Lexical_Report_Code_Invariants(
-	value Lexical_Report_Code, namespace invariant.Namespace,
+	value Lexical_Report_Code, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Uint8(
 			uint8(value),
 			uint8(ERROR_LITERAL_NOT_TERMINATED),
@@ -934,8 +934,8 @@ func Lexical_Report_Code_Invariants(
 type Error_Line int
 
 // Error_Line_Invariants excludes invalid and trailing empty line states.
-func Error_Line_Invariants(value Error_Line, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Error_Line_Invariants(value Error_Line, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), ERROR_LINE_MINIMUM, ERROR_LINE_MAXIMUM).
 		Ensure()
 }
@@ -944,8 +944,8 @@ func Error_Line_Invariants(value Error_Line, namespace invariant.Namespace) {
 type Error_Column int
 
 // Error_Column_Invariants excludes invalid and trailing empty column states.
-func Error_Column_Invariants(value Error_Column, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Error_Column_Invariants(value Error_Column, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), ERROR_COLUMN_MINIMUM, ERROR_COLUMN_MAXIMUM).
 		Ensure()
 }
@@ -954,8 +954,8 @@ func Error_Column_Invariants(value Error_Column, namespace invariant.Namespace) 
 type Report_Line int
 
 // Report_Line_Invariants excludes trailing line without a character.
-func Report_Line_Invariants(value Report_Line, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Report_Line_Invariants(value Report_Line, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), LINE_INVALID, ERROR_LINE_MAXIMUM).
 		Ensure()
 }
@@ -964,8 +964,8 @@ func Report_Line_Invariants(value Report_Line, namespace invariant.Namespace) {
 type Report_Column int
 
 // Report_Column_Invariants excludes absent character columns.
-func Report_Column_Invariants(value Report_Column, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Report_Column_Invariants(value Report_Column, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), ERROR_COLUMN_MINIMUM, ERROR_COLUMN_MAXIMUM).
 		Ensure()
 }
@@ -983,7 +983,7 @@ type Error_Position struct {
 }
 
 // Error_Position_Invariants composes reachable diagnostic coordinates.
-func Error_Position_Invariants(value Error_Position, namespace invariant.Namespace) {
+func Error_Position_Invariants(value Error_Position, namespace aver.Namespace) {
 	Filename_Invariants(value.Filename, namespace)
 	Offset_Invariants(value.Offset, namespace)
 	Error_Line_Invariants(value.Line, namespace)
@@ -994,8 +994,8 @@ func Error_Position_Invariants(value Error_Position, namespace invariant.Namespa
 type Error_Count int
 
 // Error_Count_Invariants derives work from source boundary.
-func Error_Count_Invariants(value Error_Count, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Error_Count_Invariants(value Error_Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), ERROR_COUNT_MINIMUM, ERROR_COUNT_MAXIMUM).
 		Ensure()
 }
@@ -1004,8 +1004,8 @@ func Error_Count_Invariants(value Error_Count, namespace invariant.Namespace) {
 type Boolean bool
 
 // Boolean_Invariants reaches both scanner decision results.
-func Boolean_Invariants(value Boolean, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Boolean_Invariants(value Boolean, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Sometimes(bool(value), "A scanner decision is true.").
 		Ensure()
 }
@@ -1023,7 +1023,7 @@ type Position struct {
 }
 
 // Position_Invariants composes coordinates common to valid and invalid positions.
-func Position_Invariants(value Position, namespace invariant.Namespace) {
+func Position_Invariants(value Position, namespace aver.Namespace) {
 	Filename_Invariants(value.Filename, namespace)
 	Offset_Invariants(value.Offset, namespace)
 	Line_Invariants(value.Line, namespace)
@@ -1041,7 +1041,7 @@ type Error struct {
 }
 
 // Error_Invariants keeps callbacks on bounded value state.
-func Error_Invariants(value Error, namespace invariant.Namespace) {
+func Error_Invariants(value Error, namespace aver.Namespace) {
 	Error_Code_Invariants(value.Code, namespace)
 	Character_Invariants(value.Character, namespace)
 	Position_Invariants(value.Position, namespace)
@@ -1072,7 +1072,7 @@ type Scanner_Decoder struct {
 }
 
 // Scanner_Decoder_Invariants keeps consumed state inside source boundaries.
-func Scanner_Decoder_Invariants(value Scanner_Decoder, namespace invariant.Namespace) {
+func Scanner_Decoder_Invariants(value Scanner_Decoder, namespace aver.Namespace) {
 	Source_Invariants(value.Source, namespace)
 	Source_Offset_Invariants(value.Source_Offset, namespace)
 	Source_Line_Invariants(value.Line, namespace)
@@ -1093,7 +1093,7 @@ type Scanner_Cursor struct {
 }
 
 // Scanner_Cursor_Invariants composes decoder and public look-ahead state.
-func Scanner_Cursor_Invariants(value Scanner_Cursor, namespace invariant.Namespace) {
+func Scanner_Cursor_Invariants(value Scanner_Cursor, namespace aver.Namespace) {
 	Scanner_Decoder_Invariants(value.Decoder, namespace)
 	Look_Ahead_Character_Invariants(value.Character, namespace)
 	Look_Ahead_Invariants(value.Looked, namespace)
@@ -1111,7 +1111,7 @@ type Scanner_Diagnostics struct {
 
 // Scanner_Diagnostics_Invariants bounds report state without scanner access.
 func Scanner_Diagnostics_Invariants(
-	value Scanner_Diagnostics, namespace invariant.Namespace,
+	value Scanner_Diagnostics, namespace aver.Namespace,
 ) {
 	Error_Count_Invariants(value.Error_Count, namespace)
 	Filename_Invariants(value.Filename, namespace)
@@ -1127,7 +1127,7 @@ type Scanner_Token_Bounds struct {
 
 // Scanner_Token_Bounds_Invariants keeps token boundaries inside source.
 func Scanner_Token_Bounds_Invariants(
-	value Scanner_Token_Bounds, namespace invariant.Namespace,
+	value Scanner_Token_Bounds, namespace aver.Namespace,
 ) {
 	Token_Start_Invariants(value.Start, namespace)
 	Token_End_Invariants(value.End, namespace)
@@ -1156,7 +1156,7 @@ type Scanner struct {
 }
 
 // Scanner_Invariants bounds zero storage and initialized runtime state.
-func Scanner_Invariants(value Scanner, namespace invariant.Namespace) {
+func Scanner_Invariants(value Scanner, namespace aver.Namespace) {
 	Error_Count_Invariants(value.Error_Count, namespace)
 	Mode_Invariants(value.Mode, namespace)
 	Whitespace_Invariants(value.Whitespace, namespace)
@@ -1318,11 +1318,11 @@ func Scanner_Position(subject *Scanner) (position Position) {
 func Scanner_Token_Text(subject *Scanner) (text Text) {
 	defer func() { Text_Invariants(text, "Scanner_Token_Text.text") }()
 	Scanner_Invariants(*subject, "Scanner_Token_Text")
-	invariant.Always(
+	aver.Always(
 		Token_End(subject.Token.Start) <= subject.Token.End,
 		"Scanner token start does not follow token end.",
 	)
-	invariant.Always(
+	aver.Always(
 		subject.Token.End <= Token_End(len(subject.Cursor.Decoder.Source)),
 		"Scanner token end stays inside source.",
 	)

@@ -5,8 +5,8 @@ import (
 	"unsafe"
 
 	"local/james-orcales/shared/bytes"
-	"local/james-orcales/shared/invariant/default"
 	"local/james-orcales/shared/math/bits"
+	"local/james-orcales/shared/simulation/aver/default"
 	"local/james-orcales/shared/simulation/time"
 	"local/james-orcales/shared/slices"
 	"local/james-orcales/shared/strings"
@@ -18,8 +18,8 @@ import (
 type Status uint8
 
 // Status_Invariants closes current driver outcome domain.
-func Status_Invariants(value Status, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Status_Invariants(value Status, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint8(uint8(value), uint8(STATUS_OK), uint8(STATUS_UNSUPPORTED)).
 		Ensure()
 }
@@ -29,9 +29,9 @@ type Validation_Status Status
 
 // Validation_Status_Invariants keeps pure validation outcomes exact.
 func Validation_Status_Invariants(
-	value Validation_Status, namespace invariant.Namespace,
+	value Validation_Status, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Enum_Uint8(
 			uint8(value), uint8(STATUS_OK), uint8(STATUS_INPUT_INVALID),
 		).
@@ -43,9 +43,9 @@ type Optional_Status Status
 
 // Optional_Status_Invariants keeps optional result outcomes exact.
 func Optional_Status_Invariants(
-	value Optional_Status, namespace invariant.Namespace,
+	value Optional_Status, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Enum_Uint8(
 			uint8(value), uint8(STATUS_OK), uint8(STATUS_UNSUPPORTED),
 		).
@@ -77,8 +77,8 @@ const STATUS_UNSUPPORTED Status = STATUS_BAD_CONNECTION + 1
 type Boolean bool
 
 // Boolean_Invariants requires both database truth values.
-func Boolean_Invariants(value Boolean, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Boolean_Invariants(value Boolean, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Sometimes(bool(value), "A driver Boolean value is true.").
 		Ensure()
 }
@@ -87,8 +87,8 @@ func Boolean_Invariants(value Boolean, namespace invariant.Namespace) {
 type Integer int64
 
 // Integer_Invariants keeps complete standard integer domain.
-func Integer_Invariants(value Integer, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Integer_Invariants(value Integer, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int64(int64(value), bits.INTEGER_64_MINIMUM, bits.INTEGER_64_MAXIMUM).
 		Ensure()
 }
@@ -97,8 +97,8 @@ func Integer_Invariants(value Integer, namespace invariant.Namespace) {
 type Float uint64
 
 // Float_Invariants keeps every binary64 encoding, including NaN payloads.
-func Float_Invariants(value Float, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Float_Invariants(value Float, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint64(uint64(value), bits.WORD_64_MINIMUM, bits.WORD_64_MAXIMUM).
 		Ensure()
 }
@@ -111,8 +111,8 @@ const BYTE_COUNT_UNVALIDATED_MAXIMUM = bytes.SLICE_SIZE_MAXIMUM +
 type Bytes_Unvalidated []byte
 
 // Bytes_Unvalidated_Invariants bounds hostile input before validation work.
-func Bytes_Unvalidated_Invariants(value Bytes_Unvalidated, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Bytes_Unvalidated_Invariants(value Bytes_Unvalidated, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(
 			len(value), bytes.SLICE_SIZE_MINIMUM,
 			BYTE_COUNT_UNVALIDATED_MAXIMUM,
@@ -124,8 +124,8 @@ func Bytes_Unvalidated_Invariants(value Bytes_Unvalidated, namespace invariant.N
 type Bytes []byte
 
 // Bytes_Invariants shares repository byte boundary.
-func Bytes_Invariants(value Bytes, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Bytes_Invariants(value Bytes, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), bytes.SLICE_SIZE_MINIMUM, bytes.SLICE_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -138,8 +138,8 @@ const TEXT_SIZE_UNVALIDATED_MAXIMUM = strings.TEXT_SIZE_MAXIMUM +
 type Text_Unvalidated string
 
 // Text_Unvalidated_Invariants bounds hostile input before validation work.
-func Text_Unvalidated_Invariants(value Text_Unvalidated, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Text_Unvalidated_Invariants(value Text_Unvalidated, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(
 			len(value), strings.TEXT_SIZE_MINIMUM,
 			TEXT_SIZE_UNVALIDATED_MAXIMUM,
@@ -151,8 +151,8 @@ func Text_Unvalidated_Invariants(value Text_Unvalidated, namespace invariant.Nam
 type Text string
 
 // Text_Invariants shares repository text boundary.
-func Text_Invariants(value Text, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Text_Invariants(value Text, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), strings.TEXT_SIZE_MINIMUM, strings.TEXT_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -161,8 +161,8 @@ func Text_Invariants(value Text, namespace invariant.Namespace) {
 type Value_Kind uint8
 
 // Value_Kind_Invariants closes standard driver value kinds.
-func Value_Kind_Invariants(value Value_Kind, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Value_Kind_Invariants(value Value_Kind, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint8(uint8(value), uint8(VALUE_NULL), uint8(VALUE_TIME)).
 		Ensure()
 }
@@ -213,32 +213,32 @@ type Value struct {
 }
 
 // Value_Invariants states fixed storage. Payload sites prove their active domain separately.
-func Value_Invariants(value Value, namespace invariant.Namespace) {
-	invariant.Always(
+func Value_Invariants(value Value, namespace aver.Namespace) {
+	aver.Always(
 		len(value.Kinds) == VALUE_SLOT_COUNT,
 		"A value holds one kind slot.",
 	)
-	invariant.Always(
+	aver.Always(
 		len(value.Booleans) == VALUE_SLOT_COUNT,
 		"A value holds one Boolean slot.",
 	)
-	invariant.Always(
+	aver.Always(
 		len(value.Integers) == VALUE_SLOT_COUNT,
 		"A value holds one integer slot.",
 	)
-	invariant.Always(
+	aver.Always(
 		len(value.Floats) == VALUE_SLOT_COUNT,
 		"A value holds one binary64 slot.",
 	)
-	invariant.Always(
+	aver.Always(
 		len(value.Byte_Values) == VALUE_SLOT_COUNT,
 		"A value holds one byte-view slot.",
 	)
-	invariant.Always(
+	aver.Always(
 		len(value.Texts) == VALUE_SLOT_COUNT,
 		"A value holds one text slot.",
 	)
-	invariant.Always(
+	aver.Always(
 		len(value.Moments) == VALUE_SLOT_COUNT,
 		"A value holds one timestamp slot.",
 	)
@@ -415,8 +415,8 @@ func Value_As_Time(value Value) (result time.Moment, status Validation_Status) {
 type Query_Unvalidated string
 
 // Query_Unvalidated_Invariants bounds hostile query before validation.
-func Query_Unvalidated_Invariants(value Query_Unvalidated, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Query_Unvalidated_Invariants(value Query_Unvalidated, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(
 			len(value), strings.TEXT_SIZE_MINIMUM,
 			TEXT_SIZE_UNVALIDATED_MAXIMUM,
@@ -428,8 +428,8 @@ func Query_Unvalidated_Invariants(value Query_Unvalidated, namespace invariant.N
 type Query string
 
 // Query_Invariants shares repository text boundary.
-func Query_Invariants(value Query, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Query_Invariants(value Query, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), strings.TEXT_SIZE_MINIMUM, strings.TEXT_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -454,9 +454,9 @@ type Data_Source_Unvalidated string
 
 // Data_Source_Unvalidated_Invariants bounds hostile driver text before validation.
 func Data_Source_Unvalidated_Invariants(
-	value Data_Source_Unvalidated, namespace invariant.Namespace,
+	value Data_Source_Unvalidated, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(
 			len(value), strings.TEXT_SIZE_MINIMUM,
 			TEXT_SIZE_UNVALIDATED_MAXIMUM,
@@ -468,8 +468,8 @@ func Data_Source_Unvalidated_Invariants(
 type Data_Source string
 
 // Data_Source_Invariants shares repository text boundary.
-func Data_Source_Invariants(value Data_Source, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Data_Source_Invariants(value Data_Source, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), strings.TEXT_SIZE_MINIMUM, strings.TEXT_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -494,9 +494,9 @@ type Argument_Name_Unvalidated string
 
 // Argument_Name_Unvalidated_Invariants bounds hostile name before letter scan.
 func Argument_Name_Unvalidated_Invariants(
-	value Argument_Name_Unvalidated, namespace invariant.Namespace,
+	value Argument_Name_Unvalidated, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(
 			len(value), strings.TEXT_SIZE_MINIMUM,
 			TEXT_SIZE_UNVALIDATED_MAXIMUM,
@@ -508,8 +508,8 @@ func Argument_Name_Unvalidated_Invariants(
 type Argument_Name string
 
 // Argument_Name_Invariants shares repository text boundary.
-func Argument_Name_Invariants(value Argument_Name, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Argument_Name_Invariants(value Argument_Name, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), strings.TEXT_SIZE_MINIMUM, strings.TEXT_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -526,9 +526,9 @@ type Argument_Ordinal_Unvalidated int
 
 // Argument_Ordinal_Unvalidated_Invariants bounds hostile ordinal before validation.
 func Argument_Ordinal_Unvalidated_Invariants(
-	value Argument_Ordinal_Unvalidated, namespace invariant.Namespace,
+	value Argument_Ordinal_Unvalidated, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(
 			int(value), slices.COUNT_MINIMUM,
 			ARGUMENT_COUNT_UNVALIDATED_MAXIMUM,
@@ -540,8 +540,8 @@ func Argument_Ordinal_Unvalidated_Invariants(
 type Argument_Ordinal int
 
 // Argument_Ordinal_Invariants includes zero invalid sentinel and bounded positions.
-func Argument_Ordinal_Invariants(value Argument_Ordinal, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Argument_Ordinal_Invariants(value Argument_Ordinal, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), slices.COUNT_MINIMUM, ARGUMENT_COUNT_MAXIMUM).
 		Ensure()
 }
@@ -551,9 +551,9 @@ type Named_Value_Validity bool
 
 // Named_Value_Validity_Invariants requires valid and rejected argument paths.
 func Named_Value_Validity_Invariants(
-	value Named_Value_Validity, namespace invariant.Namespace,
+	value Named_Value_Validity, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Sometimes(bool(value), "A named value passed bounded validation.").
 		Ensure()
 }
@@ -577,20 +577,20 @@ type Named_Value struct {
 }
 
 // Named_Value_Invariants states fixed storage. Validation proves each active property.
-func Named_Value_Invariants(value Named_Value, namespace invariant.Namespace) {
-	invariant.Always(
+func Named_Value_Invariants(value Named_Value, namespace aver.Namespace) {
+	aver.Always(
 		len(value.Names) == NAMED_VALUE_SLOT_COUNT,
 		"A named value holds one name slot.",
 	)
-	invariant.Always(
+	aver.Always(
 		len(value.Ordinals) == NAMED_VALUE_SLOT_COUNT,
 		"A named value holds one ordinal slot.",
 	)
-	invariant.Always(
+	aver.Always(
 		len(value.Values) == NAMED_VALUE_SLOT_COUNT,
 		"A named value holds one value slot.",
 	)
-	invariant.Always(
+	aver.Always(
 		len(value.Validities) == NAMED_VALUE_SLOT_COUNT,
 		"A named value holds one validity slot.",
 	)
@@ -658,8 +658,8 @@ func Named_Value_Value(value Named_Value) (result Value) {
 type Arguments []Named_Value
 
 // Arguments_Invariants bounds parameter storage.
-func Arguments_Invariants(value Arguments, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Arguments_Invariants(value Arguments, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), slices.COUNT_MINIMUM, ARGUMENT_COUNT_MAXIMUM).
 		Ensure()
 }
@@ -679,12 +679,12 @@ type Request struct {
 }
 
 // Request_Invariants states fixed aggregate storage.
-func Request_Invariants(value Request, namespace invariant.Namespace) {
-	invariant.Always(
+func Request_Invariants(value Request, namespace aver.Namespace) {
+	aver.Always(
 		len(value.Queries) == REQUEST_SLOT_COUNT,
 		"A request holds one query slot.",
 	)
-	invariant.Always(
+	aver.Always(
 		len(value.Argument_Sets) == REQUEST_SLOT_COUNT,
 		"A request holds one argument-set slot.",
 	)
@@ -738,8 +738,8 @@ func Request_Validate(request Request) (status Validation_Status) {
 type Isolation_Level uint8
 
 // Isolation_Level_Invariants closes standard isolation domain.
-func Isolation_Level_Invariants(value Isolation_Level, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Isolation_Level_Invariants(value Isolation_Level, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint8(
 			uint8(value), uint8(ISOLATION_DEFAULT), uint8(ISOLATION_LINEARIZABLE),
 		).
@@ -775,9 +775,9 @@ type Transaction_Read_Only bool
 
 // Transaction_Read_Only_Invariants requires both transaction access modes.
 func Transaction_Read_Only_Invariants(
-	value Transaction_Read_Only, namespace invariant.Namespace,
+	value Transaction_Read_Only, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Sometimes(bool(value), "A transaction is read-only.").
 		Ensure()
 }
@@ -798,13 +798,13 @@ type Transaction_Options struct {
 
 // Transaction_Options_Invariants states fixed option storage.
 func Transaction_Options_Invariants(
-	value Transaction_Options, namespace invariant.Namespace,
+	value Transaction_Options, namespace aver.Namespace,
 ) {
-	invariant.Always(
+	aver.Always(
 		len(value.Isolation_Levels) == TRANSACTION_OPTIONS_SLOT_COUNT,
 		"Transaction options holds one isolation slot.",
 	)
-	invariant.Always(
+	aver.Always(
 		len(value.Read_Only_Values) == TRANSACTION_OPTIONS_SLOT_COUNT,
 		"Transaction options holds one read-only slot.",
 	)
@@ -830,9 +830,9 @@ type Last_Insert_Identifier int64
 
 // Last_Insert_Identifier_Invariants keeps complete driver counter domain.
 func Last_Insert_Identifier_Invariants(
-	value Last_Insert_Identifier, namespace invariant.Namespace,
+	value Last_Insert_Identifier, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int64(int64(value), bits.INTEGER_64_MINIMUM, bits.INTEGER_64_MAXIMUM).
 		Ensure()
 }
@@ -841,8 +841,8 @@ func Last_Insert_Identifier_Invariants(
 type Rows_Affected int64
 
 // Rows_Affected_Invariants keeps complete driver counter domain.
-func Rows_Affected_Invariants(value Rows_Affected, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Rows_Affected_Invariants(value Rows_Affected, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int64(int64(value), bits.INTEGER_64_MINIMUM, bits.INTEGER_64_MAXIMUM).
 		Ensure()
 }
@@ -852,9 +852,9 @@ type Last_Insert_Identifier_Validity bool
 
 // Last_Insert_Identifier_Validity_Invariants requires present and absent paths.
 func Last_Insert_Identifier_Validity_Invariants(
-	value Last_Insert_Identifier_Validity, namespace invariant.Namespace,
+	value Last_Insert_Identifier_Validity, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Sometimes(bool(value), "A result reports last insert identifier.").
 		Ensure()
 }
@@ -864,9 +864,9 @@ type Rows_Affected_Validity bool
 
 // Rows_Affected_Validity_Invariants requires present and absent paths.
 func Rows_Affected_Validity_Invariants(
-	value Rows_Affected_Validity, namespace invariant.Namespace,
+	value Rows_Affected_Validity, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Sometimes(bool(value), "A result reports rows affected.").
 		Ensure()
 }
@@ -890,21 +890,21 @@ type Result struct {
 }
 
 // Result_Invariants states fixed optional-counter storage.
-func Result_Invariants(subject *Result, namespace invariant.Namespace) {
-	invariant.Always(subject != nil, "Result storage exists.")
-	invariant.Always(
+func Result_Invariants(subject *Result, namespace aver.Namespace) {
+	aver.Always(subject != nil, "Result storage exists.")
+	aver.Always(
 		len(subject.Last_Insert_Identifiers) == RESULT_SLOT_COUNT,
 		"A result holds one last insert identifier slot.",
 	)
-	invariant.Always(
+	aver.Always(
 		len(subject.Rows_Affected_Counts) == RESULT_SLOT_COUNT,
 		"A result holds one rows affected slot.",
 	)
-	invariant.Always(
+	aver.Always(
 		len(subject.Last_Insert_Identifier_Validities) == RESULT_SLOT_COUNT,
 		"A result holds one identifier-validity slot.",
 	)
-	invariant.Always(
+	aver.Always(
 		len(subject.Rows_Affected_Validities) == RESULT_SLOT_COUNT,
 		"A result holds one affected-count-validity slot.",
 	)
@@ -994,9 +994,9 @@ type Statement_Argument_Count int
 
 // Statement_Argument_Count_Invariants bounds known count and unknown sentinel.
 func Statement_Argument_Count_Invariants(
-	value Statement_Argument_Count, namespace invariant.Namespace,
+	value Statement_Argument_Count, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(
 			int(value), STATEMENT_ARGUMENT_COUNT_UNKNOWN, ARGUMENT_COUNT_MAXIMUM,
 		).
@@ -1028,25 +1028,25 @@ type Statement struct {
 }
 
 // Statement_Invariants states fixed prepared statement storage.
-func Statement_Invariants(subject *Statement, namespace invariant.Namespace) {
-	invariant.Always(subject != nil, "Statement storage exists.")
-	invariant.Always(
+func Statement_Invariants(subject *Statement, namespace aver.Namespace) {
+	aver.Always(subject != nil, "Statement storage exists.")
+	aver.Always(
 		len(subject.States) == STATEMENT_SLOT_COUNT,
 		"Statement holds one state slot.",
 	)
-	invariant.Always(
+	aver.Always(
 		len(subject.Argument_Counts) == STATEMENT_SLOT_COUNT,
 		"Statement holds one argument-count slot.",
 	)
-	invariant.Always(
+	aver.Always(
 		len(subject.Exec_Procedures) == STATEMENT_SLOT_COUNT,
 		"Statement holds one execute-procedure slot.",
 	)
-	invariant.Always(
+	aver.Always(
 		len(subject.Query_Procedures) == STATEMENT_SLOT_COUNT,
 		"Statement holds one query-procedure slot.",
 	)
-	invariant.Always(
+	aver.Always(
 		len(subject.Close_Procedures) == STATEMENT_SLOT_COUNT,
 		"Statement holds one close-procedure slot.",
 	)
@@ -1069,17 +1069,17 @@ type Transaction struct {
 }
 
 // Transaction_Invariants states fixed driver transaction storage.
-func Transaction_Invariants(subject *Transaction, namespace invariant.Namespace) {
-	invariant.Always(subject != nil, "Transaction storage exists.")
-	invariant.Always(
+func Transaction_Invariants(subject *Transaction, namespace aver.Namespace) {
+	aver.Always(subject != nil, "Transaction storage exists.")
+	aver.Always(
 		len(subject.States) == TRANSACTION_SLOT_COUNT,
 		"Transaction holds one state slot.",
 	)
-	invariant.Always(
+	aver.Always(
 		len(subject.Commit_Procedures) == TRANSACTION_SLOT_COUNT,
 		"Transaction holds one commit-procedure slot.",
 	)
-	invariant.Always(
+	aver.Always(
 		len(subject.Rollback_Procedures) == TRANSACTION_SLOT_COUNT,
 		"Transaction holds one rollback-procedure slot.",
 	)
@@ -1096,8 +1096,8 @@ type Driver struct {
 }
 
 // Driver_Invariants requires connection creation capability.
-func Driver_Invariants(value Driver, namespace invariant.Namespace) {
-	invariant.Always(value.Connect_Procedure != nil, "A driver can open one connection.")
+func Driver_Invariants(value Driver, namespace aver.Namespace) {
+	aver.Always(value.Connect_Procedure != nil, "A driver can open one connection.")
 }
 
 // CONNECTION_SLOT is sole live connection property slot.
@@ -1133,33 +1133,33 @@ type Connection struct {
 }
 
 // Connection_Invariants states fixed caller storage before and after driver fill.
-func Connection_Invariants(subject *Connection, namespace invariant.Namespace) {
-	invariant.Always(subject != nil, "Connection storage exists.")
-	invariant.Always(
+func Connection_Invariants(subject *Connection, namespace aver.Namespace) {
+	aver.Always(subject != nil, "Connection storage exists.")
+	aver.Always(
 		len(subject.States) == CONNECTION_SLOT_COUNT,
 		"A connection holds one state slot.",
 	)
-	invariant.Always(
+	aver.Always(
 		len(subject.Close_Procedures) == CONNECTION_SLOT_COUNT,
 		"A connection holds one close-procedure slot.",
 	)
-	invariant.Always(
+	aver.Always(
 		len(subject.Probe_Procedures) == CONNECTION_SLOT_COUNT,
 		"A connection holds one probe-procedure slot.",
 	)
-	invariant.Always(
+	aver.Always(
 		len(subject.Exec_Procedures) == CONNECTION_SLOT_COUNT,
 		"A connection holds one execute-procedure slot.",
 	)
-	invariant.Always(
+	aver.Always(
 		len(subject.Query_Procedures) == CONNECTION_SLOT_COUNT,
 		"A connection holds one query-procedure slot.",
 	)
-	invariant.Always(
+	aver.Always(
 		len(subject.Prepare_Procedures) == CONNECTION_SLOT_COUNT,
 		"A connection holds one prepare-procedure slot.",
 	)
-	invariant.Always(
+	aver.Always(
 		len(subject.Begin_Procedures) == CONNECTION_SLOT_COUNT,
 		"A connection holds one begin-procedure slot.",
 	)
@@ -1169,8 +1169,8 @@ func Connection_Invariants(subject *Connection, namespace invariant.Namespace) {
 type Column_Count int
 
 // Column_Count_Invariants shares bounded collection domain.
-func Column_Count_Invariants(value Column_Count, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Column_Count_Invariants(value Column_Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), slices.COUNT_MINIMUM, slices.SLICE_COUNT_MAXIMUM).
 		Ensure()
 }
@@ -1179,8 +1179,8 @@ func Column_Count_Invariants(value Column_Count, namespace invariant.Namespace) 
 type Values []Value
 
 // Values_Invariants bounds row destination storage.
-func Values_Invariants(value Values, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Values_Invariants(value Values, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), slices.COUNT_MINIMUM, slices.SLICE_COUNT_MAXIMUM).
 		Ensure()
 }
@@ -1206,21 +1206,21 @@ type Rows struct {
 }
 
 // Rows_Invariants states fixed caller storage before and after driver fill.
-func Rows_Invariants(subject *Rows, namespace invariant.Namespace) {
-	invariant.Always(subject != nil, "Driver rows storage exists.")
-	invariant.Always(
+func Rows_Invariants(subject *Rows, namespace aver.Namespace) {
+	aver.Always(subject != nil, "Driver rows storage exists.")
+	aver.Always(
 		len(subject.States) == ROWS_SLOT_COUNT,
 		"Driver rows holds one state slot.",
 	)
-	invariant.Always(
+	aver.Always(
 		len(subject.Column_Counts) == ROWS_SLOT_COUNT,
 		"Driver rows holds one column-count slot.",
 	)
-	invariant.Always(
+	aver.Always(
 		len(subject.Next_Procedures) == ROWS_SLOT_COUNT,
 		"Driver rows holds one next-procedure slot.",
 	)
-	invariant.Always(
+	aver.Always(
 		len(subject.Close_Procedures) == ROWS_SLOT_COUNT,
 		"Driver rows holds one close-procedure slot.",
 	)
@@ -1535,7 +1535,7 @@ func statement_argument_count_validate(
 
 func connection_live(subject *Connection) {
 	Connection_Invariants(subject, "connection_live.subject")
-	invariant.Always(
+	aver.Always(
 		subject.Close_Procedures[CONNECTION_SLOT] != nil,
 		"A live driver connection can release its resource.",
 	)
@@ -1543,19 +1543,19 @@ func connection_live(subject *Connection) {
 
 func rows_live(subject *Rows) {
 	Rows_Invariants(subject, "rows_live.subject")
-	invariant.Always(
+	aver.Always(
 		subject.Column_Counts[ROWS_SLOT] >= slices.COUNT_MINIMUM,
 		"Live driver rows has no negative column count.",
 	)
-	invariant.Always(
+	aver.Always(
 		subject.Column_Counts[ROWS_SLOT] <= slices.SLICE_COUNT_MAXIMUM,
 		"Live driver rows fits bounded column storage.",
 	)
-	invariant.Always(
+	aver.Always(
 		subject.Next_Procedures[ROWS_SLOT] != nil,
 		"Live driver rows can advance one row.",
 	)
-	invariant.Always(
+	aver.Always(
 		subject.Close_Procedures[ROWS_SLOT] != nil,
 		"Live driver rows can release cursor state.",
 	)
@@ -1566,15 +1566,15 @@ func statement_live(subject *Statement) {
 	Statement_Argument_Count_Invariants(
 		subject.Argument_Counts[STATEMENT_SLOT], "statement_live.argument_count",
 	)
-	invariant.Always(
+	aver.Always(
 		subject.Exec_Procedures[STATEMENT_SLOT] != nil,
 		"A live statement can execute.",
 	)
-	invariant.Always(
+	aver.Always(
 		subject.Query_Procedures[STATEMENT_SLOT] != nil,
 		"A live statement can query.",
 	)
-	invariant.Always(
+	aver.Always(
 		subject.Close_Procedures[STATEMENT_SLOT] != nil,
 		"A live statement can release its resource.",
 	)
@@ -1594,11 +1594,11 @@ func transaction_options_live(options Transaction_Options) {
 
 func transaction_live(subject *Transaction) {
 	Transaction_Invariants(subject, "transaction_live.subject")
-	invariant.Always(
+	aver.Always(
 		subject.Commit_Procedures[TRANSACTION_SLOT] != nil,
 		"A live transaction can commit.",
 	)
-	invariant.Always(
+	aver.Always(
 		subject.Rollback_Procedures[TRANSACTION_SLOT] != nil,
 		"A live transaction can rollback.",
 	)

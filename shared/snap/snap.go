@@ -17,7 +17,7 @@ import (
 	"unsafe"
 
 	"local/james-orcales/shared/diff/myers"
-	"local/james-orcales/shared/invariant/default"
+	"local/james-orcales/shared/simulation/aver/default"
 )
 
 // Keys the diff colors so readers can map - / + to red / green without
@@ -361,7 +361,7 @@ func snapper_is_equal_edit(
 	search := "snap.Edit(`"
 	replace := "snap.Init(`"
 	// Equal lengths keep the byte math below (Open+1-len(search)) aligned.
-	invariant.Always(len(search) == len(replace),
+	aver.Always(len(search) == len(replace),
 		"snap.Edit and snap.Init prefixes are equal length")
 	new_content := make(Buffer, 0, len(content)+len(actual))
 	new_content = append(new_content, content[:span.Open+1-len(search)]...)
@@ -441,10 +441,10 @@ func snapper_locate_edit(s *Snapper, snapshot Snapshot, content []byte) (span Sn
 	bounds := snapper_find_line(content, snapshot.Line)
 	// Sequential because each eager guard must hold before the next line's
 	// content[...] index is evaluated, or an eager out-of-range read would panic first.
-	invariant.Always(bounds.Start >= 0 && bounds.End >= 0, "line bounds were located")
-	invariant.Always(bounds.Start > 1, "line is not the first")
-	invariant.Always(content[bounds.Start-1] == '\n', "byte before line start is a newline")
-	invariant.Always(content[bounds.End] == '\n', "line ends on a newline")
+	aver.Always(bounds.Start >= 0 && bounds.End >= 0, "line bounds were located")
+	aver.Always(bounds.Start > 1, "line is not the first")
+	aver.Always(content[bounds.Start-1] == '\n', "byte before line start is a newline")
+	aver.Always(content[bounds.End] == '\n', "line ends on a newline")
 
 	line := string(content[bounds.Start:bounds.End])
 	search := "snap.Edit(`"
@@ -455,7 +455,7 @@ func snapper_locate_edit(s *Snapper, snapshot Snapshot, content []byte) (span Sn
 		)
 		return span
 	}
-	invariant.Always(string_count(line, search) == 1, "exactly one snap.Edit on the line")
+	aver.Always(string_count(line, search) == 1, "exactly one snap.Edit on the line")
 
 	call_offset := string_index(line, search) + bounds.Start
 	span.Open = call_offset + len(search) - 1
@@ -466,9 +466,9 @@ func snapper_locate_edit(s *Snapper, snapshot Snapshot, content []byte) (span Sn
 			break
 		}
 	}
-	invariant.Always(span.Open >= 0, "opening backtick offset is non-negative")
-	invariant.Always(span.Close >= 0, "closing backtick offset is non-negative")
-	invariant.Always(span.Open < span.Close, "opening backtick precedes the closing backtick")
+	aver.Always(span.Open >= 0, "opening backtick offset is non-negative")
+	aver.Always(span.Close >= 0, "closing backtick offset is non-negative")
+	aver.Always(span.Open < span.Close, "opening backtick precedes the closing backtick")
 	span.Found = true
 	return span
 }
@@ -478,14 +478,14 @@ func snapper_locate_edit(s *Snapper, snapshot Snapshot, content []byte) (span Sn
 // the old snapshot with the actual output and returns true.
 // On mismatch without editing, it prints a Myers diff to s.Out and returns false.
 func Snapshot_Is_Equal(snapshot Snapshot, actual string) (equal bool) {
-	invariant.Always(snapshot.Snapper != nil,
+	aver.Always(snapshot.Snapper != nil,
 		"Snapshot_Is_Equal snapshot is bound to a Snapper")
 	s := snapshot.Snapper
-	invariant.Always(snapshot.Line > 0, "snapshot line is 1-based")
-	invariant.Always(string_count(snapshot.Expected_Output, "`") == 0,
+	aver.Always(snapshot.Line > 0, "snapshot line is 1-based")
+	aver.Always(string_count(snapshot.Expected_Output, "`") == 0,
 		"expected output has no backtick")
-	invariant.Always(string_count(actual, "`") == 0, "actual output has no backtick")
-	invariant.Always(filepath.IsAbs(snapshot.File_Path), "snapshot file path is absolute")
+	aver.Always(string_count(actual, "`") == 0, "actual output has no backtick")
+	aver.Always(filepath.IsAbs(snapshot.File_Path), "snapshot file path is absolute")
 
 	is_equal := actual == snapshot.Expected_Output
 	if snapshot.Should_Edit {
@@ -554,7 +554,7 @@ func snapper_print_lines(snapper *Snapper, text string) {
 // Run resets Stdout and Stderr before calling function and reads them after.
 func Run(t *testing.T, function func(), snapshot Snapshot) (output string, err string) {
 	t.Helper()
-	invariant.Always(snapshot.Snapper != nil, "Run snapshot is bound to a Snapper")
+	aver.Always(snapshot.Snapper != nil, "Run snapshot is bound to a Snapper")
 	s := snapshot.Snapper
 	Buffer_Reset(s.Stdout)
 	Buffer_Reset(s.Stderr)

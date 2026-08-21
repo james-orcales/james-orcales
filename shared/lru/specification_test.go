@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"local/james-orcales/shared/lru"
+	"local/james-orcales/shared/simulation/nbio"
 	"local/james-orcales/shared/simulation/time"
 )
 
@@ -363,7 +364,7 @@ func Test_Expirable_Get_Rejects_Expired(t *testing.T) {
 		t.Fatalf("get 1 = %d, want 1", value)
 	}
 	// Advance the loop well past the TTL; the cleanup timer rides this same timeline.
-	time.Driver_Run_For(driver, 4*time.MICROSECOND)
+	nbio.Driver_Run_For(driver, 4*time.MICROSECOND)
 	_, ok = lru.Expirable_Get(c, 1)
 	if ok {
 		t.Fatalf("get 1 returned an expired entry")
@@ -393,7 +394,7 @@ func Test_Expirable_Timer_Reaps_Expired(t *testing.T) {
 	reaped := func() (finished bool) {
 		return lru.Expirable_Count(c) == 0
 	}
-	completed, drive_err := time.Driver_Run_Until(driver, time.MILLISECOND, reaped)
+	completed, drive_err := nbio.Driver_Run_Until(driver, time.MILLISECOND, reaped)
 	if drive_err != nil {
 		t.Fatalf("drive until the timer reaps the expired entries: %v", drive_err)
 	}
@@ -450,7 +451,7 @@ func Test_Expirable_Reproduces_Under_Virtual_Clock(t *testing.T) {
 			lru.Expirable_Add(c, step_index, step_index)
 			_, ok := lru.Expirable_Get(c, step_index/2)
 			results = append(results, bool(ok))
-			time.Driver_Run_For(driver, 200*time.NANOSECOND)
+			nbio.Driver_Run_For(driver, 200*time.NANOSECOND)
 		}
 		return results
 	}
@@ -493,12 +494,12 @@ func new_expirable_cache[K lru.Key_Kind, V lru.Value_Kind](
 
 // Builds simulated timeline storage owned by test heap.
 func new_expirable_loop() (
-	loop time.Timeline, driver time.Driver, clock time.Clock,
+	loop nbio.Timeline, driver nbio.Driver, clock time.Clock,
 ) {
-	state := new(time.Virtual_Timeline)
-	queue := make([]*time.Completion, 64)
-	events := make([]time.Virtual_Event, 1)
+	state := new(nbio.Virtual_Timeline)
+	queue := make([]*nbio.Completion, 64)
+	events := make([]nbio.Virtual_Event, 1)
 	virtual := time.Virtual_Clock{Resolution: 1}
-	memory := time.Virtual_Timeline_Memory{Queue: queue, Events: events}
-	return time.New_Virtual_Timeline(state, virtual, memory)
+	memory := nbio.Virtual_Timeline_Memory{Queue: queue, Events: events}
+	return nbio.New_Virtual_Timeline(state, virtual, memory)
 }

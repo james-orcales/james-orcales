@@ -5,8 +5,8 @@ import (
 	"cmp"
 	"unsafe"
 
-	"local/james-orcales/shared/invariant/default"
 	"local/james-orcales/shared/math/bits"
+	"local/james-orcales/shared/simulation/aver/default"
 )
 
 // SLICE_COUNT_MAXIMUM caps each slice that crosses this deterministic package boundary.
@@ -59,8 +59,8 @@ const ORDERING_GREATER = 1
 type Boolean bool
 
 // Boolean_Invariants states both query results as obligations.
-func Boolean_Invariants(value Boolean, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Boolean_Invariants(value Boolean, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Sometimes(bool(value), "The query result is true.").
 		Ensure()
 }
@@ -69,8 +69,8 @@ func Boolean_Invariants(value Boolean, namespace invariant.Namespace) {
 type Position int
 
 // Position_Invariants states the complete insertion-position domain.
-func Position_Invariants(value Position, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Position_Invariants(value Position, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), POSITION_MINIMUM, POSITION_MAXIMUM).
 		Ensure()
 }
@@ -79,8 +79,8 @@ func Position_Invariants(value Position, namespace invariant.Namespace) {
 type Found_Index int
 
 // Found_Index_Invariants states the complete admitted search-result domain.
-func Found_Index_Invariants(value Found_Index, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Found_Index_Invariants(value Found_Index, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), FOUND_INDEX_MINIMUM, FOUND_INDEX_MAXIMUM).
 		Ensure()
 }
@@ -89,8 +89,8 @@ func Found_Index_Invariants(value Found_Index, namespace invariant.Namespace) {
 type Search_Position int
 
 // Search_Position_Invariants states each admitted ordered-search position.
-func Search_Position_Invariants(value Search_Position, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Search_Position_Invariants(value Search_Position, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), SEARCH_POSITION_MINIMUM, SEARCH_POSITION_MAXIMUM).
 		Ensure()
 }
@@ -99,8 +99,8 @@ func Search_Position_Invariants(value Search_Position, namespace invariant.Names
 type Count int
 
 // Count_Invariants states the complete nonnegative count domain.
-func Count_Invariants(value Count, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Count_Invariants(value Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), COUNT_MINIMUM, COUNT_MAXIMUM).
 		Ensure()
 }
@@ -110,8 +110,8 @@ func Count_Invariants(value Count, namespace invariant.Namespace) {
 type Comparison int
 
 // Comparison_Invariants states the complete machine-integer comparison domain.
-func Comparison_Invariants(value Comparison, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Comparison_Invariants(value Comparison, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), COMPARISON_MINIMUM, COMPARISON_MAXIMUM).
 		Ensure()
 }
@@ -120,8 +120,8 @@ func Comparison_Invariants(value Comparison, namespace invariant.Namespace) {
 type Ordering int
 
 // Ordering_Invariants states the three results that Compare can return.
-func Ordering_Invariants(value Ordering, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Ordering_Invariants(value Ordering, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_3_Int(int(value), ORDERING_LESS, ORDERING_EQUAL, ORDERING_GREATER).
 		Ensure()
 }
@@ -153,7 +153,7 @@ type Chunk_Yield_Function[Slice ~[]Element, Element any] func(
 // Enforces the package-wide size boundary at one source root. One generic boundary avoids a
 // capacity wrapper that would discard a caller's named slice type.
 func enforce_slice[S ~[]E, E any](slice S) {
-	invariant.Always(
+	aver.Always(
 		len(slice) <= SLICE_COUNT_MAXIMUM,
 		"A slice boundary admits at most SLICE_COUNT_MAXIMUM elements.",
 	)
@@ -297,12 +297,12 @@ func Insert_Into[
 	enforce_slice(destination)
 	enforce_slice(source)
 	enforce_slice(values)
-	invariant.Always(
+	aver.Always(
 		position <= Position(len(source)),
 		"An insertion position does not exceed source count.",
 	)
 	result_count := len(source) + len(values)
-	invariant.Always(
+	aver.Always(
 		result_count <= SLICE_COUNT_MAXIMUM,
 		"An insertion result admits at most SLICE_COUNT_MAXIMUM elements.",
 	)
@@ -314,7 +314,7 @@ func Insert_Into[
 		return Count(result_count)
 	}
 	if !same_storage {
-		invariant.Always(
+		aver.Always(
 			!slices_overlap(result, values),
 			"Separate insertion output does not overlap values.",
 		)
@@ -342,8 +342,8 @@ func Delete_Into[Destination ~[]E, Source ~[]E, E any](
 	Position_Invariants(end, "delete_into.end")
 	enforce_slice(destination)
 	enforce_slice(source)
-	invariant.Always(start <= end, "A deletion start does not follow its end.")
-	invariant.Always(
+	aver.Always(start <= end, "A deletion start does not follow its end.")
+	aver.Always(
 		end <= Position(len(source)),
 		"A deletion end does not exceed source count.",
 	)
@@ -385,8 +385,8 @@ func Replace_Into[
 	enforce_slice(destination)
 	enforce_slice(source)
 	enforce_slice(values)
-	invariant.Always(start <= end, "A replacement start does not follow its end.")
-	invariant.Always(
+	aver.Always(start <= end, "A replacement start does not follow its end.")
+	aver.Always(
 		end <= Position(len(source)),
 		"A replacement end does not exceed source count.",
 	)
@@ -394,7 +394,7 @@ func Replace_Into[
 		return Insert_Into(destination, source, start, values)
 	}
 	result_count := int(start) + len(values) + len(source[int(end):])
-	invariant.Always(
+	aver.Always(
 		result_count <= SLICE_COUNT_MAXIMUM,
 		"A replacement result admits at most SLICE_COUNT_MAXIMUM elements.",
 	)
@@ -402,7 +402,7 @@ func Replace_Into[
 		destination, source, Count(result_count),
 	)
 	if !same_storage {
-		invariant.Always(
+		aver.Always(
 			!slices_overlap(result, values),
 			"Separate replacement output does not overlap values.",
 		)
@@ -437,7 +437,7 @@ func Clone_Into[Destination ~[]E, Source ~[]E, E any](
 	defer func() { Count_Invariants(count, "clone_into.count") }()
 	enforce_slice(destination)
 	enforce_slice(source)
-	invariant.Always(
+	aver.Always(
 		len(source) <= len(destination),
 		"Clone destination holds every source element.",
 	)
@@ -497,7 +497,7 @@ func Grow_Into[Destination ~[]E, Source ~[]E, E any](
 	Count_Invariants(count, "grow_into.count")
 	enforce_slice(destination)
 	enforce_slice(source)
-	invariant.Always(
+	aver.Always(
 		len(source)+int(count) <= len(destination),
 		"Grow destination reserves requested additional slots.",
 	)
@@ -528,7 +528,7 @@ func prepare_result[Destination ~[]E, Source ~[]E, E any](
 	defer func() { Boolean_Invariants(same_storage, "prepare_result.same_storage") }()
 	Count_Invariants(result_count, "prepare_result.result_count")
 	required_count := max(int(result_count), len(source))
-	invariant.Always(
+	aver.Always(
 		required_count <= len(destination),
 		"Destination holds source and every result element.",
 	)
@@ -540,7 +540,7 @@ func prepare_result[Destination ~[]E, Source ~[]E, E any](
 	if same_storage {
 		return result, destination[:len(source)], true
 	}
-	invariant.Always(
+	aver.Always(
 		!slices_overlap(result, source),
 		"Separate destination does not overlap source.",
 	)
@@ -637,18 +637,18 @@ func Concatenate_Into[
 	total_count := 0
 	for _, slice := range slices {
 		enforce_slice(slice)
-		invariant.Always(
+		aver.Always(
 			len(slice) <= SLICE_COUNT_MAXIMUM-total_count,
 			"A concatenation result admits at most SLICE_COUNT_MAXIMUM elements.",
 		)
 		total_count += len(slice)
 	}
-	invariant.Always(
+	aver.Always(
 		total_count <= len(destination),
 		"Concatenation destination holds every result element.",
 	)
 	for _, slice := range slices {
-		invariant.Always(
+		aver.Always(
 			!slices_overlap(destination[:total_count], slice),
 			"Concatenation destination does not overlap source.",
 		)
@@ -669,13 +669,13 @@ func Repeat_Into[Destination ~[]E, Source ~[]E, E any](
 	enforce_slice(destination)
 	enforce_slice(source)
 	if len(source) > 0 {
-		invariant.Always(
+		aver.Always(
 			int(count) <= SLICE_COUNT_MAXIMUM/len(source),
 			"A repeat result admits at most SLICE_COUNT_MAXIMUM elements.",
 		)
 	}
 	written_count := len(source) * int(count)
-	invariant.Always(
+	aver.Always(
 		written_count <= len(destination),
 		"Repeat destination holds every result element.",
 	)
@@ -1007,7 +1007,7 @@ func Chunk[S ~[]E, E any](
 	defer func() { Count_Invariants(chunk_count, "chunk.chunk_count") }()
 	Count_Invariants(count, "chunk.count")
 	enforce_slice(slice)
-	invariant.Always(count >= 1, "A chunk count is at least one.")
+	aver.Always(count >= 1, "A chunk count is at least one.")
 	count_int := int(count)
 	for start := 0; start < len(slice); start += count_int {
 		end := start + min(count_int, len(slice[start:]))

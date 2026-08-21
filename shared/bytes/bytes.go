@@ -5,8 +5,8 @@ package bytes
 import (
 	"unsafe"
 
-	"local/james-orcales/shared/invariant/default"
 	"local/james-orcales/shared/math/bits"
+	"local/james-orcales/shared/simulation/aver/default"
 	"local/james-orcales/shared/unicode/ucd"
 	"local/james-orcales/shared/unicode/utf8"
 )
@@ -165,8 +165,8 @@ const SEEK_FROM_END Seek_From = 2
 type Boundary int
 
 // Boundary_Invariants bounds a byte boundary through the final Slice end.
-func Boundary_Invariants(value Boundary, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Boundary_Invariants(value Boundary, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), SLICE_SIZE_MINIMUM, BOUNDARY_INDEX_MAXIMUM).
 		Ensure()
 }
@@ -175,8 +175,8 @@ func Boundary_Invariants(value Boundary, namespace invariant.Namespace) {
 type Separator_Size int
 
 // Separator_Size_Invariants bounds retained separator bytes to one Slice.
-func Separator_Size_Invariants(value Separator_Size, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Separator_Size_Invariants(value Separator_Size, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), SLICE_SIZE_MINIMUM, SLICE_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -185,8 +185,8 @@ func Separator_Size_Invariants(value Separator_Size, namespace invariant.Namespa
 type Empty_Slices [][]byte
 
 // Empty_Slices_Invariants bounds results to one item for each source character.
-func Empty_Slices_Invariants(value Empty_Slices, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Empty_Slices_Invariants(value Empty_Slices, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), SLICES_COUNT_MINIMUM, SLICE_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -195,8 +195,8 @@ func Empty_Slices_Invariants(value Empty_Slices, namespace invariant.Namespace) 
 type Slice []byte
 
 // Slice_Invariants bounds a Slice that the package reads or owns.
-func Slice_Invariants(value Slice, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Slice_Invariants(value Slice, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), SLICE_SIZE_MINIMUM, SLICE_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -205,8 +205,8 @@ func Slice_Invariants(value Slice, namespace invariant.Namespace) {
 type Text string
 
 // Text_Invariants bounds Text to the Slice size domain.
-func Text_Invariants(value Text, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Text_Invariants(value Text, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), TEXT_SIZE_MINIMUM, TEXT_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -215,8 +215,8 @@ func Text_Invariants(value Text, namespace invariant.Namespace) {
 type Slices [][]byte
 
 // Slices_Invariants bounds the number of Slices in a split or join collection.
-func Slices_Invariants(value Slices, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Slices_Invariants(value Slices, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), SLICES_COUNT_MINIMUM, SLICES_COUNT_MAXIMUM).
 		Ensure()
 }
@@ -225,8 +225,8 @@ func Slices_Invariants(value Slices, namespace invariant.Namespace) {
 type Field_Slices [][]byte
 
 // Field_Slices_Invariants bounds the field count that alternating bytes can make.
-func Field_Slices_Invariants(value Field_Slices, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Field_Slices_Invariants(value Field_Slices, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), FIELDS_COUNT_MINIMUM, FIELDS_COUNT_MAXIMUM).
 		Ensure()
 }
@@ -235,8 +235,8 @@ func Field_Slices_Invariants(value Field_Slices, namespace invariant.Namespace) 
 type Field_Count int
 
 // Field_Count_Invariants bounds fields through alternating byte delimiters.
-func Field_Count_Invariants(value Field_Count, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Field_Count_Invariants(value Field_Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), FIELDS_COUNT_MINIMUM, FIELDS_COUNT_MAXIMUM).
 		Ensure()
 }
@@ -245,8 +245,8 @@ func Field_Count_Invariants(value Field_Count, namespace invariant.Namespace) {
 type Characters []rune
 
 // Characters_Invariants bounds the number of decoded characters.
-func Characters_Invariants(value Characters, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Characters_Invariants(value Characters, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), CHARACTERS_COUNT_MINIMUM, CHARACTERS_COUNT_MAXIMUM).
 		Ensure()
 }
@@ -255,8 +255,8 @@ func Characters_Invariants(value Characters, namespace invariant.Namespace) {
 type Index_Value int
 
 // Index_Value_Invariants bounds an index to absence or the final byte.
-func Index_Value_Invariants(value Index_Value, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Index_Value_Invariants(value Index_Value, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), INDEX_ABSENT, INDEX_MAXIMUM).
 		Ensure()
 }
@@ -265,8 +265,8 @@ func Index_Value_Invariants(value Index_Value, namespace invariant.Namespace) {
 type Boundary_Index int
 
 // Boundary_Index_Invariants includes the boundary after the largest Slice.
-func Boundary_Index_Invariants(value Boundary_Index, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Boundary_Index_Invariants(value Boundary_Index, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), INDEX_ABSENT, BOUNDARY_INDEX_MAXIMUM).
 		Ensure()
 }
@@ -275,8 +275,8 @@ func Boundary_Index_Invariants(value Boundary_Index, namespace invariant.Namespa
 type Count_Value int
 
 // Count_Value_Invariants bounds one output item per source byte.
-func Count_Value_Invariants(value Count_Value, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Count_Value_Invariants(value Count_Value, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), COUNT_VALUE_MINIMUM, COUNT_VALUE_MAXIMUM).
 		Ensure()
 }
@@ -285,8 +285,8 @@ func Count_Value_Invariants(value Count_Value, namespace invariant.Namespace) {
 type Occurrence_Count int
 
 // Occurrence_Count_Invariants bounds matches through every empty boundary.
-func Occurrence_Count_Invariants(value Occurrence_Count, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Occurrence_Count_Invariants(value Occurrence_Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(
 			int(value), OCCURRENCE_COUNT_MINIMUM, OCCURRENCE_COUNT_MAXIMUM,
 		).
@@ -297,8 +297,8 @@ func Occurrence_Count_Invariants(value Occurrence_Count, namespace invariant.Nam
 type Limit int
 
 // Limit_Invariants bounds a split limit.
-func Limit_Invariants(value Limit, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Limit_Invariants(value Limit, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), LIMIT_MINIMUM, LIMIT_MAXIMUM).
 		Ensure()
 }
@@ -307,8 +307,8 @@ func Limit_Invariants(value Limit, namespace invariant.Namespace) {
 type Repeat_Count int
 
 // Repeat_Count_Invariants bounds the copy count.
-func Repeat_Count_Invariants(value Repeat_Count, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Repeat_Count_Invariants(value Repeat_Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), REPEAT_COUNT_MINIMUM, REPEAT_COUNT_MAXIMUM).
 		Ensure()
 }
@@ -317,8 +317,8 @@ func Repeat_Count_Invariants(value Repeat_Count, namespace invariant.Namespace) 
 type Replacement_Count int
 
 // Replacement_Count_Invariants bounds a replacement count.
-func Replacement_Count_Invariants(value Replacement_Count, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Replacement_Count_Invariants(value Replacement_Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(
 			int(value), REPLACEMENT_COUNT_MINIMUM, REPLACEMENT_COUNT_MAXIMUM,
 		).
@@ -329,8 +329,8 @@ func Replacement_Count_Invariants(value Replacement_Count, namespace invariant.N
 type Order int
 
 // Order_Invariants lists the three comparison results.
-func Order_Invariants(value Order, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Order_Invariants(value Order, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_3_Int(int(value), ORDER_BEFORE, ORDER_EQUAL, ORDER_AFTER).
 		Ensure()
 }
@@ -339,8 +339,8 @@ func Order_Invariants(value Order, namespace invariant.Namespace) {
 type Boolean bool
 
 // Boolean_Invariants records both Boolean states.
-func Boolean_Invariants(value Boolean, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Boolean_Invariants(value Boolean, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Sometimes(bool(value), "A Boolean report is true.").
 		Ensure()
 }
@@ -349,8 +349,8 @@ func Boolean_Invariants(value Boolean, namespace invariant.Namespace) {
 type Character rune
 
 // Character_Invariants states the complete rune storage domain.
-func Character_Invariants(value Character, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Character_Invariants(value Character, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int32(int32(value), bits.INTEGER_32_MINIMUM, bits.INTEGER_32_MAXIMUM).
 		Ensure()
 }
@@ -359,8 +359,8 @@ func Character_Invariants(value Character, namespace invariant.Namespace) {
 type Byte byte
 
 // Byte_Invariants states the complete byte domain.
-func Byte_Invariants(value Byte, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Byte_Invariants(value Byte, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint8(uint8(value), bits.WORD_8_MINIMUM, bits.WORD_8_MAXIMUM).
 		Ensure()
 }
@@ -369,8 +369,8 @@ func Byte_Invariants(value Byte, namespace invariant.Namespace) {
 type Decoded_Character rune
 
 // Decoded_Character_Invariants bounds a decoded character to valid Unicode values.
-func Decoded_Character_Invariants(value Decoded_Character, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Decoded_Character_Invariants(value Decoded_Character, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int32(
 			int32(value), DECODED_CHARACTER_MINIMUM, DECODED_CHARACTER_MAXIMUM,
 		).
@@ -381,8 +381,8 @@ func Decoded_Character_Invariants(value Decoded_Character, namespace invariant.N
 type Decoded_Size int
 
 // Decoded_Size_Invariants bounds a character read to one UTF-8 encoding.
-func Decoded_Size_Invariants(value Decoded_Size, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Decoded_Size_Invariants(value Decoded_Size, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), DECODED_SIZE_MINIMUM, DECODED_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -391,8 +391,8 @@ func Decoded_Size_Invariants(value Decoded_Size, namespace invariant.Namespace) 
 type Encoded_Size int
 
 // Encoded_Size_Invariants bounds a character write to one UTF-8 encoding.
-func Encoded_Size_Invariants(value Encoded_Size, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Encoded_Size_Invariants(value Encoded_Size, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_4_Int(
 			int(value),
 			ENCODED_SIZE_MINIMUM,
@@ -407,12 +407,12 @@ func Encoded_Size_Invariants(value Encoded_Size, namespace invariant.Namespace) 
 type Available_Slice []byte
 
 // Available_Slice_Invariants bounds the available Buffer capacity.
-func Available_Slice_Invariants(value Available_Slice, namespace invariant.Namespace) {
-	invariant.Always(
+func Available_Slice_Invariants(value Available_Slice, namespace aver.Namespace) {
+	aver.Always(
 		len(value) == SLICE_SIZE_MINIMUM,
 		"Available Buffer storage has no readable bytes",
 	)
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(cap(value), SLICE_SIZE_MINIMUM, SLICE_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -421,8 +421,8 @@ func Available_Slice_Invariants(value Available_Slice, namespace invariant.Names
 type Growth_Count int
 
 // Growth_Count_Invariants bounds reserved capacity to one Buffer.
-func Growth_Count_Invariants(value Growth_Count, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Growth_Count_Invariants(value Growth_Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), GROWTH_COUNT_MINIMUM, GROWTH_COUNT_MAXIMUM).
 		Ensure()
 }
@@ -431,8 +431,8 @@ func Growth_Count_Invariants(value Growth_Count, namespace invariant.Namespace) 
 type Read_Operation int8
 
 // Read_Operation_Invariants bounds the read operation to UTF-8 sizes and non-rune reads.
-func Read_Operation_Invariants(value Read_Operation, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Read_Operation_Invariants(value Read_Operation, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int8(int8(value), READ_OPERATION_MINIMUM, READ_OPERATION_MAXIMUM).
 		Ensure()
 }
@@ -441,8 +441,8 @@ func Read_Operation_Invariants(value Read_Operation, namespace invariant.Namespa
 type Reader_Position int64
 
 // Reader_Position_Invariants bounds a Reader position to signed integer storage.
-func Reader_Position_Invariants(value Reader_Position, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Reader_Position_Invariants(value Reader_Position, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int64(
 			int64(value), READER_POSITION_MINIMUM, READER_POSITION_MAXIMUM,
 		).
@@ -453,8 +453,8 @@ func Reader_Position_Invariants(value Reader_Position, namespace invariant.Names
 type Reader_Offset int64
 
 // Reader_Offset_Invariants bounds an offset to one Reader source in either direction.
-func Reader_Offset_Invariants(value Reader_Offset, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Reader_Offset_Invariants(value Reader_Offset, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int64(
 			int64(value), READER_OFFSET_MINIMUM, READER_OFFSET_MAXIMUM,
 		).
@@ -465,8 +465,8 @@ func Reader_Offset_Invariants(value Reader_Offset, namespace invariant.Namespace
 type Size_Value int64
 
 // Size_Value_Invariants bounds a Reader size to one Slice.
-func Size_Value_Invariants(value Size_Value, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Size_Value_Invariants(value Size_Value, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int64(int64(value), SIZE_VALUE_MINIMUM, SIZE_VALUE_MAXIMUM).
 		Ensure()
 }
@@ -475,8 +475,8 @@ func Size_Value_Invariants(value Size_Value, namespace invariant.Namespace) {
 type Seek_From uint8
 
 // Seek_From_Invariants states each accepted Reader offset origin.
-func Seek_From_Invariants(value Seek_From, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Seek_From_Invariants(value Seek_From, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_3_Uint8(
 			uint8(value), uint8(SEEK_FROM_START), uint8(SEEK_FROM_CURRENT),
 			uint8(SEEK_FROM_END),
@@ -495,15 +495,15 @@ type Buffer struct {
 }
 
 // Buffer_Invariants composes borrowed storage and read state.
-func Buffer_Invariants(value Buffer, namespace invariant.Namespace) {
+func Buffer_Invariants(value Buffer, namespace aver.Namespace) {
 	Slice_Invariants(value.Content, namespace)
 	Boundary_Invariants(value.Position, namespace)
 	Read_Operation_Invariants(value.Operation, namespace)
-	invariant.Always(
+	aver.Always(
 		int(value.Position) <= len(value.Content),
 		"Buffer position does not exceed content size.",
 	)
-	invariant.Always(
+	aver.Always(
 		cap(value.Content) <= SLICE_SIZE_MAXIMUM,
 		"Buffer capacity does not exceed Slice limit.",
 	)
@@ -520,11 +520,11 @@ type Reader struct {
 }
 
 // Reader_Invariants composes borrowed source and cursor state.
-func Reader_Invariants(value Reader, namespace invariant.Namespace) {
+func Reader_Invariants(value Reader, namespace aver.Namespace) {
 	Slice_Invariants(value.Source, namespace)
 	Reader_Position_Invariants(value.Position, namespace)
 	Index_Value_Invariants(value.Previous, namespace)
-	invariant.Always(
+	aver.Always(
 		int(value.Position) <= len(value.Source),
 		"Reader position does not exceed source size.",
 	)
@@ -536,7 +536,7 @@ func Buffer_Init(buffer *Buffer, storage Slice, content Slice) (count Boundary) 
 	Buffer_Invariants(*buffer, "buffer_init.buffer")
 	Slice_Invariants(storage, "buffer_init.storage")
 	Slice_Invariants(content, "buffer_init.content")
-	invariant.Always(
+	aver.Always(
 		len(content) <= len(storage),
 		"Buffer storage holds initial content.",
 	)
@@ -553,7 +553,7 @@ func Buffer_Init_Text(buffer *Buffer, storage Slice, content Text) (count Bounda
 	Buffer_Invariants(*buffer, "buffer_init_text.buffer")
 	Slice_Invariants(storage, "buffer_init_text.storage")
 	Text_Invariants(content, "buffer_init_text.content")
-	invariant.Always(
+	aver.Always(
 		len(content) <= len(storage),
 		"Buffer storage holds initial text.",
 	)
@@ -1416,17 +1416,17 @@ func Join_Into(
 			result_size += len(separator) * separator_count
 		}
 	}
-	invariant.Always(
+	aver.Always(
 		result_size <= len(destination),
 		"Join destination holds complete result.",
 	)
 	for _, part := range parts {
-		invariant.Always(
+		aver.Always(
 			!Overlap(destination[:result_size], part),
 			"Join destination does not overlap a part.",
 		)
 	}
-	invariant.Always(
+	aver.Always(
 		!Overlap(destination[:result_size], separator),
 		"Join destination does not overlap separator.",
 	)
@@ -1486,7 +1486,7 @@ func Map_Into(
 	defer func() { Boundary_Invariants(count, "map_into.count") }()
 	Slice_Invariants(destination, "map_into.destination")
 	Slice_Invariants(source, "map_into.source")
-	invariant.Always(
+	aver.Always(
 		!Overlap(destination, source),
 		"Map destination does not overlap source.",
 	)
@@ -1607,7 +1607,7 @@ func map_case_into(
 	ucd.Case_Invariants(mapping, "map_case_into.mapping")
 	ucd.Special_Case_Invariants(special, "map_case_into.special")
 	Boolean_Invariants(use_special, "map_case_into.use_special")
-	invariant.Always(
+	aver.Always(
 		!Overlap(destination, source),
 		"Case destination does not overlap source.",
 	)
@@ -1652,7 +1652,7 @@ func To_Valid_UTF8_Into(
 	Slice_Invariants(destination, "to_valid_utf8_into.destination")
 	Slice_Invariants(source, "to_valid_utf8_into.source")
 	Slice_Invariants(replacement, "to_valid_utf8_into.replacement")
-	invariant.Always(
+	aver.Always(
 		!Overlap(destination, source),
 		"UTF-8 destination does not overlap source.",
 	)
@@ -1690,7 +1690,7 @@ func Title_Into(destination Slice, source Slice) (count Boundary) {
 	defer func() { Boundary_Invariants(count, "title_into.count") }()
 	Slice_Invariants(destination, "title_into.destination")
 	Slice_Invariants(source, "title_into.source")
-	invariant.Always(
+	aver.Always(
 		!Overlap(destination, source),
 		"Title destination does not overlap source.",
 	)
@@ -1893,15 +1893,15 @@ func Replace_Into(
 	Slice_Invariants(old, "replace_into.old")
 	Slice_Invariants(replacement, "replace_into.replacement")
 	Replacement_Count_Invariants(count, "replace_into.count")
-	invariant.Always(
+	aver.Always(
 		!Overlap(destination, source),
 		"Replace destination does not overlap source.",
 	)
-	invariant.Always(
+	aver.Always(
 		!Overlap(destination, old),
 		"Replace destination does not overlap old value.",
 	)
-	invariant.Always(
+	aver.Always(
 		!Overlap(destination, replacement),
 		"Replace destination does not overlap replacement.",
 	)
@@ -2031,7 +2031,7 @@ func Clone_Into(destination Slice, source Slice) (count Boundary) {
 	defer func() { Boundary_Invariants(count, "clone_into.count") }()
 	Slice_Invariants(destination, "clone_into.destination")
 	Slice_Invariants(source, "clone_into.source")
-	invariant.Always(
+	aver.Always(
 		len(source) <= len(destination),
 		"Clone destination holds source.",
 	)

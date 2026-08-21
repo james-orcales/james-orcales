@@ -6,8 +6,8 @@ import (
 
 	"local/james-orcales/shared/bytes"
 	"local/james-orcales/shared/encoding/binary"
-	"local/james-orcales/shared/invariant/default"
 	"local/james-orcales/shared/math/bits"
+	"local/james-orcales/shared/simulation/aver/default"
 )
 
 // SOURCE_SIZE_MINIMUM admits empty comparison and XOR operands.
@@ -62,8 +62,8 @@ const NONNEGATIVE_INTEGER_MAXIMUM Nonnegative_Integer = Nonnegative_Integer(bits
 type Decision uint8
 
 // Decision_Invariants is for non-secret validation outside constant-time paths.
-func Decision_Invariants(value Decision, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Decision_Invariants(value Decision, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_Uint8(uint8(value), uint8(DECISION_FALSE), uint8(DECISION_TRUE)).
 		Ensure()
 }
@@ -72,8 +72,8 @@ func Decision_Invariants(value Decision, namespace invariant.Namespace) {
 type Integer int
 
 // Integer_Invariants is for non-secret validation outside constant-time paths.
-func Integer_Invariants(value Integer, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Integer_Invariants(value Integer, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), int(INTEGER_MINIMUM), int(INTEGER_MAXIMUM)).
 		Ensure()
 }
@@ -82,8 +82,8 @@ func Integer_Invariants(value Integer, namespace invariant.Namespace) {
 type Byte uint8
 
 // Byte_Invariants is for non-secret validation outside constant-time paths.
-func Byte_Invariants(value Byte, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Byte_Invariants(value Byte, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint8(uint8(value), uint8(BYTE_MINIMUM), uint8(BYTE_MAXIMUM)).
 		Ensure()
 }
@@ -92,8 +92,8 @@ func Byte_Invariants(value Byte, namespace invariant.Namespace) {
 type Integer_32 int32
 
 // Integer_32_Invariants is for non-secret validation outside constant-time paths.
-func Integer_32_Invariants(value Integer_32, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Integer_32_Invariants(value Integer_32, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int32(int32(value), int32(INTEGER_32_MINIMUM), int32(INTEGER_32_MAXIMUM)).
 		Ensure()
 }
@@ -104,9 +104,9 @@ type Nonnegative_Integer int
 // Nonnegative_Integer_Invariants is for non-secret validation outside constant-time paths.
 func Nonnegative_Integer_Invariants(
 	value Nonnegative_Integer,
-	namespace invariant.Namespace,
+	namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(
 			int(value), int(NONNEGATIVE_INTEGER_MINIMUM),
 			int(NONNEGATIVE_INTEGER_MAXIMUM),
@@ -118,8 +118,8 @@ func Nonnegative_Integer_Invariants(
 type Source []byte
 
 // Source_Invariants bounds work while never inspecting secret bytes.
-func Source_Invariants(value Source, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Source_Invariants(value Source, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), SOURCE_SIZE_MINIMUM, SOURCE_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -128,8 +128,8 @@ func Source_Invariants(value Source, namespace invariant.Namespace) {
 type Destination []byte
 
 // Destination_Invariants bounds work while never inspecting stored bytes.
-func Destination_Invariants(value Destination, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Destination_Invariants(value Destination, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), DESTINATION_SIZE_MINIMUM, DESTINATION_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -138,8 +138,8 @@ func Destination_Invariants(value Destination, namespace invariant.Namespace) {
 type Count int
 
 // Count_Invariants binds output work to one bounded operand.
-func Count_Invariants(value Count, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Count_Invariants(value Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), COUNT_MINIMUM, COUNT_MAXIMUM).
 		Ensure()
 }
@@ -148,8 +148,8 @@ func Count_Invariants(value Count, namespace invariant.Namespace) {
 type Overlap bool
 
 // Overlap_Invariants covers both caller-storage relationships.
-func Overlap_Invariants(value Overlap, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Overlap_Invariants(value Overlap, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Sometimes(bool(value), "XOR destination has partial source overlap.").
 		Ensure()
 }
@@ -230,7 +230,7 @@ func Constant_Time_Copy(selector Decision, destination Destination, source Sourc
 	if len(source) > SOURCE_SIZE_MAXIMUM {
 		panic("subtle: source exceeds size bound")
 	}
-	invariant.Always(
+	aver.Always(
 		len(destination) == len(source),
 		"Constant-time copy source and destination have equal sizes.",
 	)

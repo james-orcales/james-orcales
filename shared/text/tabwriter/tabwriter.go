@@ -3,8 +3,8 @@ package tabwriter
 
 import (
 	"local/james-orcales/shared/bytes"
-	"local/james-orcales/shared/invariant/default"
 	"local/james-orcales/shared/math/bits"
+	"local/james-orcales/shared/simulation/aver/default"
 	"local/james-orcales/shared/unicode/utf8"
 )
 
@@ -184,8 +184,8 @@ const STATUS_INPUT_INVALID = STATUS_CONFIGURATION_INVALID + utf8.CHARACTER_SIZE_
 type Minimum_Width int
 
 // Minimum_Width_Invariants keeps the complete caller scalar domain visible.
-func Minimum_Width_Invariants(value Minimum_Width, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Minimum_Width_Invariants(value Minimum_Width, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), bits.INTEGER_MINIMUM, bits.INTEGER_MAXIMUM).
 		Ensure()
 }
@@ -194,8 +194,8 @@ func Minimum_Width_Invariants(value Minimum_Width, namespace invariant.Namespace
 type Tab_Width int
 
 // Tab_Width_Invariants keeps the complete caller scalar domain visible.
-func Tab_Width_Invariants(value Tab_Width, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Tab_Width_Invariants(value Tab_Width, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), bits.INTEGER_MINIMUM, bits.INTEGER_MAXIMUM).
 		Ensure()
 }
@@ -204,8 +204,8 @@ func Tab_Width_Invariants(value Tab_Width, namespace invariant.Namespace) {
 type Padding int
 
 // Padding_Invariants keeps the complete caller scalar domain visible.
-func Padding_Invariants(value Padding, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Padding_Invariants(value Padding, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), bits.INTEGER_MINIMUM, bits.INTEGER_MAXIMUM).
 		Ensure()
 }
@@ -214,8 +214,8 @@ func Padding_Invariants(value Padding, namespace invariant.Namespace) {
 type Pad_Character byte
 
 // Pad_Character_Invariants covers every caller byte.
-func Pad_Character_Invariants(value Pad_Character, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Pad_Character_Invariants(value Pad_Character, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint8(uint8(value), bits.WORD_8_MINIMUM, bits.WORD_8_MAXIMUM).
 		Ensure()
 }
@@ -224,8 +224,8 @@ func Pad_Character_Invariants(value Pad_Character, namespace invariant.Namespace
 type Flags uint
 
 // Flags_Invariants keeps the complete caller word domain visible.
-func Flags_Invariants(value Flags, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Flags_Invariants(value Flags, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint(uint(value), bits.WORD_MINIMUM, bits.WORD_MAXIMUM).
 		Ensure()
 }
@@ -246,7 +246,7 @@ type Configuration_Input struct {
 
 // Configuration_Input_Invariants composes every hostile configuration scalar once.
 func Configuration_Input_Invariants(
-	value Configuration_Input, namespace invariant.Namespace,
+	value Configuration_Input, namespace aver.Namespace,
 ) {
 	Minimum_Width_Invariants(value.Minimum_Width, namespace)
 	Tab_Width_Invariants(value.Tab_Width, namespace)
@@ -260,9 +260,9 @@ type Minimum_Width_Storage [CONFIGURATION_FIELD_COUNT]int
 
 // Minimum_Width_Storage_Invariants fixes policy storage shape.
 func Minimum_Width_Storage_Invariants(
-	value Minimum_Width_Storage, _ invariant.Namespace,
+	value Minimum_Width_Storage, _ aver.Namespace,
 ) {
-	invariant.Always(
+	aver.Always(
 		len(value) == CONFIGURATION_FIELD_COUNT,
 		"Minimum width has one storage field.",
 	)
@@ -272,8 +272,8 @@ func Minimum_Width_Storage_Invariants(
 type Tab_Width_Storage [CONFIGURATION_FIELD_COUNT]int
 
 // Tab_Width_Storage_Invariants fixes policy storage shape.
-func Tab_Width_Storage_Invariants(value Tab_Width_Storage, _ invariant.Namespace) {
-	invariant.Always(
+func Tab_Width_Storage_Invariants(value Tab_Width_Storage, _ aver.Namespace) {
+	aver.Always(
 		len(value) == CONFIGURATION_FIELD_COUNT,
 		"Tab width has one storage field.",
 	)
@@ -283,8 +283,8 @@ func Tab_Width_Storage_Invariants(value Tab_Width_Storage, _ invariant.Namespace
 type Padding_Storage [CONFIGURATION_FIELD_COUNT]int
 
 // Padding_Storage_Invariants fixes policy storage shape.
-func Padding_Storage_Invariants(value Padding_Storage, _ invariant.Namespace) {
-	invariant.Always(
+func Padding_Storage_Invariants(value Padding_Storage, _ aver.Namespace) {
+	aver.Always(
 		len(value) == CONFIGURATION_FIELD_COUNT,
 		"Padding has one storage field.",
 	)
@@ -295,9 +295,9 @@ type Pad_Character_Storage [CONFIGURATION_FIELD_COUNT]byte
 
 // Pad_Character_Storage_Invariants fixes policy storage shape.
 func Pad_Character_Storage_Invariants(
-	value Pad_Character_Storage, _ invariant.Namespace,
+	value Pad_Character_Storage, _ aver.Namespace,
 ) {
-	invariant.Always(
+	aver.Always(
 		len(value) == CONFIGURATION_FIELD_COUNT,
 		"Pad character has one storage field.",
 	)
@@ -307,8 +307,8 @@ func Pad_Character_Storage_Invariants(
 type Flags_Storage [CONFIGURATION_FIELD_COUNT]uint
 
 // Flags_Storage_Invariants fixes policy storage shape.
-func Flags_Storage_Invariants(value Flags_Storage, _ invariant.Namespace) {
-	invariant.Always(
+func Flags_Storage_Invariants(value Flags_Storage, _ aver.Namespace) {
+	aver.Always(
 		len(value) == CONFIGURATION_FIELD_COUNT,
 		"Formatting flags have one storage field.",
 	)
@@ -329,7 +329,7 @@ type Configuration struct {
 }
 
 // Configuration_Invariants composes immutable validated policy.
-func Configuration_Invariants(value Configuration, namespace invariant.Namespace) {
+func Configuration_Invariants(value Configuration, namespace aver.Namespace) {
 	Minimum_Width_Storage_Invariants(value.Minimum_Width, namespace)
 	Tab_Width_Storage_Invariants(value.Tab_Width, namespace)
 	Padding_Storage_Invariants(value.Padding, namespace)
@@ -342,9 +342,9 @@ type Configuration_Validity bool
 
 // Configuration_Validity_Invariants covers usable and corrupted policy.
 func Configuration_Validity_Invariants(
-	value Configuration_Validity, namespace invariant.Namespace,
+	value Configuration_Validity, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Sometimes(bool(value), "Tabwriter configuration storage is valid.").
 		Ensure()
 }
@@ -395,9 +395,9 @@ type Configuration_Status uint8
 
 // Configuration_Status_Invariants lists both construction outcomes.
 func Configuration_Status_Invariants(
-	value Configuration_Status, namespace invariant.Namespace,
+	value Configuration_Status, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Enum_Uint8(
 			uint8(value), uint8(STATUS_OK), uint8(STATUS_CONFIGURATION_INVALID),
 		).
@@ -409,9 +409,9 @@ type Source_Unvalidated []byte
 
 // Source_Unvalidated_Invariants bounds validation work itself.
 func Source_Unvalidated_Invariants(
-	value Source_Unvalidated, namespace invariant.Namespace,
+	value Source_Unvalidated, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(
 			len(value), SOURCE_SIZE_MINIMUM, SOURCE_SIZE_UNVALIDATED_MAXIMUM,
 		).
@@ -422,8 +422,8 @@ func Source_Unvalidated_Invariants(
 type Source []byte
 
 // Source_Invariants keeps parsing inside workspace capacity.
-func Source_Invariants(value Source, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Source_Invariants(value Source, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), SOURCE_SIZE_MINIMUM, SOURCE_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -432,8 +432,8 @@ func Source_Invariants(value Source, namespace invariant.Namespace) {
 type Nonempty_Source []byte
 
 // Nonempty_Source_Invariants excludes calls impossible for cell output.
-func Nonempty_Source_Invariants(value Nonempty_Source, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Nonempty_Source_Invariants(value Nonempty_Source, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), NONEMPTY_CELL_END_MINIMUM, SOURCE_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -442,8 +442,8 @@ func Nonempty_Source_Invariants(value Nonempty_Source, namespace invariant.Names
 type Source_Status uint8
 
 // Source_Status_Invariants lists both validation outcomes.
-func Source_Status_Invariants(value Source_Status, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Source_Status_Invariants(value Source_Status, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_Uint8(uint8(value), uint8(STATUS_OK), uint8(STATUS_INPUT_INVALID)).
 		Ensure()
 }
@@ -452,8 +452,8 @@ func Source_Status_Invariants(value Source_Status, namespace invariant.Namespace
 type Output []byte
 
 // Output_Invariants follows repository byte-slice boundary.
-func Output_Invariants(value Output, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Output_Invariants(value Output, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), OUTPUT_SIZE_MINIMUM, OUTPUT_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -462,8 +462,8 @@ func Output_Invariants(value Output, namespace invariant.Namespace) {
 type Output_Count int
 
 // Output_Count_Invariants includes the result-too-large sentinel.
-func Output_Count_Invariants(value Output_Count, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Output_Count_Invariants(value Output_Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(
 			int(value), OUTPUT_SIZE_MINIMUM, OUTPUT_SIZE_UNREPRESENTABLE,
 		).
@@ -474,8 +474,8 @@ func Output_Count_Invariants(value Output_Count, namespace invariant.Namespace) 
 type Format_Status uint8
 
 // Format_Status_Invariants covers the contiguous runtime outcome range.
-func Format_Status_Invariants(value Format_Status, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Format_Status_Invariants(value Format_Status, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint8(
 			uint8(value), uint8(STATUS_OK), uint8(STATUS_CONFIGURATION_INVALID),
 		).
@@ -486,8 +486,8 @@ func Format_Status_Invariants(value Format_Status, namespace invariant.Namespace
 type Cell_Start int
 
 // Cell_Start_Invariants includes source end for empty trailing cells.
-func Cell_Start_Invariants(value Cell_Start, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Cell_Start_Invariants(value Cell_Start, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), SOURCE_SIZE_MINIMUM, SOURCE_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -497,9 +497,9 @@ type Stored_Cell_Start int
 
 // Stored_Cell_Start_Invariants excludes trailing source boundary without a cell.
 func Stored_Cell_Start_Invariants(
-	value Stored_Cell_Start, namespace invariant.Namespace,
+	value Stored_Cell_Start, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(int(value), SOURCE_SIZE_MINIMUM, STORED_CELL_START_MAXIMUM).
 		Ensure()
 }
@@ -508,8 +508,8 @@ func Stored_Cell_Start_Invariants(
 type Cell_End int
 
 // Cell_End_Invariants includes every bounded source boundary.
-func Cell_End_Invariants(value Cell_End, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Cell_End_Invariants(value Cell_End, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), SOURCE_SIZE_MINIMUM, SOURCE_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -519,9 +519,9 @@ type Nonempty_Cell_End int
 
 // Nonempty_Cell_End_Invariants excludes empty cell boundary.
 func Nonempty_Cell_End_Invariants(
-	value Nonempty_Cell_End, namespace invariant.Namespace,
+	value Nonempty_Cell_End, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(int(value), NONEMPTY_CELL_END_MINIMUM, SOURCE_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -530,8 +530,8 @@ func Nonempty_Cell_End_Invariants(
 type Cell_Width int
 
 // Cell_Width_Invariants admits one replacement character per invalid byte.
-func Cell_Width_Invariants(value Cell_Width, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Cell_Width_Invariants(value Cell_Width, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), WIDTH_MINIMUM, SOURCE_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -541,9 +541,9 @@ type Partial_Cell_Width int
 
 // Partial_Cell_Width_Invariants leaves room for a final escape opener.
 func Partial_Cell_Width_Invariants(
-	value Partial_Cell_Width, namespace invariant.Namespace,
+	value Partial_Cell_Width, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(int(value), WIDTH_MINIMUM, PARTIAL_CELL_WIDTH_MAXIMUM).
 		Ensure()
 }
@@ -553,9 +553,9 @@ type Aligned_Cell_Width int
 
 // Aligned_Cell_Width_Invariants bounds padding input to reachable aligned text.
 func Aligned_Cell_Width_Invariants(
-	value Aligned_Cell_Width, namespace invariant.Namespace,
+	value Aligned_Cell_Width, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(int(value), WIDTH_MINIMUM, ALIGNED_CELL_WIDTH_MAXIMUM).
 		Ensure()
 }
@@ -565,9 +565,9 @@ type Cell_Output_Size int
 
 // Cell_Output_Size_Invariants follows source byte count.
 func Cell_Output_Size_Invariants(
-	value Cell_Output_Size, namespace invariant.Namespace,
+	value Cell_Output_Size, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(int(value), OUTPUT_SIZE_MINIMUM, SOURCE_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -576,8 +576,8 @@ func Cell_Output_Size_Invariants(
 type Cell_Hard_Tab bool
 
 // Cell_Hard_Tab_Invariants covers hard and soft cells.
-func Cell_Hard_Tab_Invariants(value Cell_Hard_Tab, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Cell_Hard_Tab_Invariants(value Cell_Hard_Tab, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Sometimes(bool(value), "A cell uses a hard tab.").
 		Ensure()
 }
@@ -587,9 +587,9 @@ type Line_First_Cell int
 
 // Line_First_Cell_Invariants includes boundary after final source cell.
 func Line_First_Cell_Invariants(
-	value Line_First_Cell, namespace invariant.Namespace,
+	value Line_First_Cell, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(int(value), CELL_INDEX_MINIMUM, CELL_COUNT_MAXIMUM).
 		Ensure()
 }
@@ -599,9 +599,9 @@ type Line_Cell_Boundary int
 
 // Line_Cell_Boundary_Invariants includes boundary after final source cell.
 func Line_Cell_Boundary_Invariants(
-	value Line_Cell_Boundary, namespace invariant.Namespace,
+	value Line_Cell_Boundary, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(int(value), CELL_INDEX_MINIMUM, CELL_COUNT_MAXIMUM).
 		Ensure()
 }
@@ -610,8 +610,8 @@ func Line_Cell_Boundary_Invariants(
 type Cell_Index int
 
 // Cell_Index_Invariants includes the boundary after final cell.
-func Cell_Index_Invariants(value Cell_Index, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Cell_Index_Invariants(value Cell_Index, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), CELL_INDEX_MINIMUM, CELL_INDEX_MAXIMUM).
 		Ensure()
 }
@@ -620,8 +620,8 @@ func Cell_Index_Invariants(value Cell_Index, namespace invariant.Namespace) {
 type Cell_Count int
 
 // Cell_Count_Invariants includes empty input.
-func Cell_Count_Invariants(value Cell_Count, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Cell_Count_Invariants(value Cell_Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), CELL_COUNT_MINIMUM, CELL_COUNT_MAXIMUM).
 		Ensure()
 }
@@ -631,9 +631,9 @@ type Nonzero_Cell_Count int
 
 // Nonzero_Cell_Count_Invariants excludes pre-parse zero state.
 func Nonzero_Cell_Count_Invariants(
-	value Nonzero_Cell_Count, namespace invariant.Namespace,
+	value Nonzero_Cell_Count, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(int(value), NONZERO_CELL_COUNT_MINIMUM, CELL_COUNT_MAXIMUM).
 		Ensure()
 }
@@ -643,9 +643,9 @@ type Line_Cell_Count int
 
 // Line_Cell_Count_Invariants includes empty lines.
 func Line_Cell_Count_Invariants(
-	value Line_Cell_Count, namespace invariant.Namespace,
+	value Line_Cell_Count, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(int(value), LINE_CELL_COUNT_MINIMUM, CELL_COUNT_MAXIMUM).
 		Ensure()
 }
@@ -655,9 +655,9 @@ type Parsed_Line_Count int
 
 // Parsed_Line_Count_Invariants excludes accumulator zero state.
 func Parsed_Line_Count_Invariants(
-	value Parsed_Line_Count, namespace invariant.Namespace,
+	value Parsed_Line_Count, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(int(value), PARSED_LINE_COUNT_MINIMUM, LINE_COUNT_MAXIMUM).
 		Ensure()
 }
@@ -666,8 +666,8 @@ func Parsed_Line_Count_Invariants(
 type Line_Index int
 
 // Line_Index_Invariants excludes boundary after final line.
-func Line_Index_Invariants(value Line_Index, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Line_Index_Invariants(value Line_Index, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), LINE_INDEX_MINIMUM, LINE_INDEX_MAXIMUM).
 		Ensure()
 }
@@ -676,8 +676,8 @@ func Line_Index_Invariants(value Line_Index, namespace invariant.Namespace) {
 type Column_Index int
 
 // Column_Index_Invariants follows maximum cells on one line.
-func Column_Index_Invariants(value Column_Index, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Column_Index_Invariants(value Column_Index, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), COLUMN_INDEX_MINIMUM, COLUMN_INDEX_MAXIMUM).
 		Ensure()
 }
@@ -687,9 +687,9 @@ type Column_Line_Index int
 
 // Column_Line_Index_Invariants excludes source tails too short for a column.
 func Column_Line_Index_Invariants(
-	value Column_Line_Index, namespace invariant.Namespace,
+	value Column_Line_Index, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(int(value), LINE_INDEX_MINIMUM, COLUMN_LINE_INDEX_MAXIMUM).
 		Ensure()
 }
@@ -699,9 +699,9 @@ type Column_Line_Count int
 
 // Column_Line_Count_Invariants excludes all-newline maximum source.
 func Column_Line_Count_Invariants(
-	value Column_Line_Count, namespace invariant.Namespace,
+	value Column_Line_Count, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(int(value), COLUMN_LINE_COUNT_MINIMUM, COLUMN_LINE_COUNT_MAXIMUM).
 		Ensure()
 }
@@ -710,8 +710,8 @@ func Column_Line_Count_Invariants(
 type Column_Width int
 
 // Column_Width_Invariants includes maximum cell and padding widths.
-func Column_Width_Invariants(value Column_Width, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Column_Width_Invariants(value Column_Width, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), WIDTH_MINIMUM, COLUMN_WIDTH_MAXIMUM).
 		Ensure()
 }
@@ -720,8 +720,8 @@ func Column_Width_Invariants(value Column_Width, namespace invariant.Namespace) 
 type Append_Offset int
 
 // Append_Offset_Invariants stops at maximum caller output boundary.
-func Append_Offset_Invariants(value Append_Offset, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Append_Offset_Invariants(value Append_Offset, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), OUTPUT_SIZE_MINIMUM, OUTPUT_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -733,8 +733,8 @@ const APPENDED_OFFSET_MINIMUM = OUTPUT_SIZE_MINIMUM + utf8.CHARACTER_SIZE_MINIMU
 type Appended_Offset int
 
 // Appended_Offset_Invariants excludes empty output after mandatory emission.
-func Appended_Offset_Invariants(value Appended_Offset, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Appended_Offset_Invariants(value Appended_Offset, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), APPENDED_OFFSET_MINIMUM, OUTPUT_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -744,9 +744,9 @@ type Line_Terminator byte
 
 // Line_Terminator_Invariants lists every parsed line ending.
 func Line_Terminator_Invariants(
-	value Line_Terminator, namespace invariant.Namespace,
+	value Line_Terminator, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Enum_3_Uint8(
 			uint8(value), LINE_TERMINATOR_NONE,
 			LINE_TERMINATOR_NEWLINE, LINE_TERMINATOR_FORM_FEED,
@@ -758,32 +758,32 @@ func Line_Terminator_Invariants(
 type Cell_Starts [CELL_COUNT_MAXIMUM]Stored_Cell_Start
 
 // Cell_Starts_Invariants fixes workspace capacity while parser owns content validity.
-func Cell_Starts_Invariants(value Cell_Starts, _ invariant.Namespace) {
-	invariant.Always(len(value) == CELL_COUNT_MAXIMUM, "Cell starts have fixed capacity.")
+func Cell_Starts_Invariants(value Cell_Starts, _ aver.Namespace) {
+	aver.Always(len(value) == CELL_COUNT_MAXIMUM, "Cell starts have fixed capacity.")
 }
 
 // Cell_Ends stores source endings without owned dynamic slices.
 type Cell_Ends [CELL_COUNT_MAXIMUM]Cell_End
 
 // Cell_Ends_Invariants fixes workspace capacity while parser owns content validity.
-func Cell_Ends_Invariants(value Cell_Ends, _ invariant.Namespace) {
-	invariant.Always(len(value) == CELL_COUNT_MAXIMUM, "Cell ends have fixed capacity.")
+func Cell_Ends_Invariants(value Cell_Ends, _ aver.Namespace) {
+	aver.Always(len(value) == CELL_COUNT_MAXIMUM, "Cell ends have fixed capacity.")
 }
 
 // Cell_Widths stores display widths without owned dynamic slices.
 type Cell_Widths [CELL_COUNT_MAXIMUM]Cell_Width
 
 // Cell_Widths_Invariants fixes workspace capacity while parser owns content validity.
-func Cell_Widths_Invariants(value Cell_Widths, _ invariant.Namespace) {
-	invariant.Always(len(value) == CELL_COUNT_MAXIMUM, "Cell widths have fixed capacity.")
+func Cell_Widths_Invariants(value Cell_Widths, _ aver.Namespace) {
+	aver.Always(len(value) == CELL_COUNT_MAXIMUM, "Cell widths have fixed capacity.")
 }
 
 // Cell_Output_Sizes stores retained byte sizes without owned dynamic slices.
 type Cell_Output_Sizes [CELL_COUNT_MAXIMUM]Cell_Output_Size
 
 // Cell_Output_Sizes_Invariants fixes workspace capacity while parser owns content validity.
-func Cell_Output_Sizes_Invariants(value Cell_Output_Sizes, _ invariant.Namespace) {
-	invariant.Always(
+func Cell_Output_Sizes_Invariants(value Cell_Output_Sizes, _ aver.Namespace) {
+	aver.Always(
 		len(value) == CELL_COUNT_MAXIMUM,
 		"Cell output sizes have fixed capacity.",
 	)
@@ -793,16 +793,16 @@ func Cell_Output_Sizes_Invariants(value Cell_Output_Sizes, _ invariant.Namespace
 type Cell_Hard_Tabs [CELL_COUNT_MAXIMUM]Cell_Hard_Tab
 
 // Cell_Hard_Tabs_Invariants fixes workspace capacity while parser owns content validity.
-func Cell_Hard_Tabs_Invariants(value Cell_Hard_Tabs, _ invariant.Namespace) {
-	invariant.Always(len(value) == CELL_COUNT_MAXIMUM, "Cell tab kinds have fixed capacity.")
+func Cell_Hard_Tabs_Invariants(value Cell_Hard_Tabs, _ aver.Namespace) {
+	aver.Always(len(value) == CELL_COUNT_MAXIMUM, "Cell tab kinds have fixed capacity.")
 }
 
 // Line_First_Cells stores flat cell beginnings for each line.
 type Line_First_Cells [LINE_COUNT_MAXIMUM]Line_First_Cell
 
 // Line_First_Cells_Invariants fixes workspace capacity while parser owns content validity.
-func Line_First_Cells_Invariants(value Line_First_Cells, _ invariant.Namespace) {
-	invariant.Always(
+func Line_First_Cells_Invariants(value Line_First_Cells, _ aver.Namespace) {
+	aver.Always(
 		len(value) == LINE_COUNT_MAXIMUM,
 		"Line cell beginnings have fixed capacity.",
 	)
@@ -812,8 +812,8 @@ func Line_First_Cells_Invariants(value Line_First_Cells, _ invariant.Namespace) 
 type Line_Cell_Counts [LINE_COUNT_MAXIMUM]Line_Cell_Count
 
 // Line_Cell_Counts_Invariants fixes workspace capacity while parser owns content validity.
-func Line_Cell_Counts_Invariants(value Line_Cell_Counts, _ invariant.Namespace) {
-	invariant.Always(
+func Line_Cell_Counts_Invariants(value Line_Cell_Counts, _ aver.Namespace) {
+	aver.Always(
 		len(value) == LINE_COUNT_MAXIMUM,
 		"Line cell counts have fixed capacity.",
 	)
@@ -823,8 +823,8 @@ func Line_Cell_Counts_Invariants(value Line_Cell_Counts, _ invariant.Namespace) 
 type Line_Terminators [LINE_COUNT_MAXIMUM]Line_Terminator
 
 // Line_Terminators_Invariants fixes workspace capacity while parser owns content validity.
-func Line_Terminators_Invariants(value Line_Terminators, _ invariant.Namespace) {
-	invariant.Always(
+func Line_Terminators_Invariants(value Line_Terminators, _ aver.Namespace) {
+	aver.Always(
 		len(value) == LINE_COUNT_MAXIMUM,
 		"Line endings have fixed capacity.",
 	)
@@ -851,7 +851,7 @@ type Workspace struct {
 }
 
 // Workspace_Invariants verifies fixed state shape without reading stale content.
-func Workspace_Invariants(value Workspace, namespace invariant.Namespace) {
+func Workspace_Invariants(value Workspace, namespace aver.Namespace) {
 	Cell_Starts_Invariants(value.Cell_Starts, namespace)
 	Cell_Ends_Invariants(value.Cell_Ends, namespace)
 	Cell_Widths_Invariants(value.Cell_Widths, namespace)
@@ -866,8 +866,8 @@ func Workspace_Invariants(value Workspace, namespace invariant.Namespace) {
 type Workspace_Storage [WORKSPACE_FIELD_COUNT]*Workspace
 
 // Workspace_Storage_Invariants leaves pointer presence to Format_Into status.
-func Workspace_Storage_Invariants(value Workspace_Storage, _ invariant.Namespace) {
-	invariant.Always(
+func Workspace_Storage_Invariants(value Workspace_Storage, _ aver.Namespace) {
+	aver.Always(
 		len(value) == WORKSPACE_FIELD_COUNT,
 		"Workspace input has one pointer field.",
 	)
@@ -880,7 +880,7 @@ type Workspace_Input struct {
 }
 
 // Workspace_Input_Invariants fixes unvalidated pointer storage shape.
-func Workspace_Input_Invariants(value Workspace_Input, namespace invariant.Namespace) {
+func Workspace_Input_Invariants(value Workspace_Input, namespace aver.Namespace) {
 	Workspace_Storage_Invariants(value.State, namespace)
 }
 
@@ -888,8 +888,8 @@ func Workspace_Input_Invariants(value Workspace_Input, namespace invariant.Names
 type Write_Output bool
 
 // Write_Output_Invariants covers sizing and writing passes.
-func Write_Output_Invariants(value Write_Output, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Write_Output_Invariants(value Write_Output, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Sometimes(bool(value), "The formatter writes caller output.").
 		Ensure()
 }
@@ -898,8 +898,8 @@ func Write_Output_Invariants(value Write_Output, namespace invariant.Namespace) 
 type Aligned_Cell bool
 
 // Aligned_Cell_Invariants covers aligned and trailing cell output.
-func Aligned_Cell_Invariants(value Aligned_Cell, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Aligned_Cell_Invariants(value Aligned_Cell, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Sometimes(bool(value), "A cell belongs to an aligned column.").
 		Ensure()
 }
@@ -908,8 +908,8 @@ func Aligned_Cell_Invariants(value Aligned_Cell, namespace invariant.Namespace) 
 type Use_Tabs bool
 
 // Use_Tabs_Invariants covers tab and configured-character padding.
-func Use_Tabs_Invariants(value Use_Tabs, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Use_Tabs_Invariants(value Use_Tabs, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Sometimes(bool(value), "Padding uses tab characters.").
 		Ensure()
 }
@@ -918,8 +918,8 @@ func Use_Tabs_Invariants(value Use_Tabs, namespace invariant.Namespace) {
 type Input_Byte byte
 
 // Input_Byte_Invariants covers the complete source byte domain.
-func Input_Byte_Invariants(value Input_Byte, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Input_Byte_Invariants(value Input_Byte, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint8(uint8(value), bits.WORD_8_MINIMUM, bits.WORD_8_MAXIMUM).
 		Ensure()
 }
@@ -929,9 +929,9 @@ type Escape_Start_Byte byte
 
 // Escape_Start_Byte_Invariants lists every byte passed to escape construction.
 func Escape_Start_Byte_Invariants(
-	value Escape_Start_Byte, namespace invariant.Namespace,
+	value Escape_Start_Byte, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Enum_3_Uint8(
 			uint8(value), ESCAPE_START_HTML_ENTITY, ESCAPE_START_HTML_TAG, ESCAPE,
 		).
@@ -943,9 +943,9 @@ type Escape_Output_Size int
 
 // Escape_Output_Size_Invariants excludes impossible multi-byte single-step output.
 func Escape_Output_Size_Invariants(
-	value Escape_Output_Size, namespace invariant.Namespace,
+	value Escape_Output_Size, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Enum_Int(int(value), OUTPUT_SIZE_MINIMUM, NONEMPTY_CELL_END_MINIMUM).
 		Ensure()
 }
@@ -955,9 +955,9 @@ type Active_End_Character byte
 
 // Active_End_Character_Invariants excludes inactive zero parser state.
 func Active_End_Character_Invariants(
-	value Active_End_Character, namespace invariant.Namespace,
+	value Active_End_Character, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Enum_3_Uint8(
 			uint8(value), END_CHARACTER_HTML_ENTITY,
 			END_CHARACTER_HTML_TAG, ESCAPE,
@@ -969,8 +969,8 @@ func Active_End_Character_Invariants(
 type End_Character byte
 
 // End_Character_Invariants lists every escape parser state.
-func End_Character_Invariants(value End_Character, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func End_Character_Invariants(value End_Character, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_4_Uint8(
 			uint8(value), LINE_TERMINATOR_NONE, END_CHARACTER_HTML_ENTITY,
 			END_CHARACTER_HTML_TAG, ESCAPE,
@@ -982,8 +982,8 @@ func End_Character_Invariants(value End_Character, namespace invariant.Namespace
 type Character_Count int
 
 // Character_Count_Invariants admits one replacement character per invalid byte.
-func Character_Count_Invariants(value Character_Count, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Character_Count_Invariants(value Character_Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), WIDTH_MINIMUM, SOURCE_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -992,8 +992,8 @@ func Character_Count_Invariants(value Character_Count, namespace invariant.Names
 type Output_Byte byte
 
 // Output_Byte_Invariants covers the complete byte domain.
-func Output_Byte_Invariants(value Output_Byte, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Output_Byte_Invariants(value Output_Byte, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint8(uint8(value), bits.WORD_8_MINIMUM, bits.WORD_8_MAXIMUM).
 		Ensure()
 }
@@ -1002,8 +1002,8 @@ func Output_Byte_Invariants(value Output_Byte, namespace invariant.Namespace) {
 type Append_Status uint8
 
 // Append_Status_Invariants lists both append outcomes.
-func Append_Status_Invariants(value Append_Status, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Append_Status_Invariants(value Append_Status, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_Uint8(uint8(value), uint8(STATUS_OK), uint8(STATUS_RESULT_TOO_LARGE)).
 		Ensure()
 }

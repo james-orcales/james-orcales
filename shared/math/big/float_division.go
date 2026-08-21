@@ -4,8 +4,8 @@ package big
 import (
 	"local/james-orcales/shared/bytes"
 	"local/james-orcales/shared/encoding/binary"
-	"local/james-orcales/shared/invariant/default"
 	"local/james-orcales/shared/math/bits"
+	"local/james-orcales/shared/simulation/aver/default"
 )
 
 // INT_DIVISION_GENERAL_DIVISOR_WORD_COUNT_MAXIMUM leaves one higher dividend word.
@@ -23,13 +23,13 @@ type Float_Division_Destination [WORD_COUNT_INCREMENT]*Float
 
 // Float_Division_Destination_Invariants requires the one writable result.
 func Float_Division_Destination_Invariants(
-	value Float_Division_Destination, _ invariant.Namespace,
+	value Float_Division_Destination, _ aver.Namespace,
 ) {
-	invariant.Always(
+	aver.Always(
 		len(value) == WORD_COUNT_INCREMENT,
 		"Float division owns one destination.",
 	)
-	invariant.Always(value[WORD_COUNT_MINIMUM] != nil, "Float division output exists.")
+	aver.Always(value[WORD_COUNT_MINIMUM] != nil, "Float division output exists.")
 }
 
 // Int_Division_Empty_Workspace is the reset state required by word division.
@@ -37,13 +37,13 @@ type Int_Division_Empty_Workspace Int_Division_Workspace
 
 // Int_Division_Empty_Workspace_Invariants excludes stale scratch from word algorithms.
 func Int_Division_Empty_Workspace_Invariants(
-	value *Int_Division_Empty_Workspace, _ invariant.Namespace,
+	value *Int_Division_Empty_Workspace, _ aver.Namespace,
 ) {
-	invariant.Always(
+	aver.Always(
 		value.Quotient_Count == Quotient_Count(WORD_COUNT_MINIMUM),
 		"Word division starts with an empty quotient.",
 	)
-	invariant.Always(
+	aver.Always(
 		value.Remainder_Count == Remainder_Count(WORD_COUNT_MINIMUM),
 		"Word division starts with an empty remainder.",
 	)
@@ -54,15 +54,15 @@ type Int_Division_Multiword_Magnitude Int
 
 // Int_Division_Multiword_Magnitude_Invariants keeps normalized inline multiword storage.
 func Int_Division_Multiword_Magnitude_Invariants(
-	value *Int_Division_Multiword_Magnitude, namespace invariant.Namespace,
+	value *Int_Division_Multiword_Magnitude, namespace aver.Namespace,
 ) {
-	invariant.Tree(Polarity(value.Negative), namespace).
+	aver.Tree(Polarity(value.Negative), namespace).
 		Enum_Uint8(
 			uint8(value.Negative),
 			uint8(POLARITY_NONNEGATIVE), uint8(POLARITY_NEGATIVE),
 		).
 		Ensure()
-	invariant.Tree(Word_Count(value.Count), namespace).
+	aver.Tree(Word_Count(value.Count), namespace).
 		Range_Int(
 			int(value.Count),
 			WORD_COUNT_INCREMENT+WORD_COUNT_INCREMENT,
@@ -71,7 +71,7 @@ func Int_Division_Multiword_Magnitude_Invariants(
 		Ensure()
 	high_index := (value.Count - Word_Count(WORD_COUNT_INCREMENT)) &
 		Word_Count(WORD_INDEX_MAXIMUM)
-	invariant.Always(
+	aver.Always(
 		value.Words[high_index] != 0,
 		"A multiword division magnitude omits high zero words.",
 	)
@@ -82,9 +82,9 @@ type Int_Division_Nonzero_Word Word
 
 // Int_Division_Nonzero_Word_Invariants rejects the zero divisor handled by the caller.
 func Int_Division_Nonzero_Word_Invariants(
-	value Int_Division_Nonzero_Word, namespace invariant.Namespace,
+	value Int_Division_Nonzero_Word, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Uint64(
 			uint64(value), uint64(bits.CARRY_MAXIMUM), uint64(bits.WORD_64_MAXIMUM),
 		).
@@ -96,9 +96,9 @@ type Int_Division_Quotient_Word Word
 
 // Int_Division_Quotient_Word_Invariants covers one complete nonzero quotient word.
 func Int_Division_Quotient_Word_Invariants(
-	value Int_Division_Quotient_Word, namespace invariant.Namespace,
+	value Int_Division_Quotient_Word, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Uint64(
 			uint64(value), uint64(bits.CARRY_MAXIMUM), uint64(bits.WORD_64_MAXIMUM),
 		).
@@ -110,15 +110,15 @@ type Int_Division_General_Dividend Int
 
 // Int_Division_General_Dividend_Invariants states the restoring-path dividend domain.
 func Int_Division_General_Dividend_Invariants(
-	value *Int_Division_General_Dividend, namespace invariant.Namespace,
+	value *Int_Division_General_Dividend, namespace aver.Namespace,
 ) {
-	invariant.Tree(Polarity(value.Negative), namespace).
+	aver.Tree(Polarity(value.Negative), namespace).
 		Enum_Uint8(
 			uint8(value.Negative),
 			uint8(POLARITY_NONNEGATIVE), uint8(POLARITY_NEGATIVE),
 		).
 		Ensure()
-	invariant.Tree(Word_Count(value.Count), namespace).
+	aver.Tree(Word_Count(value.Count), namespace).
 		Range_Int(
 			int(value.Count),
 			BASE_BINARY*BASE_BINARY+WORD_COUNT_INCREMENT,
@@ -127,7 +127,7 @@ func Int_Division_General_Dividend_Invariants(
 		Ensure()
 	high_index := (value.Count - Word_Count(WORD_COUNT_INCREMENT)) &
 		Word_Count(WORD_INDEX_MAXIMUM)
-	invariant.Always(
+	aver.Always(
 		value.Words[high_index] != 0,
 		"A general division dividend omits high zero words.",
 	)
@@ -138,15 +138,15 @@ type Int_Division_General_Divisor Int
 
 // Int_Division_General_Divisor_Invariants states the restoring-path divisor domain.
 func Int_Division_General_Divisor_Invariants(
-	value *Int_Division_General_Divisor, namespace invariant.Namespace,
+	value *Int_Division_General_Divisor, namespace aver.Namespace,
 ) {
-	invariant.Tree(Polarity(value.Negative), namespace).
+	aver.Tree(Polarity(value.Negative), namespace).
 		Enum_Uint8(
 			uint8(value.Negative),
 			uint8(POLARITY_NONNEGATIVE), uint8(POLARITY_NEGATIVE),
 		).
 		Ensure()
-	invariant.Tree(Word_Count(value.Count), namespace).
+	aver.Tree(Word_Count(value.Count), namespace).
 		Range_Int(
 			int(value.Count),
 			WORD_COUNT_INCREMENT+WORD_COUNT_INCREMENT,
@@ -155,7 +155,7 @@ func Int_Division_General_Divisor_Invariants(
 		Ensure()
 	high_index := (value.Count - Word_Count(WORD_COUNT_INCREMENT)) &
 		Word_Count(WORD_INDEX_MAXIMUM)
-	invariant.Always(
+	aver.Always(
 		value.Words[high_index] != 0,
 		"A general division divisor omits high zero words.",
 	)
@@ -166,15 +166,15 @@ type Int_Division_Small_Dividend Int
 
 // Int_Division_Small_Dividend_Invariants states every reachable small dividend width.
 func Int_Division_Small_Dividend_Invariants(
-	value *Int_Division_Small_Dividend, namespace invariant.Namespace,
+	value *Int_Division_Small_Dividend, namespace aver.Namespace,
 ) {
-	invariant.Tree(Polarity(value.Negative), namespace).
+	aver.Tree(Polarity(value.Negative), namespace).
 		Enum_Uint8(
 			uint8(value.Negative),
 			uint8(POLARITY_NONNEGATIVE), uint8(POLARITY_NEGATIVE),
 		).
 		Ensure()
-	invariant.Tree(Word_Count(value.Count), namespace).
+	aver.Tree(Word_Count(value.Count), namespace).
 		Enum_Int(
 			int(value.Count),
 			WORD_COUNT_INCREMENT+WORD_COUNT_INCREMENT+WORD_COUNT_INCREMENT,
@@ -182,7 +182,7 @@ func Int_Division_Small_Dividend_Invariants(
 		).
 		Ensure()
 	high_index := value.Count - Word_Count(WORD_COUNT_INCREMENT)
-	invariant.Always(
+	aver.Always(
 		value.Words[high_index] != 0,
 		"A small division dividend omits high zero words.",
 	)
@@ -193,22 +193,22 @@ type Int_Division_Small_Divisor Int
 
 // Int_Division_Small_Divisor_Invariants states every reachable small divisor width.
 func Int_Division_Small_Divisor_Invariants(
-	value *Int_Division_Small_Divisor, namespace invariant.Namespace,
+	value *Int_Division_Small_Divisor, namespace aver.Namespace,
 ) {
-	invariant.Tree(Polarity(value.Negative), namespace).
+	aver.Tree(Polarity(value.Negative), namespace).
 		Enum_Uint8(
 			uint8(value.Negative),
 			uint8(POLARITY_NONNEGATIVE), uint8(POLARITY_NEGATIVE),
 		).
 		Ensure()
-	invariant.Tree(Word_Count(value.Count), namespace).
+	aver.Tree(Word_Count(value.Count), namespace).
 		Enum_Int(
 			int(value.Count), WORD_COUNT_INCREMENT+WORD_COUNT_INCREMENT,
 			BASE_BINARY*BASE_BINARY-WORD_COUNT_INCREMENT,
 		).
 		Ensure()
 	high_index := value.Count - Word_Count(WORD_COUNT_INCREMENT)
-	invariant.Always(
+	aver.Always(
 		value.Words[high_index] != 0,
 		"A small division divisor omits high zero words.",
 	)
@@ -219,15 +219,15 @@ type Int_Division_Restoring_Workspace Int_Division_Workspace
 
 // Int_Division_Restoring_Workspace_Invariants excludes an impossible full-width quotient.
 func Int_Division_Restoring_Workspace_Invariants(
-	value *Int_Division_Restoring_Workspace, namespace invariant.Namespace,
+	value *Int_Division_Restoring_Workspace, namespace aver.Namespace,
 ) {
-	invariant.Tree(Quotient_Count(value.Quotient_Count), namespace).
+	aver.Tree(Quotient_Count(value.Quotient_Count), namespace).
 		Range_Int(
 			int(value.Quotient_Count), WORD_COUNT_MINIMUM,
 			INT_DIVISION_GENERAL_DIVISOR_WORD_COUNT_MAXIMUM,
 		).
 		Ensure()
-	invariant.Tree(Remainder_Count(value.Remainder_Count), namespace).
+	aver.Tree(Remainder_Count(value.Remainder_Count), namespace).
 		Range_Int(
 			int(value.Remainder_Count), WORD_COUNT_MINIMUM,
 			INT_DIVISION_GENERAL_DIVISOR_WORD_COUNT_MAXIMUM,
@@ -240,15 +240,15 @@ type Int_Division_Shifted_Workspace Int_Division_Workspace
 
 // Int_Division_Shifted_Workspace_Invariants keeps only the transient shifted remainder wider.
 func Int_Division_Shifted_Workspace_Invariants(
-	value *Int_Division_Shifted_Workspace, namespace invariant.Namespace,
+	value *Int_Division_Shifted_Workspace, namespace aver.Namespace,
 ) {
-	invariant.Tree(Quotient_Count(value.Quotient_Count), namespace).
+	aver.Tree(Quotient_Count(value.Quotient_Count), namespace).
 		Range_Int(
 			int(value.Quotient_Count), WORD_COUNT_MINIMUM,
 			INT_DIVISION_GENERAL_DIVISOR_WORD_COUNT_MAXIMUM,
 		).
 		Ensure()
-	invariant.Tree(Remainder_Count(value.Remainder_Count), namespace).
+	aver.Tree(Remainder_Count(value.Remainder_Count), namespace).
 		Range_Int(
 			int(value.Remainder_Count), WORD_COUNT_MINIMUM, WORD_COUNT_MAXIMUM,
 		).
@@ -304,7 +304,7 @@ func int_divide_equal_word_count(
 	Int_Division_Multiword_Magnitude_Invariants(
 		divisor, "int_divide_equal_word_count.divisor",
 	)
-	invariant.Always(
+	aver.Always(
 		dividend.Count == divisor.Count,
 		"Equal-width division receives equal normalized word counts.",
 	)
@@ -341,7 +341,7 @@ func int_divide_equal_word_count_quotient(
 		divisor, "int_divide_equal_word_count_quotient.divisor",
 	)
 	order := int_compare_absolute((*Int)(dividend), (*Int)(divisor))
-	invariant.Always(order == ORDER_AFTER, "A quotient estimate receives a larger dividend.")
+	aver.Always(order == ORDER_AFTER, "A quotient estimate receives a larger dividend.")
 	high_index := int(divisor.Count) - WORD_COUNT_INCREMENT
 	next_index := high_index - WORD_COUNT_INCREMENT
 	shift := uint(bits.Leading_Zeros_64(bits.Word_64(divisor.Words[high_index])))
@@ -441,7 +441,7 @@ func int_divide_equal_word_count_commit(
 			(^(minuend ^ product_low) & difference)) >> WORD_BIT_INDEX_MAXIMUM
 		carry = product_high
 	}
-	invariant.Always(
+	aver.Always(
 		carry+borrow == 0,
 		"Normalized quotient estimate cannot exceed equal-width dividend.",
 	)
@@ -481,9 +481,9 @@ type Int_Division_Small_Trial_Dividend [INT_DIVISION_SMALL_TRIAL_DIVIDEND_COUNT]
 
 // Int_Division_Small_Trial_Dividend_Invariants fixes the complete estimate numerator.
 func Int_Division_Small_Trial_Dividend_Invariants(
-	value Int_Division_Small_Trial_Dividend, _ invariant.Namespace,
+	value Int_Division_Small_Trial_Dividend, _ aver.Namespace,
 ) {
-	invariant.Always(
+	aver.Always(
 		len(value) == INT_DIVISION_SMALL_TRIAL_DIVIDEND_COUNT,
 		"A small division estimate owns its three leading dividend words.",
 	)
@@ -494,13 +494,13 @@ type Int_Division_Small_Trial_Divisor [INT_DIVISION_SMALL_TRIAL_DIVISOR_COUNT]Wo
 
 // Int_Division_Small_Trial_Divisor_Invariants fixes and normalizes the divisor prefix.
 func Int_Division_Small_Trial_Divisor_Invariants(
-	value Int_Division_Small_Trial_Divisor, _ invariant.Namespace,
+	value Int_Division_Small_Trial_Divisor, _ aver.Namespace,
 ) {
-	invariant.Always(
+	aver.Always(
 		len(value) == INT_DIVISION_SMALL_TRIAL_DIVISOR_COUNT,
 		"A small division correction owns its two leading divisor words.",
 	)
-	invariant.Always(
+	aver.Always(
 		value[INT_DIVISION_SMALL_TRIAL_HIGH_INDEX]>>WORD_BIT_INDEX_MAXIMUM ==
 			Word(bits.CARRY_MAXIMUM),
 		"A small division trial normalizes the divisor high bit.",
@@ -517,7 +517,7 @@ type Int_Division_Small_Trial struct {
 
 // Int_Division_Small_Trial_Invariants binds every trial field to one machine word.
 func Int_Division_Small_Trial_Invariants(
-	value Int_Division_Small_Trial, namespace invariant.Namespace,
+	value Int_Division_Small_Trial, namespace aver.Namespace,
 ) {
 	Int_Division_Small_Trial_Dividend_Invariants(value.Dividend, namespace)
 	Int_Division_Small_Trial_Divisor_Invariants(value.Divisor, namespace)
@@ -528,9 +528,9 @@ type Int_Division_Small_Offset int
 
 // Int_Division_Small_Offset_Invariants states every reachable small quotient offset.
 func Int_Division_Small_Offset_Invariants(
-	value Int_Division_Small_Offset, namespace invariant.Namespace,
+	value Int_Division_Small_Offset, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Enum_3_Int(
 			int(value), WORD_COUNT_MINIMUM, WORD_COUNT_INCREMENT, BASE_BINARY,
 		).
@@ -613,8 +613,8 @@ const INT_DIVISION_ESTIMATE_COUNT = INT_DIVISION_ESTIMATE_INDEX + WORD_COUNT_INC
 type Int_Division_Estimate [INT_DIVISION_ESTIMATE_COUNT]Word
 
 // Int_Division_Estimate_Invariants fixes exact scalar output storage.
-func Int_Division_Estimate_Invariants(value *Int_Division_Estimate, _ invariant.Namespace) {
-	invariant.Always(
+func Int_Division_Estimate_Invariants(value *Int_Division_Estimate, _ aver.Namespace) {
+	aver.Always(
 		len(value) == INT_DIVISION_ESTIMATE_COUNT,
 		"A small division estimate owns one output word.",
 	)
@@ -636,9 +636,9 @@ type Int_Division_Word_Result [INT_DIVISION_WORD_RESULT_COUNT]Word
 
 // Int_Division_Word_Result_Invariants fixes exact scalar output storage.
 func Int_Division_Word_Result_Invariants(
-	value *Int_Division_Word_Result, _ invariant.Namespace,
+	value *Int_Division_Word_Result, _ aver.Namespace,
 ) {
-	invariant.Always(
+	aver.Always(
 		len(value) == INT_DIVISION_WORD_RESULT_COUNT,
 		"Normalized word division owns quotient and remainder output.",
 	)
@@ -833,7 +833,7 @@ func int_divide_small(
 	Int_Division_Empty_Workspace_Invariants(workspace, "int_divide_small.workspace")
 	Int_Division_Small_Dividend_Invariants(dividend, "int_divide_small.dividend")
 	Int_Division_Small_Divisor_Invariants(divisor, "int_divide_small.divisor")
-	invariant.Always(
+	aver.Always(
 		dividend.Count > divisor.Count,
 		"Small division receives at least one quotient position.",
 	)
@@ -1093,9 +1093,9 @@ type Modular_Inverse_Result_Status uint8
 
 // Modular_Inverse_Result_Status_Invariants admits a result or mathematical absence.
 func Modular_Inverse_Result_Status_Invariants(
-	value Modular_Inverse_Result_Status, namespace invariant.Namespace,
+	value Modular_Inverse_Result_Status, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Enum_Uint8(uint8(value), uint8(STATUS_OK), uint8(STATUS_RESULT_ABSENT)).
 		Ensure()
 }
@@ -1125,14 +1125,14 @@ func int_modular_inverse_coefficient_bounded(
 	multiplication_status := Int_Multiply(
 		coefficient_remainder, quotient, coefficient_divisor, multiplication,
 	)
-	invariant.Always(
+	aver.Always(
 		multiplication_status == Arithmetic_Status(STATUS_OK),
 		"The bounded coefficient product reserves one subtraction carry word.",
 	)
 	subtraction_status := Int_Subtract(
 		coefficient_remainder, coefficient_dividend, coefficient_remainder,
 	)
-	invariant.Always(
+	aver.Always(
 		subtraction_status == Arithmetic_Status(STATUS_OK),
 		"Extended Euclid keeps every bounded coefficient below its modulus.",
 	)
@@ -1148,7 +1148,7 @@ func int_modular_inverse_coefficient_word(
 		coefficient_references, "int_modular_inverse_coefficient_word.coefficient",
 	)
 	quotient := result_references[INT_REFERENCE_RIGHT_INDEX]
-	invariant.Always(
+	aver.Always(
 		quotient.Count == Word_Count(WORD_COUNT_INCREMENT),
 		"The scalar coefficient path receives one complete quotient word.",
 	)
@@ -1241,7 +1241,7 @@ func int_modular_inverse_commit(
 	if bounded {
 		if coefficient.Negative == POLARITY_NEGATIVE {
 			addition := Int_Add(coefficient, coefficient, modulus)
-			invariant.Always(
+			aver.Always(
 				addition == Arithmetic_Status(STATUS_OK),
 				"A bounded Bezout coefficient magnitude is below its modulus.",
 			)
@@ -2351,9 +2351,9 @@ type Float_Active_Word_Count int
 
 // Float_Active_Word_Count_Invariants preserves the finite mantissa count proof.
 func Float_Active_Word_Count_Invariants(
-	value Float_Active_Word_Count, namespace invariant.Namespace,
+	value Float_Active_Word_Count, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(int(value), WORD_COUNT_INCREMENT, WORD_COUNT_MAXIMUM).
 		Ensure()
 }
@@ -2362,8 +2362,8 @@ func Float_Active_Word_Count_Invariants(
 type Float_Active_Word Word
 
 // Float_Active_Word_Invariants preserves the normalized one-word proof.
-func Float_Active_Word_Invariants(value Float_Active_Word, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Float_Active_Word_Invariants(value Float_Active_Word, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint64(
 			uint64(value), uint64(bits.CARRY_MAXIMUM),
 			uint64(bits.WORD_64_MAXIMUM),
@@ -2376,9 +2376,9 @@ type Float_Add_Exact_Sum Word
 
 // Float_Add_Exact_Sum_Invariants excludes the sole unreachable native sum.
 func Float_Add_Exact_Sum_Invariants(
-	value Float_Add_Exact_Sum, namespace invariant.Namespace,
+	value Float_Add_Exact_Sum, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Holed_Uint64(
 			uint64(value), uint64(bits.CARRY_MINIMUM), uint64(bits.WORD_64_MAXIMUM),
 			uint64(bits.CARRY_MAXIMUM), uint64(bits.CARRY_MAXIMUM),
@@ -2392,9 +2392,9 @@ type Float_Add_Exact_Exponent int
 
 // Float_Add_Exact_Exponent_Invariants bounds no-match and native exact results.
 func Float_Add_Exact_Exponent_Invariants(
-	value Float_Add_Exact_Exponent, namespace invariant.Namespace,
+	value Float_Add_Exact_Exponent, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Holed_Int(
 			int(value), BIT_COUNT_MINIMUM, WORD_BIT_COUNT,
 			WORD_COUNT_INCREMENT, WORD_COUNT_INCREMENT,
@@ -3667,9 +3667,9 @@ type Float_Gob_Encoding []byte
 
 // Float_Gob_Encoding_Invariants bounds caller destination before writes.
 func Float_Gob_Encoding_Invariants(
-	value Float_Gob_Encoding, namespace invariant.Namespace,
+	value Float_Gob_Encoding, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(
 			len(value), WORD_COUNT_MINIMUM, FLOAT_GOB_SIZE_MAXIMUM,
 		).
@@ -3681,9 +3681,9 @@ type Float_Gob_Encoding_Unvalidated []byte
 
 // Float_Gob_Encoding_Unvalidated_Invariants bounds validation work.
 func Float_Gob_Encoding_Unvalidated_Invariants(
-	value Float_Gob_Encoding_Unvalidated, namespace invariant.Namespace,
+	value Float_Gob_Encoding_Unvalidated, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(
 			len(value), WORD_COUNT_MINIMUM,
 			FLOAT_GOB_UNVALIDATED_SIZE_MAXIMUM,
@@ -3696,20 +3696,20 @@ type Float_Gob_Finite_Encoding []byte
 
 // Float_Gob_Finite_Encoding_Invariants binds payload length and alignment after validation.
 func Float_Gob_Finite_Encoding_Invariants(
-	value Float_Gob_Finite_Encoding, namespace invariant.Namespace,
+	value Float_Gob_Finite_Encoding, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(
 			len(value), FLOAT_GOB_FINITE_ENCODING_SIZE_MINIMUM,
 			FLOAT_GOB_SIZE_MAXIMUM,
 		).
 		Ensure()
-	invariant.Always(
+	aver.Always(
 		(len(value)-FLOAT_GOB_MANTISSA_OFFSET)%WORD_BYTE_COUNT == WORD_COUNT_MINIMUM,
 		"A finite float gob payload holds complete mantissa words.",
 	)
 	high_bit_shift := bits.BIT_COUNT_8_MAXIMUM - WORD_COUNT_INCREMENT
-	invariant.Always(
+	aver.Always(
 		value[FLOAT_GOB_MANTISSA_OFFSET]>>high_bit_shift == byte(bits.CARRY_MAXIMUM),
 		"A finite float gob payload has a normalized mantissa.",
 	)
@@ -3720,9 +3720,9 @@ type Float_Gob_Header_Encoding [FLOAT_GOB_HEADER_SIZE]byte
 
 // Float_Gob_Header_Encoding_Invariants fixes common wire header width.
 func Float_Gob_Header_Encoding_Invariants(
-	value Float_Gob_Header_Encoding, _ invariant.Namespace,
+	value Float_Gob_Header_Encoding, _ aver.Namespace,
 ) {
-	invariant.Always(
+	aver.Always(
 		len(value) == FLOAT_GOB_HEADER_SIZE,
 		"Float gob header has fixed wire width.",
 	)
@@ -3733,9 +3733,9 @@ type Float_Gob_Mantissa_Size int
 
 // Float_Gob_Mantissa_Size_Invariants bounds structural validation work.
 func Float_Gob_Mantissa_Size_Invariants(
-	value Float_Gob_Mantissa_Size, namespace invariant.Namespace,
+	value Float_Gob_Mantissa_Size, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(
 			int(value), FLOAT_GOB_MANTISSA_SIZE_MINIMUM,
 			FLOAT_GOB_MANTISSA_SIZE_MAXIMUM,
@@ -3748,12 +3748,12 @@ type Float_Gob_Aligned_Mantissa_Size int
 
 // Float_Gob_Aligned_Mantissa_Size_Invariants binds one complete word-aligned payload.
 func Float_Gob_Aligned_Mantissa_Size_Invariants(
-	value Float_Gob_Aligned_Mantissa_Size, namespace invariant.Namespace,
+	value Float_Gob_Aligned_Mantissa_Size, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(int(value), WORD_BYTE_COUNT, FLOAT_GOB_MANTISSA_SIZE_MAXIMUM).
 		Ensure()
-	invariant.Always(
+	aver.Always(
 		int(value)%WORD_BYTE_COUNT == WORD_COUNT_MINIMUM,
 		"A validated float gob mantissa holds complete words.",
 	)
@@ -3775,7 +3775,7 @@ type Float_Gob_Header struct {
 
 // Float_Gob_Header_Invariants composes only validated Float policy fields.
 func Float_Gob_Header_Invariants(
-	value Float_Gob_Header, namespace invariant.Namespace,
+	value Float_Gob_Header, namespace aver.Namespace,
 ) {
 	Float_Precision_Invariants(value.Precision, namespace)
 	Rounding_Mode_Invariants(value.Mode, namespace)
@@ -3789,30 +3789,30 @@ type Float_Gob_Finite_Header Float_Gob_Header
 
 // Float_Gob_Finite_Header_Invariants states the finite payload policy domain.
 func Float_Gob_Finite_Header_Invariants(
-	value Float_Gob_Finite_Header, namespace invariant.Namespace,
+	value Float_Gob_Finite_Header, namespace aver.Namespace,
 ) {
-	invariant.Tree(Float_Active_Precision(value.Precision), namespace).
+	aver.Tree(Float_Active_Precision(value.Precision), namespace).
 		Range_Uint(
 			uint(value.Precision), WORD_COUNT_INCREMENT, FLOAT_PRECISION_MAXIMUM,
 		).
 		Ensure()
-	invariant.Tree(Rounding_Mode(value.Mode), namespace).
+	aver.Tree(Rounding_Mode(value.Mode), namespace).
 		Range_Uint8(
 			uint8(value.Mode), uint8(ROUND_TO_NEAREST_EVEN),
 			uint8(ROUND_TO_POSITIVE_INFINITY),
 		).
 		Ensure()
-	invariant.Tree(Accuracy(value.Accuracy), namespace).
+	aver.Tree(Accuracy(value.Accuracy), namespace).
 		Enum_3_Int8(
 			int8(value.Accuracy), int8(ACCURACY_BELOW), int8(ACCURACY_EXACT),
 			int8(ACCURACY_ABOVE),
 		).
 		Ensure()
-	invariant.Always(
+	aver.Always(
 		value.Form == FLOAT_FORM_FINITE,
 		"A finite gob header owns a mantissa payload.",
 	)
-	invariant.Tree(Polarity(value.Negative), namespace).
+	aver.Tree(Polarity(value.Negative), namespace).
 		Enum_Uint8(
 			uint8(value.Negative), uint8(POLARITY_NONNEGATIVE),
 			uint8(POLARITY_NEGATIVE),
@@ -3825,32 +3825,32 @@ type Float_Gob_Nonfinite_Header Float_Gob_Header
 
 // Float_Gob_Nonfinite_Header_Invariants states complete zero and infinity wire policy.
 func Float_Gob_Nonfinite_Header_Invariants(
-	value Float_Gob_Nonfinite_Header, namespace invariant.Namespace,
+	value Float_Gob_Nonfinite_Header, namespace aver.Namespace,
 ) {
-	invariant.Tree(Float_Precision(value.Precision), namespace).
+	aver.Tree(Float_Precision(value.Precision), namespace).
 		Range_Uint(
 			uint(value.Precision), FLOAT_PRECISION_MINIMUM,
 			FLOAT_PRECISION_MAXIMUM,
 		).
 		Ensure()
-	invariant.Tree(Rounding_Mode(value.Mode), namespace).
+	aver.Tree(Rounding_Mode(value.Mode), namespace).
 		Range_Uint8(
 			uint8(value.Mode), uint8(ROUND_TO_NEAREST_EVEN),
 			uint8(ROUND_TO_POSITIVE_INFINITY),
 		).
 		Ensure()
-	invariant.Tree(Accuracy(value.Accuracy), namespace).
+	aver.Tree(Accuracy(value.Accuracy), namespace).
 		Enum_3_Int8(
 			int8(value.Accuracy), int8(ACCURACY_BELOW), int8(ACCURACY_EXACT),
 			int8(ACCURACY_ABOVE),
 		).
 		Ensure()
-	invariant.Tree(Float_Form(value.Form), namespace).
+	aver.Tree(Float_Form(value.Form), namespace).
 		Enum_Uint8(
 			uint8(value.Form), uint8(FLOAT_FORM_ZERO), uint8(FLOAT_FORM_INFINITY),
 		).
 		Ensure()
-	invariant.Tree(Polarity(value.Negative), namespace).
+	aver.Tree(Polarity(value.Negative), namespace).
 		Enum_Uint8(
 			uint8(value.Negative), uint8(POLARITY_NONNEGATIVE),
 			uint8(POLARITY_NEGATIVE),
@@ -3863,9 +3863,9 @@ type Float_Gob_Mantissas [FLOAT_GOB_MANTISSA_COUNT]Int
 
 // Float_Gob_Mantissas_Invariants fixes transactional storage count.
 func Float_Gob_Mantissas_Invariants(
-	value Float_Gob_Mantissas, _ invariant.Namespace,
+	value Float_Gob_Mantissas, _ aver.Namespace,
 ) {
-	invariant.Always(
+	aver.Always(
 		len(value) == FLOAT_GOB_MANTISSA_COUNT,
 		"Float gob workspace owns one mantissa.",
 	)
@@ -3875,8 +3875,8 @@ func Float_Gob_Mantissas_Invariants(
 type Float_32_Bits uint32
 
 // Float_32_Bits_Invariants admits every binary32 encoding, including NaN.
-func Float_32_Bits_Invariants(value Float_32_Bits, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Float_32_Bits_Invariants(value Float_32_Bits, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint32(uint32(value), bits.WORD_32_MINIMUM, bits.WORD_32_MAXIMUM).
 		Ensure()
 }
@@ -3886,9 +3886,9 @@ type Float_32_Finite_Exponent_Field uint32
 
 // Float_32_Finite_Exponent_Field_Invariants bounds finite encoded exponent.
 func Float_32_Finite_Exponent_Field_Invariants(
-	value Float_32_Finite_Exponent_Field, namespace invariant.Namespace,
+	value Float_32_Finite_Exponent_Field, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Uint32(
 			uint32(value), bits.WORD_32_MINIMUM,
 			FLOAT_32_FINITE_EXPONENT_FIELD_MAXIMUM,
@@ -3901,9 +3901,9 @@ type Float_32_Mantissa_Field uint32
 
 // Float_32_Mantissa_Field_Invariants binds stored significand width.
 func Float_32_Mantissa_Field_Invariants(
-	value Float_32_Mantissa_Field, namespace invariant.Namespace,
+	value Float_32_Mantissa_Field, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Uint32(
 			uint32(value), bits.WORD_32_MINIMUM, FLOAT_32_MANTISSA_MASK,
 		).
@@ -3914,8 +3914,8 @@ func Float_32_Mantissa_Field_Invariants(
 type Float_32_Sign uint32
 
 // Float_32_Sign_Invariants rejects mantissa or exponent bits.
-func Float_32_Sign_Invariants(value Float_32_Sign, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Float_32_Sign_Invariants(value Float_32_Sign, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_Uint32(uint32(value), bits.WORD_32_MINIMUM, FLOAT_32_SIGN_MASK).
 		Ensure()
 }
@@ -3925,10 +3925,10 @@ type Float_32_Value_Bits uint32
 
 // Float_32_Value_Bits_Invariants rejects every NaN payload.
 func Float_32_Value_Bits_Invariants(
-	value Float_32_Value_Bits, namespace invariant.Namespace,
+	value Float_32_Value_Bits, namespace aver.Namespace,
 ) {
 	encoded := uint32(value)
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Uint32(
 			uint32(value), FLOAT_32_VALUE_BITS_MINIMUM,
 			FLOAT_32_VALUE_BITS_MAXIMUM,
@@ -3943,7 +3943,7 @@ func Float_32_Value_Bits_Invariants(
 	mantissa_nonzero := (mantissa | -mantissa) >>
 		(bits.BIT_COUNT_32_MAXIMUM - WORD_COUNT_INCREMENT)
 	not_a_number := exponent_is_nonfinite * mantissa_nonzero
-	invariant.Always(
+	aver.Always(
 		not_a_number == bits.WORD_32_MINIMUM,
 		"Numeric binary32 output never encodes NaN.",
 	)
@@ -3954,10 +3954,10 @@ type Int_Float_64_Value_Bits uint64
 
 // Int_Float_64_Value_Bits_Invariants excludes negative zero, subnormal, and NaN.
 func Int_Float_64_Value_Bits_Invariants(
-	value Int_Float_64_Value_Bits, namespace invariant.Namespace,
+	value Int_Float_64_Value_Bits, namespace aver.Namespace,
 ) {
 	encoded := uint64(value)
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Holed_Uint64(
 			uint64(value), INT_FLOAT_64_VALUE_BITS_MINIMUM,
 			INT_FLOAT_64_VALUE_BITS_MAXIMUM,
@@ -3974,7 +3974,7 @@ func Int_Float_64_Value_Bits_Invariants(
 	)
 	nonzero := (encoded | -encoded) >> WORD_BIT_INDEX_MAXIMUM
 	exponent_nonzero := (exponent | -exponent) >> WORD_BIT_INDEX_MAXIMUM
-	invariant.Always(
+	aver.Always(
 		nonzero <= exponent_nonzero,
 		"Integral binary64 output gives zero no negative or subnormal twin.",
 	)
@@ -3983,7 +3983,7 @@ func Int_Float_64_Value_Bits_Invariants(
 		WORD_BIT_INDEX_MAXIMUM
 	exponent_is_nonfinite := uint64(bits.CARRY_MAXIMUM) - exponent_difference_nonzero
 	mantissa_nonzero := (mantissa | -mantissa) >> WORD_BIT_INDEX_MAXIMUM
-	invariant.Always(
+	aver.Always(
 		exponent_is_nonfinite*mantissa_nonzero == bits.WORD_64_MINIMUM,
 		"Integral binary64 output reserves the nonfinite field for infinity.",
 	)
@@ -3999,9 +3999,9 @@ type Int_Float_64_Exponent_Field uint64
 
 // Int_Float_64_Exponent_Field_Invariants starts at the encoding for one.
 func Int_Float_64_Exponent_Field_Invariants(
-	value Int_Float_64_Exponent_Field, namespace invariant.Namespace,
+	value Int_Float_64_Exponent_Field, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Uint64(
 			uint64(value), FLOAT_64_EXPONENT_BIAS,
 			FLOAT_64_EXPONENT_MASK,
@@ -4014,9 +4014,9 @@ type Int_Float_64_Mantissa_Field uint64
 
 // Int_Float_64_Mantissa_Field_Invariants admits every binary64 mantissa field.
 func Int_Float_64_Mantissa_Field_Invariants(
-	value Int_Float_64_Mantissa_Field, namespace invariant.Namespace,
+	value Int_Float_64_Mantissa_Field, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Uint64(
 			uint64(value), bits.WORD_64_MINIMUM,
 			FLOAT_64_MANTISSA_MASK,
@@ -4029,9 +4029,9 @@ type Int_Float_64_Sign uint64
 
 // Int_Float_64_Sign_Invariants admits both integer polarities.
 func Int_Float_64_Sign_Invariants(
-	value Int_Float_64_Sign, namespace invariant.Namespace,
+	value Int_Float_64_Sign, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Enum_Uint64(
 			uint64(value), bits.WORD_64_MINIMUM, FLOAT_64_SIGN_MASK,
 		).
@@ -4043,9 +4043,9 @@ type Rat_Float_32_Mantissa uint32
 
 // Rat_Float_32_Mantissa_Invariants bounds the final binary32 significand.
 func Rat_Float_32_Mantissa_Invariants(
-	value Rat_Float_32_Mantissa, namespace invariant.Namespace,
+	value Rat_Float_32_Mantissa, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Uint32(
 			uint32(value), bits.WORD_32_MINIMUM,
 			FLOAT_32_VALUE_MANTISSA_MAXIMUM,
@@ -4058,9 +4058,9 @@ type Rat_Float_32_Rounding_Mantissa uint32
 
 // Rat_Float_32_Rounding_Mantissa_Invariants bounds the guarded significand.
 func Rat_Float_32_Rounding_Mantissa_Invariants(
-	value Rat_Float_32_Rounding_Mantissa, namespace invariant.Namespace,
+	value Rat_Float_32_Rounding_Mantissa, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Uint32(
 			uint32(value), FLOAT_32_ROUNDING_MANTISSA_MINIMUM,
 			FLOAT_32_ROUNDING_MANTISSA_MAXIMUM,
@@ -4073,9 +4073,9 @@ type Rat_Float_32_Exponent int
 
 // Rat_Float_32_Exponent_Invariants follows the complete bounded rational ratio.
 func Rat_Float_32_Exponent_Invariants(
-	value Rat_Float_32_Exponent, namespace invariant.Namespace,
+	value Rat_Float_32_Exponent, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(
 			int(value), RAT_FLOAT_32_EXPONENT_MINIMUM,
 			RAT_FLOAT_32_EXPONENT_MAXIMUM,
@@ -4088,9 +4088,9 @@ type Rat_Float_32_Rounding_Exponent int
 
 // Rat_Float_32_Rounding_Exponent_Invariants binds pre-round rational scale.
 func Rat_Float_32_Rounding_Exponent_Invariants(
-	value Rat_Float_32_Rounding_Exponent, namespace invariant.Namespace,
+	value Rat_Float_32_Rounding_Exponent, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(
 			int(value), RAT_FLOAT_32_EXPONENT_MINIMUM,
 			RAT_FLOAT_32_ROUNDING_EXPONENT_MAXIMUM,
@@ -4103,9 +4103,9 @@ type Rat_Float_32_Integers [RAT_FLOAT_32_INTEGER_COUNT]Int
 
 // Rat_Float_32_Integers_Invariants fixes complete binary32 conversion capacity.
 func Rat_Float_32_Integers_Invariants(
-	value Rat_Float_32_Integers, _ invariant.Namespace,
+	value Rat_Float_32_Integers, _ aver.Namespace,
 ) {
-	invariant.Always(
+	aver.Always(
 		len(value) == RAT_FLOAT_32_INTEGER_COUNT,
 		"Rational binary32 conversion has fixed integer capacity.",
 	)
@@ -4121,7 +4121,7 @@ type Rat_Float_32_Workspace struct {
 
 // Rat_Float_32_Workspace_Invariants composes complete binary32 conversion storage.
 func Rat_Float_32_Workspace_Invariants(
-	value *Rat_Float_32_Workspace, namespace invariant.Namespace,
+	value *Rat_Float_32_Workspace, namespace aver.Namespace,
 ) {
 	Rat_Float_32_Integers_Invariants(value.Integers, namespace)
 	Division_Memory_Invariants(value.Division, namespace)
@@ -4132,9 +4132,9 @@ type Modular_Square_Root_Status uint8
 
 // Modular_Square_Root_Status_Invariants admits every transactional root outcome.
 func Modular_Square_Root_Status_Invariants(
-	value Modular_Square_Root_Status, namespace invariant.Namespace,
+	value Modular_Square_Root_Status, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Enum_3_Uint8(
 			uint8(value), uint8(STATUS_OK), uint8(STATUS_INPUT_INVALID),
 			uint8(STATUS_RESULT_ABSENT),
@@ -4147,9 +4147,9 @@ type Modular_Square_Root_Result_Status uint8
 
 // Modular_Square_Root_Result_Status_Invariants admits root or mathematical absence.
 func Modular_Square_Root_Result_Status_Invariants(
-	value Modular_Square_Root_Result_Status, namespace invariant.Namespace,
+	value Modular_Square_Root_Result_Status, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Enum_Uint8(
 			uint8(value), uint8(STATUS_OK), uint8(STATUS_RESULT_ABSENT),
 		).
@@ -4161,9 +4161,9 @@ type Modular_Square_Root_Integers [MODULAR_SQUARE_ROOT_INTEGER_COUNT]Int
 
 // Modular_Square_Root_Integers_Invariants fixes bounded algorithm capacity.
 func Modular_Square_Root_Integers_Invariants(
-	value Modular_Square_Root_Integers, _ invariant.Namespace,
+	value Modular_Square_Root_Integers, _ aver.Namespace,
 ) {
-	invariant.Always(
+	aver.Always(
 		len(value) == MODULAR_SQUARE_ROOT_INTEGER_COUNT,
 		"Modular square-root integer storage has fixed Tonelli-Shanks capacity.",
 	)
@@ -4174,9 +4174,9 @@ type Modular_Square_Root_Modular_Memory Int_Modular_Workspace
 
 // Modular_Square_Root_Modular_Memory_Invariants composes modular scratch once.
 func Modular_Square_Root_Modular_Memory_Invariants(
-	value Modular_Square_Root_Modular_Memory, namespace invariant.Namespace,
+	value Modular_Square_Root_Modular_Memory, namespace aver.Namespace,
 ) {
-	invariant.Always(
+	aver.Always(
 		len(value.Integers) == MODULAR_INTEGER_COUNT,
 		"Modular square-root arithmetic owns complete modular integer state.",
 	)
@@ -4196,7 +4196,7 @@ type Int_Modular_Square_Root_Workspace struct {
 
 // Int_Modular_Square_Root_Workspace_Invariants composes complete bounded storage.
 func Int_Modular_Square_Root_Workspace_Invariants(
-	value *Int_Modular_Square_Root_Workspace, namespace invariant.Namespace,
+	value *Int_Modular_Square_Root_Workspace, namespace aver.Namespace,
 ) {
 	Modular_Square_Root_Integers_Invariants(value.Integers, namespace)
 	Modular_Square_Root_Modular_Memory_Invariants(value.Modular, namespace)
@@ -4208,9 +4208,9 @@ type Float_Text_Format_Unvalidated byte
 
 // Float_Text_Format_Unvalidated_Invariants keeps format validation constant work.
 func Float_Text_Format_Unvalidated_Invariants(
-	value Float_Text_Format_Unvalidated, namespace invariant.Namespace,
+	value Float_Text_Format_Unvalidated, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Uint8(uint8(value), bits.WORD_8_MINIMUM, bits.WORD_8_MAXIMUM).
 		Ensure()
 }
@@ -4220,9 +4220,9 @@ type Float_Text_Format uint8
 
 // Float_Text_Format_Invariants rejects every unsupported format byte.
 func Float_Text_Format_Invariants(
-	value Float_Text_Format, namespace invariant.Namespace,
+	value Float_Text_Format, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Uint8(
 			uint8(value), uint8(FLOAT_TEXT_KIND_BINARY),
 			uint8(FLOAT_TEXT_KIND_DECIMAL_GENERAL_UPPER),
@@ -4235,9 +4235,9 @@ type Float_Text_Precision_Unvalidated int
 
 // Float_Text_Precision_Unvalidated_Invariants bounds validation to one decision.
 func Float_Text_Precision_Unvalidated_Invariants(
-	value Float_Text_Precision_Unvalidated, namespace invariant.Namespace,
+	value Float_Text_Precision_Unvalidated, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(
 			int(value), FLOAT_TEXT_PRECISION_UNVALIDATED_MINIMUM,
 			FLOAT_TEXT_PRECISION_UNVALIDATED_MAXIMUM,
@@ -4250,9 +4250,9 @@ type Float_Text_Precision int
 
 // Float_Text_Precision_Invariants binds text work and hexadecimal rounding.
 func Float_Text_Precision_Invariants(
-	value Float_Text_Precision, namespace invariant.Namespace,
+	value Float_Text_Precision, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(
 			int(value), FLOAT_TEXT_PRECISION_MINIMUM,
 			FLOAT_TEXT_PRECISION_MAXIMUM,
@@ -4265,9 +4265,9 @@ type Float_Text_Count int
 
 // Float_Text_Count_Invariants includes zero for malformed format or precision.
 func Float_Text_Count_Invariants(
-	value Float_Text_Count, namespace invariant.Namespace,
+	value Float_Text_Count, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(
 			int(value), bytes.SLICE_SIZE_MINIMUM, FLOAT_TEXT_SIZE_MAXIMUM,
 		).
@@ -4279,9 +4279,9 @@ type Float_Text_Status uint8
 
 // Float_Text_Status_Invariants admits every transactional text outcome.
 func Float_Text_Status_Invariants(
-	value Float_Text_Status, namespace invariant.Namespace,
+	value Float_Text_Status, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Enum_3_Uint8(
 			uint8(value), uint8(STATUS_OK), uint8(STATUS_INPUT_INVALID),
 			uint8(STATUS_DESTINATION_TOO_SMALL),
@@ -4315,53 +4315,53 @@ type Float_Text_Workspace struct {
 
 // Float_Text_Workspace_Invariants composes complete bounded text storage.
 func Float_Text_Workspace_Invariants(
-	value *Float_Text_Workspace, _ invariant.Namespace,
+	value *Float_Text_Workspace, _ aver.Namespace,
 ) {
-	invariant.Always(len(value.Integers) == FLOAT_TEXT_INTEGER_COUNT,
+	aver.Always(len(value.Integers) == FLOAT_TEXT_INTEGER_COUNT,
 		"Float text owns complete integer conversion storage.")
-	invariant.Always(len(value.Values) == FLOAT_TEXT_VALUE_COUNT,
+	aver.Always(len(value.Values) == FLOAT_TEXT_VALUE_COUNT,
 		"Float text owns source and rounded values.")
-	invariant.Always(len(value.Text) == FLOAT_TEXT_INTEGER_WORKSPACE_COUNT,
+	aver.Always(len(value.Text) == FLOAT_TEXT_INTEGER_WORKSPACE_COUNT,
 		"Float text owns both integer text workspaces.")
-	invariant.Always(len(value.Control) == FLOAT_TEXT_CONTROL_COUNT,
+	aver.Always(len(value.Control) == FLOAT_TEXT_CONTROL_COUNT,
 		"Float text owns complete scalar control storage.")
-	invariant.Always(len(value.Decimals) == FLOAT_DECIMAL_COUNT,
+	aver.Always(len(value.Decimals) == FLOAT_DECIMAL_COUNT,
 		"Float text owns value and both shortest bounds.")
-	invariant.Always(
+	aver.Always(
 		len(value.Decimals[FLOAT_DECIMAL_VALUE_INDEX].Digits) ==
 			FLOAT_DECIMAL_DIGIT_COUNT_MAXIMUM,
 		"Float text value decimal retains every exact digit.",
 	)
-	invariant.Always(
+	aver.Always(
 		len(value.Decimals[FLOAT_DECIMAL_LOWER_INDEX].Digits) ==
 			FLOAT_DECIMAL_DIGIT_COUNT_MAXIMUM,
 		"Float text lower decimal retains every exact digit.",
 	)
-	invariant.Always(
+	aver.Always(
 		len(value.Decimals[FLOAT_DECIMAL_UPPER_INDEX].Digits) ==
 			FLOAT_DECIMAL_DIGIT_COUNT_MAXIMUM,
 		"Float text upper decimal retains every exact digit.",
 	)
-	invariant.Always(
+	aver.Always(
 		len(value.Decimals[FLOAT_DECIMAL_VALUE_INDEX].Control) ==
 			FLOAT_DECIMAL_CONTROL_COUNT,
 		"Float text value decimal retains count and point state.",
 	)
-	invariant.Always(
+	aver.Always(
 		len(value.Decimals[FLOAT_DECIMAL_LOWER_INDEX].Control) ==
 			FLOAT_DECIMAL_CONTROL_COUNT,
 		"Float text lower decimal retains count and point state.",
 	)
-	invariant.Always(
+	aver.Always(
 		len(value.Decimals[FLOAT_DECIMAL_UPPER_INDEX].Control) ==
 			FLOAT_DECIMAL_CONTROL_COUNT,
 		"Float text upper decimal retains count and point state.",
 	)
-	invariant.Always(len(value.Magnitude.Words) == FLOAT_TEXT_MAGNITUDE_WORD_COUNT_MAXIMUM,
+	aver.Always(len(value.Magnitude.Words) == FLOAT_TEXT_MAGNITUDE_WORD_COUNT_MAXIMUM,
 		"Float text midpoint retains one guard bit.")
-	invariant.Always(len(value.Magnitude.Control) == FLOAT_TEXT_MAGNITUDE_CONTROL_COUNT,
+	aver.Always(len(value.Magnitude.Control) == FLOAT_TEXT_MAGNITUDE_CONTROL_COUNT,
 		"Float text midpoint retains its active word count.")
-	invariant.Always(len(value.Output) == FLOAT_TEXT_SIZE_MAXIMUM,
+	aver.Always(len(value.Output) == FLOAT_TEXT_SIZE_MAXIMUM,
 		"Float text owns complete transactional output.")
 }
 
@@ -4370,9 +4370,9 @@ type Float_Parse_Base uint8
 
 // Float_Parse_Base_Invariants keeps automatic and four numeric radix kinds exhaustive.
 func Float_Parse_Base_Invariants(
-	value Float_Parse_Base, namespace invariant.Namespace,
+	value Float_Parse_Base, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Uint8(
 			uint8(value), uint8(FLOAT_PARSE_BASE_AUTOMATIC),
 			uint8(FLOAT_PARSE_BASE_HEXADECIMAL),
@@ -4385,9 +4385,9 @@ type Float_Parse_Text_Unvalidated []byte
 
 // Float_Parse_Text_Unvalidated_Invariants bounds scanning before any source copy.
 func Float_Parse_Text_Unvalidated_Invariants(
-	value Float_Parse_Text_Unvalidated, namespace invariant.Namespace,
+	value Float_Parse_Text_Unvalidated, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(
 			len(value), bytes.SLICE_SIZE_MINIMUM,
 			FLOAT_PARSE_TEXT_UNVALIDATED_SIZE_MAXIMUM,
@@ -4400,9 +4400,9 @@ type Float_Parse_Integer_Workspace Int_Parse_Workspace
 
 // Float_Parse_Integer_Workspace_Invariants fixes full-width mantissa scratch.
 func Float_Parse_Integer_Workspace_Invariants(
-	value Float_Parse_Integer_Workspace, _ invariant.Namespace,
+	value Float_Parse_Integer_Workspace, _ aver.Namespace,
 ) {
-	invariant.Always(len(value.Words) == WORD_COUNT_MAXIMUM,
+	aver.Always(len(value.Words) == WORD_COUNT_MAXIMUM,
 		"Float parse mantissa retains one complete Int magnitude.")
 }
 
@@ -4411,11 +4411,11 @@ type Float_Parse_Division_Workspace Float_Division_Workspace
 
 // Float_Parse_Division_Workspace_Invariants fixes exact-factor quotient storage.
 func Float_Parse_Division_Workspace_Invariants(
-	value Float_Parse_Division_Workspace, _ invariant.Namespace,
+	value Float_Parse_Division_Workspace, _ aver.Namespace,
 ) {
-	invariant.Always(len(value.Remainder) == FLOAT_DIVISION_WORD_COUNT_MAXIMUM,
+	aver.Always(len(value.Remainder) == FLOAT_DIVISION_WORD_COUNT_MAXIMUM,
 		"Float parse quotient retains one shifted remainder.")
-	invariant.Always(len(value.Divisor) == FLOAT_DIVISION_WORD_COUNT_MAXIMUM,
+	aver.Always(len(value.Divisor) == FLOAT_DIVISION_WORD_COUNT_MAXIMUM,
 		"Float parse quotient retains one aligned divisor.")
 }
 
@@ -4437,11 +4437,11 @@ type Float_Parse_Workspace struct {
 
 // Float_Parse_Workspace_Invariants composes only always-valid structural storage.
 func Float_Parse_Workspace_Invariants(
-	value *Float_Parse_Workspace, namespace invariant.Namespace,
+	value *Float_Parse_Workspace, namespace aver.Namespace,
 ) {
-	invariant.Always(len(value.Source) == FLOAT_PARSE_TEXT_SIZE_MAXIMUM,
+	aver.Always(len(value.Source) == FLOAT_PARSE_TEXT_SIZE_MAXIMUM,
 		"Float parse owns complete validated source storage.")
-	invariant.Always(len(value.Control) == FLOAT_PARSE_CONTROL_COUNT,
+	aver.Always(len(value.Control) == FLOAT_PARSE_CONTROL_COUNT,
 		"Float parse owns complete structural scanner state.")
 	Float_Parse_Integer_Workspace_Invariants(value.Parse, namespace)
 	Rat_Parse_Fraction_Integers_Invariants(value.Integers, namespace)
@@ -4453,8 +4453,8 @@ func Float_Parse_Workspace_Invariants(
 type Float_Rat_Status uint8
 
 // Float_Rat_Status_Invariants admits every transactional rational conversion result.
-func Float_Rat_Status_Invariants(value Float_Rat_Status, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Float_Rat_Status_Invariants(value Float_Rat_Status, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_3_Uint8(
 			uint8(value), uint8(STATUS_OK), uint8(STATUS_INPUT_INVALID),
 			uint8(STATUS_VALUE_OVERFLOW),
@@ -4467,9 +4467,9 @@ type Float_Square_Root_Source_Bit_Index int
 
 // Float_Square_Root_Source_Bit_Index_Invariants bounds one descending source cursor.
 func Float_Square_Root_Source_Bit_Index_Invariants(
-	value Float_Square_Root_Source_Bit_Index, namespace invariant.Namespace,
+	value Float_Square_Root_Source_Bit_Index, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(
 			int(value), BIT_INDEX_UNVALIDATED_MINIMUM,
 			FLOAT_SQUARE_ROOT_SOURCE_BIT_INDEX_MAXIMUM,
@@ -4482,9 +4482,9 @@ type Float_Square_Root_Active_Word_Count int
 
 // Float_Square_Root_Active_Word_Count_Invariants keeps one nonempty active prefix.
 func Float_Square_Root_Active_Word_Count_Invariants(
-	value Float_Square_Root_Active_Word_Count, namespace invariant.Namespace,
+	value Float_Square_Root_Active_Word_Count, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(
 			int(value), WORD_COUNT_INCREMENT, FLOAT_SQUARE_ROOT_WORD_COUNT_MAXIMUM,
 		).
@@ -4496,9 +4496,9 @@ type Float_Square_Root_Pair Word
 
 // Float_Square_Root_Pair_Invariants admits every two-bit digit.
 func Float_Square_Root_Pair_Invariants(
-	value Float_Square_Root_Pair, namespace invariant.Namespace,
+	value Float_Square_Root_Pair, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Enum_4_Uint64(
 			uint64(value), uint64(BIT_CLEAR), uint64(BIT_SET),
 			uint64(BASE_BINARY),
@@ -4512,9 +4512,9 @@ type Float_Binary_Precision uint
 
 // Float_Binary_Precision_Invariants admits binary32 through binary64 precision.
 func Float_Binary_Precision_Invariants(
-	value Float_Binary_Precision, namespace invariant.Namespace,
+	value Float_Binary_Precision, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Uint(
 			uint(value), WORD_COUNT_INCREMENT, FLOAT_64_VALUE_MANTISSA_BIT_COUNT,
 		).
@@ -4525,12 +4525,12 @@ func Float_Binary_Precision_Invariants(
 type Float_Binary_Source [WORD_COUNT_INCREMENT]*Float_Finite
 
 // Float_Binary_Source_Invariants requires the one conversion source.
-func Float_Binary_Source_Invariants(value Float_Binary_Source, _ invariant.Namespace) {
-	invariant.Always(
+func Float_Binary_Source_Invariants(value Float_Binary_Source, _ aver.Namespace) {
+	aver.Always(
 		len(value) == WORD_COUNT_INCREMENT,
 		"IEEE rounding owns one finite source.",
 	)
-	invariant.Always(value[WORD_COUNT_MINIMUM] != nil, "IEEE rounding source exists.")
+	aver.Always(value[WORD_COUNT_MINIMUM] != nil, "IEEE rounding source exists.")
 }
 
 // Float_Binary_Mantissa is one nonzero binary32-or-binary64 significand.
@@ -4538,9 +4538,9 @@ type Float_Binary_Mantissa Word
 
 // Float_Binary_Mantissa_Invariants keeps reduction inside the wider IEEE significand.
 func Float_Binary_Mantissa_Invariants(
-	value Float_Binary_Mantissa, namespace invariant.Namespace,
+	value Float_Binary_Mantissa, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Uint64(
 			uint64(value), uint64(bits.CARRY_MAXIMUM),
 			FLOAT_64_VALUE_MANTISSA_MAXIMUM,
@@ -4561,9 +4561,9 @@ type Float_Binary_Exponent int
 
 // Float_Binary_Exponent_Invariants keeps handled underflow and one overflow carry.
 func Float_Binary_Exponent_Invariants(
-	value Float_Binary_Exponent, namespace invariant.Namespace,
+	value Float_Binary_Exponent, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(
 			int(value), FLOAT_BINARY_EXPONENT_MINIMUM,
 			FLOAT_BINARY_EXPONENT_MAXIMUM,
@@ -4583,7 +4583,7 @@ type Float_Binary_Result struct {
 
 // Float_Binary_Result_Invariants keeps the scalar finite result normalized.
 func Float_Binary_Result_Invariants(
-	value Float_Binary_Result, namespace invariant.Namespace,
+	value Float_Binary_Result, namespace aver.Namespace,
 ) {
 	Float_Binary_Mantissa_Invariants(value.Mantissa, namespace)
 	Float_Binary_Exponent_Invariants(value.Exponent, namespace)
@@ -4595,9 +4595,9 @@ type Float_Square_Root_Exponent int
 
 // Float_Square_Root_Exponent_Invariants binds root scale to halved source bounds.
 func Float_Square_Root_Exponent_Invariants(
-	value Float_Square_Root_Exponent, namespace invariant.Namespace,
+	value Float_Square_Root_Exponent, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(
 			int(value), FLOAT_SQUARE_ROOT_EXPONENT_MINIMUM,
 			FLOAT_SQUARE_ROOT_EXPONENT_MAXIMUM,
@@ -4610,34 +4610,34 @@ type Float_Nonnegative_Finite Float
 
 // Float_Nonnegative_Finite_Invariants retains every finite field except negative polarity.
 func Float_Nonnegative_Finite_Invariants(
-	value *Float_Nonnegative_Finite, namespace invariant.Namespace,
+	value *Float_Nonnegative_Finite, namespace aver.Namespace,
 ) {
-	invariant.Tree(Float_Active_Precision(value.Precision), namespace).
+	aver.Tree(Float_Active_Precision(value.Precision), namespace).
 		Range_Uint(
 			uint(value.Precision), WORD_COUNT_INCREMENT, FLOAT_PRECISION_MAXIMUM,
 		).
 		Ensure()
-	invariant.Tree(Rounding_Mode(value.Mode), namespace).
+	aver.Tree(Rounding_Mode(value.Mode), namespace).
 		Range_Uint8(
 			uint8(value.Mode), uint8(ROUND_TO_NEAREST_EVEN),
 			uint8(ROUND_TO_POSITIVE_INFINITY),
 		).
 		Ensure()
-	invariant.Tree(Accuracy(value.Accuracy), namespace).
+	aver.Tree(Accuracy(value.Accuracy), namespace).
 		Enum_3_Int8(
 			int8(value.Accuracy), int8(ACCURACY_BELOW), int8(ACCURACY_EXACT),
 			int8(ACCURACY_ABOVE),
 		).
 		Ensure()
-	invariant.Tree(Float_Exponent(value.Exponent), namespace).
+	aver.Tree(Float_Exponent(value.Exponent), namespace).
 		Range_Int(
 			int(value.Exponent), FLOAT_EXPONENT_MINIMUM, FLOAT_EXPONENT_MAXIMUM,
 		).
 		Ensure()
 	Float_Active_Mantissa_Invariants(Float_Active_Mantissa(value.Mantissa), namespace)
-	invariant.Always(value.Form == FLOAT_FORM_FINITE,
+	aver.Always(value.Form == FLOAT_FORM_FINITE,
 		"A nonnegative finite helper value has finite form.")
-	invariant.Always(value.Negative == POLARITY_NONNEGATIVE,
+	aver.Always(value.Negative == POLARITY_NONNEGATIVE,
 		"A square-root source is nonnegative.")
 }
 
@@ -4645,8 +4645,8 @@ func Float_Nonnegative_Finite_Invariants(
 type Float_Rat_Values [FLOAT_RAT_VALUE_COUNT]Float
 
 // Float_Rat_Values_Invariants fixes complete rational conversion storage.
-func Float_Rat_Values_Invariants(value Float_Rat_Values, _ invariant.Namespace) {
-	invariant.Always(
+func Float_Rat_Values_Invariants(value Float_Rat_Values, _ aver.Namespace) {
+	aver.Always(
 		len(value) == FLOAT_RAT_VALUE_COUNT,
 		"Float rational conversion keeps both operands and one result.",
 	)
@@ -4657,13 +4657,13 @@ type Float_Rat_Division_Workspace Float_Division_Workspace
 
 // Float_Rat_Division_Workspace_Invariants fixes both quotient magnitudes.
 func Float_Rat_Division_Workspace_Invariants(
-	value Float_Rat_Division_Workspace, _ invariant.Namespace,
+	value Float_Rat_Division_Workspace, _ aver.Namespace,
 ) {
-	invariant.Always(
+	aver.Always(
 		len(value.Remainder) == FLOAT_DIVISION_WORD_COUNT_MAXIMUM,
 		"Float rational quotient remainder retains its carry word.",
 	)
-	invariant.Always(
+	aver.Always(
 		len(value.Divisor) == FLOAT_DIVISION_WORD_COUNT_MAXIMUM,
 		"Float rational quotient divisor retains its aligned mantissa.",
 	)
@@ -4681,7 +4681,7 @@ type Float_Rat_Workspace struct {
 
 // Float_Rat_Workspace_Invariants binds all conversion storage to derived bounds.
 func Float_Rat_Workspace_Invariants(
-	value *Float_Rat_Workspace, namespace invariant.Namespace,
+	value *Float_Rat_Workspace, namespace aver.Namespace,
 ) {
 	Float_Rat_Values_Invariants(value.Values, namespace)
 	Rat_Integers_Invariants(value.Integers, namespace)
@@ -4693,9 +4693,9 @@ type Float_Square_Root_Root [FLOAT_SQUARE_ROOT_WORD_COUNT_MAXIMUM]Word
 
 // Float_Square_Root_Root_Invariants fixes the precision-plus-guard capacity.
 func Float_Square_Root_Root_Invariants(
-	value Float_Square_Root_Root, _ invariant.Namespace,
+	value Float_Square_Root_Root, _ aver.Namespace,
 ) {
-	invariant.Always(
+	aver.Always(
 		len(value) == FLOAT_SQUARE_ROOT_WORD_COUNT_MAXIMUM,
 		"Float square-root result storage retains one precision guard bit.",
 	)
@@ -4706,9 +4706,9 @@ type Float_Square_Root_Remainder [FLOAT_SQUARE_ROOT_WORD_COUNT_MAXIMUM]Word
 
 // Float_Square_Root_Remainder_Invariants fixes the precision-plus-guard capacity.
 func Float_Square_Root_Remainder_Invariants(
-	value Float_Square_Root_Remainder, _ invariant.Namespace,
+	value Float_Square_Root_Remainder, _ aver.Namespace,
 ) {
-	invariant.Always(
+	aver.Always(
 		len(value) == FLOAT_SQUARE_ROOT_WORD_COUNT_MAXIMUM,
 		"Float square-root remainder storage retains one precision guard bit.",
 	)
@@ -4719,9 +4719,9 @@ type Float_Square_Root_Candidate [FLOAT_SQUARE_ROOT_WORD_COUNT_MAXIMUM]Word
 
 // Float_Square_Root_Candidate_Invariants fixes the precision-plus-guard capacity.
 func Float_Square_Root_Candidate_Invariants(
-	value Float_Square_Root_Candidate, _ invariant.Namespace,
+	value Float_Square_Root_Candidate, _ aver.Namespace,
 ) {
-	invariant.Always(
+	aver.Always(
 		len(value) == FLOAT_SQUARE_ROOT_WORD_COUNT_MAXIMUM,
 		"Float square-root candidate storage retains one precision guard bit.",
 	)
@@ -4739,7 +4739,7 @@ type Float_Square_Root_Workspace struct {
 
 // Float_Square_Root_Workspace_Invariants binds both magnitudes to one derived width.
 func Float_Square_Root_Workspace_Invariants(
-	value *Float_Square_Root_Workspace, namespace invariant.Namespace,
+	value *Float_Square_Root_Workspace, namespace aver.Namespace,
 ) {
 	Float_Square_Root_Root_Invariants(value.Root, namespace)
 	Float_Square_Root_Remainder_Invariants(value.Remainder, namespace)
@@ -4754,7 +4754,7 @@ type Float_Gob_Workspace struct {
 
 // Float_Gob_Workspace_Invariants composes one bounded mantissa.
 func Float_Gob_Workspace_Invariants(
-	value *Float_Gob_Workspace, namespace invariant.Namespace,
+	value *Float_Gob_Workspace, namespace aver.Namespace,
 ) {
 	Float_Gob_Mantissas_Invariants(value.Mantissas, namespace)
 }
@@ -4814,7 +4814,7 @@ func Float_Gob_Encode_Into(
 	aligned_bit_count := int(mantissa_count) * WORD_BIT_COUNT
 	shift := Shift_Count(aligned_bit_count - bit_count)
 	shift_status := Int_Shift_Left(mantissa, mantissa, shift)
-	invariant.Always(
+	aver.Always(
 		shift_status == Arithmetic_Status(STATUS_OK),
 		"Word alignment cannot exceed existing mantissa word count.",
 	)
@@ -4822,7 +4822,7 @@ func Float_Gob_Encode_Into(
 		Bytes(destination[FLOAT_GOB_MANTISSA_OFFSET:required]),
 		mantissa,
 	)
-	invariant.Always(
+	aver.Always(
 		fill_status == Destination_Status(STATUS_OK),
 		"Derived wire mantissa storage has exact capacity.",
 	)
@@ -5136,7 +5136,7 @@ func float_gob_decode_finite_commit(
 			validation := Float_Set_Precision(
 				&result, Float_Precision_Unvalidated(precision),
 			)
-			invariant.Always(
+			aver.Always(
 				validation == Validation_Status(STATUS_OK),
 				"Decoded precision came from validated receiver policy.",
 			)
@@ -5210,7 +5210,7 @@ func Int_Set_Float_64_Bits(
 		Int_Shift_Right(destination, destination, Shift_Count(-shift))
 	} else if shift > WORD_COUNT_MINIMUM {
 		shift_status := Int_Shift_Left(destination, destination, Shift_Count(shift))
-		invariant.Always(
+		aver.Always(
 			shift_status == Arithmetic_Status(STATUS_OK),
 			"Finite binary64 integer magnitude fits bounded Int storage.",
 		)
@@ -5330,7 +5330,7 @@ func int_modular_square_root_reduce(
 	)
 	workspace.Modular.Division.Quotient_Count = initial_quotient_count
 	workspace.Modular.Division.Remainder_Count = initial_remainder_count
-	invariant.Always(
+	aver.Always(
 		reduction == Divisor_Status(STATUS_OK),
 		"Modular square-root reduction uses validated nonzero modulus.",
 	)
@@ -5339,7 +5339,7 @@ func int_modular_square_root_reduce(
 	)
 	workspace.Modular.Division.Quotient_Count = initial_quotient_count
 	workspace.Modular.Division.Remainder_Count = initial_remainder_count
-	invariant.Always(
+	aver.Always(
 		validation == Validation_Status(STATUS_OK),
 		"Modular square-root residue uses validated positive odd modulus.",
 	)
@@ -5371,14 +5371,14 @@ func int_modular_square_root_start(
 	exponent := &integers[MODULAR_SQUARE_ROOT_EXPONENT_INDEX]
 	one := &integers[MODULAR_SQUARE_ROOT_ONE_INDEX]
 	subtraction := Int_Subtract(odd_factor, modulus, one)
-	invariant.Always(
+	aver.Always(
 		subtraction == Arithmetic_Status(STATUS_OK),
 		"Validated modular square-root modulus exceeds one.",
 	)
 	order := Int_Trailing_Zero_Bit_Count(odd_factor)
 	Int_Shift_Right(odd_factor, odd_factor, Shift_Count(order))
 	addition := Int_Add(exponent, odd_factor, one)
-	invariant.Always(
+	aver.Always(
 		addition == Arithmetic_Status(STATUS_OK),
 		"Odd factor plus one cannot exceed validated modulus.",
 	)
@@ -5415,7 +5415,7 @@ func int_modular_square_root_order_one(
 	)
 	workspace.Modular.Division.Quotient_Count = initial_quotient_count
 	workspace.Modular.Division.Remainder_Count = initial_remainder_count
-	invariant.Always(
+	aver.Always(
 		exponentiation == Modular_Status(STATUS_OK),
 		"A positive root exponent and nonzero modulus make exponentiation defined.",
 	)
@@ -5441,7 +5441,7 @@ func int_modular_square_root_powers(workspace *Int_Modular_Square_Root_Workspace
 		result, residue, exponent, modulus,
 		(*Int_Modular_Workspace)(&workspace.Modular),
 	)
-	invariant.Always(
+	aver.Always(
 		status == Modular_Status(STATUS_OK),
 		"Tonelli-Shanks root exponent is nonnegative and modulus is nonzero.",
 	)
@@ -5449,7 +5449,7 @@ func int_modular_square_root_powers(workspace *Int_Modular_Square_Root_Workspace
 		power, residue, odd_factor, modulus,
 		(*Int_Modular_Workspace)(&workspace.Modular),
 	)
-	invariant.Always(
+	aver.Always(
 		status == Modular_Status(STATUS_OK),
 		"Tonelli-Shanks power exponent is nonnegative and modulus is nonzero.",
 	)
@@ -5459,7 +5459,7 @@ func int_modular_square_root_powers(workspace *Int_Modular_Square_Root_Workspace
 	)
 	workspace.Modular.Division.Quotient_Count = initial_quotient_count
 	workspace.Modular.Division.Remainder_Count = initial_remainder_count
-	invariant.Always(
+	aver.Always(
 		status == Modular_Status(STATUS_OK),
 		"Tonelli-Shanks generator exponent is nonnegative and modulus is nonzero.",
 	)
@@ -5482,7 +5482,7 @@ func int_modular_square_root_square_factor(
 	)
 	workspace.Modular.Division.Quotient_Count = initial_quotient_count
 	workspace.Modular.Division.Remainder_Count = initial_remainder_count
-	invariant.Always(
+	aver.Always(
 		status == Divisor_Status(STATUS_OK),
 		"Tonelli-Shanks factor square uses nonzero modulus.",
 	)
@@ -5503,20 +5503,20 @@ func int_modular_square_root_advance(workspace *Int_Modular_Square_Root_Workspac
 	initial_quotient_count := workspace.Modular.Division.Quotient_Count
 	initial_remainder_count := workspace.Modular.Division.Remainder_Count
 	status := Int_Modular_Exponent(factor, generator, exponent, modulus, modular)
-	invariant.Always(
+	aver.Always(
 		status == Modular_Status(STATUS_OK),
 		"Tonelli-Shanks factor exponent uses nonnegative exponent and nonzero modulus.",
 	)
 	product_status := Int_Modular_Multiply(generator, factor, factor, modulus, modular)
-	invariant.Always(product_status == Divisor_Status(STATUS_OK),
+	aver.Always(product_status == Divisor_Status(STATUS_OK),
 		"Tonelli-Shanks generator square uses nonzero modulus.")
 	product_status = Int_Modular_Multiply(result, result, factor, modulus, modular)
-	invariant.Always(product_status == Divisor_Status(STATUS_OK),
+	aver.Always(product_status == Divisor_Status(STATUS_OK),
 		"Tonelli-Shanks root product uses nonzero modulus.")
 	product_status = Int_Modular_Multiply(power, power, generator, modulus, modular)
 	workspace.Modular.Division.Quotient_Count = initial_quotient_count
 	workspace.Modular.Division.Remainder_Count = initial_remainder_count
-	invariant.Always(product_status == Divisor_Status(STATUS_OK),
+	aver.Always(product_status == Divisor_Status(STATUS_OK),
 		"Tonelli-Shanks power product uses nonzero modulus.")
 }
 
@@ -5539,7 +5539,7 @@ func int_modular_square_root_iterate(
 	factor := &integers[MODULAR_SQUARE_ROOT_FACTOR_INDEX]
 	one := &integers[MODULAR_SQUARE_ROOT_ONE_INDEX]
 	subtraction := Int_Subtract(exponent, modulus, one)
-	invariant.Always(
+	aver.Always(
 		subtraction == Arithmetic_Status(STATUS_OK),
 		"Validated modular square-root modulus exceeds one during iteration.",
 	)
@@ -5564,7 +5564,7 @@ func int_modular_square_root_iterate(
 		Int_Set_Uint_64(exponent, Word_64(WORD_COUNT_INCREMENT))
 		shift := order - distance - WORD_COUNT_INCREMENT
 		shift_status := Int_Shift_Left(exponent, exponent, Shift_Count(shift))
-		invariant.Always(
+		aver.Always(
 			shift_status == Arithmetic_Status(STATUS_OK),
 			"Tonelli-Shanks subgroup exponent fits modulus bit width.",
 		)
@@ -5599,7 +5599,7 @@ func int_modular_square_root_commit(
 	)
 	workspace.Modular.Division.Quotient_Count = initial_quotient_count
 	workspace.Modular.Division.Remainder_Count = initial_remainder_count
-	invariant.Always(
+	aver.Always(
 		product_status == Divisor_Status(STATUS_OK),
 		"A modular square-root check uses one validated nonzero modulus.",
 	)
@@ -5686,7 +5686,7 @@ func float_text_binary(workspace *Float_Text_Workspace) {
 	bit_count := int(Int_Bit_Count(integer))
 	shift := int(value.Precision) - bit_count
 	shift_status := Int_Shift_Left(integer, integer, Shift_Count(shift))
-	invariant.Always(
+	aver.Always(
 		shift_status == Arithmetic_Status(STATUS_OK),
 		"Binary Float text aligns only inside active precision.",
 	)
@@ -5730,7 +5730,7 @@ func float_text_hexadecimal_fraction(workspace *Float_Text_Workspace) {
 		bit_count%BASE_HEXADECIMAL_DIGIT_BIT_COUNT) %
 		BASE_HEXADECIMAL_DIGIT_BIT_COUNT
 	shift_status := Int_Shift_Left(integer, integer, Shift_Count(shift))
-	invariant.Always(
+	aver.Always(
 		shift_status == Arithmetic_Status(STATUS_OK),
 		"Hexadecimal fraction alignment adds fewer than one digit.",
 	)
@@ -5786,7 +5786,7 @@ func float_text_hexadecimal(workspace *Float_Text_Workspace) {
 	validation := Float_Set_Precision(
 		rounded, Float_Precision_Unvalidated(target_precision),
 	)
-	invariant.Always(
+	aver.Always(
 		validation == Validation_Status(STATUS_OK),
 		"Hexadecimal text target precision was bounded before conversion.",
 	)
@@ -5796,7 +5796,7 @@ func float_text_hexadecimal(workspace *Float_Text_Workspace) {
 	shift_status := Int_Shift_Left(
 		integer, integer, Shift_Count(target_precision-bit_count),
 	)
-	invariant.Always(
+	aver.Always(
 		shift_status == Arithmetic_Status(STATUS_OK),
 		"Rounded hexadecimal significand fits target precision.",
 	)
@@ -6127,7 +6127,7 @@ func float_text_decimal_fixed(workspace *Float_Text_Workspace) {
 			index++
 		}
 	}
-	invariant.Always(
+	aver.Always(
 		index <= FLOAT_TEXT_SIZE_MAXIMUM,
 		"Fixed Float text fits its exact derived output bound.",
 	)
@@ -6158,7 +6158,7 @@ func float_decimal_initialize(workspace *Float_Text_Workspace) {
 	}
 	if shift > 0 {
 		shift_status := Int_Shift_Left(integer, integer, Shift_Count(shift))
-		invariant.Always(
+		aver.Always(
 			shift_status == Arithmetic_Status(STATUS_OK),
 			"Positive Float decimal shift cannot exceed normalized exponent.",
 		)
@@ -6227,7 +6227,7 @@ func float_decimal_shift_right(workspace *Float_Text_Workspace) {
 		number *= Word(BASE_DECIMAL)
 	}
 	for number > 0 {
-		invariant.Always(
+		aver.Always(
 			write_index < FLOAT_DECIMAL_DIGIT_COUNT_MAXIMUM,
 			"Exact Float decimal right shift fits derived digit capacity.",
 		)
@@ -6456,7 +6456,7 @@ func float_decimal_initialize_magnitude(workspace *Float_Text_Workspace) {
 			}
 			word_count--
 		}
-		invariant.Always(
+		aver.Always(
 			digit_count < FLOAT_DECIMAL_INTEGER_DIGIT_COUNT_MAXIMUM,
 			"Shortest-bound magnitude fits derived decimal integer digits.",
 		)
@@ -6723,11 +6723,11 @@ func float_parse_quotient(
 		result, left, right,
 		(*Float_Division_Workspace)(&workspace.Division),
 	)
-	invariant.Always(
+	aver.Always(
 		quotient_status == Validation_Status(STATUS_OK),
 		"Float parse exact denominator is positive and nonzero.",
 	)
-	invariant.Always(result.Form == FLOAT_FORM_FINITE,
+	aver.Always(result.Form == FLOAT_FORM_FINITE,
 		"Full-width exact factors keep the unscaled quotient finite.")
 	exponent_2 := workspace.Control[FLOAT_PARSE_EXPONENT_2_INDEX]
 	minimum_shift := int64(FLOAT_EXPONENT_MINIMUM) - int64(result.Exponent)
@@ -7029,9 +7029,9 @@ type Float_Addition_Result_Word_Count int
 
 // Float_Addition_Result_Word_Count_Invariants preserves that reserved carry word.
 func Float_Addition_Result_Word_Count_Invariants(
-	value Float_Addition_Result_Word_Count, namespace invariant.Namespace,
+	value Float_Addition_Result_Word_Count, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(
 			int(value), FLOAT_ADDITION_RESULT_WORD_COUNT_MINIMUM,
 			FLOAT_ADDITION_WORD_COUNT_MAXIMUM,
@@ -7073,13 +7073,13 @@ func Rat_Set_Float_32_Bits(
 	if shift > 0 {
 		Int_Set_Uint_64(denominator, Word_64(bits.CARRY_MAXIMUM))
 		shift_status := Int_Shift_Left(denominator, denominator, Shift_Count(shift))
-		invariant.Always(
+		aver.Always(
 			shift_status == Arithmetic_Status(STATUS_OK),
 			"Binary32 denominator fits rational component storage.",
 		)
 	} else {
 		shift_status := Int_Shift_Left(numerator, numerator, Shift_Count(-shift))
-		invariant.Always(
+		aver.Always(
 			shift_status == Arithmetic_Status(STATUS_OK),
 			"Binary32 numerator fits rational component storage.",
 		)
@@ -7115,7 +7115,7 @@ func Rat_Float_32_Bits(
 	quotient_word, conversion_status := Int_Uint_64(quotient)
 	quotient_fits := conversion_status == Conversion_Status(STATUS_OK) &&
 		uint64(quotient_word) <= uint64(bits.WORD_32_MAXIMUM)
-	invariant.Always(quotient_fits, "Binary32 rounding quotient fits one word.")
+	aver.Always(quotient_fits, "Binary32 rounding quotient fits one word.")
 	mantissa := uint32(quotient_word)
 	have_remainder := remainder.Count != WORD_COUNT_MINIMUM
 	if mantissa>>FLOAT_32_ROUNDING_MANTISSA_BIT_COUNT == uint32(bits.CARRY_MAXIMUM) {
@@ -7125,7 +7125,7 @@ func Rat_Float_32_Bits(
 		mantissa >>= 1
 		exponent++
 	}
-	invariant.Always(
+	aver.Always(
 		mantissa>>FLOAT_32_VALUE_MANTISSA_BIT_COUNT == uint32(bits.CARRY_MAXIMUM),
 		"Scaled binary32 rational quotient retains one normal leading bit.",
 	)
@@ -7251,7 +7251,7 @@ func rat_float_32_divide(value *Rat, workspace *Rat_Float_32_Workspace) {
 	} else if shift < WORD_COUNT_MINIMUM {
 		shift_status = Int_Shift_Left(denominator, denominator, Shift_Count(-shift))
 	}
-	invariant.Always(
+	aver.Always(
 		shift_status == Arithmetic_Status(STATUS_OK),
 		"Rational component bound leaves full Int room for binary32 scaling.",
 	)
@@ -7259,7 +7259,7 @@ func rat_float_32_divide(value *Rat, workspace *Rat_Float_32_Workspace) {
 	division_status := Int_Quotient_Remainder(
 		quotient, remainder, numerator, denominator, division,
 	)
-	invariant.Always(
+	aver.Always(
 		division_status == Division_Status(STATUS_OK),
 		"Normalized rational denominator remains nonzero during binary32 conversion.",
 	)
@@ -7497,10 +7497,10 @@ func float_finite_float_64_bits(
 		return Float_64_Value_Bits(uint64(sign) | FLOAT_64_POSITIVE_INFINITY_BITS),
 			rounded.Accuracy
 	}
-	invariant.Always(rounded.Exponent > FLOAT_64_SUBNORMAL_EXPONENT-
+	aver.Always(rounded.Exponent > FLOAT_64_SUBNORMAL_EXPONENT-
 		FLOAT_64_MANTISSA_BIT_COUNT,
 		"Rounded binary64 exponent stays above tie-underflow handling.")
-	invariant.Always(rounded.Exponent <= FLOAT_64_VALUE_BIT_COUNT_MAXIMUM,
+	aver.Always(rounded.Exponent <= FLOAT_64_VALUE_BIT_COUNT_MAXIMUM,
 		"Rounded binary64 exponent stays below overflow handling.")
 	bit_count := int(bits.Bit_Size_64(bits.Word_64(rounded.Mantissa)))
 	mantissa := uint64(rounded.Mantissa)
@@ -7559,12 +7559,12 @@ func float_finite_float_32_bits(
 			uint32(sign) | FLOAT_32_POSITIVE_INFINITY_BITS,
 		), rounded.Accuracy
 	}
-	invariant.Always(
+	aver.Always(
 		rounded.Exponent > FLOAT_32_SUBNORMAL_EXPONENT-
 			FLOAT_32_MANTISSA_BIT_COUNT,
 		"Rounded binary32 exponent stays above tie underflow handling.",
 	)
-	invariant.Always(
+	aver.Always(
 		rounded.Exponent <= FLOAT_32_VALUE_BIT_COUNT_MAXIMUM,
 		"Rounded binary32 exponent stays below overflow handling.",
 	)
@@ -8559,7 +8559,7 @@ func float_division_subtract(
 		workspace.Remainder[index] = Word(difference)
 		borrow = bits.Borrow_In(next)
 	}
-	invariant.Always(borrow == bits.Borrow_In(bits.CARRY_MINIMUM),
+	aver.Always(borrow == bits.Borrow_In(bits.CARRY_MINIMUM),
 		"A quotient digit subtracts only after magnitude comparison.")
 }
 
@@ -8881,7 +8881,7 @@ func float_division_word_round(
 		}
 		quotient_count--
 	}
-	invariant.Always(
+	aver.Always(
 		quotient_count > WORD_COUNT_MINIMUM,
 		"Normalized finite division retains one guarded quotient bit.",
 	)
@@ -8938,15 +8938,15 @@ func float_division_word_quotient(
 	)
 	divisor_count := control[FLOAT_DIVISION_DIVISOR_COUNT_INDEX]
 	dividend_count := control[FLOAT_DIVISION_DIVIDEND_COUNT_INDEX]
-	invariant.Always(
+	aver.Always(
 		divisor_count > WORD_COUNT_MINIMUM,
 		"Float word division receives one nonzero divisor.",
 	)
-	invariant.Always(
+	aver.Always(
 		divisor_count <= BASE_BINARY,
 		"Float word division keeps quotient estimation to two divisor words.",
 	)
-	invariant.Always(
+	aver.Always(
 		dividend_count >= divisor_count,
 		"Guard scaling leaves at least one quotient word.",
 	)
@@ -9331,13 +9331,13 @@ type Active_Double_Word_Magnitude [DOUBLE_WORD_MAGNITUDE_WORD_COUNT]Word
 
 // Active_Double_Word_Magnitude_Invariants fixes both words and excludes zero.
 func Active_Double_Word_Magnitude_Invariants(
-	value *Active_Double_Word_Magnitude, namespace invariant.Namespace,
+	value *Active_Double_Word_Magnitude, namespace aver.Namespace,
 ) {
-	invariant.Always(
+	aver.Always(
 		len(value) == DOUBLE_WORD_MAGNITUDE_WORD_COUNT,
 		"A double-word magnitude owns its exact scalar capacity.",
 	)
-	invariant.Always(
+	aver.Always(
 		value[DOUBLE_WORD_MAGNITUDE_LOW_INDEX]|
 			value[DOUBLE_WORD_MAGNITUDE_HIGH_INDEX] != 0,
 		"An active double word is nonzero.",
@@ -9348,28 +9348,28 @@ func Active_Double_Word_Magnitude_Invariants(
 type Int_References [INT_REFERENCE_COUNT]*Int
 
 // Int_References_Invariants rejects absent addresses without repeating Int in one chain.
-func Int_References_Invariants(value *Int_References, _ invariant.Namespace) {
-	invariant.Always(len(value) == INT_REFERENCE_COUNT, "The Int references are complete.")
-	invariant.Always(
+func Int_References_Invariants(value *Int_References, _ aver.Namespace) {
+	aver.Always(len(value) == INT_REFERENCE_COUNT, "The Int references are complete.")
+	aver.Always(
 		value[INT_REFERENCE_DESTINATION_INDEX] != nil,
 		"The Int destination exists.",
 	)
-	invariant.Always(value[INT_REFERENCE_LEFT_INDEX] != nil, "The left Int exists.")
-	invariant.Always(value[INT_REFERENCE_RIGHT_INDEX] != nil, "The right Int exists.")
+	aver.Always(value[INT_REFERENCE_LEFT_INDEX] != nil, "The left Int exists.")
+	aver.Always(value[INT_REFERENCE_RIGHT_INDEX] != nil, "The right Int exists.")
 }
 
 // Float_References carries validated Float addresses through internal helper boundaries.
 type Float_References [INT_REFERENCE_COUNT]*Float
 
 // Float_References_Invariants rejects absent addresses without repeating Float validation.
-func Float_References_Invariants(value *Float_References, _ invariant.Namespace) {
-	invariant.Always(len(value) == INT_REFERENCE_COUNT, "The Float references are complete.")
-	invariant.Always(
+func Float_References_Invariants(value *Float_References, _ aver.Namespace) {
+	aver.Always(len(value) == INT_REFERENCE_COUNT, "The Float references are complete.")
+	aver.Always(
 		value[INT_REFERENCE_DESTINATION_INDEX] != nil,
 		"The Float destination exists.",
 	)
-	invariant.Always(value[INT_REFERENCE_LEFT_INDEX] != nil, "The left Float exists.")
-	invariant.Always(value[INT_REFERENCE_RIGHT_INDEX] != nil, "The right Float exists.")
+	aver.Always(value[INT_REFERENCE_LEFT_INDEX] != nil, "The left Float exists.")
+	aver.Always(value[INT_REFERENCE_RIGHT_INDEX] != nil, "The right Float exists.")
 }
 
 // Double_Word_Zero_Count cannot exceed the highest bit in two active words.
@@ -9377,9 +9377,9 @@ type Double_Word_Zero_Count int
 
 // Double_Word_Zero_Count_Invariants derives its bound from scalar capacity.
 func Double_Word_Zero_Count_Invariants(
-	value Double_Word_Zero_Count, namespace invariant.Namespace,
+	value Double_Word_Zero_Count, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(int(value), BIT_COUNT_MINIMUM, DOUBLE_WORD_ZERO_COUNT_MAXIMUM).
 		Ensure()
 }
@@ -9388,8 +9388,8 @@ func Double_Word_Zero_Count_Invariants(
 type Euclidean_Index int
 
 // Euclidean_Index_Invariants excludes the inactive remainder slot from binary reduction.
-func Euclidean_Index_Invariants(value Euclidean_Index, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Euclidean_Index_Invariants(value Euclidean_Index, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_Int(int(value), EUCLIDEAN_DIVIDEND_INDEX, EUCLIDEAN_DIVISOR_INDEX).
 		Ensure()
 }
@@ -9398,8 +9398,8 @@ func Euclidean_Index_Invariants(value Euclidean_Index, namespace invariant.Names
 type Word_Shift Word_Count
 
 // Word_Shift_Invariants derives its maximum from the last writable word.
-func Word_Shift_Invariants(value Word_Shift, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Word_Shift_Invariants(value Word_Shift, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), WORD_COUNT_MINIMUM, WORD_INDEX_MAXIMUM).
 		Ensure()
 }
@@ -9408,8 +9408,8 @@ func Word_Shift_Invariants(value Word_Shift, namespace invariant.Namespace) {
 type Word_Factor Word
 
 // Word_Factor_Invariants excludes the no-progress factor.
-func Word_Factor_Invariants(value Word_Factor, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Word_Factor_Invariants(value Word_Factor, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint64(
 			uint64(value), uint64(bits.CARRY_MAXIMUM), uint64(bits.WORD_64_MAXIMUM),
 		).
@@ -9425,7 +9425,7 @@ type Word_Scale struct {
 }
 
 // Word_Scale_Invariants fixes the bounded shift and scalar factor.
-func Word_Scale_Invariants(value *Word_Scale, namespace invariant.Namespace) {
+func Word_Scale_Invariants(value *Word_Scale, namespace aver.Namespace) {
 	Word_Shift_Invariants(value.Shift, namespace)
 	Word_Factor_Invariants(value.Factor, namespace)
 }
@@ -9715,7 +9715,7 @@ func int_greatest_common_divisor_multiword(
 		return
 	}
 	status := Int_Shift_Left(destination, dividend, Shift_Count(common_zero_count))
-	invariant.Always(
+	aver.Always(
 		status == Arithmetic_Status(STATUS_OK),
 		"Restoring a common input factor cannot exceed either input magnitude.",
 	)
@@ -9823,7 +9823,7 @@ func int_greatest_common_divisor_subtract(
 		borrow = ((^minuend & carry) |
 			(^(minuend ^ carry) & difference)) >> WORD_BIT_INDEX_MAXIMUM
 	}
-	invariant.Always(
+	aver.Always(
 		borrow == 0,
 		"A conservative quotient keeps the scaled divisor below the dividend.",
 	)
@@ -9952,9 +9952,9 @@ type Half_Word_Product Word
 
 // Half_Word_Product_Invariants narrows a machine word to its reachable product interval.
 func Half_Word_Product_Invariants(
-	value Half_Word_Product, namespace invariant.Namespace,
+	value Half_Word_Product, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Uint64(
 			uint64(value), uint64(bits.CARRY_MINIMUM),
 			uint64(HALF_WORD_PRODUCT_MAXIMUM),

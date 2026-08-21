@@ -4,8 +4,8 @@ package elliptic
 import (
 	"local/james-orcales/shared/bytes"
 	"local/james-orcales/shared/encoding/binary"
-	"local/james-orcales/shared/invariant/default"
 	"local/james-orcales/shared/math/bits"
+	"local/james-orcales/shared/simulation/aver/default"
 )
 
 // FIELD_LIMB_COUNT derives P-256 storage from its bit and machine-word widths.
@@ -107,28 +107,28 @@ type Point struct {
 }
 
 // Point_Invariants proves canonical residues and the complete projective curve relation.
-func Point_Invariants(value Point, _ invariant.Namespace) {
-	invariant.Always(len(value.X) == FIELD_LIMB_COUNT, "Point x has P-256 width.")
-	invariant.Always(len(value.Y) == FIELD_LIMB_COUNT, "Point y has P-256 width.")
-	invariant.Always(len(value.Z) == FIELD_LIMB_COUNT, "Point z has P-256 width.")
+func Point_Invariants(value Point, _ aver.Namespace) {
+	aver.Always(len(value.X) == FIELD_LIMB_COUNT, "Point x has P-256 width.")
+	aver.Always(len(value.Y) == FIELD_LIMB_COUNT, "Point y has P-256 width.")
+	aver.Always(len(value.Z) == FIELD_LIMB_COUNT, "Point z has P-256 width.")
 	x_canonical := field_canonical(&value.X)
 	y_canonical := field_canonical(&value.Y)
 	z_canonical := field_canonical(&value.Z)
-	invariant.Always(
+	aver.Always(
 		x_canonical[bits.BIT_COUNT_MINIMUM] == binary.UINT_8_SIZE,
 		"Point x is a canonical field residue.",
 	)
-	invariant.Always(
+	aver.Always(
 		y_canonical[bits.BIT_COUNT_MINIMUM] == binary.UINT_8_SIZE,
 		"Point y is a canonical field residue.",
 	)
-	invariant.Always(
+	aver.Always(
 		z_canonical[bits.BIT_COUNT_MINIMUM] == binary.UINT_8_SIZE,
 		"Point z is a canonical field residue.",
 	)
 	z_zero := field_is_zero(&value.Z)
 	on_curve := point_projective_on_curve(&value.X, &value.Y, &value.Z)
-	invariant.Always(
+	aver.Always(
 		z_zero[bits.BIT_COUNT_MINIMUM]|on_curve[bits.BIT_COUNT_MINIMUM] ==
 			binary.UINT_8_SIZE,
 		"A finite Point satisfies the P-256 projective equation.",
@@ -139,8 +139,8 @@ func Point_Invariants(value Point, _ invariant.Namespace) {
 type Point_Handle *Point
 
 // Point_Handle_Invariants proves storage exists before separate point validation.
-func Point_Handle_Invariants(value Point_Handle, _ invariant.Namespace) {
-	invariant.Always(value != nil, "A Point handle has caller-owned storage.")
+func Point_Handle_Invariants(value Point_Handle, _ aver.Namespace) {
+	aver.Always(value != nil, "A Point handle has caller-owned storage.")
 }
 
 // Encoding_Unvalidated is one bounded hostile SEC 1 encoding.
@@ -148,9 +148,9 @@ type Encoding_Unvalidated []byte
 
 // Encoding_Unvalidated_Invariants bounds parsing before prefix or coordinate access.
 func Encoding_Unvalidated_Invariants(
-	value Encoding_Unvalidated, namespace invariant.Namespace,
+	value Encoding_Unvalidated, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(
 			len(value), ENCODING_UNVALIDATED_SIZE_MINIMUM,
 			ENCODING_UNVALIDATED_SIZE_MAXIMUM,
@@ -162,8 +162,8 @@ func Encoding_Unvalidated_Invariants(
 type Destination []byte
 
 // Destination_Invariants bounds output before any write.
-func Destination_Invariants(value Destination, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Destination_Invariants(value Destination, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), DESTINATION_SIZE_MINIMUM, DESTINATION_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -173,9 +173,9 @@ type Scalar_Unvalidated []byte
 
 // Scalar_Unvalidated_Invariants admits exact width and bounded refusal lengths.
 func Scalar_Unvalidated_Invariants(
-	value Scalar_Unvalidated, namespace invariant.Namespace,
+	value Scalar_Unvalidated, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(
 			len(value), SCALAR_UNVALIDATED_SIZE_MINIMUM,
 			SCALAR_UNVALIDATED_SIZE_MAXIMUM,
@@ -187,8 +187,8 @@ func Scalar_Unvalidated_Invariants(
 type Encoding_Kind uint8
 
 // Encoding_Kind_Invariants covers both SEC 1 finite forms.
-func Encoding_Kind_Invariants(value Encoding_Kind, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Encoding_Kind_Invariants(value Encoding_Kind, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_Uint8(
 			uint8(value), uint8(ENCODING_UNCOMPRESSED), uint8(ENCODING_COMPRESSED),
 		).
@@ -199,8 +199,8 @@ func Encoding_Kind_Invariants(value Encoding_Kind, namespace invariant.Namespace
 type Count uint8
 
 // Count_Invariants admits only infinity, compressed, and uncompressed widths.
-func Count_Invariants(value Count, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Count_Invariants(value Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_3_Uint8(
 			uint8(value), uint8(COUNT_INFINITY), uint8(COUNT_COMPRESSED),
 			uint8(COUNT_UNCOMPRESSED),
@@ -212,8 +212,8 @@ func Count_Invariants(value Count, namespace invariant.Namespace) {
 type Parse_Status uint8
 
 // Parse_Status_Invariants covers complete and refused point input.
-func Parse_Status_Invariants(value Parse_Status, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Parse_Status_Invariants(value Parse_Status, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_Uint8(
 			uint8(value), uint8(PARSE_STATUS_OK), uint8(PARSE_STATUS_INPUT_INVALID),
 		).
@@ -224,8 +224,8 @@ func Parse_Status_Invariants(value Parse_Status, namespace invariant.Namespace) 
 type Output_Status uint8
 
 // Output_Status_Invariants covers complete and short output.
-func Output_Status_Invariants(value Output_Status, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Output_Status_Invariants(value Output_Status, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_Uint8(
 			uint8(value), uint8(OUTPUT_STATUS_OK),
 			uint8(OUTPUT_STATUS_DESTINATION_TOO_SMALL),
@@ -237,8 +237,8 @@ func Output_Status_Invariants(value Output_Status, namespace invariant.Namespace
 type Scalar_Status uint8
 
 // Scalar_Status_Invariants covers complete and refused scalar input.
-func Scalar_Status_Invariants(value Scalar_Status, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Scalar_Status_Invariants(value Scalar_Status, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_Uint8(
 			uint8(value), uint8(SCALAR_STATUS_OK), uint8(SCALAR_STATUS_INPUT_INVALID),
 		).
@@ -249,8 +249,8 @@ func Scalar_Status_Invariants(value Scalar_Status, namespace invariant.Namespace
 type Equality bool
 
 // Equality_Invariants covers equal and distinct P-256 points.
-func Equality_Invariants(value Equality, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Equality_Invariants(value Equality, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Sometimes(bool(value), "P-256 points are equal.").
 		Ensure()
 }

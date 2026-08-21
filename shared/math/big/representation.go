@@ -1,24 +1,24 @@
 package big
 
 import (
-	"local/james-orcales/shared/invariant/default"
 	"local/james-orcales/shared/math/bits"
+	"local/james-orcales/shared/simulation/aver/default"
 )
 
 // Int_Double_Word is one normalized nonnegative two-word magnitude.
 type Int_Double_Word Int
 
 // Int_Double_Word_Invariants states exact shape selected by public square-root dispatch.
-func Int_Double_Word_Invariants(value *Int_Double_Word, _ invariant.Namespace) {
-	invariant.Always(
+func Int_Double_Word_Invariants(value *Int_Double_Word, _ aver.Namespace) {
+	aver.Always(
 		value.Negative == POLARITY_NONNEGATIVE,
 		"A double-word integer is nonnegative.",
 	)
-	invariant.Always(
+	aver.Always(
 		value.Count == Word_Count(BASE_BINARY),
 		"A double-word integer owns exactly two active words.",
 	)
-	invariant.Always(
+	aver.Always(
 		value.Words[WORD_COUNT_INCREMENT] != 0,
 		"A double-word integer retains its high word.",
 	)
@@ -52,8 +52,8 @@ type Double_Word_Products [DOUBLE_WORD_PRODUCT_COUNT]struct {
 }
 
 // Double_Word_Products_Invariants fixes exact two-by-two multiplication storage.
-func Double_Word_Products_Invariants(value *Double_Word_Products, _ invariant.Namespace) {
-	invariant.Always(
+func Double_Word_Products_Invariants(value *Double_Word_Products, _ aver.Namespace) {
+	aver.Always(
 		len(value) == DOUBLE_WORD_PRODUCT_COUNT,
 		"Double-word multiplication owns every word pair product.",
 	)
@@ -79,9 +79,9 @@ type Modular_Dividend_Limbs [MODULAR_DIVIDEND_LIMB_COUNT]uint32
 
 // Modular_Dividend_Limbs_Invariants binds reduction scratch to its formula capacity.
 func Modular_Dividend_Limbs_Invariants(
-	value *Modular_Dividend_Limbs, _ invariant.Namespace,
+	value *Modular_Dividend_Limbs, _ aver.Namespace,
 ) {
-	invariant.Always(
+	aver.Always(
 		len(value) == MODULAR_DIVIDEND_LIMB_COUNT,
 		"Normalized modular dividend scratch has formula capacity.",
 	)
@@ -92,9 +92,9 @@ type Modular_Divisor_Limbs [MODULAR_DOUBLE_WORD_LIMB_COUNT]uint32
 
 // Modular_Divisor_Limbs_Invariants binds normalized divisor scratch to two words.
 func Modular_Divisor_Limbs_Invariants(
-	value *Modular_Divisor_Limbs, _ invariant.Namespace,
+	value *Modular_Divisor_Limbs, _ aver.Namespace,
 ) {
-	invariant.Always(
+	aver.Always(
 		len(value) == MODULAR_DOUBLE_WORD_LIMB_COUNT,
 		"Normalized modular divisor scratch has formula capacity.",
 	)
@@ -650,7 +650,7 @@ func int_square_double_word(references *Int_References) {
 	Int_References_Invariants(references, "int_square_double_word.references")
 	destination := references[INT_REFERENCE_DESTINATION_INDEX]
 	factor := references[INT_REFERENCE_RIGHT_INDEX]
-	invariant.Always(
+	aver.Always(
 		factor.Count == Word_Count(BASE_BINARY),
 		"The symmetric square receives exactly two words.",
 	)
@@ -883,11 +883,11 @@ func rat_commit_normalized(
 	Rat_Workspace_Invariants(workspace, "rat_commit_normalized.workspace")
 	numerator := &workspace.Integers[RAT_RESULT_NUMERATOR_INDEX]
 	denominator := &workspace.Integers[RAT_RESULT_DENOMINATOR_INDEX]
-	invariant.Always(
+	aver.Always(
 		denominator.Count > WORD_COUNT_MINIMUM,
 		"A normalized rational operation retains one nonzero denominator.",
 	)
-	invariant.Always(
+	aver.Always(
 		denominator.Negative == POLARITY_NONNEGATIVE,
 		"Normalized rational operands produce one nonnegative denominator.",
 	)
@@ -902,7 +902,7 @@ func int_modular_exponent_commit(
 	Int_Invariants(destination, "int_modular_exponent_commit.destination")
 	Int_Invariants(exponent, "int_modular_exponent_commit.exponent")
 	modulus := &workspace.Integers[MODULAR_MODULUS_INDEX]
-	invariant.Always(
+	aver.Always(
 		modulus.Count > WORD_COUNT_MINIMUM,
 		"Modular exponentiation receives one nonzero normalized modulus.",
 	)
@@ -1168,7 +1168,7 @@ func int_modular_inverse_divide(
 	status := Int_Quotient_Remainder(
 		quotient, remainder, dividend, divisor, workspace,
 	)
-	invariant.Always(
+	aver.Always(
 		status == Division_Status(STATUS_OK),
 		"Modular Euclid divides only by its nonzero current remainder.",
 	)
@@ -1246,7 +1246,7 @@ func int_modular_inverse_divide_double_word_dividend(
 	status := Int_Quotient_Remainder(
 		quotient, remainder, dividend, divisor, workspace,
 	)
-	invariant.Always(
+	aver.Always(
 		status == Division_Status(STATUS_OK),
 		"The scalar modular divisor remains nonzero.",
 	)
@@ -1432,7 +1432,7 @@ func int_binomial_divide(workspace *Int_Product_Workspace) {
 	Int_Product_Workspace_Invariants(workspace, "int_binomial_divide.workspace")
 	accumulator := &workspace.Integers[PRODUCT_ACCUMULATOR_INDEX]
 	divisor := &workspace.Integers[PRODUCT_FACTOR_INDEX]
-	invariant.Always(
+	aver.Always(
 		divisor.Count == WORD_COUNT_INCREMENT,
 		"Reduced binomial denominator fits one nonzero word.",
 	)
@@ -1470,7 +1470,7 @@ func int_binomial_divide(workspace *Int_Product_Workspace) {
 			accumulator.Words[word_index] = Word(quotient)
 		}
 	}
-	invariant.Always(
+	aver.Always(
 		remainder == 0,
 		"Reduced binomial denominator divides prior coefficient exactly.",
 	)
@@ -1514,9 +1514,9 @@ type Decimal_Text_Digit_Count int
 
 // Decimal_Text_Digit_Count_Invariants binds zero text through full-width decimal text.
 func Decimal_Text_Digit_Count_Invariants(
-	value Decimal_Text_Digit_Count, namespace invariant.Namespace,
+	value Decimal_Text_Digit_Count, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(
 			int(value), SIGN_BYTE_COUNT_MAXIMUM, DECIMAL_TEXT_DIGIT_COUNT_MAXIMUM,
 		).
@@ -1527,9 +1527,9 @@ func Decimal_Text_Digit_Count_Invariants(
 type Float_Reference [WORD_COUNT_INCREMENT]*Float
 
 // Float_Reference_Invariants rejects an absent checked Float.
-func Float_Reference_Invariants(value *Float_Reference, _ invariant.Namespace) {
-	invariant.Always(len(value) == WORD_COUNT_INCREMENT, "The Float reference is complete.")
-	invariant.Always(value[WORD_COUNT_MINIMUM] != nil, "The Float reference exists.")
+func Float_Reference_Invariants(value *Float_Reference, _ aver.Namespace) {
+	aver.Always(len(value) == WORD_COUNT_INCREMENT, "The Float reference is complete.")
+	aver.Always(value[WORD_COUNT_MINIMUM] != nil, "The Float reference exists.")
 }
 
 // Float_Storage_Reference carries one writable Float slot without asserting old scratch state.
@@ -1537,10 +1537,10 @@ type Float_Storage_Reference [WORD_COUNT_INCREMENT]*Float
 
 // Float_Storage_Reference_Invariants rejects absent writable Float storage.
 func Float_Storage_Reference_Invariants(
-	value *Float_Storage_Reference, _ invariant.Namespace,
+	value *Float_Storage_Reference, _ aver.Namespace,
 ) {
-	invariant.Always(len(value) == WORD_COUNT_INCREMENT, "The Float storage is complete.")
-	invariant.Always(value[WORD_COUNT_MINIMUM] != nil, "The Float storage exists.")
+	aver.Always(len(value) == WORD_COUNT_INCREMENT, "The Float storage is complete.")
+	aver.Always(value[WORD_COUNT_MINIMUM] != nil, "The Float storage exists.")
 }
 
 // Float_Square_Root_Workspace_Reference carries already-validated restoring storage.
@@ -1548,10 +1548,10 @@ type Float_Square_Root_Workspace_Reference [WORD_COUNT_INCREMENT]*Float_Square_R
 
 // Float_Square_Root_Workspace_Reference_Invariants rejects absent restoring storage.
 func Float_Square_Root_Workspace_Reference_Invariants(
-	value *Float_Square_Root_Workspace_Reference, _ invariant.Namespace,
+	value *Float_Square_Root_Workspace_Reference, _ aver.Namespace,
 ) {
-	invariant.Always(len(value) == WORD_COUNT_INCREMENT, "The square-root storage is complete.")
-	invariant.Always(value[WORD_COUNT_MINIMUM] != nil, "The square-root storage exists.")
+	aver.Always(len(value) == WORD_COUNT_INCREMENT, "The square-root storage is complete.")
+	aver.Always(value[WORD_COUNT_MINIMUM] != nil, "The square-root storage exists.")
 }
 
 // Float_Square_Root_Pair_Reference carries one already-validated radix-four digit.
@@ -1559,10 +1559,10 @@ type Float_Square_Root_Pair_Reference [WORD_COUNT_INCREMENT]*Float_Square_Root_P
 
 // Float_Square_Root_Pair_Reference_Invariants rejects an absent radix-four digit.
 func Float_Square_Root_Pair_Reference_Invariants(
-	value *Float_Square_Root_Pair_Reference, _ invariant.Namespace,
+	value *Float_Square_Root_Pair_Reference, _ aver.Namespace,
 ) {
-	invariant.Always(len(value) == WORD_COUNT_INCREMENT, "The square-root pair is complete.")
-	invariant.Always(value[WORD_COUNT_MINIMUM] != nil, "The square-root pair exists.")
+	aver.Always(len(value) == WORD_COUNT_INCREMENT, "The square-root pair is complete.")
+	aver.Always(value[WORD_COUNT_MINIMUM] != nil, "The square-root pair exists.")
 }
 
 // Float_Square_Root_Count_Reference carries one already-validated active word count.
@@ -1570,10 +1570,10 @@ type Float_Square_Root_Count_Reference [WORD_COUNT_INCREMENT]*Float_Square_Root_
 
 // Float_Square_Root_Count_Reference_Invariants rejects an absent active word count.
 func Float_Square_Root_Count_Reference_Invariants(
-	value *Float_Square_Root_Count_Reference, _ invariant.Namespace,
+	value *Float_Square_Root_Count_Reference, _ aver.Namespace,
 ) {
-	invariant.Always(len(value) == WORD_COUNT_INCREMENT, "The square-root count is complete.")
-	invariant.Always(value[WORD_COUNT_MINIMUM] != nil, "The square-root count exists.")
+	aver.Always(len(value) == WORD_COUNT_INCREMENT, "The square-root count is complete.")
+	aver.Always(value[WORD_COUNT_MINIMUM] != nil, "The square-root count exists.")
 }
 
 // Float_Gob_Encoding_Reference preserves validated bounds across the finite fast path.
@@ -1581,13 +1581,13 @@ type Float_Gob_Encoding_Reference [WORD_COUNT_INCREMENT]*Float_Gob_Encoding
 
 // Float_Gob_Encoding_Reference_Invariants rejects absent checked encoding storage.
 func Float_Gob_Encoding_Reference_Invariants(
-	value *Float_Gob_Encoding_Reference, _ invariant.Namespace,
+	value *Float_Gob_Encoding_Reference, _ aver.Namespace,
 ) {
-	invariant.Always(
+	aver.Always(
 		len(value) == WORD_COUNT_INCREMENT,
 		"The float Gob encoding reference is complete.",
 	)
-	invariant.Always(
+	aver.Always(
 		value[WORD_COUNT_MINIMUM] != nil,
 		"The float Gob encoding reference exists.",
 	)

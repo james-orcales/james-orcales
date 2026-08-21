@@ -7,7 +7,7 @@ package printer
 import (
 	"local/james-orcales/shared/go/ast"
 	"local/james-orcales/shared/go/token"
-	"local/james-orcales/shared/invariant/default"
+	"local/james-orcales/shared/simulation/aver/default"
 )
 
 // FORM_SIZE_MINIMUM admits no output.
@@ -353,8 +353,8 @@ const SYMBOL_MAXIMUM = 255
 type Symbol byte
 
 // Symbol_Invariants states every byte one form holds.
-func Symbol_Invariants(value Symbol, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Symbol_Invariants(value Symbol, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint8(uint8(value), SYMBOL_MINIMUM, SYMBOL_MAXIMUM).
 		Ensure()
 }
@@ -376,8 +376,8 @@ const BASE_BINARY Base = 'b'
 type Base uint8
 
 // Base_Invariants states every base a number literal names of its own.
-func Base_Invariants(value Base, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Base_Invariants(value Base, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_4_Uint8(uint8(value), uint8(BASE_NONE), uint8(BASE_BINARY),
 			uint8(BASE_OCTAL), uint8(BASE_HEXADECIMAL)).
 		Ensure()
@@ -397,8 +397,8 @@ const EXPONENT_POWER Exponent = 'P'
 type Exponent uint8
 
 // Exponent_Invariants states every exponent mark a number literal states.
-func Exponent_Invariants(value Exponent, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Exponent_Invariants(value Exponent, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_3_Uint8(uint8(value), uint8(EXPONENT_NONE), uint8(EXPONENT_DECIMAL),
 			uint8(EXPONENT_POWER)).
 		Ensure()
@@ -408,8 +408,8 @@ func Exponent_Invariants(value Exponent, namespace invariant.Namespace) {
 type Boolean bool
 
 // Boolean_Invariants states both print reports as obligations.
-func Boolean_Invariants(value Boolean, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Boolean_Invariants(value Boolean, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Sometimes(bool(value), "The print report is true.").
 		Ensure()
 }
@@ -418,8 +418,8 @@ func Boolean_Invariants(value Boolean, namespace invariant.Namespace) {
 type Form []byte
 
 // Form_Invariants states the storage the widest form needs.
-func Form_Invariants(value Form, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Form_Invariants(value Form, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), FORM_SIZE_MINIMUM, FORM_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -428,8 +428,8 @@ func Form_Invariants(value Form, namespace invariant.Namespace) {
 type Form_Count int
 
 // Form_Count_Invariants states the byte count of the widest form.
-func Form_Count_Invariants(value Form_Count, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Form_Count_Invariants(value Form_Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), FORM_SIZE_MINIMUM, FORM_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -439,8 +439,8 @@ func Form_Count_Invariants(value Form_Count, namespace invariant.Namespace) {
 type Count int
 
 // Count_Invariants states the widest thing one counter counts.
-func Count_Invariants(value Count, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Count_Invariants(value Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), FORM_SIZE_MINIMUM, COUNT_MAXIMUM).
 		Ensure()
 }
@@ -449,8 +449,8 @@ func Count_Invariants(value Count, namespace invariant.Namespace) {
 type Width int32
 
 // Width_Invariants states every width a name spends.
-func Width_Invariants(value Width, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Width_Invariants(value Width, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int32(int32(value), FORM_SIZE_MINIMUM, WIDTH_MAXIMUM).
 		Ensure()
 }
@@ -504,8 +504,8 @@ type Printer struct {
 
 // Printer_Invariants states the storage the caller supplies. Each cursor is an array slot, thus
 // it proves its own domain where a body reads it.
-func Printer_Invariants(subject *Printer, namespace invariant.Namespace) {
-	invariant.Always(
+func Printer_Invariants(subject *Printer, namespace aver.Namespace) {
+	aver.Always(
 		len(subject.Nodes) == DEPTH_MAXIMUM,
 		"A printer holds one walk slot for every admitted depth.",
 	)
@@ -1212,8 +1212,8 @@ const WORD_MAXIMUM = uint8(WORD_DEFAULT)
 type Word uint8
 
 // Word_Invariants states every keyword the print writes of its own.
-func Word_Invariants(value Word, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Word_Invariants(value Word, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint8(uint8(value), WORD_MINIMUM, WORD_MAXIMUM).
 		Ensure()
 }
@@ -2825,8 +2825,8 @@ func emit_sign(subject *Printer, tree *ast.Parse_State) {
 type Position int32
 
 // Position_Invariants states the complete token run.
-func Position_Invariants(value Position, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Position_Invariants(value Position, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int32(int32(value), POSITION_MINIMUM, POSITION_MAXIMUM).
 		Ensure()
 }
@@ -3221,8 +3221,8 @@ const WRAP_INDEX Wrap = 1
 type Wrap uint8
 
 // Wrap_Invariants states every bracket a form wraps its parts in.
-func Wrap_Invariants(value Wrap, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Wrap_Invariants(value Wrap, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_Uint8(uint8(value), uint8(WRAP_CALL), uint8(WRAP_INDEX)).
 		Ensure()
 }
@@ -3544,8 +3544,8 @@ const CLASH_TIGHT = 3
 type Clash uint8
 
 // Clash_Invariants states every clash two signs standing together state.
-func Clash_Invariants(value Clash, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Clash_Invariants(value Clash, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_3_Uint8(uint8(value), CLASH_NONE, CLASH_LOOSE, CLASH_TIGHT).
 		Ensure()
 }
@@ -3554,8 +3554,8 @@ func Clash_Invariants(value Clash, namespace invariant.Namespace) {
 type Cut uint8
 
 // Cut_Invariants states every cut one form closes its signs up at.
-func Cut_Invariants(value Cut, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Cut_Invariants(value Cut, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_3_Uint8(uint8(value), CUT_MINIMUM, CUT_MIDDLE, CUT_MAXIMUM).
 		Ensure()
 }
@@ -3565,8 +3565,8 @@ type Level uint8
 
 // Level_Invariants states the binding of a token that binds nothing and the three bindings the
 // signs of this dialect hold.
-func Level_Invariants(value Level, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Level_Invariants(value Level, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_4_Uint8(uint8(value), LEVEL_MINIMUM, LEVEL_COMPARISON, LEVEL_ADDITION,
 			LEVEL_SIGN_MAXIMUM).
 		Ensure()
@@ -4834,8 +4834,8 @@ const PREFIX_MAXIMUM = uint8(PREFIX_RECEIVE)
 type Prefix uint8
 
 // Prefix_Invariants states every prefix a type opens with.
-func Prefix_Invariants(value Prefix, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Prefix_Invariants(value Prefix, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint8(uint8(value), PREFIX_MINIMUM, PREFIX_MAXIMUM).
 		Ensure()
 }

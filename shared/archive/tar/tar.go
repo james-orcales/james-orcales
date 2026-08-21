@@ -5,8 +5,8 @@ import (
 	"unsafe"
 
 	"local/james-orcales/shared/bytes"
-	"local/james-orcales/shared/invariant/default"
 	"local/james-orcales/shared/math/bits"
+	"local/james-orcales/shared/simulation/aver/default"
 	"local/james-orcales/shared/simulation/nbio"
 	"local/james-orcales/shared/simulation/time"
 	"local/james-orcales/shared/strconv"
@@ -752,8 +752,8 @@ const TYPE_FLAG_MAXIMUM Type_Flag = Type_Flag(bits.WORD_8_MAXIMUM)
 type Format uint8
 
 // Format_Invariants bounds recognized format identity.
-func Format_Invariants(value Format, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Format_Invariants(value Format, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint8(uint8(value), FORMAT_MINIMUM, FORMAT_MAXIMUM).
 		Ensure()
 }
@@ -763,9 +763,9 @@ type Format_Unvalidated uint8
 
 // Format_Unvalidated_Invariants covers the complete hostile byte domain.
 func Format_Unvalidated_Invariants(
-	value Format_Unvalidated, namespace invariant.Namespace,
+	value Format_Unvalidated, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Uint8(uint8(value), bits.WORD_8_MINIMUM, bits.WORD_8_MAXIMUM).
 		Ensure()
 }
@@ -792,8 +792,8 @@ const FORMAT_STAR Format = FORMAT_GNU + 1
 type Status uint8
 
 // Status_Invariants bounds every operation result.
-func Status_Invariants(value Status, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Status_Invariants(value Status, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint8(uint8(value), STATUS_MINIMUM, STATUS_MAXIMUM).
 		Ensure()
 }
@@ -803,9 +803,9 @@ type Initialization_Status uint8
 
 // Initialization_Status_Invariants keeps lifecycle results exact.
 func Initialization_Status_Invariants(
-	value Initialization_Status, namespace invariant.Namespace,
+	value Initialization_Status, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Enum_Uint8(
 			uint8(value), uint8(STATUS_OK), uint8(STATUS_STORAGE_INVALID),
 		).
@@ -817,9 +817,9 @@ type Header_Validation_Status uint8
 
 // Header_Validation_Status_Invariants keeps validation failures exact.
 func Header_Validation_Status_Invariants(
-	value Header_Validation_Status, namespace invariant.Namespace,
+	value Header_Validation_Status, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Enum_4_Uint8(
 			uint8(value), uint8(STATUS_OK), uint8(STATUS_INPUT_INVALID),
 			uint8(STATUS_FORMAT_UNSUPPORTED), uint8(STATUS_FIELD_TOO_LONG),
@@ -832,9 +832,9 @@ type Header_Encoding_Status uint8
 
 // Header_Encoding_Status_Invariants keeps header-size validation exact.
 func Header_Encoding_Status_Invariants(
-	value Header_Encoding_Status, namespace invariant.Namespace,
+	value Header_Encoding_Status, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Enum_3_Uint8(
 			uint8(value), uint8(STATUS_OK), uint8(STATUS_FORMAT_UNSUPPORTED),
 			uint8(STATUS_FIELD_TOO_LONG),
@@ -847,9 +847,9 @@ type Format_Encoding_Status uint8
 
 // Format_Encoding_Status_Invariants excludes generic dispatch failure.
 func Format_Encoding_Status_Invariants(
-	value Format_Encoding_Status, namespace invariant.Namespace,
+	value Format_Encoding_Status, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Enum_Uint8(uint8(value), uint8(STATUS_OK), uint8(STATUS_FIELD_TOO_LONG)).
 		Ensure()
 }
@@ -859,9 +859,9 @@ type Header_Stage_Status uint8
 
 // Header_Stage_Status_Invariants keeps writer lifecycle failures outside staging.
 func Header_Stage_Status_Invariants(
-	value Header_Stage_Status, namespace invariant.Namespace,
+	value Header_Stage_Status, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Enum_4_Uint8(
 			uint8(value), uint8(STATUS_OK), uint8(STATUS_OUTPUT_TOO_SMALL),
 			uint8(STATUS_FORMAT_UNSUPPORTED), uint8(STATUS_FIELD_TOO_LONG),
@@ -874,9 +874,9 @@ type PAX_Records_Stage_Status uint8
 
 // PAX_Records_Stage_Status_Invariants admits record staging outcomes only.
 func PAX_Records_Stage_Status_Invariants(
-	value PAX_Records_Stage_Status, namespace invariant.Namespace,
+	value PAX_Records_Stage_Status, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Enum_3_Uint8(
 			uint8(value), uint8(STATUS_OK), uint8(STATUS_OUTPUT_TOO_SMALL),
 			uint8(STATUS_FIELD_TOO_LONG),
@@ -888,8 +888,8 @@ func PAX_Records_Stage_Status_Invariants(
 type Parse_Status uint8
 
 // Parse_Status_Invariants keeps end-of-archive distinct from malformed fields.
-func Parse_Status_Invariants(value Parse_Status, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Parse_Status_Invariants(value Parse_Status, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_4_Uint8(
 			uint8(value), uint8(STATUS_OK), uint8(STATUS_END),
 			uint8(STATUS_INPUT_INVALID), uint8(STATUS_FIELD_TOO_LONG),
@@ -902,9 +902,9 @@ type Basic_Parse_Status uint8
 
 // Basic_Parse_Status_Invariants excludes failures owned by later phases.
 func Basic_Parse_Status_Invariants(
-	value Basic_Parse_Status, namespace invariant.Namespace,
+	value Basic_Parse_Status, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Enum_3_Uint8(
 			uint8(value), uint8(STATUS_OK), uint8(STATUS_INPUT_INVALID),
 			uint8(STATUS_FIELD_TOO_LONG),
@@ -916,8 +916,8 @@ func Basic_Parse_Status_Invariants(
 type Input_Status uint8
 
 // Input_Status_Invariants keeps two-outcome parser helpers exact.
-func Input_Status_Invariants(value Input_Status, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Input_Status_Invariants(value Input_Status, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_Uint8(uint8(value), uint8(STATUS_OK), uint8(STATUS_INPUT_INVALID)).
 		Ensure()
 }
@@ -927,9 +927,9 @@ type PAX_Apply_Status uint8
 
 // PAX_Apply_Status_Invariants keeps PAX mutation failures exact.
 func PAX_Apply_Status_Invariants(
-	value PAX_Apply_Status, namespace invariant.Namespace,
+	value PAX_Apply_Status, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Enum_3_Uint8(
 			uint8(value), uint8(STATUS_OK), uint8(STATUS_INPUT_INVALID),
 			uint8(STATUS_FORMAT_UNSUPPORTED),
@@ -974,8 +974,8 @@ const STATUS_TRANSPORT_FAILED = STATUS_CONTENT_INCOMPLETE + TYPE_FLAG_FIELD_SIZE
 type Count int
 
 // Count_Invariants bounds archive coordinates.
-func Count_Invariants(value Count, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Count_Invariants(value Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), COUNT_MINIMUM, COUNT_MAXIMUM).
 		Ensure()
 }
@@ -985,9 +985,9 @@ type Decimal_Magnitude uint64
 
 // Decimal_Magnitude_Invariants bounds conversion without signed overflow.
 func Decimal_Magnitude_Invariants(
-	value Decimal_Magnitude, namespace invariant.Namespace,
+	value Decimal_Magnitude, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Uint64(uint64(value), bits.WORD_64_MINIMUM, DECIMAL_MAGNITUDE_MAXIMUM).
 		Ensure()
 }
@@ -997,9 +997,9 @@ type Decimal_Magnitude_Size int
 
 // Decimal_Magnitude_Size_Invariants bounds zero through largest magnitude text.
 func Decimal_Magnitude_Size_Invariants(
-	value Decimal_Magnitude_Size, namespace invariant.Namespace,
+	value Decimal_Magnitude_Size, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(
 			int(value), TYPE_FLAG_FIELD_SIZE, DECIMAL_MAGNITUDE_SIZE_MAXIMUM,
 		).
@@ -1011,9 +1011,9 @@ type Decimal_Value_Size int
 
 // Decimal_Value_Size_Invariants bounds every signed integer rendering.
 func Decimal_Value_Size_Invariants(
-	value Decimal_Value_Size, namespace invariant.Namespace,
+	value Decimal_Value_Size, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(int(value), TYPE_FLAG_FIELD_SIZE, INTEGER_DECIMAL_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -1023,9 +1023,9 @@ type Fractional_Nanoseconds int32
 
 // Fractional_Nanoseconds_Invariants excludes whole-second timestamps.
 func Fractional_Nanoseconds_Invariants(
-	value Fractional_Nanoseconds, namespace invariant.Namespace,
+	value Fractional_Nanoseconds, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int32(
 			int32(value), int32(TYPE_FLAG_FIELD_SIZE),
 			int32(TIMESTAMP_NANOSECOND_MAXIMUM),
@@ -1038,9 +1038,9 @@ type Fraction_Digit_Count int
 
 // Fraction_Digit_Count_Invariants bounds one through nanosecond precision.
 func Fraction_Digit_Count_Invariants(
-	value Fraction_Digit_Count, namespace invariant.Namespace,
+	value Fraction_Digit_Count, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(
 			int(value), TYPE_FLAG_FIELD_SIZE,
 			TIMESTAMP_FRACTION_DIGIT_COUNT_MAXIMUM,
@@ -1053,9 +1053,9 @@ type Timestamp_Value_Size int
 
 // Timestamp_Value_Size_Invariants bounds every PAX timestamp rendering.
 func Timestamp_Value_Size_Invariants(
-	value Timestamp_Value_Size, namespace invariant.Namespace,
+	value Timestamp_Value_Size, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(int(value), TYPE_FLAG_FIELD_SIZE, TIMESTAMP_VALUE_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -1064,8 +1064,8 @@ func Timestamp_Value_Size_Invariants(
 type Unpadded_Size int64
 
 // Unpadded_Size_Invariants bounds every content or metadata alignment input.
-func Unpadded_Size_Invariants(value Unpadded_Size, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Unpadded_Size_Invariants(value Unpadded_Size, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int64(int64(value), COUNT_MINIMUM, ARCHIVE_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -1074,8 +1074,8 @@ func Unpadded_Size_Invariants(value Unpadded_Size, namespace invariant.Namespace
 type Block_Padding int64
 
 // Block_Padding_Invariants bounds one alignment remainder.
-func Block_Padding_Invariants(value Block_Padding, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Block_Padding_Invariants(value Block_Padding, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int64(int64(value), COUNT_MINIMUM, PADDING_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -1085,9 +1085,9 @@ type Metadata_Payload_Size int
 
 // Metadata_Payload_Size_Invariants bounds hostile and generated metadata bodies.
 func Metadata_Payload_Size_Invariants(
-	value Metadata_Payload_Size, namespace invariant.Namespace,
+	value Metadata_Payload_Size, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(int(value), COUNT_MINIMUM, SPECIAL_FILE_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -1097,9 +1097,9 @@ type Metadata_Block_Count int
 
 // Metadata_Block_Count_Invariants bounds zero through maximum metadata blocks.
 func Metadata_Block_Count_Invariants(
-	value Metadata_Block_Count, namespace invariant.Namespace,
+	value Metadata_Block_Count, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(
 			int(value), COUNT_MINIMUM, METADATA_BLOCK_COUNT_MAXIMUM,
 		).
@@ -1111,9 +1111,9 @@ type Metadata_Block_Position int
 
 // Metadata_Block_Position_Invariants bounds retained extension cursor.
 func Metadata_Block_Position_Invariants(
-	value Metadata_Block_Position, namespace invariant.Namespace,
+	value Metadata_Block_Position, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(
 			int(value), COUNT_MINIMUM, READER_METADATA_BLOCK_COUNT_MAXIMUM,
 		).
@@ -1125,9 +1125,9 @@ type Metadata_Available_Boundary int
 
 // Metadata_Available_Boundary_Invariants bounds retained extension storage.
 func Metadata_Available_Boundary_Invariants(
-	value Metadata_Available_Boundary, namespace invariant.Namespace,
+	value Metadata_Available_Boundary, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(int(value), COUNT_MINIMUM, READER_METADATA_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -1136,8 +1136,8 @@ func Metadata_Available_Boundary_Invariants(
 type UTF8_Position int
 
 // UTF8_Position_Invariants bounds metadata cursor.
-func UTF8_Position_Invariants(value UTF8_Position, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func UTF8_Position_Invariants(value UTF8_Position, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(
 			int(value), COUNT_MINIMUM,
 			UTF8_POSITION_MAXIMUM,
@@ -1150,9 +1150,9 @@ type UTF8_Character_Size int
 
 // UTF8_Character_Size_Invariants admits encoded rune widths only.
 func UTF8_Character_Size_Invariants(
-	value UTF8_Character_Size, namespace invariant.Namespace,
+	value UTF8_Character_Size, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Enum_3_Int(
 			int(value), utf8.CHARACTER_SIZE_TWO, utf8.CHARACTER_SIZE_THREE,
 			utf8.CHARACTER_SIZE_MAXIMUM,
@@ -1164,8 +1164,8 @@ func UTF8_Character_Size_Invariants(
 type UTF8_Boundary int
 
 // UTF8_Boundary_Invariants bounds metadata candidate end.
-func UTF8_Boundary_Invariants(value UTF8_Boundary, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func UTF8_Boundary_Invariants(value UTF8_Boundary, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(
 			int(value), TYPE_FLAG_FIELD_SIZE, HEADER_TEXT_SIZE_MAXIMUM,
 		).
@@ -1177,9 +1177,9 @@ type PAX_Payload_Size_Candidate int
 
 // PAX_Payload_Size_Candidate_Invariants bounds preflight before storage capacity.
 func PAX_Payload_Size_Candidate_Invariants(
-	value PAX_Payload_Size_Candidate, namespace invariant.Namespace,
+	value PAX_Payload_Size_Candidate, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(
 			int(value), PAX_PAYLOAD_SIZE_MINIMUM,
 			PAX_PAYLOAD_SIZE_CANDIDATE_MAXIMUM,
@@ -1192,9 +1192,9 @@ type PAX_Time_Payload_Base_Size int
 
 // PAX_Time_Payload_Base_Size_Invariants excludes optional time-record space.
 func PAX_Time_Payload_Base_Size_Invariants(
-	value PAX_Time_Payload_Base_Size, namespace invariant.Namespace,
+	value PAX_Time_Payload_Base_Size, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(
 			int(value), PAX_PAYLOAD_SIZE_MINIMUM,
 			PAX_TIME_PAYLOAD_BASE_SIZE_MAXIMUM,
@@ -1206,8 +1206,8 @@ func PAX_Time_Payload_Base_Size_Invariants(
 type Destination []byte
 
 // Destination_Invariants bounds output storage.
-func Destination_Invariants(value Destination, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Destination_Invariants(value Destination, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), COUNT_MINIMUM, ARCHIVE_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -1216,8 +1216,8 @@ func Destination_Invariants(value Destination, namespace invariant.Namespace) {
 type Source []byte
 
 // Source_Invariants bounds entry content.
-func Source_Invariants(value Source, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Source_Invariants(value Source, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), COUNT_MINIMUM, ARCHIVE_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -1226,8 +1226,8 @@ func Source_Invariants(value Source, namespace invariant.Namespace) {
 type Integer int64
 
 // Integer_Invariants covers signed wire and PAX values.
-func Integer_Invariants(value Integer, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Integer_Invariants(value Integer, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int64(int64(value), int64(INTEGER_MINIMUM), int64(INTEGER_MAXIMUM)).
 		Ensure()
 }
@@ -1237,9 +1237,9 @@ type Octal_Integer int64
 
 // Octal_Integer_Invariants bounds widest unterminated numeric field.
 func Octal_Integer_Invariants(
-	value Octal_Integer, namespace invariant.Namespace,
+	value Octal_Integer, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int64(int64(value), COUNT_MINIMUM, OCTAL_PARSE_MAXIMUM).
 		Ensure()
 }
@@ -1248,8 +1248,8 @@ func Octal_Integer_Invariants(
 type Octal_Value int64
 
 // Octal_Value_Invariants bounds largest terminated octal field.
-func Octal_Value_Invariants(value Octal_Value, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Octal_Value_Invariants(value Octal_Value, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int64(int64(value), COUNT_MINIMUM, LARGE_OCTAL_MAXIMUM).
 		Ensure()
 }
@@ -1259,9 +1259,9 @@ type Unsigned_Header_Checksum int64
 
 // Unsigned_Header_Checksum_Invariants bounds every possible header byte pattern.
 func Unsigned_Header_Checksum_Invariants(
-	value Unsigned_Header_Checksum, namespace invariant.Namespace,
+	value Unsigned_Header_Checksum, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int64(
 			int64(value), int64(HEADER_CHECKSUM_UNSIGNED_MINIMUM),
 			int64(HEADER_CHECKSUM_UNSIGNED_MAXIMUM),
@@ -1274,9 +1274,9 @@ type Signed_Header_Checksum int64
 
 // Signed_Header_Checksum_Invariants bounds every possible header byte pattern.
 func Signed_Header_Checksum_Invariants(
-	value Signed_Header_Checksum, namespace invariant.Namespace,
+	value Signed_Header_Checksum, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int64(
 			int64(value), int64(HEADER_CHECKSUM_SIGNED_MINIMUM),
 			int64(HEADER_CHECKSUM_SIGNED_MAXIMUM),
@@ -1288,8 +1288,8 @@ func Signed_Header_Checksum_Invariants(
 type Numeric_Field []byte
 
 // Numeric_Field_Invariants admits only the two TAR numeric field widths.
-func Numeric_Field_Invariants(value Numeric_Field, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Numeric_Field_Invariants(value Numeric_Field, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_Int(len(value), MODE_FIELD_SIZE, ENTRY_SIZE_FIELD_SIZE).
 		Ensure()
 }
@@ -1299,9 +1299,9 @@ type Optional_Numeric_Field []byte
 
 // Optional_Numeric_Field_Invariants fixes optional timestamp width.
 func Optional_Numeric_Field_Invariants(
-	value Optional_Numeric_Field, namespace invariant.Namespace,
+	value Optional_Numeric_Field, namespace aver.Namespace,
 ) {
-	invariant.Always(
+	aver.Always(
 		len(value) == TIMESTAMP_FIELD_SIZE,
 		"GNU optional time occupies timestamp field.",
 	)
@@ -1312,9 +1312,9 @@ type Numeric_Destination []byte
 
 // Numeric_Destination_Invariants admits only the two encoded field widths.
 func Numeric_Destination_Invariants(
-	value Numeric_Destination, namespace invariant.Namespace,
+	value Numeric_Destination, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Enum_Int(len(value), MODE_FIELD_SIZE, ENTRY_SIZE_FIELD_SIZE).
 		Ensure()
 }
@@ -1324,9 +1324,9 @@ type Numeric_Field_Size int
 
 // Numeric_Field_Size_Invariants admits only the two TAR numeric widths.
 func Numeric_Field_Size_Invariants(
-	value Numeric_Field_Size, namespace invariant.Namespace,
+	value Numeric_Field_Size, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Enum_Int(int(value), MODE_FIELD_SIZE, ENTRY_SIZE_FIELD_SIZE).
 		Ensure()
 }
@@ -1336,9 +1336,9 @@ type Unsigned_Integer uint64
 
 // Unsigned_Integer_Invariants covers decimal formatting magnitude.
 func Unsigned_Integer_Invariants(
-	value Unsigned_Integer, namespace invariant.Namespace,
+	value Unsigned_Integer, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Uint64(
 			uint64(value), uint64(UNSIGNED_INTEGER_MINIMUM),
 			uint64(UNSIGNED_INTEGER_MAXIMUM),
@@ -1350,8 +1350,8 @@ func Unsigned_Integer_Invariants(
 type Header_Name []byte
 
 // Header_Name_Invariants bounds one logical path.
-func Header_Name_Invariants(value Header_Name, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Header_Name_Invariants(value Header_Name, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), COUNT_MINIMUM, HEADER_TEXT_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -1360,8 +1360,8 @@ func Header_Name_Invariants(value Header_Name, namespace invariant.Namespace) {
 type Writer_Name []byte
 
 // Writer_Name_Invariants excludes the empty path rejected at validation.
-func Writer_Name_Invariants(value Writer_Name, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Writer_Name_Invariants(value Writer_Name, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), TYPE_FLAG_FIELD_SIZE, HEADER_TEXT_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -1371,9 +1371,9 @@ type Header_Name_Unvalidated []byte
 
 // Header_Name_Unvalidated_Invariants bounds hostile path storage.
 func Header_Name_Unvalidated_Invariants(
-	value Header_Name_Unvalidated, namespace invariant.Namespace,
+	value Header_Name_Unvalidated, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(len(value), COUNT_MINIMUM, HEADER_TEXT_SIZE_UNVALIDATED_MAXIMUM).
 		Ensure()
 }
@@ -1383,9 +1383,9 @@ type Header_Link_Name []byte
 
 // Header_Link_Name_Invariants bounds one logical link target.
 func Header_Link_Name_Invariants(
-	value Header_Link_Name, namespace invariant.Namespace,
+	value Header_Link_Name, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(len(value), COUNT_MINIMUM, HEADER_TEXT_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -1395,9 +1395,9 @@ type Header_Link_Name_Unvalidated []byte
 
 // Header_Link_Name_Unvalidated_Invariants bounds hostile link storage.
 func Header_Link_Name_Unvalidated_Invariants(
-	value Header_Link_Name_Unvalidated, namespace invariant.Namespace,
+	value Header_Link_Name_Unvalidated, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(len(value), COUNT_MINIMUM, HEADER_TEXT_SIZE_UNVALIDATED_MAXIMUM).
 		Ensure()
 }
@@ -1407,9 +1407,9 @@ type Header_User_Name []byte
 
 // Header_User_Name_Invariants bounds one owner name.
 func Header_User_Name_Invariants(
-	value Header_User_Name, namespace invariant.Namespace,
+	value Header_User_Name, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(len(value), COUNT_MINIMUM, HEADER_USER_NAME_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -1419,9 +1419,9 @@ type Header_User_Name_Unvalidated []byte
 
 // Header_User_Name_Unvalidated_Invariants bounds hostile owner storage.
 func Header_User_Name_Unvalidated_Invariants(
-	value Header_User_Name_Unvalidated, namespace invariant.Namespace,
+	value Header_User_Name_Unvalidated, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(
 			len(value), COUNT_MINIMUM, HEADER_USER_NAME_SIZE_UNVALIDATED_MAXIMUM,
 		).
@@ -1433,9 +1433,9 @@ type Header_Group_Name []byte
 
 // Header_Group_Name_Invariants bounds one group name.
 func Header_Group_Name_Invariants(
-	value Header_Group_Name, namespace invariant.Namespace,
+	value Header_Group_Name, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(len(value), COUNT_MINIMUM, HEADER_GROUP_NAME_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -1444,8 +1444,8 @@ func Header_Group_Name_Invariants(
 type UTF8_Text []byte
 
 // UTF8_Text_Invariants bounds a complete metadata field.
-func UTF8_Text_Invariants(value UTF8_Text, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func UTF8_Text_Invariants(value UTF8_Text, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), COUNT_MINIMUM, HEADER_TEXT_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -1455,9 +1455,9 @@ type GNU_Extended_Field []byte
 
 // GNU_Extended_Field_Invariants bounds values requiring a GNU long extension.
 func GNU_Extended_Field_Invariants(
-	value GNU_Extended_Field, namespace invariant.Namespace,
+	value GNU_Extended_Field, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(
 			len(value), GNU_EXTENDED_FIELD_SIZE_MINIMUM,
 			HEADER_TEXT_SIZE_MAXIMUM,
@@ -1470,9 +1470,9 @@ type Header_Group_Name_Unvalidated []byte
 
 // Header_Group_Name_Unvalidated_Invariants bounds hostile group storage.
 func Header_Group_Name_Unvalidated_Invariants(
-	value Header_Group_Name_Unvalidated, namespace invariant.Namespace,
+	value Header_Group_Name_Unvalidated, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(
 			len(value), COUNT_MINIMUM, HEADER_GROUP_NAME_SIZE_UNVALIDATED_MAXIMUM,
 		).
@@ -1483,8 +1483,8 @@ func Header_Group_Name_Unvalidated_Invariants(
 type PAX_Records []byte
 
 // PAX_Records_Invariants keeps extension parsing bounded.
-func PAX_Records_Invariants(value PAX_Records, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func PAX_Records_Invariants(value PAX_Records, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), COUNT_MINIMUM, SPECIAL_FILE_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -1494,9 +1494,9 @@ type PAX_Record_Input []byte
 
 // PAX_Record_Input_Invariants excludes empty parser calls.
 func PAX_Record_Input_Invariants(
-	value PAX_Record_Input, namespace invariant.Namespace,
+	value PAX_Record_Input, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(len(value), TYPE_FLAG_FIELD_SIZE, SPECIAL_FILE_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -1506,9 +1506,9 @@ type PAX_Parsed_Record_Size int
 
 // PAX_Parsed_Record_Size_Invariants bounds one trusted record.
 func PAX_Parsed_Record_Size_Invariants(
-	value PAX_Parsed_Record_Size, namespace invariant.Namespace,
+	value PAX_Parsed_Record_Size, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(
 			int(value), PAX_RECORD_SIZE_MINIMUM, SPECIAL_FILE_SIZE_MAXIMUM,
 		).
@@ -1520,9 +1520,9 @@ type PAX_Valid_Records []byte
 
 // PAX_Valid_Records_Invariants excludes lengths no complete record can occupy.
 func PAX_Valid_Records_Invariants(
-	value PAX_Valid_Records, namespace invariant.Namespace,
+	value PAX_Valid_Records, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(len(value), PAX_RECORD_SIZE_MINIMUM, SPECIAL_FILE_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -1532,9 +1532,9 @@ type PAX_Header_Records []byte
 
 // PAX_Header_Records_Invariants bounds one writer-supplied record set.
 func PAX_Header_Records_Invariants(
-	value PAX_Header_Records, namespace invariant.Namespace,
+	value PAX_Header_Records, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(
 			len(value), PAX_RECORD_SIZE_MINIMUM, PAX_HEADER_RECORDS_SIZE_MAXIMUM,
 		).
@@ -1545,8 +1545,8 @@ func PAX_Header_Records_Invariants(
 type PAX_Key []byte
 
 // PAX_Key_Invariants protects record scans and literal comparisons.
-func PAX_Key_Invariants(value PAX_Key, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func PAX_Key_Invariants(value PAX_Key, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), COUNT_MINIMUM, PAX_KEY_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -1556,9 +1556,9 @@ type PAX_Parsed_Key []byte
 
 // PAX_Parsed_Key_Invariants excludes the empty-key parser failure.
 func PAX_Parsed_Key_Invariants(
-	value PAX_Parsed_Key, namespace invariant.Namespace,
+	value PAX_Parsed_Key, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(len(value), TYPE_FLAG_FIELD_SIZE, PAX_KEY_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -1567,8 +1567,8 @@ func PAX_Parsed_Key_Invariants(
 type PAX_Key_Name string
 
 // PAX_Key_Name_Invariants bounds shortest and longest supported keywords.
-func PAX_Key_Name_Invariants(value PAX_Key_Name, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func PAX_Key_Name_Invariants(value PAX_Key_Name, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(
 			len(value), PAX_KEY_NAME_SIZE_MINIMUM, PAX_KEY_NAME_SIZE_MAXIMUM,
 		).
@@ -1580,9 +1580,9 @@ type Wire_Literal_Field []byte
 
 // Wire_Literal_Field_Invariants bounds version, trailer, and magic widths.
 func Wire_Literal_Field_Invariants(
-	value Wire_Literal_Field, namespace invariant.Namespace,
+	value Wire_Literal_Field, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(len(value), VERSION_FIELD_SIZE, MAGIC_FIELD_SIZE).
 		Ensure()
 }
@@ -1591,8 +1591,8 @@ func Wire_Literal_Field_Invariants(
 type Wire_Literal string
 
 // Wire_Literal_Invariants matches fixed marker width bounds.
-func Wire_Literal_Invariants(value Wire_Literal, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Wire_Literal_Invariants(value Wire_Literal, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), VERSION_FIELD_SIZE, MAGIC_FIELD_SIZE).
 		Ensure()
 }
@@ -1601,8 +1601,8 @@ func Wire_Literal_Invariants(value Wire_Literal, namespace invariant.Namespace) 
 type PAX_Value []byte
 
 // PAX_Value_Invariants protects text and number parsing.
-func PAX_Value_Invariants(value PAX_Value, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func PAX_Value_Invariants(value PAX_Value, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), COUNT_MINIMUM, PAX_VALUE_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -1612,9 +1612,9 @@ type Decimal_Candidate []byte
 
 // Decimal_Candidate_Invariants bounds numeric parser input.
 func Decimal_Candidate_Invariants(
-	value Decimal_Candidate, namespace invariant.Namespace,
+	value Decimal_Candidate, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(len(value), COUNT_MINIMUM, PAX_NUMERIC_VALUE_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -1624,9 +1624,9 @@ type PAX_Timestamp_Candidate []byte
 
 // PAX_Timestamp_Candidate_Invariants bounds timestamp parser input.
 func PAX_Timestamp_Candidate_Invariants(
-	value PAX_Timestamp_Candidate, namespace invariant.Namespace,
+	value PAX_Timestamp_Candidate, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(
 			len(value), TYPE_FLAG_FIELD_SIZE, PAX_TIMESTAMP_VALUE_SIZE_MAXIMUM,
 		).
@@ -1638,9 +1638,9 @@ type Decimal_Destination []byte
 
 // Decimal_Destination_Invariants bounds signed decimal width.
 func Decimal_Destination_Invariants(
-	value Decimal_Destination, namespace invariant.Namespace,
+	value Decimal_Destination, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(
 			len(value), TYPE_FLAG_FIELD_SIZE, INTEGER_DECIMAL_SIZE_MAXIMUM,
 		).
@@ -1652,9 +1652,9 @@ type Unsigned_Decimal_Destination []byte
 
 // Unsigned_Decimal_Destination_Invariants bounds magnitude width.
 func Unsigned_Decimal_Destination_Invariants(
-	value Unsigned_Decimal_Destination, namespace invariant.Namespace,
+	value Unsigned_Decimal_Destination, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(
 			len(value), TYPE_FLAG_FIELD_SIZE, DECIMAL_MAGNITUDE_SIZE_MAXIMUM,
 		).
@@ -1666,9 +1666,9 @@ type Timestamp_Destination []byte
 
 // Timestamp_Destination_Invariants bounds timestamp text width.
 func Timestamp_Destination_Invariants(
-	value Timestamp_Destination, namespace invariant.Namespace,
+	value Timestamp_Destination, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(len(value), TYPE_FLAG_FIELD_SIZE, TIMESTAMP_VALUE_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -1678,9 +1678,9 @@ type PAX_Payload_Destination []byte
 
 // PAX_Payload_Destination_Invariants bounds mandatory through maximum payload.
 func PAX_Payload_Destination_Invariants(
-	value PAX_Payload_Destination, namespace invariant.Namespace,
+	value PAX_Payload_Destination, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(len(value), PAX_PAYLOAD_SIZE_MINIMUM, SPECIAL_FILE_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -1690,9 +1690,9 @@ type PAX_Header_Field_Size int
 
 // PAX_Header_Field_Size_Invariants bounds mandatory through complete payload.
 func PAX_Header_Field_Size_Invariants(
-	value PAX_Header_Field_Size, namespace invariant.Namespace,
+	value PAX_Header_Field_Size, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(int(value), PAX_PAYLOAD_SIZE_MINIMUM, SPECIAL_FILE_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -1701,8 +1701,8 @@ func PAX_Header_Field_Size_Invariants(
 type PAX_Time_Size int
 
 // PAX_Time_Size_Invariants bounds a nonempty generated timestamp span.
-func PAX_Time_Size_Invariants(value PAX_Time_Size, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func PAX_Time_Size_Invariants(value PAX_Time_Size, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(
 			int(value), PAX_TIMESTAMP_RECORD_SIZE_MINIMUM, PAX_TIME_SIZE_MAXIMUM,
 		).
@@ -1714,9 +1714,9 @@ type PAX_Time_Destination []byte
 
 // PAX_Time_Destination_Invariants bounds one through three timestamp records.
 func PAX_Time_Destination_Invariants(
-	value PAX_Time_Destination, namespace invariant.Namespace,
+	value PAX_Time_Destination, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(
 			len(value), PAX_TIMESTAMP_RECORD_SIZE_MINIMUM, PAX_TIME_SIZE_MAXIMUM,
 		).
@@ -1728,9 +1728,9 @@ type PAX_Text_Value []byte
 
 // PAX_Text_Value_Invariants bounds every writer-generated text value.
 func PAX_Text_Value_Invariants(
-	value PAX_Text_Value, namespace invariant.Namespace,
+	value PAX_Text_Value, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(len(value), TYPE_FLAG_FIELD_SIZE, PAX_NAME_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -1740,9 +1740,9 @@ type PAX_Record_Key_Size int
 
 // PAX_Record_Key_Size_Invariants bounds decimal through link-path keys.
 func PAX_Record_Key_Size_Invariants(
-	value PAX_Record_Key_Size, namespace invariant.Namespace,
+	value PAX_Record_Key_Size, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(
 			int(value), PAX_KEY_NAME_SIZE_MINIMUM, PAX_KEY_NAME_SIZE_MAXIMUM,
 		).
@@ -1754,9 +1754,9 @@ type PAX_Record_Value_Size int
 
 // PAX_Record_Value_Size_Invariants bounds one generated record value.
 func PAX_Record_Value_Size_Invariants(
-	value PAX_Record_Value_Size, namespace invariant.Namespace,
+	value PAX_Record_Value_Size, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(
 			int(value), TYPE_FLAG_FIELD_SIZE, HEADER_TEXT_SIZE_MAXIMUM,
 		).
@@ -1768,9 +1768,9 @@ type PAX_Record_Size_Candidate int
 
 // PAX_Record_Size_Candidate_Invariants bounds every independently bounded record.
 func PAX_Record_Size_Candidate_Invariants(
-	value PAX_Record_Size_Candidate, namespace invariant.Namespace,
+	value PAX_Record_Size_Candidate, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(
 			int(value), PAX_GENERATED_RECORD_SIZE_MINIMUM,
 			PAX_LINK_RECORD_SIZE_CANDIDATE_MAXIMUM,
@@ -1783,9 +1783,9 @@ type PAX_Text_Record_Size int
 
 // PAX_Text_Record_Size_Invariants bounds shortest through largest path record.
 func PAX_Text_Record_Size_Invariants(
-	value PAX_Text_Record_Size, namespace invariant.Namespace,
+	value PAX_Text_Record_Size, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(
 			int(value), PAX_TEXT_RECORD_SIZE_MINIMUM,
 			PAX_PATH_WRITE_RECORD_SIZE_MAXIMUM,
@@ -1798,9 +1798,9 @@ type PAX_Decimal_Record_Size int
 
 // PAX_Decimal_Record_Size_Invariants bounds identifiers and logical size.
 func PAX_Decimal_Record_Size_Invariants(
-	value PAX_Decimal_Record_Size, namespace invariant.Namespace,
+	value PAX_Decimal_Record_Size, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(
 			int(value), PAX_GENERATED_RECORD_SIZE_MINIMUM,
 			PAX_IDENTIFIER_RECORD_SIZE_MAXIMUM,
@@ -1813,9 +1813,9 @@ type PAX_Timestamp_Record_Size int
 
 // PAX_Timestamp_Record_Size_Invariants bounds shortest through widest time.
 func PAX_Timestamp_Record_Size_Invariants(
-	value PAX_Timestamp_Record_Size, namespace invariant.Namespace,
+	value PAX_Timestamp_Record_Size, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(
 			int(value), PAX_TIMESTAMP_RECORD_SIZE_MINIMUM,
 			PAX_TIMESTAMP_RECORD_SIZE_MAXIMUM,
@@ -1828,9 +1828,9 @@ type PAX_Text_Record_Destination []byte
 
 // PAX_Text_Record_Destination_Invariants bounds valid text write windows.
 func PAX_Text_Record_Destination_Invariants(
-	value PAX_Text_Record_Destination, namespace invariant.Namespace,
+	value PAX_Text_Record_Destination, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(
 			len(value), PAX_TEXT_RECORD_DESTINATION_SIZE_MINIMUM,
 			SPECIAL_FILE_SIZE_MAXIMUM,
@@ -1843,9 +1843,9 @@ type PAX_Decimal_Record_Destination []byte
 
 // PAX_Decimal_Record_Destination_Invariants bounds integer write windows.
 func PAX_Decimal_Record_Destination_Invariants(
-	value PAX_Decimal_Record_Destination, namespace invariant.Namespace,
+	value PAX_Decimal_Record_Destination, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(
 			len(value), PAX_GENERATED_RECORD_SIZE_MINIMUM,
 			PAX_DECIMAL_RECORD_DESTINATION_SIZE_MAXIMUM,
@@ -1858,9 +1858,9 @@ type PAX_Timestamp_Record_Destination []byte
 
 // PAX_Timestamp_Record_Destination_Invariants bounds time write windows.
 func PAX_Timestamp_Record_Destination_Invariants(
-	value PAX_Timestamp_Record_Destination, namespace invariant.Namespace,
+	value PAX_Timestamp_Record_Destination, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(
 			len(value), PAX_TIMESTAMP_RECORD_SIZE_MINIMUM, PAX_TIME_SIZE_MAXIMUM,
 		).
@@ -1871,8 +1871,8 @@ func PAX_Timestamp_Record_Destination_Invariants(
 type PAX_Text_Key string
 
 // PAX_Text_Key_Invariants bounds path through link-path keyword widths.
-func PAX_Text_Key_Invariants(value PAX_Text_Key, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func PAX_Text_Key_Invariants(value PAX_Text_Key, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), PAX_TEXT_KEY_SIZE_MINIMUM, PAX_TEXT_KEY_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -1882,9 +1882,9 @@ type PAX_Decimal_Key string
 
 // PAX_Decimal_Key_Invariants bounds owner identifiers through size keyword.
 func PAX_Decimal_Key_Invariants(
-	value PAX_Decimal_Key, namespace invariant.Namespace,
+	value PAX_Decimal_Key, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Enum_Int(len(value), PAX_DECIMAL_KEY_SIZE_MINIMUM, PAX_DECIMAL_KEY_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -1893,8 +1893,8 @@ func PAX_Decimal_Key_Invariants(
 type PAX_Time_Key string
 
 // PAX_Time_Key_Invariants fixes the shared timestamp keyword width.
-func PAX_Time_Key_Invariants(value PAX_Time_Key, namespace invariant.Namespace) {
-	invariant.Always(
+func PAX_Time_Key_Invariants(value PAX_Time_Key, namespace aver.Namespace) {
+	aver.Always(
 		len(value) == PAX_TIME_KEY_SIZE,
 		"Generated PAX timestamp keys share one width.",
 	)
@@ -1905,9 +1905,9 @@ type PAX_Records_Unvalidated []byte
 
 // PAX_Records_Unvalidated_Invariants bounds hostile extension storage.
 func PAX_Records_Unvalidated_Invariants(
-	value PAX_Records_Unvalidated, namespace invariant.Namespace,
+	value PAX_Records_Unvalidated, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(len(value), COUNT_MINIMUM, SPECIAL_FILE_SIZE_UNVALIDATED_MAXIMUM).
 		Ensure()
 }
@@ -1916,8 +1916,8 @@ func PAX_Records_Unvalidated_Invariants(
 type Entry_Size int64
 
 // Entry_Size_Invariants protects caller destination arithmetic.
-func Entry_Size_Invariants(value Entry_Size, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Entry_Size_Invariants(value Entry_Size, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int64(int64(value), COUNT_MINIMUM, ARCHIVE_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -1927,9 +1927,9 @@ type Entry_Size_Unvalidated int64
 
 // Entry_Size_Unvalidated_Invariants covers the complete hostile integer domain.
 func Entry_Size_Unvalidated_Invariants(
-	value Entry_Size_Unvalidated, namespace invariant.Namespace,
+	value Entry_Size_Unvalidated, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int64(
 			int64(value), bits.INTEGER_64_MINIMUM, bits.INTEGER_64_MAXIMUM,
 		).
@@ -1940,8 +1940,8 @@ func Entry_Size_Unvalidated_Invariants(
 type File_Mode int64
 
 // File_Mode_Invariants covers octal and base-256 encodings.
-func File_Mode_Invariants(value File_Mode, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func File_Mode_Invariants(value File_Mode, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int64(int64(value), int64(INTEGER_MINIMUM), int64(INTEGER_MAXIMUM)).
 		Ensure()
 }
@@ -1951,9 +1951,9 @@ type User_Identifier int64
 
 // User_Identifier_Invariants covers octal, base-256, and PAX forms.
 func User_Identifier_Invariants(
-	value User_Identifier, namespace invariant.Namespace,
+	value User_Identifier, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int64(int64(value), int64(INTEGER_MINIMUM), int64(INTEGER_MAXIMUM)).
 		Ensure()
 }
@@ -1963,9 +1963,9 @@ type Group_Identifier int64
 
 // Group_Identifier_Invariants covers octal, base-256, and PAX forms.
 func Group_Identifier_Invariants(
-	value Group_Identifier, namespace invariant.Namespace,
+	value Group_Identifier, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int64(int64(value), int64(INTEGER_MINIMUM), int64(INTEGER_MAXIMUM)).
 		Ensure()
 }
@@ -1974,8 +1974,8 @@ func Group_Identifier_Invariants(
 type Device_Major int64
 
 // Device_Major_Invariants covers octal and base-256 forms.
-func Device_Major_Invariants(value Device_Major, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Device_Major_Invariants(value Device_Major, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int64(int64(value), int64(INTEGER_MINIMUM), int64(INTEGER_MAXIMUM)).
 		Ensure()
 }
@@ -1984,8 +1984,8 @@ func Device_Major_Invariants(value Device_Major, namespace invariant.Namespace) 
 type Device_Minor int64
 
 // Device_Minor_Invariants covers octal and base-256 forms.
-func Device_Minor_Invariants(value Device_Minor, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Device_Minor_Invariants(value Device_Minor, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int64(int64(value), int64(INTEGER_MINIMUM), int64(INTEGER_MAXIMUM)).
 		Ensure()
 }
@@ -1995,9 +1995,9 @@ type Access_Seconds int64
 
 // Access_Seconds_Invariants covers complete Unix time.
 func Access_Seconds_Invariants(
-	value Access_Seconds, namespace invariant.Namespace,
+	value Access_Seconds, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int64(int64(value), int64(INTEGER_MINIMUM), int64(INTEGER_MAXIMUM)).
 		Ensure()
 }
@@ -2007,9 +2007,9 @@ type Access_Nanosecond_Count int32
 
 // Access_Nanosecond_Count_Invariants bounds one fractional second.
 func Access_Nanosecond_Count_Invariants(
-	value Access_Nanosecond_Count, namespace invariant.Namespace,
+	value Access_Nanosecond_Count, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int32(
 			int32(value), int32(TIMESTAMP_NANOSECOND_MINIMUM),
 			int32(TIMESTAMP_NANOSECOND_MAXIMUM),
@@ -2022,9 +2022,9 @@ type Access_Nanosecond_Count_Unvalidated int32
 
 // Access_Nanosecond_Count_Unvalidated_Invariants covers the complete scalar domain.
 func Access_Nanosecond_Count_Unvalidated_Invariants(
-	value Access_Nanosecond_Count_Unvalidated, namespace invariant.Namespace,
+	value Access_Nanosecond_Count_Unvalidated, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int32(int32(value), bits.INTEGER_32_MINIMUM, bits.INTEGER_32_MAXIMUM).
 		Ensure()
 }
@@ -2034,9 +2034,9 @@ type Access_Time_Set bool
 
 // Access_Time_Set_Invariants covers absent and present metadata.
 func Access_Time_Set_Invariants(
-	value Access_Time_Set, namespace invariant.Namespace,
+	value Access_Time_Set, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Sometimes(bool(value), "Access time is present.").
 		Ensure()
 }
@@ -2053,7 +2053,7 @@ type Access_Timestamp struct {
 
 // Access_Timestamp_Invariants composes one normalized optional instant.
 func Access_Timestamp_Invariants(
-	value Access_Timestamp, namespace invariant.Namespace,
+	value Access_Timestamp, namespace aver.Namespace,
 ) {
 	Access_Seconds_Invariants(value.Seconds, namespace)
 	Access_Nanosecond_Count_Invariants(value.Nanoseconds, namespace)
@@ -2072,7 +2072,7 @@ type Access_Timestamp_Unvalidated struct {
 
 // Access_Timestamp_Unvalidated_Invariants composes hostile access time.
 func Access_Timestamp_Unvalidated_Invariants(
-	value Access_Timestamp_Unvalidated, namespace invariant.Namespace,
+	value Access_Timestamp_Unvalidated, namespace aver.Namespace,
 ) {
 	Access_Seconds_Invariants(value.Seconds, namespace)
 	Access_Nanosecond_Count_Unvalidated_Invariants(value.Nanoseconds, namespace)
@@ -2084,9 +2084,9 @@ type Change_Seconds int64
 
 // Change_Seconds_Invariants covers complete Unix time.
 func Change_Seconds_Invariants(
-	value Change_Seconds, namespace invariant.Namespace,
+	value Change_Seconds, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int64(int64(value), int64(INTEGER_MINIMUM), int64(INTEGER_MAXIMUM)).
 		Ensure()
 }
@@ -2096,9 +2096,9 @@ type Change_Nanosecond_Count int32
 
 // Change_Nanosecond_Count_Invariants bounds one fractional second.
 func Change_Nanosecond_Count_Invariants(
-	value Change_Nanosecond_Count, namespace invariant.Namespace,
+	value Change_Nanosecond_Count, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int32(
 			int32(value), int32(TIMESTAMP_NANOSECOND_MINIMUM),
 			int32(TIMESTAMP_NANOSECOND_MAXIMUM),
@@ -2111,9 +2111,9 @@ type Change_Nanosecond_Count_Unvalidated int32
 
 // Change_Nanosecond_Count_Unvalidated_Invariants covers the complete scalar domain.
 func Change_Nanosecond_Count_Unvalidated_Invariants(
-	value Change_Nanosecond_Count_Unvalidated, namespace invariant.Namespace,
+	value Change_Nanosecond_Count_Unvalidated, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int32(int32(value), bits.INTEGER_32_MINIMUM, bits.INTEGER_32_MAXIMUM).
 		Ensure()
 }
@@ -2123,9 +2123,9 @@ type Change_Time_Set bool
 
 // Change_Time_Set_Invariants covers absent and present metadata.
 func Change_Time_Set_Invariants(
-	value Change_Time_Set, namespace invariant.Namespace,
+	value Change_Time_Set, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Sometimes(bool(value), "Metadata change time is present.").
 		Ensure()
 }
@@ -2142,7 +2142,7 @@ type Change_Timestamp struct {
 
 // Change_Timestamp_Invariants composes one normalized optional instant.
 func Change_Timestamp_Invariants(
-	value Change_Timestamp, namespace invariant.Namespace,
+	value Change_Timestamp, namespace aver.Namespace,
 ) {
 	Change_Seconds_Invariants(value.Seconds, namespace)
 	Change_Nanosecond_Count_Invariants(value.Nanoseconds, namespace)
@@ -2161,7 +2161,7 @@ type Change_Timestamp_Unvalidated struct {
 
 // Change_Timestamp_Unvalidated_Invariants composes hostile metadata time.
 func Change_Timestamp_Unvalidated_Invariants(
-	value Change_Timestamp_Unvalidated, namespace invariant.Namespace,
+	value Change_Timestamp_Unvalidated, namespace aver.Namespace,
 ) {
 	Change_Seconds_Invariants(value.Seconds, namespace)
 	Change_Nanosecond_Count_Unvalidated_Invariants(value.Nanoseconds, namespace)
@@ -2173,9 +2173,9 @@ type Nanosecond_Count int32
 
 // Nanosecond_Count_Invariants bounds one fractional second.
 func Nanosecond_Count_Invariants(
-	value Nanosecond_Count, namespace invariant.Namespace,
+	value Nanosecond_Count, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int32(
 			int32(value), int32(TIMESTAMP_NANOSECOND_MINIMUM),
 			int32(TIMESTAMP_NANOSECOND_MAXIMUM),
@@ -2188,9 +2188,9 @@ type Nanosecond_Count_Unvalidated int32
 
 // Nanosecond_Count_Unvalidated_Invariants covers the complete scalar domain.
 func Nanosecond_Count_Unvalidated_Invariants(
-	value Nanosecond_Count_Unvalidated, namespace invariant.Namespace,
+	value Nanosecond_Count_Unvalidated, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int32(int32(value), bits.INTEGER_32_MINIMUM, bits.INTEGER_32_MAXIMUM).
 		Ensure()
 }
@@ -2199,8 +2199,8 @@ func Nanosecond_Count_Unvalidated_Invariants(
 type Type_Flag byte
 
 // Type_Flag_Invariants covers complete extension byte domain.
-func Type_Flag_Invariants(value Type_Flag, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Type_Flag_Invariants(value Type_Flag, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint8(uint8(value), uint8(TYPE_FLAG_MINIMUM), uint8(TYPE_FLAG_MAXIMUM)).
 		Ensure()
 }
@@ -2210,9 +2210,9 @@ type Wire_Type_Flag byte
 
 // Wire_Type_Flag_Invariants bounds normalized fixed-header entry kinds.
 func Wire_Type_Flag_Invariants(
-	value Wire_Type_Flag, namespace invariant.Namespace,
+	value Wire_Type_Flag, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Uint8(
 			uint8(value), uint8(TYPE_FLAG_FIELD_SIZE), uint8(TYPE_FLAG_MAXIMUM),
 		).
@@ -2224,9 +2224,9 @@ type GNU_Long_Type_Flag byte
 
 // GNU_Long_Type_Flag_Invariants keeps GNU metadata dispatch exact.
 func GNU_Long_Type_Flag_Invariants(
-	value GNU_Long_Type_Flag, namespace invariant.Namespace,
+	value GNU_Long_Type_Flag, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Enum_Uint8(
 			uint8(value), uint8(TYPE_GNU_LONG_LINK), uint8(TYPE_GNU_LONG_NAME),
 		).
@@ -2238,9 +2238,9 @@ type Metadata_Type_Flag byte
 
 // Metadata_Type_Flag_Invariants keeps generated metadata families exact.
 func Metadata_Type_Flag_Invariants(
-	value Metadata_Type_Flag, namespace invariant.Namespace,
+	value Metadata_Type_Flag, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Enum_3_Uint8(
 			uint8(value), uint8(TYPE_GNU_LONG_LINK), uint8(TYPE_GNU_LONG_NAME),
 			uint8(TYPE_PAX_LOCAL),
@@ -2252,8 +2252,8 @@ func Metadata_Type_Flag_Invariants(
 type Metadata_Size int64
 
 // Metadata_Size_Invariants bounds PAX or GNU metadata bodies.
-func Metadata_Size_Invariants(value Metadata_Size, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Metadata_Size_Invariants(value Metadata_Size, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int64(
 			int64(value), int64(PAX_PAYLOAD_SIZE_MINIMUM),
 			int64(SPECIAL_FILE_SIZE_MAXIMUM),
@@ -2272,7 +2272,7 @@ type Timestamp struct {
 }
 
 // Timestamp_Invariants composes signed instant, fraction, and presence.
-func Timestamp_Invariants(value Timestamp, namespace invariant.Namespace) {
+func Timestamp_Invariants(value Timestamp, namespace aver.Namespace) {
 	Integer_Invariants(value.Seconds, namespace)
 	Nanosecond_Count_Invariants(value.Nanoseconds, namespace)
 	bytes.Boolean_Invariants(value.Set, namespace)
@@ -2290,7 +2290,7 @@ type Timestamp_Unvalidated struct {
 
 // Timestamp_Unvalidated_Invariants composes hostile modification time.
 func Timestamp_Unvalidated_Invariants(
-	value Timestamp_Unvalidated, namespace invariant.Namespace,
+	value Timestamp_Unvalidated, namespace aver.Namespace,
 ) {
 	Integer_Invariants(value.Seconds, namespace)
 	Nanosecond_Count_Unvalidated_Invariants(value.Nanoseconds, namespace)
@@ -2332,7 +2332,7 @@ type Header struct {
 }
 
 // Header_Invariants keeps bounded fields and normalized times together.
-func Header_Invariants(value Header, namespace invariant.Namespace) {
+func Header_Invariants(value Header, namespace aver.Namespace) {
 	Format_Invariants(value.Format, namespace)
 	Type_Flag_Invariants(value.Type_Flag, namespace)
 	Header_Name_Invariants(value.Name, namespace)
@@ -2388,9 +2388,9 @@ type Header_Unvalidated struct {
 
 // Header_Unvalidated_Invariants composes the complete caller domain.
 func Header_Unvalidated_Invariants(
-	value *Header_Unvalidated, namespace invariant.Namespace,
+	value *Header_Unvalidated, namespace aver.Namespace,
 ) {
-	invariant.Always(value != nil, "Unvalidated TAR Header state exists.")
+	aver.Always(value != nil, "Unvalidated TAR Header state exists.")
 	Format_Unvalidated_Invariants(value.Format, namespace)
 	Type_Flag_Invariants(value.Type_Flag, namespace)
 	Header_Name_Unvalidated_Invariants(value.Name, namespace)
@@ -2547,9 +2547,9 @@ type Header_Name_Destination []byte
 
 // Header_Name_Destination_Invariants bounds decoded path storage.
 func Header_Name_Destination_Invariants(
-	value Header_Name_Destination, namespace invariant.Namespace,
+	value Header_Name_Destination, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(len(value), COUNT_MINIMUM, HEADER_TEXT_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -2559,9 +2559,9 @@ type Header_Link_Name_Destination []byte
 
 // Header_Link_Name_Destination_Invariants bounds decoded link storage.
 func Header_Link_Name_Destination_Invariants(
-	value Header_Link_Name_Destination, namespace invariant.Namespace,
+	value Header_Link_Name_Destination, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(len(value), COUNT_MINIMUM, HEADER_TEXT_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -2571,9 +2571,9 @@ type Header_User_Name_Destination []byte
 
 // Header_User_Name_Destination_Invariants bounds decoded owner storage.
 func Header_User_Name_Destination_Invariants(
-	value Header_User_Name_Destination, namespace invariant.Namespace,
+	value Header_User_Name_Destination, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(len(value), COUNT_MINIMUM, HEADER_USER_NAME_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -2583,9 +2583,9 @@ type Header_Group_Name_Destination []byte
 
 // Header_Group_Name_Destination_Invariants bounds decoded group storage.
 func Header_Group_Name_Destination_Invariants(
-	value Header_Group_Name_Destination, namespace invariant.Namespace,
+	value Header_Group_Name_Destination, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(len(value), COUNT_MINIMUM, HEADER_GROUP_NAME_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -2604,7 +2604,7 @@ type Header_Storage struct {
 
 // Header_Storage_Invariants keeps caller fields inside metadata bounds.
 func Header_Storage_Invariants(
-	value Header_Storage, namespace invariant.Namespace,
+	value Header_Storage, namespace aver.Namespace,
 ) {
 	Header_Name_Destination_Invariants(value.Name, namespace)
 	Header_Link_Name_Destination_Invariants(value.Link_Name, namespace)
@@ -2617,9 +2617,9 @@ type Logical_Count int
 
 // Logical_Count_Invariants protects caller output arithmetic.
 func Logical_Count_Invariants(
-	value Logical_Count, namespace invariant.Namespace,
+	value Logical_Count, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(int(value), COUNT_MINIMUM, COUNT_MAXIMUM).
 		Ensure()
 }
@@ -2629,9 +2629,9 @@ type Logical_Position int
 
 // Logical_Position_Invariants keeps read progress bounded.
 func Logical_Position_Invariants(
-	value Logical_Position, namespace invariant.Namespace,
+	value Logical_Position, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(int(value), COUNT_MINIMUM, COUNT_MAXIMUM).
 		Ensure()
 }
@@ -2641,9 +2641,9 @@ type Reader_Initialized bool
 
 // Reader_Initialized_Invariants covers both reader lifecycle states.
 func Reader_Initialized_Invariants(
-	value Reader_Initialized, namespace invariant.Namespace,
+	value Reader_Initialized, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Sometimes(bool(value), "Reader is bound to caller archive.").
 		Ensure()
 }
@@ -2652,8 +2652,8 @@ func Reader_Initialized_Invariants(
 type Entry_Active bool
 
 // Entry_Active_Invariants covers absent and selected entry states.
-func Entry_Active_Invariants(value Entry_Active, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Entry_Active_Invariants(value Entry_Active, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Sometimes(bool(value), "Reader has selected one entry.").
 		Ensure()
 }
@@ -2662,8 +2662,8 @@ func Entry_Active_Invariants(value Entry_Active, namespace invariant.Namespace) 
 type Reader_Block []byte
 
 // Reader_Block_Invariants bounds one fixed wire record.
-func Reader_Block_Invariants(value Reader_Block, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Reader_Block_Invariants(value Reader_Block, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), COUNT_MINIMUM, BLOCK_SIZE).
 		Ensure()
 }
@@ -2673,9 +2673,9 @@ type Reader_Header_Block []byte
 
 // Reader_Header_Block_Invariants protects each fixed-offset header access.
 func Reader_Header_Block_Invariants(
-	value Reader_Header_Block, namespace invariant.Namespace,
+	value Reader_Header_Block, namespace aver.Namespace,
 ) {
-	invariant.Always(
+	aver.Always(
 		len(value) == BLOCK_SIZE,
 		"Initialized Reader header workspace has one complete TAR block.",
 	)
@@ -2685,8 +2685,8 @@ func Reader_Header_Block_Invariants(
 type Reader_Metadata []byte
 
 // Reader_Metadata_Invariants bounds extension workspace.
-func Reader_Metadata_Invariants(value Reader_Metadata, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Reader_Metadata_Invariants(value Reader_Metadata, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), COUNT_MINIMUM, READER_METADATA_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -2695,8 +2695,8 @@ func Reader_Metadata_Invariants(value Reader_Metadata, namespace invariant.Names
 type Header_Block []byte
 
 // Header_Block_Invariants fixes every parser and formatter to one wire block.
-func Header_Block_Invariants(value Header_Block, namespace invariant.Namespace) {
-	invariant.Always(
+func Header_Block_Invariants(value Header_Block, namespace aver.Namespace) {
+	aver.Always(
 		len(value) == BLOCK_SIZE,
 		"A header occupies one complete wire block.",
 	)
@@ -2706,8 +2706,8 @@ func Header_Block_Invariants(value Header_Block, namespace invariant.Namespace) 
 type Overlap_Left []byte
 
 // Overlap_Left_Invariants bounds the larger header-field side.
-func Overlap_Left_Invariants(value Overlap_Left, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Overlap_Left_Invariants(value Overlap_Left, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), COUNT_MINIMUM, HEADER_TEXT_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -2716,8 +2716,8 @@ func Overlap_Left_Invariants(value Overlap_Left, namespace invariant.Namespace) 
 type Overlap_Right []byte
 
 // Overlap_Right_Invariants bounds the larger reader-workspace side.
-func Overlap_Right_Invariants(value Overlap_Right, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Overlap_Right_Invariants(value Overlap_Right, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), COUNT_MINIMUM, READER_METADATA_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -2727,9 +2727,9 @@ type Reader_Transfer_Buffer []byte
 
 // Reader_Transfer_Buffer_Invariants bounds one transport borrow.
 func Reader_Transfer_Buffer_Invariants(
-	value Reader_Transfer_Buffer, namespace invariant.Namespace,
+	value Reader_Transfer_Buffer, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(len(value), COUNT_MINIMUM, ARCHIVE_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -2739,9 +2739,9 @@ type Reader_Long_Name []byte
 
 // Reader_Long_Name_Invariants bounds one GNU name override.
 func Reader_Long_Name_Invariants(
-	value Reader_Long_Name, namespace invariant.Namespace,
+	value Reader_Long_Name, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(len(value), COUNT_MINIMUM, HEADER_TEXT_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -2751,9 +2751,9 @@ type Reader_Long_Link []byte
 
 // Reader_Long_Link_Invariants bounds one GNU link override.
 func Reader_Long_Link_Invariants(
-	value Reader_Long_Link, namespace invariant.Namespace,
+	value Reader_Long_Link, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(len(value), COUNT_MINIMUM, HEADER_TEXT_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -2767,7 +2767,7 @@ type Reader_Storage struct {
 }
 
 // Reader_Storage_Invariants bounds both caller workspaces.
-func Reader_Storage_Invariants(value Reader_Storage, namespace invariant.Namespace) {
+func Reader_Storage_Invariants(value Reader_Storage, namespace aver.Namespace) {
 	Reader_Block_Invariants(value.Block, namespace)
 	Reader_Metadata_Invariants(value.Metadata, namespace)
 }
@@ -2776,8 +2776,8 @@ func Reader_Storage_Invariants(value Reader_Storage, namespace invariant.Namespa
 type Reader_Stage uint8
 
 // Reader_Stage_Invariants bounds transport continuation state.
-func Reader_Stage_Invariants(value Reader_Stage, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Reader_Stage_Invariants(value Reader_Stage, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint8(uint8(value), uint8(READER_STAGE_NONE), uint8(READER_STAGE_CONTENT)).
 		Ensure()
 }
@@ -2805,9 +2805,9 @@ type Physical_Debt int
 
 // Physical_Debt_Invariants bounds unread stored content.
 func Physical_Debt_Invariants(
-	value Physical_Debt, namespace invariant.Namespace,
+	value Physical_Debt, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(int(value), COUNT_MINIMUM, COUNT_MAXIMUM).
 		Ensure()
 }
@@ -2817,9 +2817,9 @@ type Metadata_Position int
 
 // Metadata_Position_Invariants bounds first unused extension byte.
 func Metadata_Position_Invariants(
-	value Metadata_Position, namespace invariant.Namespace,
+	value Metadata_Position, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(int(value), COUNT_MINIMUM, READER_METADATA_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -2829,9 +2829,9 @@ type Pending_PAX_Position int
 
 // Pending_PAX_Position_Invariants bounds one retained metadata origin.
 func Pending_PAX_Position_Invariants(
-	value Pending_PAX_Position, namespace invariant.Namespace,
+	value Pending_PAX_Position, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(int(value), COUNT_MINIMUM, READER_METADATA_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -2841,9 +2841,9 @@ type Pending_PAX_Size int
 
 // Pending_PAX_Size_Invariants bounds absent through maximum local metadata.
 func Pending_PAX_Size_Invariants(
-	value Pending_PAX_Size, namespace invariant.Namespace,
+	value Pending_PAX_Size, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(int(value), COUNT_MINIMUM, SPECIAL_FILE_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -2853,9 +2853,9 @@ type Reader_Skip_Debt int
 
 // Reader_Skip_Debt_Invariants bounds one discard stage.
 func Reader_Skip_Debt_Invariants(
-	value Reader_Skip_Debt, namespace invariant.Namespace,
+	value Reader_Skip_Debt, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(int(value), COUNT_MINIMUM, COUNT_MAXIMUM).
 		Ensure()
 }
@@ -2865,9 +2865,9 @@ type Reader_Transfer_Offset int
 
 // Reader_Transfer_Offset_Invariants bounds partial transfer progress.
 func Reader_Transfer_Offset_Invariants(
-	value Reader_Transfer_Offset, namespace invariant.Namespace,
+	value Reader_Transfer_Offset, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(int(value), COUNT_MINIMUM, COUNT_MAXIMUM).
 		Ensure()
 }
@@ -2877,9 +2877,9 @@ type Reader_Transfer_Needed int
 
 // Reader_Transfer_Needed_Invariants bounds one transfer request.
 func Reader_Transfer_Needed_Invariants(
-	value Reader_Transfer_Needed, namespace invariant.Namespace,
+	value Reader_Transfer_Needed, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(int(value), COUNT_MINIMUM, COUNT_MAXIMUM).
 		Ensure()
 }
@@ -2889,9 +2889,9 @@ type Reader_Extension_Type byte
 
 // Reader_Extension_Type_Invariants bounds extension identity.
 func Reader_Extension_Type_Invariants(
-	value Reader_Extension_Type, namespace invariant.Namespace,
+	value Reader_Extension_Type, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Uint8(uint8(value), uint8(TYPE_FLAG_MINIMUM), uint8(TYPE_FLAG_MAXIMUM)).
 		Ensure()
 }
@@ -2901,9 +2901,9 @@ type Reader_Extension_Size int
 
 // Reader_Extension_Size_Invariants protects metadata slicing.
 func Reader_Extension_Size_Invariants(
-	value Reader_Extension_Size, namespace invariant.Namespace,
+	value Reader_Extension_Size, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(int(value), COUNT_MINIMUM, SPECIAL_FILE_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -2913,9 +2913,9 @@ type Reader_Header_Complete bool
 
 // Reader_Header_Complete_Invariants covers extension continuation and logical completion.
 func Reader_Header_Complete_Invariants(
-	value Reader_Header_Complete, namespace invariant.Namespace,
+	value Reader_Header_Complete, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Sometimes(bool(value), "Reader header work completed one public request.").
 		Ensure()
 }
@@ -2925,9 +2925,9 @@ type Reader_Header_Status uint8
 
 // Reader_Header_Status_Invariants excludes lifecycle and transport results from header work.
 func Reader_Header_Status_Invariants(
-	value Reader_Header_Status, namespace invariant.Namespace,
+	value Reader_Header_Status, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Uint8(
 			uint8(value), uint8(STATUS_OK), uint8(STATUS_FIELD_TOO_LONG),
 		).
@@ -2939,9 +2939,9 @@ type Reader_Resolve_Failure uint8
 
 // Reader_Resolve_Failure_Invariants admits logical header failures only.
 func Reader_Resolve_Failure_Invariants(
-	value Reader_Resolve_Failure, namespace invariant.Namespace,
+	value Reader_Resolve_Failure, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Enum_4_Uint8(
 			uint8(value), uint8(STATUS_INPUT_INVALID),
 			uint8(STATUS_OUTPUT_TOO_SMALL), uint8(STATUS_FORMAT_UNSUPPORTED),
@@ -2955,9 +2955,9 @@ type Reader_Resolve_Success bool
 
 // Reader_Resolve_Success_Invariants covers commitment and failure.
 func Reader_Resolve_Success_Invariants(
-	value Reader_Resolve_Success, namespace invariant.Namespace,
+	value Reader_Resolve_Success, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Sometimes(bool(value), "Logical header resolution succeeds.").
 		Ensure()
 }
@@ -2966,8 +2966,8 @@ func Reader_Resolve_Success_Invariants(
 type Reader_Active bool
 
 // Reader_Active_Invariants covers idle and active operations.
-func Reader_Active_Invariants(value Reader_Active, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Reader_Active_Invariants(value Reader_Active, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Sometimes(bool(value), "Reader has an operation in flight.").
 		Ensure()
 }
@@ -2977,9 +2977,9 @@ type Reader_Submission_Active bool
 
 // Reader_Submission_Active_Invariants covers callback timing.
 func Reader_Submission_Active_Invariants(
-	value Reader_Submission_Active, namespace invariant.Namespace,
+	value Reader_Submission_Active, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Sometimes(bool(value), "Reader is inside Stream Procedure.").
 		Ensure()
 }
@@ -2989,9 +2989,9 @@ type Reader_Wait_Active bool
 
 // Reader_Wait_Active_Invariants covers inline and deferred retirement.
 func Reader_Wait_Active_Invariants(
-	value Reader_Wait_Active, namespace invariant.Namespace,
+	value Reader_Wait_Active, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Sometimes(bool(value), "Reader waits for Stream retirement.").
 		Ensure()
 }
@@ -3001,9 +3001,9 @@ type Reader_Continue bool
 
 // Reader_Continue_Invariants covers inline trampoline state.
 func Reader_Continue_Invariants(
-	value Reader_Continue, namespace invariant.Namespace,
+	value Reader_Continue, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Sometimes(bool(value), "Reader has inline retirement to process.").
 		Ensure()
 }
@@ -3028,7 +3028,7 @@ type Reader_Transfer struct {
 
 // Reader_Transfer_Invariants composes one bounded Stream request.
 func Reader_Transfer_Invariants(
-	value Reader_Transfer, namespace invariant.Namespace,
+	value Reader_Transfer, namespace aver.Namespace,
 ) {
 	Reader_Transfer_Buffer_Invariants(value.Buffer, namespace)
 	Reader_Transfer_Offset_Invariants(value.Offset, namespace)
@@ -3037,11 +3037,11 @@ func Reader_Transfer_Invariants(
 	Reader_Submission_Active_Invariants(value.Submission_Active, namespace)
 	Reader_Wait_Active_Invariants(value.Wait_Active, namespace)
 	Reader_Continue_Invariants(value.Continue, namespace)
-	invariant.Always(
+	aver.Always(
 		int(value.Offset) <= int(value.Needed),
 		"Reader transfer cursor does not cross requested bytes.",
 	)
-	invariant.Always(
+	aver.Always(
 		int(value.Needed) <= len(value.Buffer),
 		"Reader transfer request stays inside its borrowed buffer.",
 	)
@@ -3085,7 +3085,7 @@ type Reader_Archive struct {
 
 // Reader_Archive_Invariants composes retained archive state.
 func Reader_Archive_Invariants(
-	value Reader_Archive, namespace invariant.Namespace,
+	value Reader_Archive, namespace aver.Namespace,
 ) {
 	Reader_Block_Invariants(value.Block, namespace)
 	Reader_Metadata_Invariants(value.Metadata, namespace)
@@ -3103,7 +3103,7 @@ func Reader_Archive_Invariants(
 	Logical_Count_Invariants(value.Logical_Size, namespace)
 	Logical_Position_Invariants(value.Logical_Position, namespace)
 	Entry_Active_Invariants(value.Entry_Active, namespace)
-	invariant.Always(
+	aver.Always(
 		int(value.Logical_Position) <= int(value.Logical_Size),
 		"Reader logical cursor stays inside entry.",
 	)
@@ -3135,9 +3135,9 @@ type Reader struct {
 }
 
 // Reader_Invariants keeps every cursor within caller archive.
-func Reader_Invariants(value *Reader, namespace invariant.Namespace) {
-	invariant.Always(value != nil, "Reader state exists.")
-	invariant.Always(
+func Reader_Invariants(value *Reader, namespace aver.Namespace) {
+	aver.Always(value != nil, "Reader state exists.")
+	aver.Always(
 		unsafe.Pointer(value) == unsafe.Pointer(&value.Completion),
 		"Reader completion stays first so a static Stream callback recovers its owner.",
 	)
@@ -3155,9 +3155,9 @@ type Destination_Position int
 
 // Destination_Position_Invariants keeps writes inside caller storage.
 func Destination_Position_Invariants(
-	value Destination_Position, namespace invariant.Namespace,
+	value Destination_Position, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(int(value), COUNT_MINIMUM, WRITER_STORAGE_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -3167,9 +3167,9 @@ type Header_Start_Position int
 
 // Header_Start_Position_Invariants bounds one header staging origin.
 func Header_Start_Position_Invariants(
-	value Header_Start_Position, namespace invariant.Namespace,
+	value Header_Start_Position, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(int(value), COUNT_MINIMUM, PADDING_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -3179,9 +3179,9 @@ type PAX_Payload_Start_Position int
 
 // PAX_Payload_Start_Position_Invariants bounds the generated payload origin.
 func PAX_Payload_Start_Position_Invariants(
-	value PAX_Payload_Start_Position, namespace invariant.Namespace,
+	value PAX_Payload_Start_Position, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(
 			int(value), PAX_PAYLOAD_START_POSITION_MINIMUM,
 			PAX_PAYLOAD_START_POSITION_MAXIMUM,
@@ -3194,9 +3194,9 @@ type Encoded_Header_Size int
 
 // Encoded_Header_Size_Invariants bounds one through maximum staged sequence.
 func Encoded_Header_Size_Invariants(
-	value Encoded_Header_Size, namespace invariant.Namespace,
+	value Encoded_Header_Size, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(int(value), BLOCK_SIZE, ENCODED_HEADER_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -3206,9 +3206,9 @@ type PAX_Encoded_Header_Size int
 
 // PAX_Encoded_Header_Size_Invariants bounds PAX metadata and main header.
 func PAX_Encoded_Header_Size_Invariants(
-	value PAX_Encoded_Header_Size, namespace invariant.Namespace,
+	value PAX_Encoded_Header_Size, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(
 			int(value), PAX_HEADER_WIRE_SIZE_MINIMUM,
 			PAX_ENCODED_HEADER_SIZE_MAXIMUM,
@@ -3221,9 +3221,9 @@ type GNU_Encoded_Header_Size int
 
 // GNU_Encoded_Header_Size_Invariants bounds one complete GNU header sequence.
 func GNU_Encoded_Header_Size_Invariants(
-	value GNU_Encoded_Header_Size, namespace invariant.Namespace,
+	value GNU_Encoded_Header_Size, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(int(value), BLOCK_SIZE, ENCODED_HEADER_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -3233,9 +3233,9 @@ type Header_Required_Size int
 
 // Header_Required_Size_Invariants bounds every successful staging requirement.
 func Header_Required_Size_Invariants(
-	value Header_Required_Size, namespace invariant.Namespace,
+	value Header_Required_Size, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(int(value), BLOCK_SIZE, WRITER_STORAGE_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -3245,9 +3245,9 @@ type PAX_Header_End_Position int
 
 // PAX_Header_End_Position_Invariants bounds shortest and largest PAX sequences.
 func PAX_Header_End_Position_Invariants(
-	value PAX_Header_End_Position, namespace invariant.Namespace,
+	value PAX_Header_End_Position, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(
 			int(value), PAX_HEADER_WIRE_SIZE_MINIMUM,
 			PAX_HEADER_END_POSITION_MAXIMUM,
@@ -3260,9 +3260,9 @@ type GNU_Header_End_Position int
 
 // GNU_Header_End_Position_Invariants bounds fixed through two-long-field sequences.
 func GNU_Header_End_Position_Invariants(
-	value GNU_Header_End_Position, namespace invariant.Namespace,
+	value GNU_Header_End_Position, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(int(value), BLOCK_SIZE, WRITER_STORAGE_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -3272,9 +3272,9 @@ type GNU_Long_Position int
 
 // GNU_Long_Position_Invariants bounds first through second metadata origins.
 func GNU_Long_Position_Invariants(
-	value GNU_Long_Position, namespace invariant.Namespace,
+	value GNU_Long_Position, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(int(value), COUNT_MINIMUM, GNU_LONG_POSITION_MAXIMUM).
 		Ensure()
 }
@@ -3284,9 +3284,9 @@ type GNU_Long_End_Position int
 
 // GNU_Long_End_Position_Invariants bounds first minimum through second maximum.
 func GNU_Long_End_Position_Invariants(
-	value GNU_Long_End_Position, namespace invariant.Namespace,
+	value GNU_Long_End_Position, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(
 			int(value), GNU_LONG_END_POSITION_MINIMUM,
 			GNU_LONG_END_POSITION_MAXIMUM,
@@ -3299,9 +3299,9 @@ type GNU_Long_Encoded_Size int
 
 // GNU_Long_Encoded_Size_Invariants bounds one complete long-field record.
 func GNU_Long_Encoded_Size_Invariants(
-	value GNU_Long_Encoded_Size, namespace invariant.Namespace,
+	value GNU_Long_Encoded_Size, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(
 			int(value), GNU_LONG_END_POSITION_MINIMUM,
 			GNU_LONG_FIELD_WIRE_SIZE_MAXIMUM,
@@ -3313,8 +3313,8 @@ func GNU_Long_Encoded_Size_Invariants(
 type Content_Count int
 
 // Content_Count_Invariants protects declared entry completion.
-func Content_Count_Invariants(value Content_Count, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Content_Count_Invariants(value Content_Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), COUNT_MINIMUM, COUNT_MAXIMUM).
 		Ensure()
 }
@@ -3323,8 +3323,8 @@ func Content_Count_Invariants(value Content_Count, namespace invariant.Namespace
 type Padding_Count int
 
 // Padding_Count_Invariants bounds one TAR record remainder.
-func Padding_Count_Invariants(value Padding_Count, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Padding_Count_Invariants(value Padding_Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), COUNT_MINIMUM, PADDING_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -3334,9 +3334,9 @@ type Writer_Initialized bool
 
 // Writer_Initialized_Invariants covers both writer binding states.
 func Writer_Initialized_Invariants(
-	value Writer_Initialized, namespace invariant.Namespace,
+	value Writer_Initialized, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Sometimes(bool(value), "Writer is bound to caller destination.").
 		Ensure()
 }
@@ -3345,8 +3345,8 @@ func Writer_Initialized_Invariants(
 type Writer_Closed bool
 
 // Writer_Closed_Invariants covers open and closed lifecycle states.
-func Writer_Closed_Invariants(value Writer_Closed, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Writer_Closed_Invariants(value Writer_Closed, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Sometimes(bool(value), "Writer emitted archive footer.").
 		Ensure()
 }
@@ -3356,9 +3356,9 @@ type Writer_Header_Storage []byte
 
 // Writer_Header_Storage_Invariants bounds retained staging bytes.
 func Writer_Header_Storage_Invariants(
-	value Writer_Header_Storage, namespace invariant.Namespace,
+	value Writer_Header_Storage, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(len(value), COUNT_MINIMUM, WRITER_STORAGE_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -3368,9 +3368,9 @@ type Zero_Destination []byte
 
 // Zero_Destination_Invariants bounds every zero-filled staging span.
 func Zero_Destination_Invariants(
-	value Zero_Destination, namespace invariant.Namespace,
+	value Zero_Destination, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(len(value), COUNT_MINIMUM, WRITER_STORAGE_SIZE_MINIMUM).
 		Ensure()
 }
@@ -3380,9 +3380,9 @@ type PAX_Header_Destination []byte
 
 // PAX_Header_Destination_Invariants excludes storage rejected by preflight.
 func PAX_Header_Destination_Invariants(
-	value PAX_Header_Destination, namespace invariant.Namespace,
+	value PAX_Header_Destination, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(len(value), PAX_HEADER_WIRE_SIZE_MINIMUM, WRITER_STORAGE_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -3392,9 +3392,9 @@ type GNU_Header_Destination []byte
 
 // GNU_Header_Destination_Invariants excludes storage rejected by preflight.
 func GNU_Header_Destination_Invariants(
-	value GNU_Header_Destination, namespace invariant.Namespace,
+	value GNU_Header_Destination, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(len(value), WRITER_STORAGE_SIZE_MINIMUM, WRITER_STORAGE_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -3404,9 +3404,9 @@ type GNU_Long_Destination []byte
 
 // GNU_Long_Destination_Invariants excludes storage rejected by long preflight.
 func GNU_Long_Destination_Invariants(
-	value GNU_Long_Destination, namespace invariant.Namespace,
+	value GNU_Long_Destination, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(
 			len(value), GNU_LONG_DESTINATION_SIZE_MINIMUM,
 			WRITER_STORAGE_SIZE_MAXIMUM,
@@ -3418,8 +3418,8 @@ func GNU_Long_Destination_Invariants(
 type Writer_Operation uint8
 
 // Writer_Operation_Invariants bounds callback commit identity.
-func Writer_Operation_Invariants(value Writer_Operation, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Writer_Operation_Invariants(value Writer_Operation, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_4_Uint8(
 			uint8(value), uint8(WRITER_OPERATION_NONE),
 			uint8(WRITER_OPERATION_HEADER), uint8(WRITER_OPERATION_CONTENT),
@@ -3444,8 +3444,8 @@ const WRITER_OPERATION_CLOSE Writer_Operation = WRITER_OPERATION_CONTENT + 1
 type Archive_Count int
 
 // Archive_Count_Invariants bounds accepted archive bytes.
-func Archive_Count_Invariants(value Archive_Count, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Archive_Count_Invariants(value Archive_Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), COUNT_MINIMUM, COUNT_MAXIMUM).
 		Ensure()
 }
@@ -3455,9 +3455,9 @@ type Pending_Content_Count int
 
 // Pending_Content_Count_Invariants bounds staged content debt.
 func Pending_Content_Count_Invariants(
-	value Pending_Content_Count, namespace invariant.Namespace,
+	value Pending_Content_Count, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(int(value), COUNT_MINIMUM, COUNT_MAXIMUM).
 		Ensure()
 }
@@ -3467,9 +3467,9 @@ type Pending_Padding_Count int
 
 // Pending_Padding_Count_Invariants bounds staged alignment debt.
 func Pending_Padding_Count_Invariants(
-	value Pending_Padding_Count, namespace invariant.Namespace,
+	value Pending_Padding_Count, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(int(value), COUNT_MINIMUM, PADDING_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -3478,8 +3478,8 @@ func Pending_Padding_Count_Invariants(
 type Writer_Active bool
 
 // Writer_Active_Invariants covers idle and active operations.
-func Writer_Active_Invariants(value Writer_Active, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Writer_Active_Invariants(value Writer_Active, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Sometimes(bool(value), "Writer has an operation in flight.").
 		Ensure()
 }
@@ -3489,9 +3489,9 @@ type Writer_Submission_Active bool
 
 // Writer_Submission_Active_Invariants covers callback timing.
 func Writer_Submission_Active_Invariants(
-	value Writer_Submission_Active, namespace invariant.Namespace,
+	value Writer_Submission_Active, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Sometimes(bool(value), "Writer is inside Stream Procedure.").
 		Ensure()
 }
@@ -3501,9 +3501,9 @@ type Writer_Wait_Active bool
 
 // Writer_Wait_Active_Invariants covers inline and deferred retirement.
 func Writer_Wait_Active_Invariants(
-	value Writer_Wait_Active, namespace invariant.Namespace,
+	value Writer_Wait_Active, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Sometimes(bool(value), "Writer waits for Stream retirement.").
 		Ensure()
 }
@@ -3513,9 +3513,9 @@ type Writer_Continue bool
 
 // Writer_Continue_Invariants covers inline trampoline state.
 func Writer_Continue_Invariants(
-	value Writer_Continue, namespace invariant.Namespace,
+	value Writer_Continue, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Sometimes(bool(value), "Writer has inline retirement to process.").
 		Ensure()
 }
@@ -3566,9 +3566,9 @@ type Writer struct {
 }
 
 // Writer_Invariants keeps output cursor inside caller destination.
-func Writer_Invariants(value *Writer, namespace invariant.Namespace) {
-	invariant.Always(value != nil, "Writer state exists.")
-	invariant.Always(
+func Writer_Invariants(value *Writer, namespace aver.Namespace) {
+	aver.Always(value != nil, "Writer state exists.")
+	aver.Always(
 		unsafe.Pointer(value) == unsafe.Pointer(&value.Completion),
 		"Writer completion stays first so a static Stream callback recovers its owner.",
 	)
@@ -3589,7 +3589,7 @@ func Writer_Invariants(value *Writer, namespace invariant.Namespace) {
 	Padding_Count_Invariants(value.Padding, namespace)
 	Writer_Initialized_Invariants(value.Initialized, namespace)
 	Writer_Closed_Invariants(value.Closed, namespace)
-	invariant.Always(
+	aver.Always(
 		int(value.Position) <= len(value.Destination),
 		"Writer cursor stays inside destination.",
 	)
@@ -3641,8 +3641,8 @@ const TYPE_GNU_LONG_LINK Type_Flag = 'K'
 type Name_Prefix []byte
 
 // Name_Prefix_Invariants bounds one split path prefix.
-func Name_Prefix_Invariants(value Name_Prefix, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Name_Prefix_Invariants(value Name_Prefix, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), COUNT_MINIMUM, PREFIX_FIELD_SIZE).
 		Ensure()
 }
@@ -3651,8 +3651,8 @@ func Name_Prefix_Invariants(value Name_Prefix, namespace invariant.Namespace) {
 type Name_Suffix []byte
 
 // Name_Suffix_Invariants bounds one split path suffix.
-func Name_Suffix_Invariants(value Name_Suffix, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Name_Suffix_Invariants(value Name_Suffix, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), COUNT_MINIMUM, HEADER_TEXT_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -3661,8 +3661,8 @@ func Name_Suffix_Invariants(value Name_Suffix, namespace invariant.Namespace) {
 type Name_Joined bool
 
 // Name_Joined_Invariants covers contiguous and split path views.
-func Name_Joined_Invariants(value Name_Joined, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Name_Joined_Invariants(value Name_Joined, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Sometimes(bool(value), "Archive path uses prefix field.").
 		Ensure()
 }
@@ -3678,11 +3678,11 @@ type Field_Value struct {
 }
 
 // Field_Value_Invariants bounds combined metadata view.
-func Field_Value_Invariants(value Field_Value, namespace invariant.Namespace) {
+func Field_Value_Invariants(value Field_Value, namespace aver.Namespace) {
 	Name_Prefix_Invariants(value.Prefix, namespace)
 	Name_Suffix_Invariants(value.Suffix, namespace)
 	Name_Joined_Invariants(value.Joined, namespace)
-	invariant.Always(
+	aver.Always(
 		len(value.Prefix)+len(value.Suffix) <= SPECIAL_FILE_SIZE_MAXIMUM,
 		"Split archive field stays inside metadata bound.",
 	)
@@ -3692,8 +3692,8 @@ func Field_Value_Invariants(value Field_Value, namespace invariant.Namespace) {
 type Field []byte
 
 // Field_Invariants bounds one complete metadata view.
-func Field_Invariants(value Field, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Field_Invariants(value Field, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), COUNT_MINIMUM, SPECIAL_FILE_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -3703,9 +3703,9 @@ type NUL_Checked_Text []byte
 
 // NUL_Checked_Text_Invariants bounds largest checked header field.
 func NUL_Checked_Text_Invariants(
-	value NUL_Checked_Text, namespace invariant.Namespace,
+	value NUL_Checked_Text, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(len(value), COUNT_MINIMUM, HEADER_TEXT_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -3714,8 +3714,8 @@ func NUL_Checked_Text_Invariants(
 type Field_Size int
 
 // Field_Size_Invariants bounds decoded path width.
-func Field_Size_Invariants(value Field_Size, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Field_Size_Invariants(value Field_Size, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), COUNT_MINIMUM, HEADER_TEXT_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -3725,9 +3725,9 @@ type Wire_Text_Field []byte
 
 // Wire_Text_Field_Invariants admits fixed text widths only.
 func Wire_Text_Field_Invariants(
-	value Wire_Text_Field, namespace invariant.Namespace,
+	value Wire_Text_Field, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Enum_4_Int(
 			len(value), USER_NAME_FIELD_SIZE, NAME_FIELD_SIZE,
 			STAR_PREFIX_FIELD_SIZE, PREFIX_FIELD_SIZE,
@@ -3739,8 +3739,8 @@ func Wire_Text_Field_Invariants(
 type Wire_Text []byte
 
 // Wire_Text_Invariants bounds largest fixed text field.
-func Wire_Text_Invariants(value Wire_Text, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Wire_Text_Invariants(value Wire_Text, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), COUNT_MINIMUM, PREFIX_FIELD_SIZE).
 		Ensure()
 }
@@ -3750,9 +3750,9 @@ type GNU_Prefix_Text []byte
 
 // GNU_Prefix_Text_Invariants bounds one GNU prefix field.
 func GNU_Prefix_Text_Invariants(
-	value GNU_Prefix_Text, namespace invariant.Namespace,
+	value GNU_Prefix_Text, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(len(value), COUNT_MINIMUM, PREFIX_FIELD_SIZE).
 		Ensure()
 }
@@ -3761,8 +3761,8 @@ func GNU_Prefix_Text_Invariants(
 type Wire_File_Mode int64
 
 // Wire_File_Mode_Invariants bounds an eight-byte base-256 value.
-func Wire_File_Mode_Invariants(value Wire_File_Mode, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Wire_File_Mode_Invariants(value Wire_File_Mode, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int64(int64(value), SMALL_NUMERIC_MINIMUM, SMALL_NUMERIC_MAXIMUM).
 		Ensure()
 }
@@ -3772,9 +3772,9 @@ type Wire_User_Identifier int64
 
 // Wire_User_Identifier_Invariants bounds an eight-byte base-256 value.
 func Wire_User_Identifier_Invariants(
-	value Wire_User_Identifier, namespace invariant.Namespace,
+	value Wire_User_Identifier, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int64(int64(value), SMALL_NUMERIC_MINIMUM, SMALL_NUMERIC_MAXIMUM).
 		Ensure()
 }
@@ -3784,9 +3784,9 @@ type Wire_Group_Identifier int64
 
 // Wire_Group_Identifier_Invariants bounds an eight-byte base-256 value.
 func Wire_Group_Identifier_Invariants(
-	value Wire_Group_Identifier, namespace invariant.Namespace,
+	value Wire_Group_Identifier, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int64(int64(value), SMALL_NUMERIC_MINIMUM, SMALL_NUMERIC_MAXIMUM).
 		Ensure()
 }
@@ -3796,9 +3796,9 @@ type Wire_Device_Major int64
 
 // Wire_Device_Major_Invariants bounds an eight-byte base-256 value.
 func Wire_Device_Major_Invariants(
-	value Wire_Device_Major, namespace invariant.Namespace,
+	value Wire_Device_Major, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int64(int64(value), SMALL_NUMERIC_MINIMUM, SMALL_NUMERIC_MAXIMUM).
 		Ensure()
 }
@@ -3808,9 +3808,9 @@ type Wire_Device_Minor int64
 
 // Wire_Device_Minor_Invariants bounds an eight-byte base-256 value.
 func Wire_Device_Minor_Invariants(
-	value Wire_Device_Minor, namespace invariant.Namespace,
+	value Wire_Device_Minor, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int64(int64(value), SMALL_NUMERIC_MINIMUM, SMALL_NUMERIC_MAXIMUM).
 		Ensure()
 }
@@ -3820,9 +3820,9 @@ type Wire_Name_Prefix []byte
 
 // Wire_Name_Prefix_Invariants bounds the largest prefix field.
 func Wire_Name_Prefix_Invariants(
-	value Wire_Name_Prefix, namespace invariant.Namespace,
+	value Wire_Name_Prefix, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(len(value), COUNT_MINIMUM, PREFIX_FIELD_SIZE).
 		Ensure()
 }
@@ -3832,9 +3832,9 @@ type Wire_Prefix_Field []byte
 
 // Wire_Prefix_Field_Invariants spans the two fixed prefix widths.
 func Wire_Prefix_Field_Invariants(
-	value Wire_Prefix_Field, namespace invariant.Namespace,
+	value Wire_Prefix_Field, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(len(value), STAR_PREFIX_FIELD_SIZE, PREFIX_FIELD_SIZE).
 		Ensure()
 }
@@ -3844,9 +3844,9 @@ type Wire_Name_Suffix []byte
 
 // Wire_Name_Suffix_Invariants bounds the fixed name field.
 func Wire_Name_Suffix_Invariants(
-	value Wire_Name_Suffix, namespace invariant.Namespace,
+	value Wire_Name_Suffix, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(len(value), COUNT_MINIMUM, NAME_FIELD_SIZE).
 		Ensure()
 }
@@ -3856,9 +3856,9 @@ type STAR_Wire_Name_Prefix []byte
 
 // STAR_Wire_Name_Prefix_Invariants bounds STAR prefix bytes.
 func STAR_Wire_Name_Prefix_Invariants(
-	value STAR_Wire_Name_Prefix, namespace invariant.Namespace,
+	value STAR_Wire_Name_Prefix, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(len(value), COUNT_MINIMUM, STAR_PREFIX_FIELD_SIZE).
 		Ensure()
 }
@@ -3868,9 +3868,9 @@ type STAR_Wire_Name_Suffix []byte
 
 // STAR_Wire_Name_Suffix_Invariants bounds STAR suffix bytes.
 func STAR_Wire_Name_Suffix_Invariants(
-	value STAR_Wire_Name_Suffix, namespace invariant.Namespace,
+	value STAR_Wire_Name_Suffix, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(len(value), COUNT_MINIMUM, NAME_FIELD_SIZE).
 		Ensure()
 }
@@ -3887,7 +3887,7 @@ type STAR_Wire_Name struct {
 
 // STAR_Wire_Name_Invariants composes exact STAR path fields.
 func STAR_Wire_Name_Invariants(
-	value STAR_Wire_Name, namespace invariant.Namespace,
+	value STAR_Wire_Name, namespace aver.Namespace,
 ) {
 	STAR_Wire_Name_Prefix_Invariants(value.Prefix, namespace)
 	STAR_Wire_Name_Suffix_Invariants(value.Suffix, namespace)
@@ -3899,9 +3899,9 @@ type Wire_Name_Joined bool
 
 // Wire_Name_Joined_Invariants covers contiguous and split wire names.
 func Wire_Name_Joined_Invariants(
-	value Wire_Name_Joined, namespace invariant.Namespace,
+	value Wire_Name_Joined, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Sometimes(bool(value), "Wire path uses prefix field.").
 		Ensure()
 }
@@ -3917,11 +3917,11 @@ type Wire_Name struct {
 }
 
 // Wire_Name_Invariants composes one bounded wire path.
-func Wire_Name_Invariants(value Wire_Name, namespace invariant.Namespace) {
+func Wire_Name_Invariants(value Wire_Name, namespace aver.Namespace) {
 	Wire_Name_Prefix_Invariants(value.Prefix, namespace)
 	Wire_Name_Suffix_Invariants(value.Suffix, namespace)
 	Wire_Name_Joined_Invariants(value.Joined, namespace)
-	invariant.Always(
+	aver.Always(
 		len(value.Prefix)+len(value.Suffix) <= WIRE_NAME_SIZE_MAXIMUM,
 		"Wire path stays inside fixed fields.",
 	)
@@ -3931,8 +3931,8 @@ func Wire_Name_Invariants(value Wire_Name, namespace invariant.Namespace) {
 type Wire_Link_Name []byte
 
 // Wire_Link_Name_Invariants bounds the fixed link field.
-func Wire_Link_Name_Invariants(value Wire_Link_Name, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Wire_Link_Name_Invariants(value Wire_Link_Name, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), COUNT_MINIMUM, LINK_NAME_FIELD_SIZE).
 		Ensure()
 }
@@ -3941,8 +3941,8 @@ func Wire_Link_Name_Invariants(value Wire_Link_Name, namespace invariant.Namespa
 type Wire_User_Name []byte
 
 // Wire_User_Name_Invariants bounds the fixed owner field.
-func Wire_User_Name_Invariants(value Wire_User_Name, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Wire_User_Name_Invariants(value Wire_User_Name, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), COUNT_MINIMUM, USER_NAME_FIELD_SIZE).
 		Ensure()
 }
@@ -3951,8 +3951,8 @@ func Wire_User_Name_Invariants(value Wire_User_Name, namespace invariant.Namespa
 type Wire_Group_Name []byte
 
 // Wire_Group_Name_Invariants bounds the fixed group field.
-func Wire_Group_Name_Invariants(value Wire_Group_Name, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Wire_Group_Name_Invariants(value Wire_Group_Name, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), COUNT_MINIMUM, GROUP_NAME_FIELD_SIZE).
 		Ensure()
 }
@@ -3961,8 +3961,8 @@ func Wire_Group_Name_Invariants(value Wire_Group_Name, namespace invariant.Names
 type USTAR_Name []byte
 
 // USTAR_Name_Invariants bounds one encodable USTAR path.
-func USTAR_Name_Invariants(value USTAR_Name, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func USTAR_Name_Invariants(value USTAR_Name, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), USTAR_PATH_SIZE_MINIMUM, USTAR_PATH_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -3972,9 +3972,9 @@ type USTAR_User_Name []byte
 
 // USTAR_User_Name_Invariants bounds one USTAR owner field.
 func USTAR_User_Name_Invariants(
-	value USTAR_User_Name, namespace invariant.Namespace,
+	value USTAR_User_Name, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(len(value), COUNT_MINIMUM, USER_NAME_FIELD_SIZE).
 		Ensure()
 }
@@ -3984,9 +3984,9 @@ type USTAR_Group_Name []byte
 
 // USTAR_Group_Name_Invariants bounds one USTAR group field.
 func USTAR_Group_Name_Invariants(
-	value USTAR_Group_Name, namespace invariant.Namespace,
+	value USTAR_Group_Name, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(len(value), COUNT_MINIMUM, GROUP_NAME_FIELD_SIZE).
 		Ensure()
 }
@@ -3996,9 +3996,9 @@ type USTAR_Device_Major int64
 
 // USTAR_Device_Major_Invariants bounds one device-class field.
 func USTAR_Device_Major_Invariants(
-	value USTAR_Device_Major, namespace invariant.Namespace,
+	value USTAR_Device_Major, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int64(int64(value), COUNT_MINIMUM, SMALL_OCTAL_MAXIMUM).
 		Ensure()
 }
@@ -4008,9 +4008,9 @@ type USTAR_Device_Minor int64
 
 // USTAR_Device_Minor_Invariants bounds one device-instance field.
 func USTAR_Device_Minor_Invariants(
-	value USTAR_Device_Minor, namespace invariant.Namespace,
+	value USTAR_Device_Minor, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int64(int64(value), COUNT_MINIMUM, SMALL_OCTAL_MAXIMUM).
 		Ensure()
 }
@@ -4030,7 +4030,7 @@ type USTAR_Fields struct {
 }
 
 // USTAR_Fields_Invariants composes one encodable USTAR extension.
-func USTAR_Fields_Invariants(value USTAR_Fields, namespace invariant.Namespace) {
+func USTAR_Fields_Invariants(value USTAR_Fields, namespace aver.Namespace) {
 	USTAR_Name_Invariants(value.Name, namespace)
 	USTAR_User_Name_Invariants(value.User_Name, namespace)
 	USTAR_Group_Name_Invariants(value.Group_Name, namespace)
@@ -4043,9 +4043,9 @@ type USTAR_Prefix_Count int
 
 // USTAR_Prefix_Count_Invariants bounds one prefix field write.
 func USTAR_Prefix_Count_Invariants(
-	value USTAR_Prefix_Count, namespace invariant.Namespace,
+	value USTAR_Prefix_Count, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(int(value), COUNT_MINIMUM, PREFIX_FIELD_SIZE).
 		Ensure()
 }
@@ -4055,9 +4055,9 @@ type USTAR_Suffix_Start int
 
 // USTAR_Suffix_Start_Invariants bounds fixed name-field origin.
 func USTAR_Suffix_Start_Invariants(
-	value USTAR_Suffix_Start, namespace invariant.Namespace,
+	value USTAR_Suffix_Start, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(
 			int(value), COUNT_MINIMUM, USTAR_SUFFIX_START_MAXIMUM,
 		).
@@ -4068,8 +4068,8 @@ func USTAR_Suffix_Start_Invariants(
 type Basic_Format uint8
 
 // Basic_Format_Invariants bounds one V7-compatible writer format.
-func Basic_Format_Invariants(value Basic_Format, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Basic_Format_Invariants(value Basic_Format, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_3_Uint8(
 			uint8(value), uint8(FORMAT_V7), uint8(FORMAT_USTAR), uint8(FORMAT_PAX),
 		).
@@ -4081,9 +4081,9 @@ type Basic_Fit_Format uint8
 
 // Basic_Fit_Format_Invariants distinguishes V7 from USTAR path rules.
 func Basic_Fit_Format_Invariants(
-	value Basic_Fit_Format, namespace invariant.Namespace,
+	value Basic_Fit_Format, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Enum_Uint8(uint8(value), uint8(FORMAT_V7), uint8(FORMAT_USTAR)).
 		Ensure()
 }
@@ -4093,9 +4093,9 @@ type Writer_Selected_Format uint8
 
 // Writer_Selected_Format_Invariants excludes selection and read-only STAR.
 func Writer_Selected_Format_Invariants(
-	value Writer_Selected_Format, namespace invariant.Namespace,
+	value Writer_Selected_Format, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Enum_4_Uint8(
 			uint8(value), uint8(FORMAT_V7), uint8(FORMAT_USTAR),
 			uint8(FORMAT_PAX), uint8(FORMAT_GNU),
@@ -4108,9 +4108,9 @@ type Encoding_Format uint8
 
 // Encoding_Format_Invariants admits wire families accepted by dispatch.
 func Encoding_Format_Invariants(
-	value Encoding_Format, namespace invariant.Namespace,
+	value Encoding_Format, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Uint8(uint8(value), uint8(FORMAT_V7), uint8(FORMAT_STAR)).
 		Ensure()
 }
@@ -4120,9 +4120,9 @@ type Basic_Link_Name []byte
 
 // Basic_Link_Name_Invariants bounds one fixed link field.
 func Basic_Link_Name_Invariants(
-	value Basic_Link_Name, namespace invariant.Namespace,
+	value Basic_Link_Name, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(len(value), COUNT_MINIMUM, LINK_NAME_FIELD_SIZE).
 		Ensure()
 }
@@ -4132,9 +4132,9 @@ type Basic_File_Mode int64
 
 // Basic_File_Mode_Invariants bounds one fixed mode field.
 func Basic_File_Mode_Invariants(
-	value Basic_File_Mode, namespace invariant.Namespace,
+	value Basic_File_Mode, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int64(int64(value), COUNT_MINIMUM, SMALL_OCTAL_MAXIMUM).
 		Ensure()
 }
@@ -4144,9 +4144,9 @@ type Basic_User_Identifier int64
 
 // Basic_User_Identifier_Invariants bounds one fixed owner field.
 func Basic_User_Identifier_Invariants(
-	value Basic_User_Identifier, namespace invariant.Namespace,
+	value Basic_User_Identifier, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int64(int64(value), COUNT_MINIMUM, SMALL_OCTAL_MAXIMUM).
 		Ensure()
 }
@@ -4156,9 +4156,9 @@ type Basic_Group_Identifier int64
 
 // Basic_Group_Identifier_Invariants bounds one fixed group field.
 func Basic_Group_Identifier_Invariants(
-	value Basic_Group_Identifier, namespace invariant.Namespace,
+	value Basic_Group_Identifier, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int64(int64(value), COUNT_MINIMUM, SMALL_OCTAL_MAXIMUM).
 		Ensure()
 }
@@ -4168,9 +4168,9 @@ type Basic_Modification_Seconds int64
 
 // Basic_Modification_Seconds_Invariants bounds one fixed timestamp field.
 func Basic_Modification_Seconds_Invariants(
-	value Basic_Modification_Seconds, namespace invariant.Namespace,
+	value Basic_Modification_Seconds, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int64(int64(value), COUNT_MINIMUM, LARGE_OCTAL_MAXIMUM).
 		Ensure()
 }
@@ -4206,7 +4206,7 @@ type Basic_Header struct {
 }
 
 // Basic_Header_Invariants composes one fixed writer record.
-func Basic_Header_Invariants(value Basic_Header, namespace invariant.Namespace) {
+func Basic_Header_Invariants(value Basic_Header, namespace aver.Namespace) {
 	Basic_Format_Invariants(value.Format, namespace)
 	Type_Flag_Invariants(value.Type_Flag, namespace)
 	USTAR_Name_Invariants(value.Name, namespace)
@@ -4226,8 +4226,8 @@ func Basic_Header_Invariants(value Basic_Header, namespace invariant.Namespace) 
 type GNU_Name []byte
 
 // GNU_Name_Invariants reserves one wire terminator inside the metadata bound.
-func GNU_Name_Invariants(value GNU_Name, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func GNU_Name_Invariants(value GNU_Name, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), TYPE_FLAG_FIELD_SIZE, HEADER_TEXT_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -4236,8 +4236,8 @@ func GNU_Name_Invariants(value GNU_Name, namespace invariant.Namespace) {
 type GNU_Link_Name []byte
 
 // GNU_Link_Name_Invariants reserves one wire terminator inside the metadata bound.
-func GNU_Link_Name_Invariants(value GNU_Link_Name, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func GNU_Link_Name_Invariants(value GNU_Link_Name, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), COUNT_MINIMUM, HEADER_TEXT_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -4252,7 +4252,7 @@ type GNU_Modification_Time struct {
 
 // GNU_Modification_Time_Invariants composes one lossless fixed timestamp.
 func GNU_Modification_Time_Invariants(
-	value GNU_Modification_Time, namespace invariant.Namespace,
+	value GNU_Modification_Time, namespace aver.Namespace,
 ) {
 	Integer_Invariants(value.Seconds, namespace)
 	bytes.Boolean_Invariants(value.Set, namespace)
@@ -4291,7 +4291,7 @@ type GNU_Header struct {
 }
 
 // GNU_Header_Invariants composes one lossless GNU writer sequence.
-func GNU_Header_Invariants(value GNU_Header, namespace invariant.Namespace) {
+func GNU_Header_Invariants(value GNU_Header, namespace aver.Namespace) {
 	Type_Flag_Invariants(value.Type_Flag, namespace)
 	GNU_Name_Invariants(value.Name, namespace)
 	GNU_Link_Name_Invariants(value.Link_Name, namespace)
@@ -4313,9 +4313,9 @@ type PAX_Payload_Size int
 
 // PAX_Payload_Size_Invariants bounds mandatory records and the metadata cap.
 func PAX_Payload_Size_Invariants(
-	value PAX_Payload_Size, namespace invariant.Namespace,
+	value PAX_Payload_Size, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(int(value), PAX_PAYLOAD_SIZE_MINIMUM, SPECIAL_FILE_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -4325,9 +4325,9 @@ type PAX_Records_Payload_Size int
 
 // PAX_Records_Payload_Size_Invariants bounds record-bearing metadata.
 func PAX_Records_Payload_Size_Invariants(
-	value PAX_Records_Payload_Size, namespace invariant.Namespace,
+	value PAX_Records_Payload_Size, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(
 			int(value), PAX_RECORDS_PAYLOAD_SIZE_MINIMUM,
 			SPECIAL_FILE_SIZE_MAXIMUM,
@@ -4340,9 +4340,9 @@ type PAX_Header_Name []byte
 
 // PAX_Header_Name_Invariants bounds the path after record framing.
 func PAX_Header_Name_Invariants(
-	value PAX_Header_Name, namespace invariant.Namespace,
+	value PAX_Header_Name, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(len(value), TYPE_FLAG_FIELD_SIZE, PAX_NAME_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -4352,9 +4352,9 @@ type PAX_Fallback_Name []byte
 
 // PAX_Fallback_Name_Invariants bounds PAX fixed-header fallback.
 func PAX_Fallback_Name_Invariants(
-	value PAX_Fallback_Name, namespace invariant.Namespace,
+	value PAX_Fallback_Name, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(len(value), TYPE_FLAG_FIELD_SIZE, NAME_FIELD_SIZE).
 		Ensure()
 }
@@ -4364,9 +4364,9 @@ type PAX_Header_Link_Name []byte
 
 // PAX_Header_Link_Name_Invariants bounds the link after record framing.
 func PAX_Header_Link_Name_Invariants(
-	value PAX_Header_Link_Name, namespace invariant.Namespace,
+	value PAX_Header_Link_Name, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(len(value), COUNT_MINIMUM, PAX_LINK_NAME_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -4376,9 +4376,9 @@ type PAX_Header_User_Name []byte
 
 // PAX_Header_User_Name_Invariants bounds the owner after record framing.
 func PAX_Header_User_Name_Invariants(
-	value PAX_Header_User_Name, namespace invariant.Namespace,
+	value PAX_Header_User_Name, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(len(value), COUNT_MINIMUM, PAX_USER_NAME_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -4388,9 +4388,9 @@ type PAX_Header_Group_Name []byte
 
 // PAX_Header_Group_Name_Invariants bounds the group after record framing.
 func PAX_Header_Group_Name_Invariants(
-	value PAX_Header_Group_Name, namespace invariant.Namespace,
+	value PAX_Header_Group_Name, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(len(value), COUNT_MINIMUM, PAX_GROUP_NAME_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -4428,7 +4428,7 @@ type PAX_Header struct {
 }
 
 // PAX_Header_Invariants composes one bounded PAX writer sequence.
-func PAX_Header_Invariants(value PAX_Header, namespace invariant.Namespace) {
+func PAX_Header_Invariants(value PAX_Header, namespace aver.Namespace) {
 	Type_Flag_Invariants(value.Type_Flag, namespace)
 	PAX_Header_Name_Invariants(value.Name, namespace)
 	PAX_Header_Link_Name_Invariants(value.Link_Name, namespace)
@@ -4450,9 +4450,9 @@ type Wire_Modification_Seconds int64
 
 // Wire_Modification_Seconds_Invariants preserves the complete timestamp domain.
 func Wire_Modification_Seconds_Invariants(
-	value Wire_Modification_Seconds, namespace invariant.Namespace,
+	value Wire_Modification_Seconds, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int64(int64(value), bits.INTEGER_64_MINIMUM, bits.INTEGER_64_MAXIMUM).
 		Ensure()
 }
@@ -4467,7 +4467,7 @@ type Optional_Integer struct {
 
 // Optional_Integer_Invariants composes one optional fixed numeric result.
 func Optional_Integer_Invariants(
-	value Optional_Integer, namespace invariant.Namespace,
+	value Optional_Integer, namespace aver.Namespace,
 ) {
 	Integer_Invariants(value.Value, namespace)
 	bytes.Boolean_Invariants(value.Set, namespace)
@@ -4483,7 +4483,7 @@ type Wire_Access_Time struct {
 
 // Wire_Access_Time_Invariants composes optional fixed-header access time.
 func Wire_Access_Time_Invariants(
-	value Wire_Access_Time, namespace invariant.Namespace,
+	value Wire_Access_Time, namespace aver.Namespace,
 ) {
 	Access_Seconds_Invariants(value.Seconds, namespace)
 	Access_Time_Set_Invariants(value.Set, namespace)
@@ -4499,7 +4499,7 @@ type Wire_Change_Time struct {
 
 // Wire_Change_Time_Invariants composes optional fixed-header change time.
 func Wire_Change_Time_Invariants(
-	value Wire_Change_Time, namespace invariant.Namespace,
+	value Wire_Change_Time, namespace aver.Namespace,
 ) {
 	Change_Seconds_Invariants(value.Seconds, namespace)
 	Change_Time_Set_Invariants(value.Set, namespace)
@@ -4525,7 +4525,7 @@ type Wire_Header_Basic struct {
 
 // Wire_Header_Basic_Invariants composes fixed numeric fields.
 func Wire_Header_Basic_Invariants(
-	value Wire_Header_Basic, namespace invariant.Namespace,
+	value Wire_Header_Basic, namespace aver.Namespace,
 ) {
 	Wire_Type_Flag_Invariants(value.Type_Flag, namespace)
 	Entry_Size_Invariants(value.Size, namespace)
@@ -4554,7 +4554,7 @@ type Wire_Header_Names struct {
 
 // Wire_Header_Names_Invariants composes fixed text and device fields.
 func Wire_Header_Names_Invariants(
-	value Wire_Header_Names, namespace invariant.Namespace,
+	value Wire_Header_Names, namespace aver.Namespace,
 ) {
 	Wire_Name_Invariants(value.Name, namespace)
 	Wire_Link_Name_Invariants(value.Link_Name, namespace)
@@ -4582,7 +4582,7 @@ type Wire_Header_Fixed_Names struct {
 
 // Wire_Header_Fixed_Names_Invariants composes pre-extension fixed fields.
 func Wire_Header_Fixed_Names_Invariants(
-	value Wire_Header_Fixed_Names, namespace invariant.Namespace,
+	value Wire_Header_Fixed_Names, namespace aver.Namespace,
 ) {
 	Wire_Name_Suffix_Invariants(value.Name, namespace)
 	Wire_Link_Name_Invariants(value.Link_Name, namespace)
@@ -4604,7 +4604,7 @@ type Wire_Header_Extensions struct {
 
 // Wire_Header_Extensions_Invariants composes format-specific fields.
 func Wire_Header_Extensions_Invariants(
-	value Wire_Header_Extensions, namespace invariant.Namespace,
+	value Wire_Header_Extensions, namespace aver.Namespace,
 ) {
 	Reader_Format_Invariants(value.Format, namespace)
 	Wire_Access_Time_Invariants(value.Access_Time, namespace)
@@ -4622,7 +4622,7 @@ type Wire_Header struct {
 }
 
 // Wire_Header_Invariants composes one decoded fixed header.
-func Wire_Header_Invariants(value Wire_Header, namespace invariant.Namespace) {
+func Wire_Header_Invariants(value Wire_Header, namespace aver.Namespace) {
 	Wire_Header_Basic_Invariants(value.Basic, namespace)
 	Wire_Header_Names_Invariants(value.Names, namespace)
 	Wire_Header_Extensions_Invariants(value.Extensions, namespace)
@@ -4632,8 +4632,8 @@ func Wire_Header_Invariants(value Wire_Header, namespace invariant.Namespace) {
 type Physical_Size int64
 
 // Physical_Size_Invariants protects archive payload slicing.
-func Physical_Size_Invariants(value Physical_Size, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Physical_Size_Invariants(value Physical_Size, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int64(int64(value), COUNT_MINIMUM, ARCHIVE_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -4643,9 +4643,9 @@ type Reader_Format uint8
 
 // Reader_Format_Invariants bounds the five readable wire families.
 func Reader_Format_Invariants(
-	value Reader_Format, namespace invariant.Namespace,
+	value Reader_Format, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Uint8(uint8(value), uint8(FORMAT_V7), uint8(FORMAT_STAR)).
 		Ensure()
 }
@@ -4687,7 +4687,7 @@ type Raw_Header struct {
 }
 
 // Raw_Header_Invariants keeps parsed logical and physical sizes bounded.
-func Raw_Header_Invariants(value Raw_Header, namespace invariant.Namespace) {
+func Raw_Header_Invariants(value Raw_Header, namespace aver.Namespace) {
 	Reader_Format_Invariants(value.Format, namespace)
 	Wire_Type_Flag_Invariants(value.Type_Flag, namespace)
 	Field_Value_Invariants(value.Name, namespace)
@@ -4730,7 +4730,7 @@ type GNU_Numeric_Fields struct {
 
 // GNU_Numeric_Fields_Invariants composes GNU numeric encoding inputs.
 func GNU_Numeric_Fields_Invariants(
-	value GNU_Numeric_Fields, namespace invariant.Namespace,
+	value GNU_Numeric_Fields, namespace aver.Namespace,
 ) {
 	File_Mode_Invariants(value.Mode, namespace)
 	User_Identifier_Invariants(value.User_Identifier, namespace)
@@ -4757,7 +4757,7 @@ type PAX_Text_Fields struct {
 
 // PAX_Text_Fields_Invariants composes PAX text overrides.
 func PAX_Text_Fields_Invariants(
-	value PAX_Text_Fields, namespace invariant.Namespace,
+	value PAX_Text_Fields, namespace aver.Namespace,
 ) {
 	Field_Value_Invariants(value.Name, namespace)
 	Header_Link_Name_Invariants(value.Link_Name, namespace)
@@ -4770,9 +4770,9 @@ type PAX_Apply_User_Name []byte
 
 // PAX_Apply_User_Name_Invariants bounds prior owner override.
 func PAX_Apply_User_Name_Invariants(
-	value PAX_Apply_User_Name, namespace invariant.Namespace,
+	value PAX_Apply_User_Name, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(len(value), COUNT_MINIMUM, PAX_APPLY_USER_NAME_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -4782,9 +4782,9 @@ type PAX_Apply_Group_Name []byte
 
 // PAX_Apply_Group_Name_Invariants bounds prior group override.
 func PAX_Apply_Group_Name_Invariants(
-	value PAX_Apply_Group_Name, namespace invariant.Namespace,
+	value PAX_Apply_Group_Name, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(len(value), COUNT_MINIMUM, PAX_APPLY_GROUP_NAME_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -4803,7 +4803,7 @@ type PAX_Input_Text_Fields struct {
 
 // PAX_Input_Text_Fields_Invariants composes pre-PAX text domains.
 func PAX_Input_Text_Fields_Invariants(
-	value PAX_Input_Text_Fields, namespace invariant.Namespace,
+	value PAX_Input_Text_Fields, namespace aver.Namespace,
 ) {
 	Field_Value_Invariants(value.Name, namespace)
 	Header_Link_Name_Invariants(value.Link_Name, namespace)
@@ -4825,7 +4825,7 @@ type Header_Text_Fields struct {
 
 // Header_Text_Fields_Invariants composes decoded caller-backed text.
 func Header_Text_Fields_Invariants(
-	value Header_Text_Fields, namespace invariant.Namespace,
+	value Header_Text_Fields, namespace aver.Namespace,
 ) {
 	Header_Name_Invariants(value.Name, namespace)
 	Header_Link_Name_Invariants(value.Link_Name, namespace)
@@ -4838,9 +4838,9 @@ type PAX_Entry_Size int64
 
 // PAX_Entry_Size_Invariants covers parsed nonnegative decimal domain.
 func PAX_Entry_Size_Invariants(
-	value PAX_Entry_Size, namespace invariant.Namespace,
+	value PAX_Entry_Size, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int64(int64(value), COUNT_MINIMUM, int64(INTEGER_MAXIMUM)).
 		Ensure()
 }
@@ -4850,9 +4850,9 @@ type PAX_Physical_Size int64
 
 // PAX_Physical_Size_Invariants covers parsed nonnegative decimal domain.
 func PAX_Physical_Size_Invariants(
-	value PAX_Physical_Size, namespace invariant.Namespace,
+	value PAX_Physical_Size, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int64(int64(value), COUNT_MINIMUM, int64(INTEGER_MAXIMUM)).
 		Ensure()
 }
@@ -4871,7 +4871,7 @@ type PAX_Numeric_Fields struct {
 
 // PAX_Numeric_Fields_Invariants composes PAX numeric overrides.
 func PAX_Numeric_Fields_Invariants(
-	value PAX_Numeric_Fields, namespace invariant.Namespace,
+	value PAX_Numeric_Fields, namespace aver.Namespace,
 ) {
 	PAX_Entry_Size_Invariants(value.Size, namespace)
 	PAX_Physical_Size_Invariants(value.Physical_Size, namespace)
@@ -4893,7 +4893,7 @@ type PAX_Input_Numeric_Fields struct {
 
 // PAX_Input_Numeric_Fields_Invariants composes pre-PAX numeric domains.
 func PAX_Input_Numeric_Fields_Invariants(
-	value PAX_Input_Numeric_Fields, namespace invariant.Namespace,
+	value PAX_Input_Numeric_Fields, namespace aver.Namespace,
 ) {
 	Entry_Size_Invariants(value.Size, namespace)
 	Physical_Size_Invariants(value.Physical_Size, namespace)
@@ -4913,7 +4913,7 @@ type PAX_Timestamp_Fields struct {
 
 // PAX_Timestamp_Fields_Invariants composes PAX timestamp overrides.
 func PAX_Timestamp_Fields_Invariants(
-	value PAX_Timestamp_Fields, namespace invariant.Namespace,
+	value PAX_Timestamp_Fields, namespace aver.Namespace,
 ) {
 	Present_Timestamp_Invariants(value.Modification_Time, namespace)
 	Access_Timestamp_Invariants(value.Access_Time, namespace)
@@ -4930,7 +4930,7 @@ type Present_Timestamp struct {
 
 // Present_Timestamp_Invariants composes one required normalized instant.
 func Present_Timestamp_Invariants(
-	value Present_Timestamp, namespace invariant.Namespace,
+	value Present_Timestamp, namespace aver.Namespace,
 ) {
 	Integer_Invariants(value.Seconds, namespace)
 	Nanosecond_Count_Invariants(value.Nanoseconds, namespace)
@@ -4948,7 +4948,7 @@ type PAX_Timestamp_Input struct {
 
 // PAX_Timestamp_Input_Invariants composes fixed-header timestamp inputs.
 func PAX_Timestamp_Input_Invariants(
-	value PAX_Timestamp_Input, namespace invariant.Namespace,
+	value PAX_Timestamp_Input, namespace aver.Namespace,
 ) {
 	Wire_Modification_Seconds_Invariants(value.Modification_Seconds, namespace)
 	Wire_Access_Time_Invariants(value.Access_Time, namespace)
@@ -4993,13 +4993,13 @@ func Reader_Next(
 ) {
 	Reader_Invariants(reader, "Reader_Next.reader")
 	Header_Storage_Invariants(storage, "Reader_Next.storage")
-	invariant.Always(completion != nil, "Reader_Next has a completion.")
-	invariant.Always(
+	aver.Always(completion != nil, "Reader_Next has a completion.")
+	aver.Always(
 		completion == &reader.Completion,
 		"Reader_Next submits the completion owned by its Reader.",
 	)
-	invariant.Always(callback != nil, "Reader_Next has a callback.")
-	invariant.Always(!reader.Active, "Reader_Next owns a free callback slot.")
+	aver.Always(callback != nil, "Reader_Next has a callback.")
+	aver.Always(!reader.Active, "Reader_Next owns a free callback slot.")
 	reader.Active = true
 	reader.Callback = callback
 	reader.Status = STATUS_OK
@@ -5044,13 +5044,13 @@ func Reader_Read(
 ) {
 	Reader_Invariants(reader, "Reader_Read.reader")
 	Destination_Invariants(destination, "Reader_Read.destination")
-	invariant.Always(completion != nil, "Reader_Read has a completion.")
-	invariant.Always(
+	aver.Always(completion != nil, "Reader_Read has a completion.")
+	aver.Always(
 		completion == &reader.Completion,
 		"Reader_Read submits the completion owned by its Reader.",
 	)
-	invariant.Always(callback != nil, "Reader_Read has a callback.")
-	invariant.Always(!reader.Active, "Reader_Read owns a free callback slot.")
+	aver.Always(callback != nil, "Reader_Read has a callback.")
+	aver.Always(!reader.Active, "Reader_Read owns a free callback slot.")
 	reader.Active = true
 	reader.Callback = callback
 	reader.Status = STATUS_OK
@@ -5162,8 +5162,8 @@ func reader_progress(completion *nbio.Completion) {
 
 func reader_stream_complete(completion *nbio.Completion) {
 	reader := (*Reader)(unsafe.Pointer(completion))
-	invariant.Always(reader.Active, "Reader callback belongs to one active operation.")
-	invariant.Always(
+	aver.Always(reader.Active, "Reader callback belongs to one active operation.")
+	aver.Always(
 		reader.Transfer.Wait_Active,
 		"Reader callback retires one submitted transfer.",
 	)
@@ -5658,14 +5658,14 @@ func Writer_Write_Header(
 ) {
 	Writer_Invariants(writer, "Writer_Write_Header.writer")
 	Header_Unvalidated_Invariants(header, "Writer_Write_Header.header")
-	invariant.Always(completion != nil, "Writer_Write_Header has a completion.")
-	invariant.Always(
+	aver.Always(completion != nil, "Writer_Write_Header has a completion.")
+	aver.Always(
 		completion == &writer.Completion,
 		"Writer_Write_Header submits the completion owned by its Writer.",
 	)
-	invariant.Always(header != nil, "Writer_Write_Header has a header.")
-	invariant.Always(callback != nil, "Writer_Write_Header has a callback.")
-	invariant.Always(!writer.Active, "Writer_Write_Header owns a free callback slot.")
+	aver.Always(header != nil, "Writer_Write_Header has a header.")
+	aver.Always(callback != nil, "Writer_Write_Header has a callback.")
+	aver.Always(!writer.Active, "Writer_Write_Header owns a free callback slot.")
 	writer.Active = true
 	writer.Callback = callback
 	writer.Operation = WRITER_OPERATION_HEADER
@@ -6197,13 +6197,13 @@ func Writer_Write(
 ) {
 	Writer_Invariants(writer, "Writer_Write.writer")
 	Source_Invariants(source, "Writer_Write.source")
-	invariant.Always(completion != nil, "Writer_Write has a completion.")
-	invariant.Always(
+	aver.Always(completion != nil, "Writer_Write has a completion.")
+	aver.Always(
 		completion == &writer.Completion,
 		"Writer_Write submits the completion owned by its Writer.",
 	)
-	invariant.Always(callback != nil, "Writer_Write has a callback.")
-	invariant.Always(!writer.Active, "Writer_Write owns a free callback slot.")
+	aver.Always(callback != nil, "Writer_Write has a callback.")
+	aver.Always(!writer.Active, "Writer_Write owns a free callback slot.")
 	writer.Active = true
 	writer.Callback = callback
 	writer.Operation = WRITER_OPERATION_CONTENT
@@ -6246,13 +6246,13 @@ func Writer_Close(
 	writer *Writer, completion *nbio.Completion, callback nbio.Callback,
 ) {
 	Writer_Invariants(writer, "Writer_Close.writer")
-	invariant.Always(completion != nil, "Writer_Close has a completion.")
-	invariant.Always(
+	aver.Always(completion != nil, "Writer_Close has a completion.")
+	aver.Always(
 		completion == &writer.Completion,
 		"Writer_Close submits the completion owned by its Writer.",
 	)
-	invariant.Always(callback != nil, "Writer_Close has a callback.")
-	invariant.Always(!writer.Active, "Writer_Close owns a free callback slot.")
+	aver.Always(callback != nil, "Writer_Close has a callback.")
+	aver.Always(!writer.Active, "Writer_Close owns a free callback slot.")
 	writer.Active = true
 	writer.Callback = callback
 	writer.Operation = WRITER_OPERATION_CLOSE
@@ -6321,7 +6321,7 @@ func writer_submit_progress(completion *nbio.Completion) {
 
 func writer_stream_complete(completion *nbio.Completion) {
 	writer := (*Writer)(unsafe.Pointer(completion))
-	invariant.Always(writer.Wait_Active, "Writer callback retires one submitted transfer.")
+	aver.Always(writer.Wait_Active, "Writer callback retires one submitted transfer.")
 	writer.Wait_Active = false
 	requested := len(writer.Source) - int(writer.Count)
 	count := completion.Data

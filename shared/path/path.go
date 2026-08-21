@@ -5,7 +5,7 @@ import (
 	"errors"
 
 	"local/james-orcales/shared/bytes"
-	"local/james-orcales/shared/invariant/default"
+	"local/james-orcales/shared/simulation/aver/default"
 	"local/james-orcales/shared/unicode/utf8"
 )
 
@@ -76,8 +76,8 @@ var Error_Bad_Pattern = errors.New("syntax error in pattern")
 type Boolean bool
 
 // Boolean_Invariants proves both path decision states occur.
-func Boolean_Invariants(value Boolean, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Boolean_Invariants(value Boolean, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Sometimes(bool(value), "A path decision is true.").
 		Ensure()
 }
@@ -86,8 +86,8 @@ func Boolean_Invariants(value Boolean, namespace invariant.Namespace) {
 type Elements []bytes.Text
 
 // Elements_Invariants caps Join_Into work independently from output size.
-func Elements_Invariants(value Elements, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Elements_Invariants(value Elements, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), ELEMENT_COUNT_MINIMUM, ELEMENT_COUNT_MAXIMUM).
 		Ensure()
 }
@@ -96,8 +96,8 @@ func Elements_Invariants(value Elements, namespace invariant.Namespace) {
 type Nonempty_Count int
 
 // Nonempty_Count_Invariants proves mandatory dot through maximum path size.
-func Nonempty_Count_Invariants(value Nonempty_Count, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Nonempty_Count_Invariants(value Nonempty_Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), NONEMPTY_SIZE_MINIMUM, PATH_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -106,8 +106,8 @@ func Nonempty_Count_Invariants(value Nonempty_Count, namespace invariant.Namespa
 type Boundary bytes.Boundary
 
 // Boundary_Invariants proves every written path count stays inside host pathname capacity.
-func Boundary_Invariants(value Boundary, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Boundary_Invariants(value Boundary, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), PATH_SIZE_MINIMUM, PATH_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -116,8 +116,8 @@ func Boundary_Invariants(value Boundary, namespace invariant.Namespace) {
 type Directory_Count int
 
 // Directory_Count_Invariants excludes full size because directory loses final element or slash.
-func Directory_Count_Invariants(value Directory_Count, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Directory_Count_Invariants(value Directory_Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), NONEMPTY_SIZE_MINIMUM, DIRECTORY_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -126,8 +126,8 @@ func Directory_Count_Invariants(value Directory_Count, namespace invariant.Names
 type Text bytes.Text
 
 // Text_Invariants proves clipped intermediate views stay inside path bound.
-func Text_Invariants(value Text, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Text_Invariants(value Text, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), PATH_SIZE_MINIMUM, PATH_SIZE_MAXIMUM).
 		Ensure()
 }

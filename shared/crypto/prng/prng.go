@@ -29,8 +29,8 @@ package prng
 import (
 	"unsafe"
 
-	"local/james-orcales/shared/invariant/default"
 	"local/james-orcales/shared/math/bits"
+	"local/james-orcales/shared/simulation/aver/default"
 )
 
 // CHACHA_CONSTANT_FIRST is the little-endian word for ASCII "expa", first of the four constants
@@ -125,8 +125,8 @@ const CHACHA_WORD_BYTE_COUNT = 4
 type Block_Counter uint32
 
 // Block_Counter_Invariants bounds a block counter to one refill's range.
-func Block_Counter_Invariants(counter Block_Counter, namespace invariant.Namespace) {
-	invariant.Tree(counter, namespace).
+func Block_Counter_Invariants(counter Block_Counter, namespace aver.Namespace) {
+	aver.Tree(counter, namespace).
 		Enum_4_Uint32(
 			uint32(counter),
 			BLOCK_COUNTER_MIN,
@@ -141,8 +141,8 @@ func Block_Counter_Invariants(counter Block_Counter, namespace invariant.Namespa
 type Cursor uint
 
 // Cursor_Invariants bounds a buffer cursor to the buffer.
-func Cursor_Invariants(cursor Cursor, namespace invariant.Namespace) {
-	invariant.Tree(cursor, namespace).
+func Cursor_Invariants(cursor Cursor, namespace aver.Namespace) {
+	aver.Tree(cursor, namespace).
 		Range_Uint(uint(cursor), uint(CURSOR_MIN), uint(CURSOR_MAX)).
 		Ensure()
 }
@@ -151,8 +151,8 @@ func Cursor_Invariants(cursor Cursor, namespace invariant.Namespace) {
 type Bound uint64
 
 // Bound_Invariants requires a bound to be positive and within the overflow-safe ceiling.
-func Bound_Invariants(bound Bound, namespace invariant.Namespace) {
-	invariant.Tree(bound, namespace).
+func Bound_Invariants(bound Bound, namespace aver.Namespace) {
+	aver.Tree(bound, namespace).
 		Range_Uint64(uint64(bound), uint64(BOUND_MIN), uint64(BOUND_MAX)).
 		Ensure()
 }
@@ -161,8 +161,8 @@ func Bound_Invariants(bound Bound, namespace invariant.Namespace) {
 type Index uint64
 
 // Index_Invariants bounds a draw result.
-func Index_Invariants(index Index, namespace invariant.Namespace) {
-	invariant.Tree(index, namespace).
+func Index_Invariants(index Index, namespace aver.Namespace) {
+	aver.Tree(index, namespace).
 		Range_Uint64(uint64(index), uint64(INDEX_MIN), uint64(INDEX_MAX)).
 		Ensure()
 }
@@ -171,8 +171,8 @@ func Index_Invariants(index Index, namespace invariant.Namespace) {
 type Sink []byte
 
 // Sink_Invariants bounds a fill request's length.
-func Sink_Invariants(sink Sink, namespace invariant.Namespace) {
-	invariant.Tree(sink, namespace).
+func Sink_Invariants(sink Sink, namespace aver.Namespace) {
+	aver.Tree(sink, namespace).
 		Range_Int(len(sink), SINK_MIN, SINK_MAX).
 		Ensure()
 }
@@ -195,7 +195,7 @@ type Chacha struct {
 
 // Chacha_Invariants states a Chacha's buffer position; its key and buffer are fixed-size
 // arrays with no bundle of their own.
-func Chacha_Invariants(generator Chacha, namespace invariant.Namespace) {
+func Chacha_Invariants(generator Chacha, namespace aver.Namespace) {
 	Cursor_Invariants(generator.Position, namespace)
 }
 
@@ -228,8 +228,8 @@ func (generator *Chacha) Read(p []byte) (n int, err error) {
 type Word uint64
 
 // Word_Invariants preserves the complete draw domain.
-func Word_Invariants(word Word, namespace invariant.Namespace) {
-	invariant.Tree(word, namespace).
+func Word_Invariants(word Word, namespace aver.Namespace) {
+	aver.Tree(word, namespace).
 		Range_Uint64(uint64(word), uint64(WORD_MINIMUM), uint64(WORD_MAXIMUM)).
 		Ensure()
 }
@@ -250,9 +250,9 @@ type Source struct {
 }
 
 // Source_Invariants proves both halves of the vtable are bound before any draw.
-func Source_Invariants(source Source, _ invariant.Namespace) {
-	invariant.Always(source.State != nil, "A Source has caller-owned state.")
-	invariant.Always(source.Next != nil, "A Source has a bound draw procedure.")
+func Source_Invariants(source Source, _ aver.Namespace) {
+	aver.Always(source.State != nil, "A Source has caller-owned state.")
+	aver.Always(source.Next != nil, "A Source has a bound draw procedure.")
 }
 
 // Source_Read fills sink through the vtable, one word per eight bytes, little-endian so a shorter

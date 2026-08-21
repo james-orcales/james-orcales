@@ -4,14 +4,14 @@ import (
 	"testing"
 
 	"local/james-orcales/shared/crypto/prng"
-	"local/james-orcales/shared/invariant/default"
+	"local/james-orcales/shared/simulation/aver/default"
 	"local/james-orcales/shared/simulation/time"
 	"local/james-orcales/shared/uuid"
 )
 
 // TestMain register UUID invariant roots before specification run.
 func TestMain(m *testing.M) {
-	invariant.Run_Test_Main(m)
+	aver.Run_Test_Main(m)
 }
 
 // FIXED_EPOCH_SECONDS is the Unix second the fixed generator's virtual clock reads,

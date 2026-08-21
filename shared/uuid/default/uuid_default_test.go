@@ -4,14 +4,14 @@ import (
 	"testing"
 
 	"local/james-orcales/shared/crypto/prng"
-	"local/james-orcales/shared/invariant/default"
+	"local/james-orcales/shared/simulation/aver/default"
 	"local/james-orcales/shared/uuid"
 	system_uuid "local/james-orcales/shared/uuid/default"
 )
 
 // TestMain register operating-system UUID invariant roots before smoke run.
 func TestMain(m *testing.M) {
-	invariant.Run_Test_Main(m)
+	aver.Run_Test_Main(m)
 }
 
 // Test_Operating_System_Generator_Smoke checks the host-wired generator mints valid,

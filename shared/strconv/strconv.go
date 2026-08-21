@@ -10,9 +10,9 @@ package strconv
 import (
 	"errors"
 
-	"local/james-orcales/shared/invariant/default"
 	"local/james-orcales/shared/math/bits"
 	"local/james-orcales/shared/math/fixedpoint"
+	"local/james-orcales/shared/simulation/aver/default"
 	"local/james-orcales/shared/strings"
 	"local/james-orcales/shared/unicode/ucd"
 	"local/james-orcales/shared/unicode/utf8"
@@ -356,8 +356,8 @@ type Prefix_Text string
 
 // Prefix_Text_Invariants bounds a literal prefix, excluding the one size that no
 // literal has.
-func Prefix_Text_Invariants(value Prefix_Text, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Prefix_Text_Invariants(value Prefix_Text, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Holed_Int(
 			len(value), TEXT_SIZE_MINIMUM, TEXT_SIZE_MAXIMUM,
 			PREFIX_TEXT_SIZE_HOLE, PREFIX_TEXT_SIZE_HOLE,
@@ -372,8 +372,8 @@ type Text string
 // Text_Invariants bounds the text a conversion reads.
 //
 //go:nosplit
-func Text_Invariants(value Text, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Text_Invariants(value Text, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), TEXT_SIZE_MINIMUM, TEXT_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -382,8 +382,8 @@ func Text_Invariants(value Text, namespace invariant.Namespace) {
 type Number_Text string
 
 // Number_Text_Invariants bounds the text that a number reader takes.
-func Number_Text_Invariants(value Number_Text, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Number_Text_Invariants(value Number_Text, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), NUMBER_TEXT_SIZE_MINIMUM, TEXT_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -392,8 +392,8 @@ func Number_Text_Invariants(value Number_Text, namespace invariant.Namespace) {
 type Literal_Text string
 
 // Literal_Text_Invariants bounds the text that a literal reader takes.
-func Literal_Text_Invariants(value Literal_Text, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Literal_Text_Invariants(value Literal_Text, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), LITERAL_TEXT_SIZE_MINIMUM, TEXT_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -402,8 +402,8 @@ func Literal_Text_Invariants(value Literal_Text, namespace invariant.Namespace) 
 type Tail_Text string
 
 // Tail_Text_Invariants bounds the text that one character leaves.
-func Tail_Text_Invariants(value Tail_Text, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Tail_Text_Invariants(value Tail_Text, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), TEXT_SIZE_MINIMUM, TAIL_TEXT_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -412,8 +412,8 @@ func Tail_Text_Invariants(value Tail_Text, namespace invariant.Namespace) {
 type Body_Text string
 
 // Body_Text_Invariants bounds the text that a two-character prefix leaves.
-func Body_Text_Invariants(value Body_Text, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Body_Text_Invariants(value Body_Text, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), TEXT_SIZE_MINIMUM, BODY_TEXT_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -422,8 +422,8 @@ func Body_Text_Invariants(value Body_Text, namespace invariant.Namespace) {
 type Escape_Tail_Text string
 
 // Escape_Tail_Text_Invariants bounds the text that a two-character escape leaves.
-func Escape_Tail_Text_Invariants(value Escape_Tail_Text, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Escape_Tail_Text_Invariants(value Escape_Tail_Text, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), TEXT_SIZE_MINIMUM, ESCAPE_TAIL_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -433,9 +433,9 @@ type Escape_Destination []byte
 
 // Escape_Destination_Invariants bounds plain UTF-8 and escaped widths.
 func Escape_Destination_Invariants(
-	value Escape_Destination, namespace invariant.Namespace,
+	value Escape_Destination, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(len(value), ESCAPE_SIZE_MINIMUM, ESCAPE_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -445,9 +445,9 @@ type Escape_Sequence_Buffer []byte
 
 // Escape_Sequence_Buffer_Invariants states four mandatory escape widths.
 func Escape_Sequence_Buffer_Invariants(
-	value Escape_Sequence_Buffer, namespace invariant.Namespace,
+	value Escape_Sequence_Buffer, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Enum_4_Int(
 			len(value), ESCAPE_SEQUENCE_SIZE_MINIMUM, BYTE_ESCAPE_SIZE,
 			SHORT_UNICODE_ESCAPE_SIZE, LONG_UNICODE_ESCAPE_SIZE,
@@ -459,16 +459,16 @@ func Escape_Sequence_Buffer_Invariants(
 type Byte_Escape_Buffer []byte
 
 // Byte_Escape_Buffer_Invariants states hexadecimal byte escape width.
-func Byte_Escape_Buffer_Invariants(value Byte_Escape_Buffer, namespace invariant.Namespace) {
-	invariant.Always(len(value) == BYTE_ESCAPE_SIZE, "Byte escape storage has four bytes.")
+func Byte_Escape_Buffer_Invariants(value Byte_Escape_Buffer, namespace aver.Namespace) {
+	aver.Always(len(value) == BYTE_ESCAPE_SIZE, "Byte escape storage has four bytes.")
 }
 
 // Unquoted_Buffer is exact caller storage for one decoded literal value.
 type Unquoted_Buffer []byte
 
 // Unquoted_Buffer_Invariants bounds decoded literal width.
-func Unquoted_Buffer_Invariants(value Unquoted_Buffer, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Unquoted_Buffer_Invariants(value Unquoted_Buffer, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), TEXT_SIZE_MINIMUM, UNQUOTED_TEXT_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -477,8 +477,8 @@ func Unquoted_Buffer_Invariants(value Unquoted_Buffer, namespace invariant.Names
 type Fraction_Text string
 
 // Fraction_Text_Invariants bounds the fraction digits that the reader keeps.
-func Fraction_Text_Invariants(value Fraction_Text, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Fraction_Text_Invariants(value Fraction_Text, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), TEXT_SIZE_MINIMUM, FRACTION_TEXT_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -488,8 +488,8 @@ type Fraction_Units uint64
 
 // Fraction_Units_Invariants bounds a fraction to one whole, which the rounding of a
 // fraction of nines reaches.
-func Fraction_Units_Invariants(value Fraction_Units, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Fraction_Units_Invariants(value Fraction_Units, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint64(uint64(value), FRACTION_UNITS_MINIMUM, FRACTION_UNITS_MAXIMUM).
 		Ensure()
 }
@@ -498,8 +498,8 @@ func Fraction_Units_Invariants(value Fraction_Units, namespace invariant.Namespa
 type Buffer []byte
 
 // Buffer_Invariants bounds caller-owned conversion storage.
-func Buffer_Invariants(value Buffer, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Buffer_Invariants(value Buffer, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), BUFFER_SIZE_MINIMUM, BUFFER_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -508,8 +508,8 @@ func Buffer_Invariants(value Buffer, namespace invariant.Namespace) {
 type Boolean_Count int
 
 // Boolean_Count_Invariants states both Boolean text widths.
-func Boolean_Count_Invariants(value Boolean_Count, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Boolean_Count_Invariants(value Boolean_Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_Int(int(value), BOOLEAN_TEXT_SIZE_TRUE, BOOLEAN_TEXT_SIZE_FALSE).
 		Ensure()
 }
@@ -518,8 +518,8 @@ func Boolean_Count_Invariants(value Boolean_Count, namespace invariant.Namespace
 type Digit_Text_Count int
 
 // Digit_Text_Count_Invariants bounds unsigned integer width.
-func Digit_Text_Count_Invariants(value Digit_Text_Count, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Digit_Text_Count_Invariants(value Digit_Text_Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), DIGIT_TEXT_SIZE_MINIMUM, DIGIT_TEXT_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -528,8 +528,8 @@ func Digit_Text_Count_Invariants(value Digit_Text_Count, namespace invariant.Nam
 type Integer_Text_Count int
 
 // Integer_Text_Count_Invariants bounds signed integer width.
-func Integer_Text_Count_Invariants(value Integer_Text_Count, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Integer_Text_Count_Invariants(value Integer_Text_Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), INTEGER_TEXT_SIZE_MINIMUM, INTEGER_TEXT_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -538,8 +538,8 @@ func Integer_Text_Count_Invariants(value Integer_Text_Count, namespace invariant
 type Decimal_Text_Count int
 
 // Decimal_Text_Count_Invariants bounds machine integer decimal width.
-func Decimal_Text_Count_Invariants(value Decimal_Text_Count, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Decimal_Text_Count_Invariants(value Decimal_Text_Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), DECIMAL_TEXT_SIZE_MINIMUM, DECIMAL_TEXT_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -549,9 +549,9 @@ type Fixed_Point_Text_Count int
 
 // Fixed_Point_Text_Count_Invariants bounds fixed-point text width.
 func Fixed_Point_Text_Count_Invariants(
-	value Fixed_Point_Text_Count, namespace invariant.Namespace,
+	value Fixed_Point_Text_Count, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(
 			int(value), FIXED_POINT_TEXT_SIZE_MINIMUM, FIXED_POINT_TEXT_SIZE_MAXIMUM,
 		).
@@ -562,8 +562,8 @@ func Fixed_Point_Text_Count_Invariants(
 type Quoted_Text_Count int
 
 // Quoted_Text_Count_Invariants bounds string literal width.
-func Quoted_Text_Count_Invariants(value Quoted_Text_Count, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Quoted_Text_Count_Invariants(value Quoted_Text_Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), QUOTED_TEXT_SIZE_MINIMUM, QUOTED_TEXT_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -573,9 +573,9 @@ type Character_Text_Count int
 
 // Character_Text_Count_Invariants bounds character literal width.
 func Character_Text_Count_Invariants(
-	value Character_Text_Count, namespace invariant.Namespace,
+	value Character_Text_Count, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(
 			int(value), CHARACTER_TEXT_SIZE_MINIMUM, CHARACTER_TEXT_SIZE_MAXIMUM,
 		).
@@ -586,8 +586,8 @@ func Character_Text_Count_Invariants(
 type Escape_Text_Count int
 
 // Escape_Text_Count_Invariants bounds plain UTF-8 and escaped widths.
-func Escape_Text_Count_Invariants(value Escape_Text_Count, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Escape_Text_Count_Invariants(value Escape_Text_Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), ESCAPE_SIZE_MINIMUM, ESCAPE_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -597,9 +597,9 @@ type Escape_Sequence_Count int
 
 // Escape_Sequence_Count_Invariants states four mandatory escape widths.
 func Escape_Sequence_Count_Invariants(
-	value Escape_Sequence_Count, namespace invariant.Namespace,
+	value Escape_Sequence_Count, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Enum_4_Int(
 			int(value), ESCAPE_SEQUENCE_SIZE_MINIMUM, BYTE_ESCAPE_SIZE,
 			SHORT_UNICODE_ESCAPE_SIZE, LONG_UNICODE_ESCAPE_SIZE,
@@ -611,8 +611,8 @@ func Escape_Sequence_Count_Invariants(
 type Decoded_Text_Count int
 
 // Decoded_Text_Count_Invariants states UTF-8 sequence widths.
-func Decoded_Text_Count_Invariants(value Decoded_Text_Count, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Decoded_Text_Count_Invariants(value Decoded_Text_Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_4_Int(
 			int(value), utf8.CHARACTER_SIZE_MINIMUM, utf8.CHARACTER_SIZE_TWO,
 			utf8.CHARACTER_SIZE_THREE, utf8.CHARACTER_SIZE_MAXIMUM,
@@ -625,9 +625,9 @@ type Unquoted_Text_Count int
 
 // Unquoted_Text_Count_Invariants bounds decoded literal width.
 func Unquoted_Text_Count_Invariants(
-	value Unquoted_Text_Count, namespace invariant.Namespace,
+	value Unquoted_Text_Count, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(int(value), TEXT_SIZE_MINIMUM, UNQUOTED_TEXT_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -636,8 +636,8 @@ func Unquoted_Text_Count_Invariants(
 type Boolean bool
 
 // Boolean_Invariants records both Boolean states.
-func Boolean_Invariants(value Boolean, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Boolean_Invariants(value Boolean, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Sometimes(bool(value), "A Boolean value is true.").
 		Ensure()
 }
@@ -646,8 +646,8 @@ func Boolean_Invariants(value Boolean, namespace invariant.Namespace) {
 type Base int
 
 // Base_Invariants bounds a radix to the range the digit symbols cover.
-func Base_Invariants(value Base, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Base_Invariants(value Base, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), BASE_MINIMUM, BASE_MAXIMUM).
 		Ensure()
 }
@@ -656,8 +656,8 @@ func Base_Invariants(value Base, namespace invariant.Namespace) {
 type Implied_Base int
 
 // Implied_Base_Invariants bounds a radix, admitting zero and excluding one.
-func Implied_Base_Invariants(value Implied_Base, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Implied_Base_Invariants(value Implied_Base, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Holed_Int(
 			int(value), IMPLIED_BASE_MINIMUM, IMPLIED_BASE_MAXIMUM,
 			IMPLIED_BASE_HOLE, IMPLIED_BASE_HOLE, IMPLIED_BASE_HOLE, IMPLIED_BASE_HOLE,
@@ -670,8 +670,8 @@ func Implied_Base_Invariants(value Implied_Base, namespace invariant.Namespace) 
 type Bit_Size int
 
 // Bit_Size_Invariants bounds a width to the integer types the package converts.
-func Bit_Size_Invariants(value Bit_Size, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Bit_Size_Invariants(value Bit_Size, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), BIT_SIZE_MINIMUM, BIT_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -680,8 +680,8 @@ func Bit_Size_Invariants(value Bit_Size, namespace invariant.Namespace) {
 type Signed_Integer int64
 
 // Signed_Integer_Invariants states the complete signed 64-bit domain.
-func Signed_Integer_Invariants(value Signed_Integer, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Signed_Integer_Invariants(value Signed_Integer, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int64(int64(value), INTEGER_64_MINIMUM, INTEGER_64_MAXIMUM).
 		Ensure()
 }
@@ -690,8 +690,8 @@ func Signed_Integer_Invariants(value Signed_Integer, namespace invariant.Namespa
 type Unsigned_Integer uint64
 
 // Unsigned_Integer_Invariants states the complete unsigned 64-bit domain.
-func Unsigned_Integer_Invariants(value Unsigned_Integer, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Unsigned_Integer_Invariants(value Unsigned_Integer, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint64(uint64(value), UNSIGNED_64_MINIMUM, UNSIGNED_64_MAXIMUM).
 		Ensure()
 }
@@ -702,8 +702,8 @@ type Machine_Integer int
 // Machine_Integer_Invariants states the complete platform integer domain.
 //
 //go:nosplit
-func Machine_Integer_Invariants(value Machine_Integer, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Machine_Integer_Invariants(value Machine_Integer, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), MACHINE_INTEGER_MINIMUM, MACHINE_INTEGER_MAXIMUM).
 		Ensure()
 }
@@ -712,8 +712,8 @@ func Machine_Integer_Invariants(value Machine_Integer, namespace invariant.Names
 type Character rune
 
 // Character_Invariants states the complete rune storage domain.
-func Character_Invariants(value Character, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Character_Invariants(value Character, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int32(int32(value), CHARACTER_MINIMUM, CHARACTER_MAXIMUM).
 		Ensure()
 }
@@ -723,8 +723,8 @@ func Character_Invariants(value Character, namespace invariant.Namespace) {
 type Latin_1_Character rune
 
 // Latin_1_Character_Invariants bounds a character to the Latin-1 block.
-func Latin_1_Character_Invariants(value Latin_1_Character, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Latin_1_Character_Invariants(value Latin_1_Character, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int32(int32(value), CODE_POINT_MINIMUM, int32(LATIN_1_MAXIMUM)).
 		Ensure()
 }
@@ -733,8 +733,8 @@ func Latin_1_Character_Invariants(value Latin_1_Character, namespace invariant.N
 type Code_Point rune
 
 // Code_Point_Invariants bounds a value to the code point range.
-func Code_Point_Invariants(value Code_Point, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Code_Point_Invariants(value Code_Point, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int32(int32(value), CODE_POINT_MINIMUM, CODE_POINT_MAXIMUM).
 		Ensure()
 }
@@ -743,8 +743,8 @@ func Code_Point_Invariants(value Code_Point, namespace invariant.Namespace) {
 type Byte_Point rune
 
 // Byte_Point_Invariants bounds a value to the code points of one byte.
-func Byte_Point_Invariants(value Byte_Point, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Byte_Point_Invariants(value Byte_Point, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int32(int32(value), CODE_POINT_MINIMUM, BYTE_POINT_MAXIMUM).
 		Ensure()
 }
@@ -753,8 +753,8 @@ func Byte_Point_Invariants(value Byte_Point, namespace invariant.Namespace) {
 type Text_Byte uint8
 
 // Text_Byte_Invariants states the complete byte domain.
-func Text_Byte_Invariants(value Text_Byte, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Text_Byte_Invariants(value Text_Byte, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint8(uint8(value), TEXT_BYTE_MINIMUM, TEXT_BYTE_MAXIMUM).
 		Ensure()
 }
@@ -763,8 +763,8 @@ func Text_Byte_Invariants(value Text_Byte, namespace invariant.Namespace) {
 type Invalid_Text_Byte uint8
 
 // Invalid_Text_Byte_Invariants bounds failed leading byte.
-func Invalid_Text_Byte_Invariants(value Invalid_Text_Byte, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Invalid_Text_Byte_Invariants(value Invalid_Text_Byte, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint8(
 			uint8(value), INVALID_TEXT_BYTE_MINIMUM, INVALID_TEXT_BYTE_MAXIMUM,
 		).
@@ -775,8 +775,8 @@ func Invalid_Text_Byte_Invariants(value Invalid_Text_Byte, namespace invariant.N
 type Octal_Digit_Byte uint8
 
 // Octal_Digit_Byte_Invariants bounds a symbol to the octal digits.
-func Octal_Digit_Byte_Invariants(value Octal_Digit_Byte, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Octal_Digit_Byte_Invariants(value Octal_Digit_Byte, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint8(uint8(value), OCTAL_DIGIT_MINIMUM, OCTAL_DIGIT_MAXIMUM).
 		Ensure()
 }
@@ -785,8 +785,8 @@ func Octal_Digit_Byte_Invariants(value Octal_Digit_Byte, namespace invariant.Nam
 type Folded_Byte uint8
 
 // Folded_Byte_Invariants bounds a folded byte, which holds the bit the fold sets.
-func Folded_Byte_Invariants(value Folded_Byte, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Folded_Byte_Invariants(value Folded_Byte, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint8(uint8(value), FOLDED_BYTE_MINIMUM, FOLDED_BYTE_MAXIMUM).
 		Ensure()
 }
@@ -795,8 +795,8 @@ func Folded_Byte_Invariants(value Folded_Byte, namespace invariant.Namespace) {
 type Digit_Value uint8
 
 // Digit_Value_Invariants bounds a digit to the largest radix.
-func Digit_Value_Invariants(value Digit_Value, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Digit_Value_Invariants(value Digit_Value, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint8(uint8(value), DIGIT_VALUE_MINIMUM, DIGIT_VALUE_MAXIMUM).
 		Ensure()
 }
@@ -805,8 +805,8 @@ func Digit_Value_Invariants(value Digit_Value, namespace invariant.Namespace) {
 type Hexadecimal_Value uint8
 
 // Hexadecimal_Value_Invariants bounds a digit to base sixteen.
-func Hexadecimal_Value_Invariants(value Hexadecimal_Value, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Hexadecimal_Value_Invariants(value Hexadecimal_Value, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint8(uint8(value), HEXADECIMAL_VALUE_MINIMUM, HEXADECIMAL_VALUE_MAXIMUM).
 		Ensure()
 }
@@ -815,8 +815,8 @@ func Hexadecimal_Value_Invariants(value Hexadecimal_Value, namespace invariant.N
 type Quote_Mark uint8
 
 // Quote_Mark_Invariants states the three literal forms.
-func Quote_Mark_Invariants(value Quote_Mark, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Quote_Mark_Invariants(value Quote_Mark, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_3_Uint8(uint8(value), QUOTE_MARK_NONE, QUOTE_MARK_DOUBLE, QUOTE_MARK_SINGLE).
 		Ensure()
 }
@@ -825,8 +825,8 @@ func Quote_Mark_Invariants(value Quote_Mark, namespace invariant.Namespace) {
 type Literal_Quote_Mark uint8
 
 // Literal_Quote_Mark_Invariants states the two literal forms.
-func Literal_Quote_Mark_Invariants(value Literal_Quote_Mark, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Literal_Quote_Mark_Invariants(value Literal_Quote_Mark, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_Uint8(uint8(value), QUOTE_MARK_DOUBLE, QUOTE_MARK_SINGLE).
 		Ensure()
 }
@@ -835,8 +835,8 @@ func Literal_Quote_Mark_Invariants(value Literal_Quote_Mark, namespace invariant
 type Digit_Count int
 
 // Digit_Count_Invariants states the three escape widths.
-func Digit_Count_Invariants(value Digit_Count, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Digit_Count_Invariants(value Digit_Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_3_Int(
 			int(value), HEXADECIMAL_DIGIT_COUNT, SHORT_UNICODE_DIGIT_COUNT,
 			LONG_UNICODE_DIGIT_COUNT,

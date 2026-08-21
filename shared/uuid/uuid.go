@@ -21,8 +21,8 @@ import (
 	"local/james-orcales/shared/database/driver"
 	"local/james-orcales/shared/encoding/binary"
 	"local/james-orcales/shared/encoding/hex"
-	"local/james-orcales/shared/invariant/default"
 	"local/james-orcales/shared/math/bits"
+	"local/james-orcales/shared/simulation/aver/default"
 	"local/james-orcales/shared/simulation/time"
 	"local/james-orcales/shared/strings"
 )
@@ -111,16 +111,16 @@ const UUID_URN_BYTE_COUNT = UUID_URN_PREFIX_BYTE_COUNT + UUID_TEXT_BYTE_COUNT
 type UUID [UUID_BYTE_COUNT]byte
 
 // UUID_Invariants fixes RFC 9562 storage width.
-func UUID_Invariants(value UUID, _ invariant.Namespace) {
-	invariant.Always(len(value) == UUID_BYTE_COUNT, "UUID storage has RFC 9562 width.")
+func UUID_Invariants(value UUID, _ aver.Namespace) {
+	aver.Always(len(value) == UUID_BYTE_COUNT, "UUID storage has RFC 9562 width.")
 }
 
 // UUIDs is a slice of UUID, given a name so UUIDs_Strings can hang off it.
 type UUIDs []UUID
 
 // UUIDs_Invariants bounds UUID collections by shared byte-storage capacity.
-func UUIDs_Invariants(value UUIDs, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func UUIDs_Invariants(value UUIDs, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), bytes.SLICE_SIZE_MINIMUM, UUIDS_COUNT_MAXIMUM).
 		Ensure()
 }
@@ -132,8 +132,8 @@ const UUIDS_COUNT_MAXIMUM = bytes.SLICE_SIZE_MAXIMUM / UUID_BYTE_COUNT
 type Version byte
 
 // Version_Invariants bounds one hexadecimal version nibble.
-func Version_Invariants(value Version, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Version_Invariants(value Version, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint8(uint8(value), bits.WORD_8_MINIMUM, VERSION_MAXIMUM).
 		Ensure()
 }
@@ -142,8 +142,8 @@ func Version_Invariants(value Version, namespace invariant.Namespace) {
 type Variant byte
 
 // Variant_Invariants admits every recognized UUID layout variant.
-func Variant_Invariants(value Variant, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Variant_Invariants(value Variant, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_4_Uint8(
 			uint8(value), uint8(VARIANT_RFC_4122), uint8(VARIANT_RESERVED),
 			uint8(VARIANT_MICROSOFT), uint8(VARIANT_FUTURE),
@@ -155,8 +155,8 @@ func Variant_Invariants(value Variant, namespace invariant.Namespace) {
 type Domain byte
 
 // Domain_Invariants admits three DCE Security domains.
-func Domain_Invariants(value Domain, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Domain_Invariants(value Domain, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_3_Uint8(
 			uint8(value), uint8(DOMAIN_PERSON), uint8(DOMAIN_GROUP),
 			uint8(DOMAIN_ORGANIZATION),
@@ -168,8 +168,8 @@ func Domain_Invariants(value Domain, namespace invariant.Namespace) {
 type Time int64
 
 // Time_Invariants bounds timestamp to RFC 9562 60-bit field.
-func Time_Invariants(value Time, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Time_Invariants(value Time, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int64(int64(value), TIME_MINIMUM, TIME_MAXIMUM).
 		Ensure()
 }
@@ -178,8 +178,8 @@ func Time_Invariants(value Time, namespace invariant.Namespace) {
 type Generated_Time int64
 
 // Generated_Time_Invariants matches arithmetic image of complete Clock domain.
-func Generated_Time_Invariants(value Generated_Time, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Generated_Time_Invariants(value Generated_Time, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int64(int64(value), GENERATED_TIME_MINIMUM, GENERATED_TIME_MAXIMUM).
 		Ensure()
 }
@@ -188,16 +188,16 @@ func Generated_Time_Invariants(value Generated_Time, namespace invariant.Namespa
 type Node [NODE_BYTE_COUNT]byte
 
 // Node_Invariants fixes RFC 9562 node storage width.
-func Node_Invariants(value Node, _ invariant.Namespace) {
-	invariant.Always(len(value) == NODE_BYTE_COUNT, "UUID node has RFC 9562 width.")
+func Node_Invariants(value Node, _ aver.Namespace) {
+	aver.Always(len(value) == NODE_BYTE_COUNT, "UUID node has RFC 9562 width.")
 }
 
 // Clock_Sequence separates timestamp collisions within one generator.
 type Clock_Sequence uint16
 
 // Clock_Sequence_Invariants bounds RFC 9562 sequence field before variant stamping.
-func Clock_Sequence_Invariants(value Clock_Sequence, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Clock_Sequence_Invariants(value Clock_Sequence, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint16(
 			uint16(value), bits.WORD_16_MINIMUM, uint16(CLOCK_SEQUENCE_MAXIMUM),
 		).
@@ -208,8 +208,8 @@ func Clock_Sequence_Invariants(value Clock_Sequence, namespace invariant.Namespa
 type Valid bool
 
 // Valid_Invariants requires valid and invalid nullable values.
-func Valid_Invariants(value Valid, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Valid_Invariants(value Valid, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Sometimes(bool(value), "A nullable UUID contains a value.").
 		Ensure()
 }
@@ -218,8 +218,8 @@ func Valid_Invariants(value Valid, namespace invariant.Namespace) {
 type Identifier uint32
 
 // Identifier_Invariants admits complete DCE identifier storage domain.
-func Identifier_Invariants(value Identifier, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Identifier_Invariants(value Identifier, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint32(uint32(value), bits.WORD_32_MINIMUM, bits.WORD_32_MAXIMUM).
 		Ensure()
 }
@@ -228,8 +228,8 @@ func Identifier_Invariants(value Identifier, namespace invariant.Namespace) {
 type Name []byte
 
 // Name_Invariants bounds malicious names before hashing work.
-func Name_Invariants(value Name, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Name_Invariants(value Name, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), bytes.SLICE_SIZE_MINIMUM, bytes.SLICE_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -238,8 +238,8 @@ func Name_Invariants(value Name, namespace invariant.Namespace) {
 type Text_Unvalidated string
 
 // Text_Unvalidated_Invariants bounds malicious input before syntax work.
-func Text_Unvalidated_Invariants(value Text_Unvalidated, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Text_Unvalidated_Invariants(value Text_Unvalidated, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), strings.TEXT_SIZE_MINIMUM, strings.TEXT_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -248,16 +248,16 @@ func Text_Unvalidated_Invariants(value Text_Unvalidated, namespace invariant.Nam
 type URN string
 
 // URN_Invariants fixes prefix and UUID text width.
-func URN_Invariants(value URN, _ invariant.Namespace) {
-	invariant.Always(len(value) == UUID_URN_BYTE_COUNT, "UUID URN has RFC 2141 width.")
+func URN_Invariants(value URN, _ aver.Namespace) {
+	aver.Always(len(value) == UUID_URN_BYTE_COUNT, "UUID URN has RFC 2141 width.")
 }
 
 // Strings is caller-independent rendering of bounded UUID collection.
 type Strings []string
 
 // Strings_Invariants preserves collection count bound.
-func Strings_Invariants(value Strings, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Strings_Invariants(value Strings, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), bytes.SLICE_SIZE_MINIMUM, UUIDS_COUNT_MAXIMUM).
 		Ensure()
 }
@@ -266,8 +266,8 @@ func Strings_Invariants(value Strings, namespace invariant.Namespace) {
 type Unix_Second int64
 
 // Unix_Second_Invariants bounds conversion from RFC 9562 timestamp.
-func Unix_Second_Invariants(value Unix_Second, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Unix_Second_Invariants(value Unix_Second, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int64(int64(value), UNIX_SECOND_MINIMUM, UNIX_SECOND_MAXIMUM).
 		Ensure()
 }
@@ -280,16 +280,16 @@ const NANOSECOND_STORAGE_COUNT = UUID_BIT_COUNT / UUID_BIT_COUNT
 type Nanosecond [NANOSECOND_STORAGE_COUNT]int64
 
 // Nanosecond_Invariants states bounds and resolution without claiming impossible values.
-func Nanosecond_Invariants(value Nanosecond, _ invariant.Namespace) {
-	invariant.Always(
+func Nanosecond_Invariants(value Nanosecond, _ aver.Namespace) {
+	aver.Always(
 		value[0] >= NANOSECOND_MINIMUM,
 		"UUID Unix nanoseconds stay above signed subsecond minimum.",
 	)
-	invariant.Always(
+	aver.Always(
 		value[0] <= NANOSECOND_MAXIMUM,
 		"UUID Unix nanoseconds stay below signed subsecond maximum.",
 	)
-	invariant.Always(
+	aver.Always(
 		value[0]%UUID_TICK_NANOSECOND_COUNT == 0,
 		"UUID Unix nanoseconds retain exact RFC tick resolution.",
 	)
@@ -299,8 +299,8 @@ func Nanosecond_Invariants(value Nanosecond, _ invariant.Namespace) {
 type Order int
 
 // Order_Invariants admits before, equal, and after.
-func Order_Invariants(value Order, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Order_Invariants(value Order, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_3_Int(int(value), ORDER_BEFORE, ORDER_EQUAL, ORDER_AFTER).
 		Ensure()
 }
@@ -309,8 +309,8 @@ func Order_Invariants(value Order, namespace invariant.Namespace) {
 type Unix_Millisecond uint64
 
 // Unix_Millisecond_Invariants bounds Version 7 48-bit millisecond field.
-func Unix_Millisecond_Invariants(value Unix_Millisecond, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Unix_Millisecond_Invariants(value Unix_Millisecond, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint64(uint64(value), UNIX_MILLISECOND_MINIMUM, UNIX_MILLISECOND_MAXIMUM).
 		Ensure()
 }
@@ -320,9 +320,9 @@ type Generated_Unix_Millisecond uint64
 
 // Generated_Unix_Millisecond_Invariants matches nonnegative Clock image.
 func Generated_Unix_Millisecond_Invariants(
-	value Generated_Unix_Millisecond, namespace invariant.Namespace,
+	value Generated_Unix_Millisecond, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Uint64(
 			uint64(value), GENERATED_UNIX_MILLISECOND_MINIMUM,
 			GENERATED_UNIX_MILLISECOND_MAXIMUM,
@@ -334,8 +334,8 @@ func Generated_Unix_Millisecond_Invariants(
 type V7_Sequence uint16
 
 // V7_Sequence_Invariants bounds Version 7 12-bit sequence field.
-func V7_Sequence_Invariants(value V7_Sequence, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func V7_Sequence_Invariants(value V7_Sequence, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint16(uint16(value), V7_SEQUENCE_MINIMUM, V7_SEQUENCE_MAXIMUM).
 		Ensure()
 }
@@ -345,9 +345,9 @@ type Clock_Sequence_State uint16
 
 // Clock_Sequence_State_Invariants bounds internal optional sequence encoding.
 func Clock_Sequence_State_Invariants(
-	value Clock_Sequence_State, namespace invariant.Namespace,
+	value Clock_Sequence_State, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Uint16(
 			uint16(value), bits.WORD_16_MINIMUM, CLOCK_SEQUENCE_VALUE_COUNT,
 		).
@@ -358,8 +358,8 @@ func Clock_Sequence_State_Invariants(
 type Timestamp_State int64
 
 // Timestamp_State_Invariants bounds internal timestamp storage.
-func Timestamp_State_Invariants(value Timestamp_State, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Timestamp_State_Invariants(value Timestamp_State, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int64(int64(value), TIME_MINIMUM, TIME_MAXIMUM).
 		Ensure()
 }
@@ -368,8 +368,8 @@ func Timestamp_State_Invariants(value Timestamp_State, namespace invariant.Names
 type V7_State uint64
 
 // V7_State_Invariants bounds internal Version 7 ordering storage.
-func V7_State_Invariants(value V7_State, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func V7_State_Invariants(value V7_State, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint64(uint64(value), V7_VALUE_MINIMUM, V7_VALUE_MAXIMUM).
 		Ensure()
 }
@@ -385,7 +385,7 @@ type Generator_State struct {
 }
 
 // Generator_State_Invariants composes caller-selected ordering state.
-func Generator_State_Invariants(value Generator_State, namespace invariant.Namespace) {
+func Generator_State_Invariants(value Generator_State, namespace aver.Namespace) {
 	Clock_Sequence_State_Invariants(value.Clock_Sequence, namespace)
 	Timestamp_State_Invariants(value.Last_Time, namespace)
 	V7_State_Invariants(value.Last_V7, namespace)
@@ -531,8 +531,8 @@ const JSON_NULL = "null"
 type Error uint8
 
 // Error_Invariants closes every UUID failure kind.
-func Error_Invariants(value Error, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Error_Invariants(value Error, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint8(
 			uint8(value), uint8(ERROR_INVALID_FORMAT),
 			uint8(ERROR_V7_TIME_OUTPUT_OF_RANGE),
@@ -600,7 +600,7 @@ type Generator struct {
 }
 
 // Generator_Invariants composes every injected dependency and mutable ordering field.
-func Generator_Invariants(value Generator, namespace invariant.Namespace) {
+func Generator_Invariants(value Generator, namespace aver.Namespace) {
 	prng.Source_Invariants(value.Source, namespace)
 	time.Clock_Invariants(value.Clock, namespace)
 	Node_Invariants(value.Node, namespace)
@@ -618,7 +618,7 @@ type Null_UUID struct {
 }
 
 // Null_UUID_Invariants composes nullable value and presence state.
-func Null_UUID_Invariants(value Null_UUID, namespace invariant.Namespace) {
+func Null_UUID_Invariants(value Null_UUID, namespace aver.Namespace) {
 	UUID_Invariants(value.UUID, namespace)
 	Valid_Invariants(value.Valid, namespace)
 }
@@ -1187,12 +1187,12 @@ type Compare_Input struct {
 }
 
 // Compare_Input_Invariants fixes both RFC 9562 operand widths without repeating UUID type.
-func Compare_Input_Invariants(value Compare_Input, _ invariant.Namespace) {
-	invariant.Always(
+func Compare_Input_Invariants(value Compare_Input, _ aver.Namespace) {
+	aver.Always(
 		len(value.A) == UUID_BYTE_COUNT,
 		"First UUID comparison operand has RFC 9562 width.",
 	)
-	invariant.Always(
+	aver.Always(
 		len(value.B) == UUID_BYTE_COUNT,
 		"Second UUID comparison operand has RFC 9562 width.",
 	)
@@ -1359,7 +1359,7 @@ func UUID_Value(uuid UUID) (value driver.Value) {
 	UUID_Invariants(uuid, "uuid_value.uuid")
 	var status driver.Validation_Status
 	value, status = driver.Value_Of_Text(driver.Text_Unvalidated(uuid.String()))
-	invariant.Always(
+	aver.Always(
 		status == driver.Validation_Status(driver.STATUS_OK),
 		"Canonical UUID text always fits shared driver text bound.",
 	)

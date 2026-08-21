@@ -2,8 +2,8 @@
 package utf8
 
 import (
-	"local/james-orcales/shared/invariant/default"
 	"local/james-orcales/shared/math/bits"
+	"local/james-orcales/shared/simulation/aver/default"
 )
 
 // REPLACEMENT_CHARACTER is the result for an invalid encoding or character.
@@ -229,8 +229,8 @@ const REPLACEMENT_BYTE_TWO byte = CONTINUATION_BYTE |
 type Bytes []byte
 
 // Bytes_Invariants applies the package sequence limit.
-func Bytes_Invariants(value Bytes, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Bytes_Invariants(value Bytes, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), SEQUENCE_SIZE_MINIMUM, SEQUENCE_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -239,8 +239,8 @@ func Bytes_Invariants(value Bytes, namespace invariant.Namespace) {
 type Text string
 
 // Text_Invariants applies the package sequence limit.
-func Text_Invariants(value Text, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Text_Invariants(value Text, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), SEQUENCE_SIZE_MINIMUM, SEQUENCE_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -249,8 +249,8 @@ func Text_Invariants(value Text, namespace invariant.Namespace) {
 type Byte byte
 
 // Byte_Invariants covers all byte values.
-func Byte_Invariants(value Byte, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Byte_Invariants(value Byte, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint8(uint8(value), bits.WORD_8_MINIMUM, bits.WORD_8_MAXIMUM).
 		Ensure()
 }
@@ -259,8 +259,8 @@ func Byte_Invariants(value Byte, namespace invariant.Namespace) {
 type Character rune
 
 // Character_Invariants covers the complete rune-storage domain.
-func Character_Invariants(value Character, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Character_Invariants(value Character, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int32(int32(value), CHARACTER_MINIMUM, CHARACTER_MAXIMUM).
 		Ensure()
 }
@@ -270,9 +270,9 @@ type Decoded_Character rune
 
 // Decoded_Character_Invariants covers all valid decoded code points.
 func Decoded_Character_Invariants(
-	value Decoded_Character, namespace invariant.Namespace,
+	value Decoded_Character, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int32(
 			int32(value), DECODED_CHARACTER_MINIMUM, DECODED_CHARACTER_MAXIMUM,
 		).
@@ -283,8 +283,8 @@ func Decoded_Character_Invariants(
 type Size int
 
 // Size_Invariants covers all UTF-8 character sizes and invalidity.
-func Size_Invariants(value Size, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Size_Invariants(value Size, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Holed_Int(
 			int(value), CHARACTER_SIZE_INVALID, CHARACTER_SIZE_MAXIMUM,
 			CHARACTER_SIZE_HOLE, CHARACTER_SIZE_HOLE,
@@ -297,8 +297,8 @@ func Size_Invariants(value Size, namespace invariant.Namespace) {
 type Decoded_Size int
 
 // Decoded_Size_Invariants covers empty input and all UTF-8 encoding sizes.
-func Decoded_Size_Invariants(value Decoded_Size, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Decoded_Size_Invariants(value Decoded_Size, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), DECODED_SIZE_MINIMUM, DECODED_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -307,8 +307,8 @@ func Decoded_Size_Invariants(value Decoded_Size, namespace invariant.Namespace) 
 type Encoded_Size int
 
 // Encoded_Size_Invariants lists all UTF-8 encoding sizes.
-func Encoded_Size_Invariants(value Encoded_Size, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Encoded_Size_Invariants(value Encoded_Size, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_4_Int(
 			int(value), CHARACTER_SIZE_MINIMUM, CHARACTER_SIZE_TWO,
 			CHARACTER_SIZE_THREE, CHARACTER_SIZE_MAXIMUM,
@@ -320,8 +320,8 @@ func Encoded_Size_Invariants(value Encoded_Size, namespace invariant.Namespace) 
 type Count int
 
 // Count_Invariants applies the maximum one-character-per-byte count.
-func Count_Invariants(value Count, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Count_Invariants(value Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), CHARACTER_COUNT_MINIMUM, CHARACTER_COUNT_MAXIMUM).
 		Ensure()
 }
@@ -330,8 +330,8 @@ func Count_Invariants(value Count, namespace invariant.Namespace) {
 type Nonempty_Bytes []byte
 
 // Nonempty_Bytes_Invariants excludes an empty append result.
-func Nonempty_Bytes_Invariants(value Nonempty_Bytes, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Nonempty_Bytes_Invariants(value Nonempty_Bytes, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), CHARACTER_SIZE_MINIMUM, SEQUENCE_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -340,8 +340,8 @@ func Nonempty_Bytes_Invariants(value Nonempty_Bytes, namespace invariant.Namespa
 type Boolean bool
 
 // Boolean_Invariants requires both report values.
-func Boolean_Invariants(value Boolean, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Boolean_Invariants(value Boolean, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Sometimes(bool(value), "A UTF-8 report is true.").
 		Ensure()
 }
@@ -696,11 +696,11 @@ func Append_Character(buffer Bytes, character Character) (result Nonempty_Bytes)
 		encoded_size = CHARACTER_SIZE_THREE
 	}
 	result_size := len(buffer) + encoded_size
-	invariant.Always(
+	aver.Always(
 		result_size <= SEQUENCE_SIZE_MAXIMUM,
 		"A UTF-8 append result does not exceed the sequence limit.",
 	)
-	invariant.Always(
+	aver.Always(
 		result_size <= cap(buffer),
 		"Caller storage holds the appended UTF-8 encoding.",
 	)

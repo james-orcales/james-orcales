@@ -5,7 +5,7 @@ import (
 
 	"local/james-orcales/shared/crypto/prng"
 	system_prng "local/james-orcales/shared/crypto/prng/default"
-	"local/james-orcales/shared/invariant/default"
+	"local/james-orcales/shared/simulation/aver/default"
 )
 
 // DRAW_BYTE_COUNT compares one complete uint64 draw from each generator.
@@ -17,7 +17,7 @@ const SAMPLE_BYTE_COUNT = 32
 // TestMain registers this package's assertions with the invariant coverage recorder and reports any
 // gaps after the suite runs.
 func TestMain(m *testing.M) {
-	invariant.Run_Test_Main(m)
+	aver.Run_Test_Main(m)
 }
 
 // Test_Operating_System_Smoke checks the OS-seeded constructor yields a working, non-degenerate

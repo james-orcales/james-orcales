@@ -3,8 +3,8 @@ package gob
 
 import (
 	"local/james-orcales/shared/bytes"
-	"local/james-orcales/shared/invariant/default"
 	"local/james-orcales/shared/math/bits"
+	"local/james-orcales/shared/simulation/aver/default"
 )
 
 // PREFIX_SIZE is the signed byte-count prefix before multi-byte integers.
@@ -73,8 +73,8 @@ const STATUS_INPUT_INVALID = STATUS_STORAGE_INVALID + 1
 type Unsigned uint64
 
 // Unsigned_Invariants covers the complete wire-value domain.
-func Unsigned_Invariants(value Unsigned, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Unsigned_Invariants(value Unsigned, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint64(uint64(value), bits.WORD_64_MINIMUM, bits.WORD_64_MAXIMUM).
 		Ensure()
 }
@@ -83,8 +83,8 @@ func Unsigned_Invariants(value Unsigned, namespace invariant.Namespace) {
 type Integer int64
 
 // Integer_Invariants covers the complete signed wire-value domain.
-func Integer_Invariants(value Integer, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Integer_Invariants(value Integer, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int64(int64(value), bits.INTEGER_64_MINIMUM, bits.INTEGER_64_MAXIMUM).
 		Ensure()
 }
@@ -93,8 +93,8 @@ func Integer_Invariants(value Integer, namespace invariant.Namespace) {
 type Boolean bool
 
 // Boolean_Invariants covers false and true wire values.
-func Boolean_Invariants(value Boolean, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Boolean_Invariants(value Boolean, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Sometimes(bool(value), "A gob boolean is true.").
 		Ensure()
 }
@@ -103,8 +103,8 @@ func Boolean_Invariants(value Boolean, namespace invariant.Namespace) {
 type Boolean_Output []byte
 
 // Boolean_Output_Invariants permits refusal storage or its sole encoded byte.
-func Boolean_Output_Invariants(value Boolean_Output, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Boolean_Output_Invariants(value Boolean_Output, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_Int(len(value), bytes.SLICE_SIZE_MINIMUM, PREFIX_SIZE).
 		Ensure()
 }
@@ -113,8 +113,8 @@ func Boolean_Output_Invariants(value Boolean_Output, namespace invariant.Namespa
 type Float_64_Bits uint64
 
 // Float_64_Bits_Invariants covers finite, infinite, and NaN bit patterns.
-func Float_64_Bits_Invariants(value Float_64_Bits, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Float_64_Bits_Invariants(value Float_64_Bits, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint64(uint64(value), bits.WORD_64_MINIMUM, bits.WORD_64_MAXIMUM).
 		Ensure()
 }
@@ -123,8 +123,8 @@ func Float_64_Bits_Invariants(value Float_64_Bits, namespace invariant.Namespace
 type Complex_Encoded []byte
 
 // Complex_Encoded_Invariants follows two fixed-width scalar boundaries.
-func Complex_Encoded_Invariants(value Complex_Encoded, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Complex_Encoded_Invariants(value Complex_Encoded, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(
 			len(value), bytes.SLICE_SIZE_MINIMUM, COMPLEX_ENCODED_SIZE_MAXIMUM,
 		).
@@ -135,8 +135,8 @@ func Complex_Encoded_Invariants(value Complex_Encoded, namespace invariant.Names
 type Complex_Output []byte
 
 // Complex_Output_Invariants follows two fixed-width scalar boundaries.
-func Complex_Output_Invariants(value Complex_Output, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Complex_Output_Invariants(value Complex_Output, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(
 			len(value), bytes.SLICE_SIZE_MINIMUM, COMPLEX_ENCODED_SIZE_MAXIMUM,
 		).
@@ -147,8 +147,8 @@ func Complex_Output_Invariants(value Complex_Output, namespace invariant.Namespa
 type Bytes []byte
 
 // Bytes_Invariants leaves room for its largest count prefix.
-func Bytes_Invariants(value Bytes, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Bytes_Invariants(value Bytes, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), bytes.SLICE_SIZE_MINIMUM, BYTES_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -157,8 +157,8 @@ func Bytes_Invariants(value Bytes, namespace invariant.Namespace) {
 type Integer_Encoded []byte
 
 // Integer_Encoded_Invariants follows the fixed word-width encoding.
-func Integer_Encoded_Invariants(value Integer_Encoded, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Integer_Encoded_Invariants(value Integer_Encoded, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(
 			len(value), bytes.SLICE_SIZE_MINIMUM, INTEGER_ENCODED_SIZE_MAXIMUM,
 		).
@@ -169,8 +169,8 @@ func Integer_Encoded_Invariants(value Integer_Encoded, namespace invariant.Names
 type Integer_Output []byte
 
 // Integer_Output_Invariants follows the fixed word-width encoding.
-func Integer_Output_Invariants(value Integer_Output, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Integer_Output_Invariants(value Integer_Output, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(
 			len(value), bytes.SLICE_SIZE_MINIMUM, INTEGER_ENCODED_SIZE_MAXIMUM,
 		).
@@ -181,8 +181,8 @@ func Integer_Output_Invariants(value Integer_Output, namespace invariant.Namespa
 type Bytes_Encoded []byte
 
 // Bytes_Encoded_Invariants enforces the shared encoded boundary.
-func Bytes_Encoded_Invariants(value Bytes_Encoded, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Bytes_Encoded_Invariants(value Bytes_Encoded, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), bytes.SLICE_SIZE_MINIMUM, ENCODED_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -191,8 +191,8 @@ func Bytes_Encoded_Invariants(value Bytes_Encoded, namespace invariant.Namespace
 type Bytes_Output []byte
 
 // Bytes_Output_Invariants enforces the shared destination boundary.
-func Bytes_Output_Invariants(value Bytes_Output, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Bytes_Output_Invariants(value Bytes_Output, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), bytes.SLICE_SIZE_MINIMUM, ENCODED_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -202,9 +202,9 @@ type Integer_Size_Count int
 
 // Integer_Size_Count_Invariants follows the fixed word width.
 func Integer_Size_Count_Invariants(
-	value Integer_Size_Count, namespace invariant.Namespace,
+	value Integer_Size_Count, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(int(value), PREFIX_SIZE, INTEGER_ENCODED_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -214,9 +214,9 @@ type Boolean_Size_Count int
 
 // Boolean_Size_Count_Invariants rejects broad integer-size claims.
 func Boolean_Size_Count_Invariants(
-	value Boolean_Size_Count, _ invariant.Namespace,
+	value Boolean_Size_Count, _ aver.Namespace,
 ) {
-	invariant.Always(
+	aver.Always(
 		int(value) == PREFIX_SIZE, "Gob boolean storage is exactly one byte.",
 	)
 }
@@ -226,9 +226,9 @@ type Boolean_Encoded_Count int
 
 // Boolean_Encoded_Count_Invariants includes refusal and exact success.
 func Boolean_Encoded_Count_Invariants(
-	value Boolean_Encoded_Count, namespace invariant.Namespace,
+	value Boolean_Encoded_Count, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Enum_Int(int(value), bytes.SLICE_SIZE_MINIMUM, PREFIX_SIZE).
 		Ensure()
 }
@@ -238,9 +238,9 @@ type Complex_Size_Count int
 
 // Complex_Size_Count_Invariants follows the sum of two scalar widths.
 func Complex_Size_Count_Invariants(
-	value Complex_Size_Count, namespace invariant.Namespace,
+	value Complex_Size_Count, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(
 			int(value), COMPLEX_ENCODED_SIZE_MINIMUM, COMPLEX_ENCODED_SIZE_MAXIMUM,
 		).
@@ -252,9 +252,9 @@ type Complex_Encoded_Count int
 
 // Complex_Encoded_Count_Invariants removes the unreachable one-byte aggregate.
 func Complex_Encoded_Count_Invariants(
-	value Complex_Encoded_Count, namespace invariant.Namespace,
+	value Complex_Encoded_Count, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Holed_Int(
 			int(value), bytes.SLICE_SIZE_MINIMUM, COMPLEX_ENCODED_SIZE_MAXIMUM,
 			PREFIX_SIZE, PREFIX_SIZE, PREFIX_SIZE, PREFIX_SIZE,
@@ -267,9 +267,9 @@ type Complex_Consumed_Count int
 
 // Complex_Consumed_Count_Invariants removes partial-component success.
 func Complex_Consumed_Count_Invariants(
-	value Complex_Consumed_Count, namespace invariant.Namespace,
+	value Complex_Consumed_Count, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Holed_Int(
 			int(value), bytes.SLICE_SIZE_MINIMUM, COMPLEX_ENCODED_SIZE_MAXIMUM,
 			PREFIX_SIZE, PREFIX_SIZE, PREFIX_SIZE, PREFIX_SIZE,
@@ -281,8 +281,8 @@ func Complex_Consumed_Count_Invariants(
 type Complex_Position int
 
 // Complex_Position_Invariants includes success zero and the final truncated byte.
-func Complex_Position_Invariants(value Complex_Position, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Complex_Position_Invariants(value Complex_Position, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(
 			int(value), bytes.SLICE_SIZE_MINIMUM, COMPLEX_ENCODED_SIZE_MAXIMUM,
 		).
@@ -294,9 +294,9 @@ type Integer_Encoded_Count int
 
 // Integer_Encoded_Count_Invariants includes every scalar encoding size.
 func Integer_Encoded_Count_Invariants(
-	value Integer_Encoded_Count, namespace invariant.Namespace,
+	value Integer_Encoded_Count, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(
 			int(value), bytes.SLICE_SIZE_MINIMUM, INTEGER_ENCODED_SIZE_MAXIMUM,
 		).
@@ -308,9 +308,9 @@ type Integer_Consumed_Count int
 
 // Integer_Consumed_Count_Invariants follows fixed scalar input.
 func Integer_Consumed_Count_Invariants(
-	value Integer_Consumed_Count, namespace invariant.Namespace,
+	value Integer_Consumed_Count, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(
 			int(value), bytes.SLICE_SIZE_MINIMUM, INTEGER_ENCODED_SIZE_MAXIMUM,
 		).
@@ -321,8 +321,8 @@ func Integer_Consumed_Count_Invariants(
 type Integer_Position int
 
 // Integer_Position_Invariants includes every truncated scalar boundary.
-func Integer_Position_Invariants(value Integer_Position, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Integer_Position_Invariants(value Integer_Position, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), bytes.SLICE_SIZE_MINIMUM, INTEGER_POSITION_MAXIMUM).
 		Ensure()
 }
@@ -331,8 +331,8 @@ func Integer_Position_Invariants(value Integer_Position, namespace invariant.Nam
 type Bytes_Size_Count int
 
 // Bytes_Size_Count_Invariants excludes zero because even empty content has a count.
-func Bytes_Size_Count_Invariants(value Bytes_Size_Count, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Bytes_Size_Count_Invariants(value Bytes_Size_Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), PREFIX_SIZE, ENCODED_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -341,8 +341,8 @@ func Bytes_Size_Count_Invariants(value Bytes_Size_Count, namespace invariant.Nam
 type Bytes_Encoded_Count int
 
 // Bytes_Encoded_Count_Invariants includes every bounded result.
-func Bytes_Encoded_Count_Invariants(value Bytes_Encoded_Count, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Bytes_Encoded_Count_Invariants(value Bytes_Encoded_Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), bytes.SLICE_SIZE_MINIMUM, ENCODED_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -352,9 +352,9 @@ type Bytes_Consumed_Count int
 
 // Bytes_Consumed_Count_Invariants includes every bounded input prefix.
 func Bytes_Consumed_Count_Invariants(
-	value Bytes_Consumed_Count, namespace invariant.Namespace,
+	value Bytes_Consumed_Count, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(int(value), bytes.SLICE_SIZE_MINIMUM, ENCODED_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -363,8 +363,8 @@ func Bytes_Consumed_Count_Invariants(
 type Bytes_Position int
 
 // Bytes_Position_Invariants includes unexpected end after maximum input.
-func Bytes_Position_Invariants(value Bytes_Position, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Bytes_Position_Invariants(value Bytes_Position, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), bytes.SLICE_SIZE_MINIMUM, POSITION_MAXIMUM).
 		Ensure()
 }
@@ -374,9 +374,9 @@ type Integer_Encode_Status uint8
 
 // Integer_Encode_Status_Invariants lists both scalar encode outcomes.
 func Integer_Encode_Status_Invariants(
-	value Integer_Encode_Status, namespace invariant.Namespace,
+	value Integer_Encode_Status, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Enum_Uint8(uint8(value), STATUS_OK, STATUS_OUTPUT_TOO_SMALL).
 		Ensure()
 }
@@ -386,9 +386,9 @@ type Bytes_Encode_Status uint8
 
 // Bytes_Encode_Status_Invariants lists every bytes encode outcome.
 func Bytes_Encode_Status_Invariants(
-	value Bytes_Encode_Status, namespace invariant.Namespace,
+	value Bytes_Encode_Status, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Enum_3_Uint8(
 			uint8(value), STATUS_OK, STATUS_OUTPUT_TOO_SMALL, STATUS_STORAGE_INVALID,
 		).
@@ -399,8 +399,8 @@ func Bytes_Encode_Status_Invariants(
 type Decode_Status uint8
 
 // Decode_Status_Invariants excludes encode-only refusals.
-func Decode_Status_Invariants(value Decode_Status, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Decode_Status_Invariants(value Decode_Status, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_Uint8(uint8(value), STATUS_OK, STATUS_INPUT_INVALID).
 		Ensure()
 }

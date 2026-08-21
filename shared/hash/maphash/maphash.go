@@ -4,8 +4,8 @@ package maphash
 import (
 	"local/james-orcales/shared/bytes"
 	"local/james-orcales/shared/encoding/binary"
-	"local/james-orcales/shared/invariant/default"
 	"local/james-orcales/shared/math/bits"
+	"local/james-orcales/shared/simulation/aver/default"
 )
 
 // TEXT_SIZE_MINIMUM admits an empty bounded text write.
@@ -117,8 +117,8 @@ const COUNT_MAXIMUM = SOURCE_SIZE_MAXIMUM
 type Text string
 
 // Text_Invariants binds UTF-8 bytes to the same per-call boundary.
-func Text_Invariants(value Text, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Text_Invariants(value Text, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), TEXT_SIZE_MINIMUM, TEXT_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -127,8 +127,8 @@ func Text_Invariants(value Text, namespace invariant.Namespace) {
 type Source []byte
 
 // Source_Invariants binds one call to repository byte boundary.
-func Source_Invariants(value Source, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Source_Invariants(value Source, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), SOURCE_SIZE_MINIMUM, SOURCE_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -137,8 +137,8 @@ func Source_Invariants(value Source, namespace invariant.Namespace) {
 type Destination []byte
 
 // Destination_Invariants binds output to repository byte boundary.
-func Destination_Invariants(value Destination, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Destination_Invariants(value Destination, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), DESTINATION_SIZE_MINIMUM, DESTINATION_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -147,8 +147,8 @@ func Destination_Invariants(value Destination, namespace invariant.Namespace) {
 type Count int
 
 // Count_Invariants covers accepted source count or zero on refusal.
-func Count_Invariants(value Count, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Count_Invariants(value Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), COUNT_MINIMUM, COUNT_MAXIMUM).
 		Ensure()
 }
@@ -157,8 +157,8 @@ func Count_Invariants(value Count, namespace invariant.Namespace) {
 type Write_Status uint8
 
 // Write_Status_Invariants covers success and total-bound refusal.
-func Write_Status_Invariants(value Write_Status, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Write_Status_Invariants(value Write_Status, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_Uint8(
 			uint8(value), uint8(WRITE_STATUS_OK), uint8(WRITE_STATUS_MESSAGE_TOO_LARGE),
 		).
@@ -169,8 +169,8 @@ func Write_Status_Invariants(value Write_Status, namespace invariant.Namespace) 
 type Output_Count uint8
 
 // Output_Count_Invariants excludes partial hash output.
-func Output_Count_Invariants(value Output_Count, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Output_Count_Invariants(value Output_Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_Uint8(
 			uint8(value), uint8(OUTPUT_COUNT_EMPTY), uint8(OUTPUT_COUNT_COMPLETE),
 		).
@@ -181,8 +181,8 @@ func Output_Count_Invariants(value Output_Count, namespace invariant.Namespace) 
 type Output_Status uint8
 
 // Output_Status_Invariants covers complete and short output.
-func Output_Status_Invariants(value Output_Status, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Output_Status_Invariants(value Output_Status, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_Uint8(uint8(value), uint8(OUTPUT_STATUS_OK), uint8(OUTPUT_STATUS_TOO_SMALL)).
 		Ensure()
 }
@@ -191,8 +191,8 @@ func Output_Status_Invariants(value Output_Status, namespace invariant.Namespace
 type Byte uint8
 
 // Byte_Invariants preserves every byte value.
-func Byte_Invariants(value Byte, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Byte_Invariants(value Byte, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint8(uint8(value), bits.WORD_8_MINIMUM, bits.WORD_8_MAXIMUM).
 		Ensure()
 }
@@ -201,8 +201,8 @@ func Byte_Invariants(value Byte, namespace invariant.Namespace) {
 type Key_0 uint64
 
 // Key_0_Invariants preserves the full injected key domain.
-func Key_0_Invariants(value Key_0, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Key_0_Invariants(value Key_0, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint64(uint64(value), bits.WORD_64_MINIMUM, bits.WORD_64_MAXIMUM).
 		Ensure()
 }
@@ -211,8 +211,8 @@ func Key_0_Invariants(value Key_0, namespace invariant.Namespace) {
 type Key_1 uint64
 
 // Key_1_Invariants preserves the full injected key domain.
-func Key_1_Invariants(value Key_1, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Key_1_Invariants(value Key_1, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint64(uint64(value), bits.WORD_64_MINIMUM, bits.WORD_64_MAXIMUM).
 		Ensure()
 }
@@ -221,8 +221,8 @@ func Key_1_Invariants(value Key_1, namespace invariant.Namespace) {
 type Output_Mask uint64
 
 // Output_Mask_Invariants preserves the full injected mask domain.
-func Output_Mask_Invariants(value Output_Mask, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Output_Mask_Invariants(value Output_Mask, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint64(uint64(value), bits.WORD_64_MINIMUM, bits.WORD_64_MAXIMUM).
 		Ensure()
 }
@@ -238,7 +238,7 @@ type Seed struct {
 }
 
 // Seed_Invariants covers each injected word; initialization separately rejects an unkeyed seed.
-func Seed_Invariants(value Seed, namespace invariant.Namespace) {
+func Seed_Invariants(value Seed, namespace aver.Namespace) {
 	Key_0_Invariants(value.Key_0, namespace)
 	Key_1_Invariants(value.Key_1, namespace)
 	Output_Mask_Invariants(value.Output_Mask, namespace)
@@ -248,8 +248,8 @@ func Seed_Invariants(value Seed, namespace invariant.Namespace) {
 type Tail_Count int
 
 // Tail_Count_Invariants excludes a complete word because it is compressed immediately.
-func Tail_Count_Invariants(value Tail_Count, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Tail_Count_Invariants(value Tail_Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), TAIL_COUNT_MINIMUM, TAIL_COUNT_MAXIMUM).
 		Ensure()
 }
@@ -258,8 +258,8 @@ func Tail_Count_Invariants(value Tail_Count, namespace invariant.Namespace) {
 type Message_Size_Maximum uint32
 
 // Message_Size_Maximum_Invariants binds configuration to package limit.
-func Message_Size_Maximum_Invariants(value Message_Size_Maximum, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Message_Size_Maximum_Invariants(value Message_Size_Maximum, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint32(uint32(value), TOTAL_COUNT_MINIMUM, TOTAL_COUNT_MAXIMUM).
 		Ensure()
 }
@@ -268,8 +268,8 @@ func Message_Size_Maximum_Invariants(value Message_Size_Maximum, namespace invar
 type State_0 uint64
 
 // State_0_Invariants preserves every first-lane bit pattern.
-func State_0_Invariants(value State_0, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func State_0_Invariants(value State_0, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint64(uint64(value), bits.WORD_64_MINIMUM, bits.WORD_64_MAXIMUM).
 		Ensure()
 }
@@ -278,8 +278,8 @@ func State_0_Invariants(value State_0, namespace invariant.Namespace) {
 type State_1 uint64
 
 // State_1_Invariants preserves every second-lane bit pattern.
-func State_1_Invariants(value State_1, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func State_1_Invariants(value State_1, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint64(uint64(value), bits.WORD_64_MINIMUM, bits.WORD_64_MAXIMUM).
 		Ensure()
 }
@@ -288,8 +288,8 @@ func State_1_Invariants(value State_1, namespace invariant.Namespace) {
 type State_2 uint64
 
 // State_2_Invariants preserves every third-lane bit pattern.
-func State_2_Invariants(value State_2, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func State_2_Invariants(value State_2, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint64(uint64(value), bits.WORD_64_MINIMUM, bits.WORD_64_MAXIMUM).
 		Ensure()
 }
@@ -298,8 +298,8 @@ func State_2_Invariants(value State_2, namespace invariant.Namespace) {
 type State_3 uint64
 
 // State_3_Invariants preserves every fourth-lane bit pattern.
-func State_3_Invariants(value State_3, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func State_3_Invariants(value State_3, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint64(uint64(value), bits.WORD_64_MINIMUM, bits.WORD_64_MAXIMUM).
 		Ensure()
 }
@@ -308,8 +308,8 @@ func State_3_Invariants(value State_3, namespace invariant.Namespace) {
 type Total_Count uint32
 
 // Total_Count_Invariants binds accepted bytes to logical-message storage.
-func Total_Count_Invariants(value Total_Count, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Total_Count_Invariants(value Total_Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint32(uint32(value), TOTAL_COUNT_MINIMUM, TOTAL_COUNT_MAXIMUM).
 		Ensure()
 }
@@ -324,8 +324,8 @@ const READY_COMPLETE Ready = READY_EMPTY + 1
 type Ready uint8
 
 // Ready_Invariants admits zero storage and keyed state.
-func Ready_Invariants(value Ready, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Ready_Invariants(value Ready, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_Uint8(uint8(value), uint8(READY_EMPTY), uint8(READY_COMPLETE)).
 		Ensure()
 }
@@ -356,7 +356,7 @@ type Hash struct {
 
 // Hash_Invariants covers all bounded and full-width state; runtime entries separately require
 // Ready because Hash_Init must accept zero caller storage.
-func Hash_Invariants(value Hash, namespace invariant.Namespace) {
+func Hash_Invariants(value Hash, namespace aver.Namespace) {
 	Seed_Invariants(value.Seed, namespace)
 	State_0_Invariants(value.State_0, namespace)
 	State_1_Invariants(value.State_1, namespace)
@@ -366,7 +366,7 @@ func Hash_Invariants(value Hash, namespace invariant.Namespace) {
 	Total_Count_Invariants(value.Total_Count, namespace)
 	Message_Size_Maximum_Invariants(value.Message_Size_Maximum, namespace)
 	Ready_Invariants(value.Ready, namespace)
-	invariant.Always(
+	aver.Always(
 		uint32(value.Total_Count) <= uint32(value.Message_Size_Maximum),
 		"Map hash total count stays inside configured message bound.",
 	)
@@ -376,8 +376,8 @@ func Hash_Invariants(value Hash, namespace invariant.Namespace) {
 type Value uint64
 
 // Value_Invariants preserves every keyed result.
-func Value_Invariants(value Value, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Value_Invariants(value Value, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint64(uint64(value), bits.WORD_64_MINIMUM, bits.WORD_64_MAXIMUM).
 		Ensure()
 }
@@ -395,7 +395,7 @@ func Hash_Init_Bounded(value *Hash, seed Seed, maximum Message_Size_Maximum) {
 	Seed_Invariants(seed, "Hash_Init_Bounded.seed")
 	Message_Size_Maximum_Invariants(maximum, "Hash_Init_Bounded.maximum")
 	key := uint64(seed.Key_0) | uint64(seed.Key_1)
-	invariant.Always(key != 0, "Hash_Init_Bounded requires at least one nonzero key word.")
+	aver.Always(key != 0, "Hash_Init_Bounded requires at least one nonzero key word.")
 	if key == 0 {
 		panic("maphash: seed is unkeyed")
 	}
@@ -409,7 +409,7 @@ func Hash_Init_Bounded(value *Hash, seed Seed, maximum Message_Size_Maximum) {
 	value.Total_Count = 0
 	value.Message_Size_Maximum = maximum
 	value.Ready = READY_COMPLETE
-	invariant.Always(
+	aver.Always(
 		value.Ready == READY_COMPLETE, "Hash_Init_Bounded produces keyed state.",
 	)
 }
@@ -432,7 +432,7 @@ func Hash_Write(
 			hash_write_blocks(value, source)
 		}
 	}
-	invariant.Always(value.Ready == READY_COMPLETE, "Hash_Write requires Hash_Init.")
+	aver.Always(value.Ready == READY_COMPLETE, "Hash_Write requires Hash_Init.")
 	if value.Ready != READY_COMPLETE {
 		panic("maphash: hash is not initialized")
 	}
@@ -525,7 +525,7 @@ func Hash_Write_Text(
 	}()
 	Hash_Invariants(*value, "Hash_Write_Text.value")
 	Text_Invariants(text, "Hash_Write_Text.text")
-	invariant.Always(value.Ready == READY_COMPLETE, "Hash_Write_Text requires Hash_Init.")
+	aver.Always(value.Ready == READY_COMPLETE, "Hash_Write_Text requires Hash_Init.")
 	if value.Ready != READY_COMPLETE {
 		panic("maphash: hash is not initialized")
 	}
@@ -542,7 +542,7 @@ func Hash_Write_Byte(value *Hash, item Byte) (status Write_Status) {
 	defer func() { Write_Status_Invariants(status, "Hash_Write_Byte.status") }()
 	Hash_Invariants(*value, "Hash_Write_Byte.value")
 	Byte_Invariants(item, "Hash_Write_Byte.item")
-	invariant.Always(value.Ready == READY_COMPLETE, "Hash_Write_Byte requires Hash_Init.")
+	aver.Always(value.Ready == READY_COMPLETE, "Hash_Write_Byte requires Hash_Init.")
 	if value.Ready != READY_COMPLETE {
 		panic("maphash: hash is not initialized")
 	}
@@ -555,7 +555,7 @@ func Hash_Write_Byte(value *Hash, item Byte) (status Write_Status) {
 func Hash_Sum_64(value *Hash) (result Value) {
 	defer func() { Value_Invariants(result, "Hash_Sum_64.result") }()
 	Hash_Invariants(*value, "Hash_Sum_64.value")
-	invariant.Always(value.Ready == READY_COMPLETE, "Hash_Sum_64 requires Hash_Init.")
+	aver.Always(value.Ready == READY_COMPLETE, "Hash_Sum_64 requires Hash_Init.")
 	if value.Ready != READY_COMPLETE {
 		panic("maphash: hash is not initialized")
 	}
@@ -627,7 +627,7 @@ func Hash_Sum_Into(
 	}()
 	Hash_Invariants(*value, "Hash_Sum_Into.value")
 	Destination_Invariants(destination, "Hash_Sum_Into.destination")
-	invariant.Always(value.Ready == READY_COMPLETE, "Hash_Sum_Into requires Hash_Init.")
+	aver.Always(value.Ready == READY_COMPLETE, "Hash_Sum_Into requires Hash_Init.")
 	if value.Ready != READY_COMPLETE {
 		panic("maphash: hash is not initialized")
 	}
@@ -648,7 +648,7 @@ func Hash_Sum_Into(
 func Hash_Seed(value *Hash) (seed Seed) {
 	defer func() { Seed_Invariants(seed, "Hash_Seed.seed") }()
 	Hash_Invariants(*value, "Hash_Seed.value")
-	invariant.Always(value.Ready == READY_COMPLETE, "Hash_Seed requires Hash_Init.")
+	aver.Always(value.Ready == READY_COMPLETE, "Hash_Seed requires Hash_Init.")
 	if value.Ready != READY_COMPLETE {
 		panic("maphash: hash is not initialized")
 	}
@@ -661,7 +661,7 @@ func Hash_Message_Size_Maximum(value *Hash) (maximum Message_Size_Maximum) {
 		Message_Size_Maximum_Invariants(maximum, "Hash_Message_Size_Maximum.maximum")
 	}()
 	Hash_Invariants(*value, "Hash_Message_Size_Maximum.value")
-	invariant.Always(
+	aver.Always(
 		value.Ready == READY_COMPLETE,
 		"Hash_Message_Size_Maximum requires Hash_Init.",
 	)
@@ -674,7 +674,7 @@ func Hash_Message_Size_Maximum(value *Hash) (maximum Message_Size_Maximum) {
 // Hash_Reset discards bytes while retaining explicit Seed.
 func Hash_Reset(value *Hash) {
 	Hash_Invariants(*value, "Hash_Reset.value.input")
-	invariant.Always(value.Ready == READY_COMPLETE, "Hash_Reset requires Hash_Init.")
+	aver.Always(value.Ready == READY_COMPLETE, "Hash_Reset requires Hash_Init.")
 	if value.Ready != READY_COMPLETE {
 		panic("maphash: hash is not initialized")
 	}
@@ -687,12 +687,12 @@ func Hash_Reset(value *Hash) {
 func Hash_Set_Seed(value *Hash, seed Seed) {
 	Hash_Invariants(*value, "Hash_Set_Seed.value.input")
 	Seed_Invariants(seed, "Hash_Set_Seed.seed")
-	invariant.Always(value.Ready == READY_COMPLETE, "Hash_Set_Seed requires Hash_Init.")
+	aver.Always(value.Ready == READY_COMPLETE, "Hash_Set_Seed requires Hash_Init.")
 	if value.Ready != READY_COMPLETE {
 		panic("maphash: hash is not initialized")
 	}
 	key := uint64(seed.Key_0) | uint64(seed.Key_1)
-	invariant.Always(key != 0, "Hash_Set_Seed requires at least one nonzero key word.")
+	aver.Always(key != 0, "Hash_Set_Seed requires at least one nonzero key word.")
 	if key == 0 {
 		panic("maphash: seed is unkeyed")
 	}
@@ -706,7 +706,7 @@ func Hash_Clone_Into(destination *Hash, source *Hash) {
 	defer func() {
 		Hash_Invariants(*destination, "Hash_Clone_Into.destination.output")
 	}()
-	invariant.Always(
+	aver.Always(
 		source.Ready == READY_COMPLETE,
 		"Hash_Clone_Into requires initialized source.",
 	)
@@ -722,7 +722,7 @@ func Bytes(seed Seed, source Source) (result Value) {
 	Seed_Invariants(seed, "Bytes.seed")
 	Source_Invariants(source, "Bytes.source")
 	key := uint64(seed.Key_0) | uint64(seed.Key_1)
-	invariant.Always(key != 0, "Bytes requires at least one nonzero key word.")
+	aver.Always(key != 0, "Bytes requires at least one nonzero key word.")
 	if key == 0 {
 		panic("maphash: seed is unkeyed")
 	}
@@ -732,10 +732,10 @@ func Bytes(seed Seed, source Source) (result Value) {
 	var value Hash
 	Hash_Init(&value, seed)
 	count, status := Hash_Write(&value, source)
-	invariant.Always(
+	aver.Always(
 		count == Count(len(source)), "Bytes consumes complete bounded source.",
 	)
-	invariant.Always(status == WRITE_STATUS_OK, "Bytes stays inside fresh message bound.")
+	aver.Always(status == WRITE_STATUS_OK, "Bytes stays inside fresh message bound.")
 	return Hash_Sum_64(&value)
 }
 
@@ -745,7 +745,7 @@ func String(seed Seed, text Text) (result Value) {
 	Seed_Invariants(seed, "String.seed")
 	Text_Invariants(text, "String.text")
 	key := uint64(seed.Key_0) | uint64(seed.Key_1)
-	invariant.Always(key != 0, "String requires at least one nonzero key word.")
+	aver.Always(key != 0, "String requires at least one nonzero key word.")
 	if key == 0 {
 		panic("maphash: seed is unkeyed")
 	}
@@ -755,9 +755,9 @@ func String(seed Seed, text Text) (result Value) {
 	var value Hash
 	Hash_Init(&value, seed)
 	count, status := Hash_Write_Text(&value, text)
-	invariant.Always(
+	aver.Always(
 		count == Count(len(text)), "String consumes complete bounded text.",
 	)
-	invariant.Always(status == WRITE_STATUS_OK, "String stays inside fresh message bound.")
+	aver.Always(status == WRITE_STATUS_OK, "String stays inside fresh message bound.")
 	return Hash_Sum_64(&value)
 }

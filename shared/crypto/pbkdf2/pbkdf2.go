@@ -6,8 +6,8 @@ import (
 	"local/james-orcales/shared/crypto/hmac"
 	"local/james-orcales/shared/crypto/subtle"
 	"local/james-orcales/shared/encoding/binary"
-	"local/james-orcales/shared/invariant/default"
 	"local/james-orcales/shared/math/bits"
+	"local/james-orcales/shared/simulation/aver/default"
 )
 
 // INPUT_SIZE_MINIMUM admits empty password and salt values defined by PBKDF2.
@@ -60,8 +60,8 @@ const STATUS_WORK_TOO_LARGE Status = STATUS_OK + binary.UINT_8_SIZE
 type Password []byte
 
 // Password_Invariants bounds key setup without inspecting secret bytes.
-func Password_Invariants(value Password, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Password_Invariants(value Password, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), INPUT_SIZE_MINIMUM, INPUT_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -70,8 +70,8 @@ func Password_Invariants(value Password, namespace invariant.Namespace) {
 type Salt []byte
 
 // Salt_Invariants bounds first-block work without inspecting salt bytes.
-func Salt_Invariants(value Salt, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Salt_Invariants(value Salt, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), INPUT_SIZE_MINIMUM, INPUT_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -80,8 +80,8 @@ func Salt_Invariants(value Salt, namespace invariant.Namespace) {
 type Destination []byte
 
 // Destination_Invariants binds output and block count to repository limits.
-func Destination_Invariants(value Destination, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Destination_Invariants(value Destination, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), OUTPUT_SIZE_MINIMUM, OUTPUT_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -90,8 +90,8 @@ func Destination_Invariants(value Destination, namespace invariant.Namespace) {
 type Iteration_Count uint32
 
 // Iteration_Count_Invariants keeps one-block synchronous work inside its cap.
-func Iteration_Count_Invariants(value Iteration_Count, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Iteration_Count_Invariants(value Iteration_Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint32(
 			uint32(value), uint32(ITERATION_COUNT_MINIMUM),
 			uint32(ITERATION_COUNT_MAXIMUM),
@@ -103,8 +103,8 @@ func Iteration_Count_Invariants(value Iteration_Count, namespace invariant.Names
 type Count int
 
 // Count_Invariants spans empty through largest bounded output.
-func Count_Invariants(value Count, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Count_Invariants(value Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), int(COUNT_EMPTY), int(COUNT_MAXIMUM)).
 		Ensure()
 }
@@ -113,8 +113,8 @@ func Count_Invariants(value Count, namespace invariant.Namespace) {
 type Status uint8
 
 // Status_Invariants covers completed and refused derivation.
-func Status_Invariants(value Status, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Status_Invariants(value Status, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_Uint8(
 			uint8(value), uint8(STATUS_OK), uint8(STATUS_WORK_TOO_LARGE),
 		).

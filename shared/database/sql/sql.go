@@ -5,8 +5,8 @@ import (
 	"unsafe"
 
 	"local/james-orcales/shared/database/driver"
-	"local/james-orcales/shared/invariant/default"
 	"local/james-orcales/shared/math/bits"
+	"local/james-orcales/shared/simulation/aver/default"
 	"local/james-orcales/shared/slices"
 )
 
@@ -14,8 +14,8 @@ import (
 type Status uint8
 
 // Status_Invariants closes every SQL outcome.
-func Status_Invariants(value Status, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Status_Invariants(value Status, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint8(uint8(value), uint8(STATUS_OK), uint8(STATUS_GENERATION_EXHAUSTED)).
 		Ensure()
 }
@@ -25,9 +25,9 @@ type Initialization_Status Status
 
 // Initialization_Status_Invariants keeps initialization outcomes exact.
 func Initialization_Status_Invariants(
-	value Initialization_Status, namespace invariant.Namespace,
+	value Initialization_Status, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Enum_Uint8(
 			uint8(value), uint8(STATUS_OK), uint8(STATUS_STORAGE_INVALID),
 		).
@@ -39,9 +39,9 @@ type Operation_Status Status
 
 // Operation_Status_Invariants bounds connection-backed operation outcomes.
 func Operation_Status_Invariants(
-	value Operation_Status, namespace invariant.Namespace,
+	value Operation_Status, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Uint8(uint8(value), uint8(STATUS_OK), uint8(STATUS_BUSY)).
 		Ensure()
 }
@@ -51,9 +51,9 @@ type Reservation_Status Status
 
 // Reservation_Status_Invariants keeps reservation outcomes exact.
 func Reservation_Status_Invariants(
-	value Reservation_Status, namespace invariant.Namespace,
+	value Reservation_Status, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Enum_4_Uint8(
 			uint8(value), uint8(STATUS_OK), uint8(STATUS_CLOSED),
 			uint8(STATUS_HANDLE_INVALID), uint8(STATUS_BUSY),
@@ -66,9 +66,9 @@ type Transition_Status Status
 
 // Transition_Status_Invariants keeps transition outcomes exact.
 func Transition_Status_Invariants(
-	value Transition_Status, namespace invariant.Namespace,
+	value Transition_Status, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Enum_3_Uint8(
 			uint8(value), uint8(STATUS_OK), uint8(STATUS_HANDLE_INVALID),
 			uint8(STATUS_BUSY),
@@ -80,8 +80,8 @@ func Transition_Status_Invariants(
 type Driver_Status Status
 
 // Driver_Status_Invariants excludes pool-owned outcomes.
-func Driver_Status_Invariants(value Driver_Status, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Driver_Status_Invariants(value Driver_Status, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint8(uint8(value), uint8(STATUS_OK), uint8(STATUS_UNSUPPORTED)).
 		Ensure()
 }
@@ -133,9 +133,9 @@ type Synchronizer struct {
 }
 
 // Synchronizer_Invariants requires balanced critical-section capabilities.
-func Synchronizer_Invariants(value Synchronizer, namespace invariant.Namespace) {
-	invariant.Always(value.Lock_Procedure != nil, "A pool synchronizer can lock.")
-	invariant.Always(value.Unlock_Procedure != nil, "A pool synchronizer can unlock.")
+func Synchronizer_Invariants(value Synchronizer, namespace aver.Namespace) {
+	aver.Always(value.Lock_Procedure != nil, "A pool synchronizer can lock.")
+	aver.Always(value.Unlock_Procedure != nil, "A pool synchronizer can unlock.")
 }
 
 // CONNECTION_COUNT_MAXIMUM shares repository collection capacity.
@@ -145,8 +145,8 @@ const CONNECTION_COUNT_MAXIMUM = slices.SLICE_COUNT_MAXIMUM
 type Connection_Count int
 
 // Connection_Count_Invariants bounds each pool quantity by fixed capacity.
-func Connection_Count_Invariants(value Connection_Count, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Connection_Count_Invariants(value Connection_Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), slices.COUNT_MINIMUM, CONNECTION_COUNT_MAXIMUM).
 		Ensure()
 }
@@ -158,8 +158,8 @@ const SLOT_INDEX_MAXIMUM = CONNECTION_COUNT_MAXIMUM - 1
 type Slot_Index int
 
 // Slot_Index_Invariants bounds slot addressing.
-func Slot_Index_Invariants(value Slot_Index, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Slot_Index_Invariants(value Slot_Index, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), slices.COUNT_MINIMUM, SLOT_INDEX_MAXIMUM).
 		Ensure()
 }
@@ -168,8 +168,8 @@ func Slot_Index_Invariants(value Slot_Index, namespace invariant.Namespace) {
 type Generation uint64
 
 // Generation_Invariants keeps complete finite lease identity domain.
-func Generation_Invariants(value Generation, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Generation_Invariants(value Generation, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint64(uint64(value), bits.WORD_64_MINIMUM, bits.WORD_64_MAXIMUM).
 		Ensure()
 }
@@ -182,9 +182,9 @@ type Lease_Generation Generation
 
 // Lease_Generation_Invariants excludes the zero sentinel.
 func Lease_Generation_Invariants(
-	value Lease_Generation, namespace invariant.Namespace,
+	value Lease_Generation, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Uint64(
 			uint64(value), uint64(LEASE_GENERATION_MINIMUM), bits.WORD_64_MAXIMUM,
 		).
@@ -195,8 +195,8 @@ func Lease_Generation_Invariants(
 type Slot_State uint8
 
 // Slot_State_Invariants closes pool slot lifecycle.
-func Slot_State_Invariants(value Slot_State, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Slot_State_Invariants(value Slot_State, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint8(uint8(value), uint8(SLOT_EMPTY), uint8(SLOT_CLOSE)).
 		Ensure()
 }
@@ -236,9 +236,9 @@ type Reservation_State Slot_State
 
 // Reservation_State_Invariants closes resource owner states.
 func Reservation_State_Invariants(
-	value Reservation_State, namespace invariant.Namespace,
+	value Reservation_State, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Enum_4_Uint8(
 			uint8(value), uint8(SLOT_CONNECTION), uint8(SLOT_ROWS),
 			uint8(SLOT_STATEMENT), uint8(SLOT_TRANSACTION),
@@ -250,8 +250,8 @@ func Reservation_State_Invariants(
 type Activity_State Slot_State
 
 // Activity_State_Invariants closes active slot states.
-func Activity_State_Invariants(value Activity_State, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Activity_State_Invariants(value Activity_State, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_3_Uint8(
 			uint8(value), uint8(SLOT_EXECUTION), uint8(SLOT_ROWS_READING),
 			uint8(SLOT_CLOSE),
@@ -263,8 +263,8 @@ func Activity_State_Invariants(value Activity_State, namespace invariant.Namespa
 type Discard_State Slot_State
 
 // Discard_State_Invariants closes discardable active states.
-func Discard_State_Invariants(value Discard_State, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Discard_State_Invariants(value Discard_State, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_3_Uint8(
 			uint8(value), uint8(SLOT_EXECUTION), uint8(SLOT_ROWS_READING),
 			uint8(SLOT_CLOSE),
@@ -289,16 +289,16 @@ type Slot struct {
 }
 
 // Slot_Invariants states fixed caller-owned slot storage.
-func Slot_Invariants(value Slot, namespace invariant.Namespace) {
-	invariant.Always(
+func Slot_Invariants(value Slot, namespace aver.Namespace) {
+	aver.Always(
 		len(value.Connections) == SLOT_FIELD_COUNT,
 		"A pool slot holds one driver connection.",
 	)
-	invariant.Always(
+	aver.Always(
 		len(value.States) == SLOT_FIELD_COUNT,
 		"A pool slot holds one lifecycle state.",
 	)
-	invariant.Always(
+	aver.Always(
 		len(value.Generations) == SLOT_FIELD_COUNT,
 		"A pool slot holds one lease generation.",
 	)
@@ -308,8 +308,8 @@ func Slot_Invariants(value Slot, namespace invariant.Namespace) {
 type Slot_Storage []Slot
 
 // Slot_Storage_Invariants bounds fixed pool capacity.
-func Slot_Storage_Invariants(value Slot_Storage, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Slot_Storage_Invariants(value Slot_Storage, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), slices.COUNT_MINIMUM, CONNECTION_COUNT_MAXIMUM).
 		Ensure()
 }
@@ -322,9 +322,9 @@ type Initialized_Slot_Storage Slot_Storage
 
 // Initialized_Slot_Storage_Invariants excludes rejected empty storage.
 func Initialized_Slot_Storage_Invariants(
-	value Initialized_Slot_Storage, namespace invariant.Namespace,
+	value Initialized_Slot_Storage, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(
 			len(value), INITIALIZED_CONNECTION_COUNT_MINIMUM,
 			CONNECTION_COUNT_MAXIMUM,
@@ -336,8 +336,8 @@ func Initialized_Slot_Storage_Invariants(
 type Pool_State uint8
 
 // Pool_State_Invariants closes pool lifecycle.
-func Pool_State_Invariants(value Pool_State, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Pool_State_Invariants(value Pool_State, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_3_Uint8(
 			uint8(value), uint8(POOL_UNINITIALIZED), uint8(POOL_OPEN),
 			uint8(POOL_CLOSED),
@@ -359,9 +359,9 @@ type Initialized_Pool_State Pool_State
 
 // Initialized_Pool_State_Invariants closes bound pool lifecycle.
 func Initialized_Pool_State_Invariants(
-	value Initialized_Pool_State, namespace invariant.Namespace,
+	value Initialized_Pool_State, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Enum_Uint8(
 			uint8(value), uint8(POOL_OPEN), uint8(POOL_CLOSED),
 		).
@@ -389,25 +389,25 @@ type Pool struct {
 }
 
 // Pool_Invariants states fixed pool aggregate storage.
-func Pool_Invariants(subject *Pool, namespace invariant.Namespace) {
-	invariant.Always(subject != nil, "Pool storage exists.")
-	invariant.Always(
+func Pool_Invariants(subject *Pool, namespace aver.Namespace) {
+	aver.Always(subject != nil, "Pool storage exists.")
+	aver.Always(
 		len(subject.Drivers) == POOL_FIELD_COUNT,
 		"A pool holds one driver slot.",
 	)
-	invariant.Always(
+	aver.Always(
 		len(subject.Data_Sources) == POOL_FIELD_COUNT,
 		"A pool holds one data-source slot.",
 	)
-	invariant.Always(
+	aver.Always(
 		len(subject.Synchronizers) == POOL_FIELD_COUNT,
 		"A pool holds one synchronizer slot.",
 	)
-	invariant.Always(
+	aver.Always(
 		len(subject.Slot_Sets) == POOL_FIELD_COUNT,
 		"A pool holds one slot-storage view.",
 	)
-	invariant.Always(
+	aver.Always(
 		len(subject.States) == POOL_FIELD_COUNT,
 		"A pool holds one lifecycle slot.",
 	)
@@ -430,16 +430,16 @@ type Connection struct {
 }
 
 // Connection_Invariants states fixed lease handle storage.
-func Connection_Invariants(subject Connection, namespace invariant.Namespace) {
-	invariant.Always(
+func Connection_Invariants(subject Connection, namespace aver.Namespace) {
+	aver.Always(
 		len(subject.Pools) == HANDLE_FIELD_COUNT,
 		"A connection handle holds one pool slot.",
 	)
-	invariant.Always(
+	aver.Always(
 		len(subject.Slot_Indices) == HANDLE_FIELD_COUNT,
 		"A connection handle holds one index slot.",
 	)
-	invariant.Always(
+	aver.Always(
 		len(subject.Generations) == HANDLE_FIELD_COUNT,
 		"A connection handle holds one generation slot.",
 	)
@@ -449,8 +449,8 @@ func Connection_Invariants(subject Connection, namespace invariant.Namespace) {
 type Return_State Slot_State
 
 // Return_State_Invariants permits pool, connection, statement, and transaction owners.
-func Return_State_Invariants(value Return_State, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Return_State_Invariants(value Return_State, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_4_Uint8(
 			uint8(value), uint8(SLOT_IDLE), uint8(SLOT_CONNECTION),
 			uint8(SLOT_STATEMENT), uint8(SLOT_TRANSACTION),
@@ -463,9 +463,9 @@ type Connection_Return_State Return_State
 
 // Connection_Return_State_Invariants closes connection operation ownership.
 func Connection_Return_State_Invariants(
-	value Connection_Return_State, namespace invariant.Namespace,
+	value Connection_Return_State, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Enum_Uint8(
 			uint8(value), uint8(SLOT_IDLE), uint8(SLOT_CONNECTION),
 		).
@@ -476,8 +476,8 @@ func Connection_Return_State_Invariants(
 type Transition_Kind uint8
 
 // Transition_Kind_Invariants closes transition target representation.
-func Transition_Kind_Invariants(value Transition_Kind, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Transition_Kind_Invariants(value Transition_Kind, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_Uint8(
 			uint8(value), uint8(TRANSITION_RETURN), uint8(TRANSITION_ROWS),
 		).
@@ -501,16 +501,16 @@ type Rows struct {
 }
 
 // Rows_Invariants states fixed rows handle storage.
-func Rows_Invariants(subject Rows, namespace invariant.Namespace) {
-	invariant.Always(
+func Rows_Invariants(subject Rows, namespace aver.Namespace) {
+	aver.Always(
 		len(subject.Connections) == HANDLE_FIELD_COUNT,
 		"Rows holds one connection handle.",
 	)
-	invariant.Always(
+	aver.Always(
 		len(subject.Driver_Rows) == HANDLE_FIELD_COUNT,
 		"Rows holds one driver cursor.",
 	)
-	invariant.Always(
+	aver.Always(
 		len(subject.Return_States) == HANDLE_FIELD_COUNT,
 		"Rows holds one return state.",
 	)
@@ -527,16 +527,16 @@ type Statement struct {
 }
 
 // Statement_Invariants states fixed statement handle storage.
-func Statement_Invariants(subject Statement, namespace invariant.Namespace) {
-	invariant.Always(
+func Statement_Invariants(subject Statement, namespace aver.Namespace) {
+	aver.Always(
 		len(subject.Connections) == HANDLE_FIELD_COUNT,
 		"Statement holds one connection handle.",
 	)
-	invariant.Always(
+	aver.Always(
 		len(subject.Driver_Statements) == HANDLE_FIELD_COUNT,
 		"Statement holds one driver statement.",
 	)
-	invariant.Always(
+	aver.Always(
 		len(subject.Return_States) == HANDLE_FIELD_COUNT,
 		"Statement holds one return state.",
 	)
@@ -553,16 +553,16 @@ type Transaction struct {
 }
 
 // Transaction_Invariants states fixed transaction handle storage.
-func Transaction_Invariants(subject Transaction, namespace invariant.Namespace) {
-	invariant.Always(
+func Transaction_Invariants(subject Transaction, namespace aver.Namespace) {
+	aver.Always(
 		len(subject.Connections) == HANDLE_FIELD_COUNT,
 		"Transaction holds one connection handle.",
 	)
-	invariant.Always(
+	aver.Always(
 		len(subject.Driver_Transactions) == HANDLE_FIELD_COUNT,
 		"Transaction holds one driver transaction.",
 	)
-	invariant.Always(
+	aver.Always(
 		len(subject.Return_States) == HANDLE_FIELD_COUNT,
 		"Transaction holds one return state.",
 	)
@@ -573,9 +573,9 @@ type Transaction_Terminal uint8
 
 // Transaction_Terminal_Invariants closes terminal operation choice.
 func Transaction_Terminal_Invariants(
-	value Transaction_Terminal, namespace invariant.Namespace,
+	value Transaction_Terminal, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Enum_Uint8(
 			uint8(value), uint8(TRANSACTION_ROLLBACK), uint8(TRANSACTION_COMMIT),
 		).
@@ -595,8 +595,8 @@ type Result struct {
 }
 
 // Result_Invariants states fixed result storage.
-func Result_Invariants(value Result, namespace invariant.Namespace) {
-	invariant.Always(
+func Result_Invariants(value Result, namespace aver.Namespace) {
+	aver.Always(
 		len(value.Driver_Results) == HANDLE_FIELD_COUNT,
 		"SQL Result holds one driver result.",
 	)
@@ -621,20 +621,20 @@ type Statistics struct {
 }
 
 // Statistics_Invariants states fixed statistics storage.
-func Statistics_Invariants(value Statistics, namespace invariant.Namespace) {
-	invariant.Always(
+func Statistics_Invariants(value Statistics, namespace aver.Namespace) {
+	aver.Always(
 		len(value.Capacities) == STATISTICS_FIELD_COUNT,
 		"Statistics holds one capacity slot.",
 	)
-	invariant.Always(
+	aver.Always(
 		len(value.Open_Counts) == STATISTICS_FIELD_COUNT,
 		"Statistics holds one open-count slot.",
 	)
-	invariant.Always(
+	aver.Always(
 		len(value.Idle_Counts) == STATISTICS_FIELD_COUNT,
 		"Statistics holds one idle-count slot.",
 	)
-	invariant.Always(
+	aver.Always(
 		len(value.In_Use_Counts) == STATISTICS_FIELD_COUNT,
 		"Statistics holds one in-use-count slot.",
 	)
@@ -1779,7 +1779,7 @@ func pool_initialized(pool *Pool) {
 	Initialized_Pool_State_Invariants(
 		Initialized_Pool_State(pool.States[POOL_FIELD]), "pool_initialized.state",
 	)
-	invariant.Always(
+	aver.Always(
 		pool.States[POOL_FIELD] != POOL_UNINITIALIZED,
 		"An initialized pool has bound dependencies.",
 	)

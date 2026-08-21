@@ -6,9 +6,9 @@ import (
 	"unsafe"
 
 	"local/james-orcales/shared/bytes"
-	"local/james-orcales/shared/invariant/default"
 	"local/james-orcales/shared/math/bits"
 	"local/james-orcales/shared/path"
+	"local/james-orcales/shared/simulation/aver/default"
 	"local/james-orcales/shared/simulation/nbio"
 	"local/james-orcales/shared/unicode/utf8"
 )
@@ -53,8 +53,8 @@ const PATH_PARENT_SIZE_MAXIMUM = PATH_SIZE_MAXIMUM - 2*NONEMPTY_SIZE_MINIMUM
 type Path_Storage []Slice
 
 // Path_Storage_Invariants bounds traversal width and every path slot.
-func Path_Storage_Invariants(value Path_Storage, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Path_Storage_Invariants(value Path_Storage, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), FILESYSTEM_PATH_COUNT_MINIMUM, FILESYSTEM_PATH_COUNT_MAXIMUM).
 		Ensure()
 }
@@ -63,8 +63,8 @@ func Path_Storage_Invariants(value Path_Storage, namespace invariant.Namespace) 
 type Parent_Path Slice
 
 // Parent_Path_Invariants spans empty prefix through largest possible parent.
-func Parent_Path_Invariants(value Parent_Path, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Parent_Path_Invariants(value Parent_Path, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), PATH_SIZE_MINIMUM, PATH_PARENT_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -73,8 +73,8 @@ func Parent_Path_Invariants(value Parent_Path, namespace invariant.Namespace) {
 type Glob_Current_Paths Path_Storage
 
 // Glob_Current_Paths_Invariants bounds active candidate collection.
-func Glob_Current_Paths_Invariants(value Glob_Current_Paths, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Glob_Current_Paths_Invariants(value Glob_Current_Paths, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), FILESYSTEM_PATH_COUNT_MINIMUM, FILESYSTEM_PATH_COUNT_MAXIMUM).
 		Ensure()
 }
@@ -83,8 +83,8 @@ func Glob_Current_Paths_Invariants(value Glob_Current_Paths, namespace invariant
 type Glob_Next_Paths Path_Storage
 
 // Glob_Next_Paths_Invariants bounds produced candidate collection.
-func Glob_Next_Paths_Invariants(value Glob_Next_Paths, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Glob_Next_Paths_Invariants(value Glob_Next_Paths, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), FILESYSTEM_PATH_COUNT_MINIMUM, FILESYSTEM_PATH_COUNT_MAXIMUM).
 		Ensure()
 }
@@ -93,8 +93,8 @@ func Glob_Next_Paths_Invariants(value Glob_Next_Paths, namespace invariant.Names
 type Glob_Current_Count int
 
 // Glob_Current_Count_Invariants spans empty through caller candidate bound.
-func Glob_Current_Count_Invariants(value Glob_Current_Count, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Glob_Current_Count_Invariants(value Glob_Current_Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), FILESYSTEM_PATH_COUNT_MINIMUM, FILESYSTEM_PATH_COUNT_MAXIMUM).
 		Ensure()
 }
@@ -103,8 +103,8 @@ func Glob_Current_Count_Invariants(value Glob_Current_Count, namespace invariant
 type Glob_Next_Count int
 
 // Glob_Next_Count_Invariants spans empty through caller candidate bound.
-func Glob_Next_Count_Invariants(value Glob_Next_Count, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Glob_Next_Count_Invariants(value Glob_Next_Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), FILESYSTEM_PATH_COUNT_MINIMUM, FILESYSTEM_PATH_COUNT_MAXIMUM).
 		Ensure()
 }
@@ -114,9 +114,9 @@ type Glob_Candidate_Index int
 
 // Glob_Candidate_Index_Invariants spans first candidate through collection boundary.
 func Glob_Candidate_Index_Invariants(
-	value Glob_Candidate_Index, namespace invariant.Namespace,
+	value Glob_Candidate_Index, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(int(value), FILESYSTEM_PATH_COUNT_MINIMUM, FILESYSTEM_PATH_COUNT_MAXIMUM).
 		Ensure()
 }
@@ -125,8 +125,8 @@ func Glob_Candidate_Index_Invariants(
 type Glob_Segment_Start int
 
 // Glob_Segment_Start_Invariants spans pattern boundaries.
-func Glob_Segment_Start_Invariants(value Glob_Segment_Start, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Glob_Segment_Start_Invariants(value Glob_Segment_Start, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), PATH_SIZE_MINIMUM, PATH_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -135,8 +135,8 @@ func Glob_Segment_Start_Invariants(value Glob_Segment_Start, namespace invariant
 type Glob_Segment_End int
 
 // Glob_Segment_End_Invariants spans pattern boundaries.
-func Glob_Segment_End_Invariants(value Glob_Segment_End, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Glob_Segment_End_Invariants(value Glob_Segment_End, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), PATH_SIZE_MINIMUM, PATH_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -145,8 +145,8 @@ func Glob_Segment_End_Invariants(value Glob_Segment_End, namespace invariant.Nam
 type Glob_Segment_Final bool
 
 // Glob_Segment_Final_Invariants proves both component positions occur.
-func Glob_Segment_Final_Invariants(value Glob_Segment_Final, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Glob_Segment_Final_Invariants(value Glob_Segment_Final, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Sometimes(bool(value), "Glob component is final.").
 		Ensure()
 }
@@ -155,8 +155,8 @@ func Glob_Segment_Final_Invariants(value Glob_Segment_Final, namespace invariant
 type Glob_Segment_Meta bool
 
 // Glob_Segment_Meta_Invariants proves both component forms occur.
-func Glob_Segment_Meta_Invariants(value Glob_Segment_Meta, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Glob_Segment_Meta_Invariants(value Glob_Segment_Meta, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Sometimes(bool(value), "Glob component contains pattern syntax.").
 		Ensure()
 }
@@ -165,8 +165,8 @@ func Glob_Segment_Meta_Invariants(value Glob_Segment_Meta, namespace invariant.N
 type Glob_Work_Ready bool
 
 // Glob_Work_Ready_Invariants proves both async lifecycle states occur.
-func Glob_Work_Ready_Invariants(value Glob_Work_Ready, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Glob_Work_Ready_Invariants(value Glob_Work_Ready, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Sometimes(bool(value), "Glob callback queued continuation.").
 		Ensure()
 }
@@ -175,8 +175,8 @@ func Glob_Work_Ready_Invariants(value Glob_Work_Ready, namespace invariant.Names
 type Glob_Done bool
 
 // Glob_Done_Invariants proves active and terminal runner states occur.
-func Glob_Done_Invariants(value Glob_Done, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Glob_Done_Invariants(value Glob_Done, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Sometimes(bool(value), "Glob runner stopped.").
 		Ensure()
 }
@@ -185,8 +185,8 @@ func Glob_Done_Invariants(value Glob_Done, namespace invariant.Namespace) {
 type Directory_Entries []nbio.Directory_Entry
 
 // Directory_Entries_Invariants requires bounded positive pass capacity.
-func Directory_Entries_Invariants(value Directory_Entries, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Directory_Entries_Invariants(value Directory_Entries, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), FILESYSTEM_PATH_COUNT_MINIMUM, FILESYSTEM_PATH_COUNT_MAXIMUM).
 		Ensure()
 }
@@ -195,8 +195,8 @@ func Directory_Entries_Invariants(value Directory_Entries, namespace invariant.N
 type Directory_Buffer []byte
 
 // Directory_Buffer_Invariants bounds one backend directory pass.
-func Directory_Buffer_Invariants(value Directory_Buffer, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Directory_Buffer_Invariants(value Directory_Buffer, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(
 			len(value), FILESYSTEM_PATH_COUNT_MINIMUM,
 			nbio.DIRECTORY_BUFFER_SIZE_MAXIMUM,
@@ -217,15 +217,15 @@ type Glob_Memory struct {
 }
 
 // Glob_Memory_Invariants states each retained collection has usable bounded storage.
-func Glob_Memory_Invariants(value Glob_Memory, namespace invariant.Namespace) {
+func Glob_Memory_Invariants(value Glob_Memory, namespace aver.Namespace) {
 	Glob_Current_Paths_Invariants(value.Current, namespace)
 	Glob_Next_Paths_Invariants(value.Next, namespace)
 	Directory_Entries_Invariants(value.Entries, namespace)
 	Directory_Buffer_Invariants(value.Directory_Buffer, namespace)
-	invariant.Always(len(value.Current) > 0, "Glob has current candidate capacity.")
-	invariant.Always(len(value.Next) > 0, "Glob has next candidate capacity.")
-	invariant.Always(len(value.Entries) > 0, "Glob has directory-entry capacity.")
-	invariant.Always(len(value.Directory_Buffer) > 0,
+	aver.Always(len(value.Current) > 0, "Glob has current candidate capacity.")
+	aver.Always(len(value.Next) > 0, "Glob has next candidate capacity.")
+	aver.Always(len(value.Entries) > 0, "Glob has directory-entry capacity.")
+	aver.Always(len(value.Directory_Buffer) > 0,
 		"Glob has directory-record capacity.")
 }
 
@@ -233,8 +233,8 @@ func Glob_Memory_Invariants(value Glob_Memory, namespace invariant.Namespace) {
 type Glob_Phase uint8
 
 // Glob_Phase_Invariants accepts exactly idle, open, read, and close states.
-func Glob_Phase_Invariants(value Glob_Phase, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Glob_Phase_Invariants(value Glob_Phase, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_4_Uint8(
 			uint8(value), uint8(GLOB_PHASE_IDLE), uint8(GLOB_PHASE_OPEN),
 			uint8(GLOB_PHASE_READ), uint8(GLOB_PHASE_CLOSE),
@@ -298,8 +298,8 @@ type Glob_Runner struct {
 }
 
 // Glob_Runner_Invariants states complete runner scalar domains.
-func Glob_Runner_Invariants(value *Glob_Runner, namespace invariant.Namespace) {
-	invariant.Always(value != nil, "A Glob_Runner has caller-owned state.")
+func Glob_Runner_Invariants(value *Glob_Runner, namespace aver.Namespace) {
+	aver.Always(value != nil, "A Glob_Runner has caller-owned state.")
 	nbio.IO_Invariants(value.Loop, namespace)
 	Text_Invariants(value.Pattern, namespace)
 	Glob_Current_Paths_Invariants(value.Current, namespace)
@@ -328,7 +328,7 @@ func Glob_Runner_Init(
 	Glob_Memory_Invariants(memory, "glob_runner_init.memory")
 	path_storage_slots_validate(Path_Storage(memory.Current))
 	path_storage_slots_validate(Path_Storage(memory.Next))
-	invariant.Always(len(memory.Current) == len(memory.Next),
+	aver.Always(len(memory.Current) == len(memory.Next),
 		"Glob candidate generations have equal capacity.")
 	directory_buffer_validate(memory.Directory_Buffer)
 	*runner = Glob_Runner{
@@ -431,7 +431,7 @@ func Glob_Runner_Status(runner *Glob_Runner) (err error) {
 func Glob_Runner_Matches(runner *Glob_Runner) (matches Path_Storage) {
 	defer func() { Path_Storage_Invariants(matches, "glob_runner_matches.matches") }()
 	Glob_Runner_Invariants(runner, "glob_runner_matches.runner")
-	invariant.Always(runner.Done, "Glob result is read after runner stops.")
+	aver.Always(runner.Done, "Glob result is read after runner stops.")
 	return Path_Storage(runner.Current[:runner.Current_Count])
 }
 
@@ -530,8 +530,8 @@ func glob_directory_close(runner *Glob_Runner) {
 func glob_entries_apply(runner *Glob_Runner, count Path_Count) {
 	Glob_Runner_Invariants(runner, "glob_entries_apply.runner")
 	Path_Count_Invariants(count, "glob_entries_apply.count")
-	invariant.Always(count > 0, "Glob directory completion has entries.")
-	invariant.Always(int(count) <= len(runner.Entries),
+	aver.Always(count > 0, "Glob directory completion has entries.")
+	aver.Always(int(count) <= len(runner.Entries),
 		"Glob directory completion count fits caller entries.")
 	segment := runner.Pattern[runner.Segment_Start:runner.Segment_End]
 	for index := 0; index < int(count); index++ {
@@ -656,7 +656,7 @@ type Walk_Entry struct {
 }
 
 // Walk_Entry_Invariants bounds borrowed name.
-func Walk_Entry_Invariants(value Walk_Entry, namespace invariant.Namespace) {
+func Walk_Entry_Invariants(value Walk_Entry, namespace aver.Namespace) {
 	bytes.Slice_Invariants(value.Name, namespace)
 }
 
@@ -669,8 +669,8 @@ type Walk_Function[State any] func(
 type Walk_Queue_Paths Path_Storage
 
 // Walk_Queue_Paths_Invariants bounds queued path collection.
-func Walk_Queue_Paths_Invariants(value Walk_Queue_Paths, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Walk_Queue_Paths_Invariants(value Walk_Queue_Paths, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), FILESYSTEM_PATH_COUNT_MINIMUM, FILESYSTEM_PATH_COUNT_MAXIMUM).
 		Ensure()
 }
@@ -679,8 +679,8 @@ func Walk_Queue_Paths_Invariants(value Walk_Queue_Paths, namespace invariant.Nam
 type Walk_Child_Paths Path_Storage
 
 // Walk_Child_Paths_Invariants bounds active child collection.
-func Walk_Child_Paths_Invariants(value Walk_Child_Paths, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Walk_Child_Paths_Invariants(value Walk_Child_Paths, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), FILESYSTEM_PATH_COUNT_MINIMUM, FILESYSTEM_PATH_COUNT_MAXIMUM).
 		Ensure()
 }
@@ -689,8 +689,8 @@ func Walk_Child_Paths_Invariants(value Walk_Child_Paths, namespace invariant.Nam
 type Walk_Queue_Count int
 
 // Walk_Queue_Count_Invariants spans empty through caller path bound.
-func Walk_Queue_Count_Invariants(value Walk_Queue_Count, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Walk_Queue_Count_Invariants(value Walk_Queue_Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), FILESYSTEM_PATH_COUNT_MINIMUM, FILESYSTEM_PATH_COUNT_MAXIMUM).
 		Ensure()
 }
@@ -699,8 +699,8 @@ func Walk_Queue_Count_Invariants(value Walk_Queue_Count, namespace invariant.Nam
 type Walk_Child_Count int
 
 // Walk_Child_Count_Invariants spans empty through caller path bound.
-func Walk_Child_Count_Invariants(value Walk_Child_Count, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Walk_Child_Count_Invariants(value Walk_Child_Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), FILESYSTEM_PATH_COUNT_MINIMUM, FILESYSTEM_PATH_COUNT_MAXIMUM).
 		Ensure()
 }
@@ -709,8 +709,8 @@ func Walk_Child_Count_Invariants(value Walk_Child_Count, namespace invariant.Nam
 type Walk_Work_Ready bool
 
 // Walk_Work_Ready_Invariants proves both async lifecycle states occur.
-func Walk_Work_Ready_Invariants(value Walk_Work_Ready, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Walk_Work_Ready_Invariants(value Walk_Work_Ready, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Sometimes(bool(value), "Walk callback queued continuation.").
 		Ensure()
 }
@@ -719,8 +719,8 @@ func Walk_Work_Ready_Invariants(value Walk_Work_Ready, namespace invariant.Names
 type Walk_Done bool
 
 // Walk_Done_Invariants proves active and terminal runner states occur.
-func Walk_Done_Invariants(value Walk_Done, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Walk_Done_Invariants(value Walk_Done, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Sometimes(bool(value), "Walk runner stopped.").
 		Ensure()
 }
@@ -738,15 +738,15 @@ type Walk_Memory struct {
 }
 
 // Walk_Memory_Invariants states each retained collection has usable bounded storage.
-func Walk_Memory_Invariants(value Walk_Memory, namespace invariant.Namespace) {
+func Walk_Memory_Invariants(value Walk_Memory, namespace aver.Namespace) {
 	Walk_Queue_Paths_Invariants(value.Queue, namespace)
 	Walk_Child_Paths_Invariants(value.Children, namespace)
 	Directory_Entries_Invariants(value.Entries, namespace)
 	Directory_Buffer_Invariants(value.Directory_Buffer, namespace)
-	invariant.Always(len(value.Queue) > 0, "Walk has queued path capacity.")
-	invariant.Always(len(value.Children) > 0, "Walk has child path capacity.")
-	invariant.Always(len(value.Entries) > 0, "Walk has directory-entry capacity.")
-	invariant.Always(len(value.Directory_Buffer) > 0,
+	aver.Always(len(value.Queue) > 0, "Walk has queued path capacity.")
+	aver.Always(len(value.Children) > 0, "Walk has child path capacity.")
+	aver.Always(len(value.Entries) > 0, "Walk has directory-entry capacity.")
+	aver.Always(len(value.Directory_Buffer) > 0,
 		"Walk has directory-record capacity.")
 }
 
@@ -754,8 +754,8 @@ func Walk_Memory_Invariants(value Walk_Memory, namespace invariant.Namespace) {
 type Walk_Phase uint8
 
 // Walk_Phase_Invariants accepts exactly idle, open, read, and close states.
-func Walk_Phase_Invariants(value Walk_Phase, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Walk_Phase_Invariants(value Walk_Phase, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_4_Uint8(
 			uint8(value), uint8(WALK_PHASE_IDLE), uint8(WALK_PHASE_OPEN),
 			uint8(WALK_PHASE_READ), uint8(WALK_PHASE_CLOSE),
@@ -818,9 +818,9 @@ type Walk_Runner[State any] struct {
 
 // Walk_Runner_Invariants states complete runner scalar domains.
 func Walk_Runner_Invariants[State any](
-	value *Walk_Runner[State], namespace invariant.Namespace,
+	value *Walk_Runner[State], namespace aver.Namespace,
 ) {
-	invariant.Always(value != nil, "A Walk_Runner has caller-owned state.")
+	aver.Always(value != nil, "A Walk_Runner has caller-owned state.")
 	nbio.IO_Invariants(value.Loop, namespace)
 	Walk_Queue_Paths_Invariants(value.Queue, namespace)
 	Walk_Child_Paths_Invariants(value.Children, namespace)
@@ -867,7 +867,7 @@ func walk_runner_init[State any](
 	nbio.IO_Invariants(loop, "walk_runner_init_internal.loop")
 	Text_Invariants(root, "walk_runner_init_internal.root")
 	Walk_Memory_Invariants(memory, "walk_runner_init_internal.memory")
-	invariant.Always(visitor != nil, "A Walk_Runner has visitor.")
+	aver.Always(visitor != nil, "A Walk_Runner has visitor.")
 	path_storage_slots_validate(Path_Storage(memory.Queue))
 	path_storage_slots_validate(Path_Storage(memory.Children))
 	directory_buffer_validate(memory.Directory_Buffer)
@@ -1076,8 +1076,8 @@ func walk_directory_error[State any](
 func walk_entries_collect[State any](runner *Walk_Runner[State], count Path_Count) {
 	Walk_Runner_Invariants(runner, "walk_entries_collect.runner")
 	Path_Count_Invariants(count, "walk_entries_collect.count")
-	invariant.Always(count > 0, "Walk directory completion has entries.")
-	invariant.Always(int(count) <= len(runner.Entries),
+	aver.Always(count > 0, "Walk directory completion has entries.")
+	aver.Always(int(count) <= len(runner.Entries),
 		"Walk directory completion count fits caller entries.")
 	parent := Slice(runner.Directory_Path[:runner.Directory_Path_Count])
 	for index := 0; index < int(count); index++ {
@@ -1148,11 +1148,11 @@ func Eval_Symlinks_Into(
 	Slice_Invariants(remainder, "eval_symlinks_into.remainder")
 	Slice_Invariants(link_target, "eval_symlinks_into.link_target")
 	Text_Invariants(value, "eval_symlinks_into.value")
-	invariant.Always(len(destination) == PATH_SIZE_MAXIMUM,
+	aver.Always(len(destination) == PATH_SIZE_MAXIMUM,
 		"Eval_Symlinks destination has exact path capacity.")
-	invariant.Always(len(remainder) == PATH_SIZE_MAXIMUM,
+	aver.Always(len(remainder) == PATH_SIZE_MAXIMUM,
 		"Eval_Symlinks remainder storage has exact path capacity.")
-	invariant.Always(len(link_target) == PATH_SIZE_MAXIMUM,
+	aver.Always(len(link_target) == PATH_SIZE_MAXIMUM,
 		"Eval_Symlinks link storage has exact target capacity.")
 	return eval_symlinks_apply(storage, destination, remainder, link_target, value)
 }
@@ -1161,8 +1161,8 @@ func Eval_Symlinks_Into(
 type Eval_Link_Count int
 
 // Eval_Link_Count_Invariants spans first lookup through rejected cycle boundary.
-func Eval_Link_Count_Invariants(value Eval_Link_Count, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Eval_Link_Count_Invariants(value Eval_Link_Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(
 			int(value), SYMBOLIC_LINK_COUNT_MINIMUM, SYMBOLIC_LINK_COUNT_BOUNDARY,
 		).
@@ -1173,8 +1173,8 @@ func Eval_Link_Count_Invariants(value Eval_Link_Count, namespace invariant.Names
 type Eval_Done bool
 
 // Eval_Done_Invariants proves both resolution lifecycle states occur.
-func Eval_Done_Invariants(value Eval_Done, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Eval_Done_Invariants(value Eval_Done, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Sometimes(bool(value), "Symbolic-link resolution stopped.").
 		Ensure()
 }
@@ -1183,8 +1183,8 @@ func Eval_Done_Invariants(value Eval_Done, namespace invariant.Namespace) {
 type Eval_Destination bytes.Slice
 
 // Eval_Destination_Invariants requires exact caller path storage.
-func Eval_Destination_Invariants(value Eval_Destination, _ invariant.Namespace) {
-	invariant.Always(len(value) == PATH_SIZE_MAXIMUM,
+func Eval_Destination_Invariants(value Eval_Destination, _ aver.Namespace) {
+	aver.Always(len(value) == PATH_SIZE_MAXIMUM,
 		"Eval destination has exact path capacity.")
 }
 
@@ -1192,8 +1192,8 @@ func Eval_Destination_Invariants(value Eval_Destination, _ invariant.Namespace) 
 type Eval_Remainder bytes.Slice
 
 // Eval_Remainder_Invariants requires exact caller path storage.
-func Eval_Remainder_Invariants(value Eval_Remainder, _ invariant.Namespace) {
-	invariant.Always(len(value) == PATH_SIZE_MAXIMUM,
+func Eval_Remainder_Invariants(value Eval_Remainder, _ aver.Namespace) {
+	aver.Always(len(value) == PATH_SIZE_MAXIMUM,
 		"Eval remainder has exact path capacity.")
 }
 
@@ -1201,8 +1201,8 @@ func Eval_Remainder_Invariants(value Eval_Remainder, _ invariant.Namespace) {
 type Eval_Link_Target bytes.Slice
 
 // Eval_Link_Target_Invariants requires exact caller path storage.
-func Eval_Link_Target_Invariants(value Eval_Link_Target, _ invariant.Namespace) {
-	invariant.Always(len(value) == PATH_SIZE_MAXIMUM,
+func Eval_Link_Target_Invariants(value Eval_Link_Target, _ aver.Namespace) {
+	aver.Always(len(value) == PATH_SIZE_MAXIMUM,
 		"Eval link target has exact path capacity.")
 }
 
@@ -1211,9 +1211,9 @@ type Eval_Remainder_Count bytes.Boundary
 
 // Eval_Remainder_Count_Invariants spans empty through full path.
 func Eval_Remainder_Count_Invariants(
-	value Eval_Remainder_Count, namespace invariant.Namespace,
+	value Eval_Remainder_Count, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(int(value), PATH_SIZE_MINIMUM, PATH_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -1223,9 +1223,9 @@ type Eval_Destination_Count bytes.Boundary
 
 // Eval_Destination_Count_Invariants spans empty through full path.
 func Eval_Destination_Count_Invariants(
-	value Eval_Destination_Count, namespace invariant.Namespace,
+	value Eval_Destination_Count, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(int(value), PATH_SIZE_MINIMUM, PATH_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -1234,8 +1234,8 @@ func Eval_Destination_Count_Invariants(
 type Eval_Start bytes.Boundary
 
 // Eval_Start_Invariants spans path boundaries.
-func Eval_Start_Invariants(value Eval_Start, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Eval_Start_Invariants(value Eval_Start, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), PATH_SIZE_MINIMUM, PATH_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -1244,8 +1244,8 @@ func Eval_Start_Invariants(value Eval_Start, namespace invariant.Namespace) {
 type Eval_End bytes.Boundary
 
 // Eval_End_Invariants spans path boundaries.
-func Eval_End_Invariants(value Eval_End, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Eval_End_Invariants(value Eval_End, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), PATH_SIZE_MINIMUM, PATH_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -1277,7 +1277,7 @@ type Eval_State struct {
 }
 
 // Eval_State_Invariants states retained buffer and scalar bounds.
-func Eval_State_Invariants(value Eval_State, namespace invariant.Namespace) {
+func Eval_State_Invariants(value Eval_State, namespace aver.Namespace) {
 	Eval_Destination_Invariants(value.Destination, namespace)
 	Eval_Remainder_Invariants(value.Remainder, namespace)
 	Eval_Link_Target_Invariants(value.Link_Target, namespace)
@@ -1603,14 +1603,14 @@ func path_storage_write_text(
 func path_storage_slots_validate(storage Path_Storage) {
 	Path_Storage_Invariants(storage, "path_storage_slots_validate.storage")
 	for index := range storage {
-		invariant.Always(cap(storage[index]) <= PATH_SIZE_MAXIMUM,
+		aver.Always(cap(storage[index]) <= PATH_SIZE_MAXIMUM,
 			"A filesystem path slot stays inside path bound.")
 	}
 }
 
 func directory_buffer_validate(buffer Directory_Buffer) {
 	Directory_Buffer_Invariants(buffer, "directory_buffer_validate.buffer")
-	invariant.Always(len(buffer) >= nbio.DIRECTORY_BUFFER_SIZE_MINIMUM,
+	aver.Always(len(buffer) >= nbio.DIRECTORY_BUFFER_SIZE_MINIMUM,
 		"Filesystem runner holds at least one directory-record byte.")
 }
 
@@ -1724,8 +1724,8 @@ const PATH_SIZE_MAXIMUM = path.PATH_SIZE_MAXIMUM
 type Text bytes.Text
 
 // Text_Invariants applies host pathname limit to text representation.
-func Text_Invariants(value Text, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Text_Invariants(value Text, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), PATH_SIZE_MINIMUM, PATH_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -1734,8 +1734,8 @@ func Text_Invariants(value Text, namespace invariant.Namespace) {
 type Slice bytes.Slice
 
 // Slice_Invariants applies host pathname limit to byte representation.
-func Slice_Invariants(value Slice, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Slice_Invariants(value Slice, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), PATH_SIZE_MINIMUM, PATH_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -1744,8 +1744,8 @@ func Slice_Invariants(value Slice, namespace invariant.Namespace) {
 type Boundary bytes.Boundary
 
 // Boundary_Invariants applies host pathname limit to written byte count.
-func Boundary_Invariants(value Boundary, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Boundary_Invariants(value Boundary, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), PATH_SIZE_MINIMUM, PATH_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -1806,8 +1806,8 @@ var Error_Working_Directory = errors.New("filepath: working directory is not abs
 type Boolean bool
 
 // Boolean_Invariants proves both filepath decision states occur.
-func Boolean_Invariants(value Boolean, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Boolean_Invariants(value Boolean, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Sometimes(bool(value), "A filepath decision is true.").
 		Ensure()
 }
@@ -1816,8 +1816,8 @@ func Boolean_Invariants(value Boolean, namespace invariant.Namespace) {
 type Elements []bytes.Text
 
 // Elements_Invariants prevents empty elements from causing unbounded work.
-func Elements_Invariants(value Elements, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Elements_Invariants(value Elements, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), ELEMENT_COUNT_MINIMUM, ELEMENT_COUNT_MAXIMUM).
 		Ensure()
 }
@@ -1826,8 +1826,8 @@ func Elements_Invariants(value Elements, namespace invariant.Namespace) {
 type Paths []bytes.Text
 
 // Paths_Invariants prevents malicious caller slot traversal from becoming unbounded.
-func Paths_Invariants(value Paths, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Paths_Invariants(value Paths, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), PATH_COUNT_MINIMUM, PATH_COUNT_MAXIMUM).
 		Ensure()
 }
@@ -1836,8 +1836,8 @@ func Paths_Invariants(value Paths, namespace invariant.Namespace) {
 type Path_Count int
 
 // Path_Count_Invariants proves empty through separator-dense list.
-func Path_Count_Invariants(value Path_Count, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Path_Count_Invariants(value Path_Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), PATH_COUNT_MINIMUM, PATH_COUNT_MAXIMUM).
 		Ensure()
 }
@@ -1846,8 +1846,8 @@ func Path_Count_Invariants(value Path_Count, namespace invariant.Namespace) {
 type Nonempty_Count int
 
 // Nonempty_Count_Invariants proves mandatory byte through path bound.
-func Nonempty_Count_Invariants(value Nonempty_Count, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Nonempty_Count_Invariants(value Nonempty_Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), NONEMPTY_SIZE_MINIMUM, PATH_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -1856,8 +1856,8 @@ func Nonempty_Count_Invariants(value Nonempty_Count, namespace invariant.Namespa
 type Directory_Count int
 
 // Directory_Count_Invariants excludes full size because directory loses final element or slash.
-func Directory_Count_Invariants(value Directory_Count, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Directory_Count_Invariants(value Directory_Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), NONEMPTY_SIZE_MINIMUM, DIRECTORY_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -1866,24 +1866,24 @@ func Directory_Count_Invariants(value Directory_Count, namespace invariant.Names
 type Volume string
 
 // Volume_Invariants proves platform absence exactly instead of accepting broad Text range.
-func Volume_Invariants(value Volume, namespace invariant.Namespace) {
-	invariant.Always(len(value) == VOLUME_SIZE, "A Unix volume is empty.")
+func Volume_Invariants(value Volume, namespace aver.Namespace) {
+	aver.Always(len(value) == VOLUME_SIZE, "A Unix volume is empty.")
 }
 
 // Dot_Count keeps fixed relative identity size typed.
 type Dot_Count int
 
 // Dot_Count_Invariants prevents fixed output from claiming full path range.
-func Dot_Count_Invariants(value Dot_Count, namespace invariant.Namespace) {
-	invariant.Always(int(value) == DOT_COUNT, "A relative identity has one byte.")
+func Dot_Count_Invariants(value Dot_Count, namespace aver.Namespace) {
+	aver.Always(int(value) == DOT_COUNT, "A relative identity has one byte.")
 }
 
 // Base_Text excludes zero because standard base result is never empty.
 type Base_Text string
 
 // Base_Text_Invariants proves mandatory dot through full final element.
-func Base_Text_Invariants(value Base_Text, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Base_Text_Invariants(value Base_Text, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), NONEMPTY_SIZE_MINIMUM, PATH_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -1892,8 +1892,8 @@ func Base_Text_Invariants(value Base_Text, namespace invariant.Namespace) {
 type Nonempty_Path []byte
 
 // Nonempty_Path_Invariants proves Clean mandatory dot output.
-func Nonempty_Path_Invariants(value Nonempty_Path, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Nonempty_Path_Invariants(value Nonempty_Path, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), NONEMPTY_SIZE_MINIMUM, PATH_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -1902,8 +1902,8 @@ func Nonempty_Path_Invariants(value Nonempty_Path, namespace invariant.Namespace
 type Cleaned_Path []byte
 
 // Cleaned_Path_Invariants proves normalized identity stays inside path bound.
-func Cleaned_Path_Invariants(value Cleaned_Path, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Cleaned_Path_Invariants(value Cleaned_Path, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), PATH_SIZE_MINIMUM, PATH_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -1912,8 +1912,8 @@ func Cleaned_Path_Invariants(value Cleaned_Path, namespace invariant.Namespace) 
 type Start int
 
 // Start_Invariants proves at least one differing byte follows boundary.
-func Start_Invariants(value Start, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Start_Invariants(value Start, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), PATH_SIZE_MINIMUM, START_MAXIMUM).
 		Ensure()
 }
@@ -1922,8 +1922,8 @@ func Start_Invariants(value Start, namespace invariant.Namespace) {
 type Up_Count int
 
 // Up_Count_Invariants proves shortest one-byte element packing bound.
-func Up_Count_Invariants(value Up_Count, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Up_Count_Invariants(value Up_Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), PATH_SIZE_MINIMUM, UP_COUNT_MAXIMUM).
 		Ensure()
 }
@@ -1932,8 +1932,8 @@ func Up_Count_Invariants(value Up_Count, namespace invariant.Namespace) {
 type Nonempty_Text string
 
 // Nonempty_Text_Invariants proves scan enters only active tails.
-func Nonempty_Text_Invariants(value Nonempty_Text, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Nonempty_Text_Invariants(value Nonempty_Text, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), NONEMPTY_SIZE_MINIMUM, PATH_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -1942,8 +1942,8 @@ func Nonempty_Text_Invariants(value Nonempty_Text, namespace invariant.Namespace
 type Part_Text string
 
 // Part_Text_Invariants proves malicious empty component through full path component.
-func Part_Text_Invariants(value Part_Text, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Part_Text_Invariants(value Part_Text, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), PATH_SIZE_MINIMUM, PATH_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -1952,8 +1952,8 @@ func Part_Text_Invariants(value Part_Text, namespace invariant.Namespace) {
 type Part_Tail string
 
 // Part_Tail_Invariants subtracts consumed separator before longest tail.
-func Part_Tail_Invariants(value Part_Tail, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Part_Tail_Invariants(value Part_Tail, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), PATH_SIZE_MINIMUM, PART_TAIL_MAXIMUM).
 		Ensure()
 }

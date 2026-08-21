@@ -3,7 +3,7 @@ package json
 
 import (
 	"local/james-orcales/shared/bytes"
-	"local/james-orcales/shared/invariant/default"
+	"local/james-orcales/shared/simulation/aver/default"
 )
 
 // ENCODED_SIZE_MAXIMUM follows shared byte-slice boundary.
@@ -76,8 +76,8 @@ const OBJECT_AFTER_VALUE = OBJECT_VALUE + 1
 type Encoded []byte
 
 // Encoded_Invariants enforces shared source boundary.
-func Encoded_Invariants(value Encoded, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Encoded_Invariants(value Encoded, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), bytes.SLICE_SIZE_MINIMUM, ENCODED_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -86,8 +86,8 @@ func Encoded_Invariants(value Encoded, namespace invariant.Namespace) {
 type Output []byte
 
 // Output_Invariants enforces shared destination boundary.
-func Output_Invariants(value Output, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Output_Invariants(value Output, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), bytes.SLICE_SIZE_MINIMUM, OUTPUT_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -96,8 +96,8 @@ func Output_Invariants(value Output, namespace invariant.Namespace) {
 type Prefix []byte
 
 // Prefix_Invariants enforces shared formatting boundary.
-func Prefix_Invariants(value Prefix, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Prefix_Invariants(value Prefix, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), bytes.SLICE_SIZE_MINIMUM, PREFIX_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -106,8 +106,8 @@ func Prefix_Invariants(value Prefix, namespace invariant.Namespace) {
 type Indent []byte
 
 // Indent_Invariants enforces shared formatting boundary.
-func Indent_Invariants(value Indent, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Indent_Invariants(value Indent, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), bytes.SLICE_SIZE_MINIMUM, INDENT_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -116,8 +116,8 @@ func Indent_Invariants(value Indent, namespace invariant.Namespace) {
 type Count int
 
 // Count_Invariants keeps public results inside writable output bound.
-func Count_Invariants(value Count, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Count_Invariants(value Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), bytes.SLICE_SIZE_MINIMUM, OUTPUT_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -126,8 +126,8 @@ func Count_Invariants(value Count, namespace invariant.Namespace) {
 type Compact_Count int
 
 // Compact_Count_Invariants follows compact output limits for valid input.
-func Compact_Count_Invariants(value Compact_Count, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Compact_Count_Invariants(value Compact_Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), VALUE_SIZE_MINIMUM, OUTPUT_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -136,8 +136,8 @@ func Compact_Count_Invariants(value Compact_Count, namespace invariant.Namespace
 type Position int
 
 // Position_Invariants includes unexpected end after maximum source.
-func Position_Invariants(value Position, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Position_Invariants(value Position, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), bytes.SLICE_SIZE_MINIMUM, POSITION_MAXIMUM).
 		Ensure()
 }
@@ -146,8 +146,8 @@ func Position_Invariants(value Position, namespace invariant.Namespace) {
 type Validate_Status uint8
 
 // Validate_Status_Invariants lists valid and invalid source.
-func Validate_Status_Invariants(value Validate_Status, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Validate_Status_Invariants(value Validate_Status, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_Uint8(uint8(value), uint8(STATUS_OK), uint8(STATUS_INPUT_INVALID)).
 		Ensure()
 }
@@ -157,9 +157,9 @@ type Compact_Size_Status uint8
 
 // Compact_Size_Status_Invariants lists compact sizing outcomes.
 func Compact_Size_Status_Invariants(
-	value Compact_Size_Status, namespace invariant.Namespace,
+	value Compact_Size_Status, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Enum_Uint8(uint8(value), uint8(STATUS_OK), uint8(STATUS_INPUT_INVALID)).
 		Ensure()
 }
@@ -169,9 +169,9 @@ type Indent_Size_Status uint8
 
 // Indent_Size_Status_Invariants lists indentation sizing outcomes.
 func Indent_Size_Status_Invariants(
-	value Indent_Size_Status, namespace invariant.Namespace,
+	value Indent_Size_Status, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Enum_3_Uint8(
 			uint8(value), uint8(STATUS_OK), uint8(STATUS_INPUT_INVALID),
 			uint8(STATUS_OUTPUT_TOO_LARGE),
@@ -183,8 +183,8 @@ func Indent_Size_Status_Invariants(
 type Compact_Status uint8
 
 // Compact_Status_Invariants lists every compact outcome.
-func Compact_Status_Invariants(value Compact_Status, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Compact_Status_Invariants(value Compact_Status, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_4_Uint8(
 			uint8(value), uint8(STATUS_OK), uint8(STATUS_INPUT_INVALID),
 			uint8(STATUS_OUTPUT_TOO_SMALL), uint8(STATUS_STORAGE_INVALID),
@@ -196,8 +196,8 @@ func Compact_Status_Invariants(value Compact_Status, namespace invariant.Namespa
 type Indent_Status uint8
 
 // Indent_Status_Invariants covers contiguous indentation outcomes.
-func Indent_Status_Invariants(value Indent_Status, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Indent_Status_Invariants(value Indent_Status, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint8(uint8(value), uint8(STATUS_OK), uint8(STATUS_OUTPUT_TOO_LARGE)).
 		Ensure()
 }
@@ -213,16 +213,16 @@ type Parse_Result struct {
 }
 
 // Parse_Result_Invariants fixes result shape before public scalar conversion.
-func Parse_Result_Invariants(value Parse_Result, _ invariant.Namespace) {
-	invariant.Always(
+func Parse_Result_Invariants(value Parse_Result, _ aver.Namespace) {
+	aver.Always(
 		len(value.Next) == SCALAR_STORAGE_SIZE,
 		"JSON parser next position stays in fixed scalar storage.",
 	)
-	invariant.Always(
+	aver.Always(
 		len(value.Error) == SCALAR_STORAGE_SIZE,
 		"JSON parser error position stays in fixed scalar storage.",
 	)
-	invariant.Always(
+	aver.Always(
 		len(value.Valid) == SCALAR_STORAGE_SIZE,
 		"JSON parser validity stays in fixed scalar storage.",
 	)
@@ -232,8 +232,8 @@ func Parse_Result_Invariants(value Parse_Result, _ invariant.Namespace) {
 type Boolean bool
 
 // Boolean_Invariants covers both lexical outcomes.
-func Boolean_Invariants(value Boolean, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Boolean_Invariants(value Boolean, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Sometimes(bool(value), "JSON lexical decision is positive.").
 		Ensure()
 }

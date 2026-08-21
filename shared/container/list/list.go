@@ -9,7 +9,7 @@
 package list
 
 import (
-	"local/james-orcales/shared/invariant/default"
+	"local/james-orcales/shared/simulation/aver/default"
 	"local/james-orcales/shared/slices"
 )
 
@@ -52,8 +52,8 @@ const POSITION_MAXIMUM = NODE_COUNT_MAXIMUM - 1
 type Position int
 
 // Position_Invariants states the complete element-handle domain.
-func Position_Invariants(value Position, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Position_Invariants(value Position, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Holed_Int(
 			int(value), POSITION_MINIMUM, POSITION_MAXIMUM,
 			ROOT_POSITION, FREE_POSITION, FREE_POSITION, FREE_POSITION,
@@ -66,8 +66,8 @@ func Position_Invariants(value Position, namespace invariant.Namespace) {
 type Element_Position int
 
 // Element_Position_Invariants states the domain of one live element node.
-func Element_Position_Invariants(value Element_Position, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Element_Position_Invariants(value Element_Position, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), FIRST_ELEMENT_POSITION, POSITION_MAXIMUM).
 		Ensure()
 }
@@ -77,8 +77,8 @@ func Element_Position_Invariants(value Element_Position, namespace invariant.Nam
 type Mark_Position int
 
 // Mark_Position_Invariants states the domain of one insertion mark.
-func Mark_Position_Invariants(value Mark_Position, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Mark_Position_Invariants(value Mark_Position, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Holed_Int(
 			int(value), ROOT_POSITION, POSITION_MAXIMUM,
 			FREE_POSITION, FREE_POSITION, FREE_POSITION, FREE_POSITION,
@@ -90,8 +90,8 @@ func Mark_Position_Invariants(value Mark_Position, namespace invariant.Namespace
 type Successor int
 
 // Successor_Invariants states the complete neighbor domain.
-func Successor_Invariants(value Successor, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Successor_Invariants(value Successor, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), POSITION_MINIMUM, POSITION_MAXIMUM).
 		Ensure()
 }
@@ -100,8 +100,8 @@ func Successor_Invariants(value Successor, namespace invariant.Namespace) {
 type Predecessor int
 
 // Predecessor_Invariants states the complete neighbor domain.
-func Predecessor_Invariants(value Predecessor, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Predecessor_Invariants(value Predecessor, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), POSITION_MINIMUM, POSITION_MAXIMUM).
 		Ensure()
 }
@@ -110,8 +110,8 @@ func Predecessor_Invariants(value Predecessor, namespace invariant.Namespace) {
 type Count int
 
 // Count_Invariants states the complete element-count domain.
-func Count_Invariants(value Count, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Count_Invariants(value Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), COUNT_MINIMUM, COUNT_MAXIMUM).
 		Ensure()
 }
@@ -120,8 +120,8 @@ func Count_Invariants(value Count, namespace invariant.Namespace) {
 type Boolean bool
 
 // Boolean_Invariants states both report results as obligations.
-func Boolean_Invariants(value Boolean, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Boolean_Invariants(value Boolean, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Sometimes(bool(value), "The node report is true.").
 		Ensure()
 }
@@ -142,7 +142,7 @@ type Element[Value any] struct {
 
 // Element_Invariants composes both neighbors and the use report of one node.
 func Element_Invariants[Value any](
-	element Element[Value], namespace invariant.Namespace,
+	element Element[Value], namespace aver.Namespace,
 ) {
 	Successor_Invariants(element.Next, namespace)
 	Predecessor_Invariants(element.Previous, namespace)
@@ -162,7 +162,7 @@ type List[Value any] struct {
 // List_Invariants states the element count of one list. The subject is a pointer, because a
 // list holds its whole pool and a value parameter would copy that pool at each assertion.
 func List_Invariants[Value any](
-	subject *List[Value], namespace invariant.Namespace,
+	subject *List[Value], namespace aver.Namespace,
 ) {
 	Count_Invariants(subject.Element_Count, namespace)
 }
@@ -199,11 +199,11 @@ func lazy_initialize[Value any](subject *List[Value]) {
 func enforce_live[Value any](subject *List[Value], position Position) {
 	Position_Invariants(position, "enforce_live.position")
 	List_Invariants(subject, "enforce_live.subject")
-	invariant.Always(
+	aver.Always(
 		int(position) < len(subject.Nodes),
 		"A live handle names a node of the pool.",
 	)
-	invariant.Always(
+	aver.Always(
 		bool(subject.Nodes[position].Used),
 		"A live handle names a node that the element ring holds.",
 	)
@@ -274,7 +274,7 @@ func Value_At[Value any](subject *List[Value], position Position) (value Value) 
 func allocate[Value any](subject *List[Value]) (position Element_Position) {
 	defer func() { Element_Position_Invariants(position, "allocate.position") }()
 	List_Invariants(subject, "allocate.subject")
-	invariant.Always(
+	aver.Always(
 		subject.Element_Count < COUNT_MAXIMUM,
 		"A list insertion keeps room for the new element.",
 	)
@@ -476,7 +476,7 @@ func Push_Front_List[Value any](subject *List[Value], other *List[Value]) {
 func enforce_copy(subject_count Count, other_count Count) {
 	Count_Invariants(subject_count, "enforce_copy.subject_count")
 	Count_Invariants(other_count, "enforce_copy.other_count")
-	invariant.Always(
+	aver.Always(
 		int(subject_count)+int(other_count) <= COUNT_MAXIMUM,
 		"A list copy keeps room for every added element.",
 	)

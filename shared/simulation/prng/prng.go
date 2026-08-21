@@ -21,8 +21,8 @@ import (
 	"unsafe"
 
 	"local/james-orcales/shared/crypto/prng"
-	"local/james-orcales/shared/invariant/default"
 	"local/james-orcales/shared/math/bits"
+	"local/james-orcales/shared/simulation/aver/default"
 )
 
 // The splitmix64 increment, derived from the golden ratio, strides the seed state.
@@ -101,8 +101,8 @@ const DISTRIBUTION_COUNT_MINIMUM Distribution_Count = 1
 type Seed uint64
 
 // Seed_Invariants preserves all replay identities.
-func Seed_Invariants(seed Seed, namespace invariant.Namespace) {
-	invariant.Tree(seed, namespace).
+func Seed_Invariants(seed Seed, namespace aver.Namespace) {
+	aver.Tree(seed, namespace).
 		Range_Uint64(uint64(seed), uint64(SEED_MINIMUM), uint64(SEED_MAXIMUM)).
 		Ensure()
 }
@@ -111,8 +111,8 @@ func Seed_Invariants(seed Seed, namespace invariant.Namespace) {
 type Word uint64
 
 // Word_Invariants preserves every xoshiro output.
-func Word_Invariants(word Word, namespace invariant.Namespace) {
-	invariant.Tree(word, namespace).
+func Word_Invariants(word Word, namespace aver.Namespace) {
+	aver.Tree(word, namespace).
 		Range_Uint64(uint64(word), uint64(WORD_MINIMUM), uint64(WORD_MAXIMUM)).
 		Ensure()
 }
@@ -121,8 +121,8 @@ func Word_Invariants(word Word, namespace invariant.Namespace) {
 type Weight uint64
 
 // Weight_Invariants permits zero-mass buckets without narrowing totals.
-func Weight_Invariants(weight Weight, namespace invariant.Namespace) {
-	invariant.Tree(weight, namespace).
+func Weight_Invariants(weight Weight, namespace aver.Namespace) {
+	aver.Tree(weight, namespace).
 		Range_Uint64(uint64(weight), uint64(WEIGHT_MINIMUM), uint64(WEIGHT_MAXIMUM)).
 		Ensure()
 }
@@ -131,8 +131,8 @@ func Weight_Invariants(weight Weight, namespace invariant.Namespace) {
 type Ratio_Numerator Weight
 
 // Ratio_Numerator_Invariants preserves zero through complete favorable mass.
-func Ratio_Numerator_Invariants(value Ratio_Numerator, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Ratio_Numerator_Invariants(value Ratio_Numerator, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint64(uint64(value), uint64(WEIGHT_MINIMUM), uint64(WEIGHT_MAXIMUM)).
 		Ensure()
 }
@@ -141,8 +141,8 @@ func Ratio_Numerator_Invariants(value Ratio_Numerator, namespace invariant.Names
 type Ratio_Denominator Weight
 
 // Ratio_Denominator_Invariants preserves every representable total mass.
-func Ratio_Denominator_Invariants(value Ratio_Denominator, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Ratio_Denominator_Invariants(value Ratio_Denominator, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint64(
 			uint64(value),
 			uint64(RATIO_DENOMINATOR_MINIMUM),
@@ -155,8 +155,8 @@ func Ratio_Denominator_Invariants(value Ratio_Denominator, namespace invariant.N
 type Bound int
 
 // Bound_Invariants rejects zero before unsigned rejection sampling.
-func Bound_Invariants(bound Bound, namespace invariant.Namespace) {
-	invariant.Tree(bound, namespace).
+func Bound_Invariants(bound Bound, namespace aver.Namespace) {
+	aver.Tree(bound, namespace).
 		Range_Int(int(bound), int(BOUND_MINIMUM), int(BOUND_MAXIMUM)).
 		Ensure()
 }
@@ -165,8 +165,8 @@ func Bound_Invariants(bound Bound, namespace invariant.Namespace) {
 type Index int
 
 // Index_Invariants preserves every result below the largest Bound.
-func Index_Invariants(index Index, namespace invariant.Namespace) {
-	invariant.Tree(index, namespace).
+func Index_Invariants(index Index, namespace aver.Namespace) {
+	aver.Tree(index, namespace).
 		Range_Int(int(index), int(INDEX_MINIMUM), int(INDEX_MAXIMUM)).
 		Ensure()
 }
@@ -175,8 +175,8 @@ func Index_Invariants(index Index, namespace invariant.Namespace) {
 type Draw_Bound uint64
 
 // Draw_Bound_Invariants preserves every positive unsigned limit.
-func Draw_Bound_Invariants(bound Draw_Bound, namespace invariant.Namespace) {
-	invariant.Tree(bound, namespace).
+func Draw_Bound_Invariants(bound Draw_Bound, namespace aver.Namespace) {
+	aver.Tree(bound, namespace).
 		Range_Uint64(
 			uint64(bound), uint64(DRAW_BOUND_MINIMUM), uint64(DRAW_BOUND_MAXIMUM),
 		).
@@ -187,8 +187,8 @@ func Draw_Bound_Invariants(bound Draw_Bound, namespace invariant.Namespace) {
 type Draw uint64
 
 // Draw_Invariants excludes the unreachable largest word.
-func Draw_Invariants(draw Draw, namespace invariant.Namespace) {
-	invariant.Tree(draw, namespace).
+func Draw_Invariants(draw Draw, namespace aver.Namespace) {
+	aver.Tree(draw, namespace).
 		Range_Uint64(uint64(draw), uint64(DRAW_MINIMUM), uint64(DRAW_MAXIMUM)).
 		Ensure()
 }
@@ -197,8 +197,8 @@ func Draw_Invariants(draw Draw, namespace invariant.Namespace) {
 type Boolean bool
 
 // Boolean_Invariants requires both decision branches across package runs.
-func Boolean_Invariants(value Boolean, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Boolean_Invariants(value Boolean, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Sometimes(bool(value), "A random decision is true.").
 		Ensure()
 }
@@ -207,8 +207,8 @@ func Boolean_Invariants(value Boolean, namespace invariant.Namespace) {
 type Item_Count int
 
 // Item_Count_Invariants rejects hostile selection and shuffle work.
-func Item_Count_Invariants(count Item_Count, namespace invariant.Namespace) {
-	invariant.Tree(count, namespace).
+func Item_Count_Invariants(count Item_Count, namespace aver.Namespace) {
+	aver.Tree(count, namespace).
 		Range_Int(int(count), int(ITEM_COUNT_MINIMUM), int(ITEM_COUNT_MAXIMUM)).
 		Ensure()
 }
@@ -217,8 +217,8 @@ func Item_Count_Invariants(count Item_Count, namespace invariant.Namespace) {
 type Items[T any] [ITEM_COUNT_MAXIMUM]T
 
 // Items_Invariants makes the generic aggregate a fixed-width singleton.
-func Items_Invariants[T any](items Items[T], _ invariant.Namespace) {
-	invariant.Always(
+func Items_Invariants[T any](items Items[T], _ aver.Namespace) {
+	aver.Always(
 		len(items) == int(ITEM_COUNT_MAXIMUM),
 		"Random item storage keeps its fixed width.",
 	)
@@ -228,8 +228,8 @@ func Items_Invariants[T any](items Items[T], _ invariant.Namespace) {
 type Weights [DISTRIBUTION_COUNT_MAXIMUM]Weight
 
 // Weights_Invariants makes cumulative storage a fixed-width singleton.
-func Weights_Invariants(weights Weights, _ invariant.Namespace) {
-	invariant.Always(
+func Weights_Invariants(weights Weights, _ aver.Namespace) {
+	aver.Always(
 		len(weights) == DISTRIBUTION_COUNT_MAXIMUM,
 		"Distribution weights keep their fixed width.",
 	)
@@ -239,8 +239,8 @@ func Weights_Invariants(weights Weights, _ invariant.Namespace) {
 type Distribution_Count int
 
 // Distribution_Count_Invariants keeps every live bucket addressable.
-func Distribution_Count_Invariants(count Distribution_Count, namespace invariant.Namespace) {
-	invariant.Tree(count, namespace).
+func Distribution_Count_Invariants(count Distribution_Count, namespace aver.Namespace) {
+	aver.Tree(count, namespace).
 		Range_Int(
 			int(count), int(DISTRIBUTION_COUNT_MINIMUM), DISTRIBUTION_COUNT_MAXIMUM,
 		).
@@ -255,8 +255,8 @@ type Xoshiro struct {
 }
 
 // Xoshiro_Invariants rejects xoshiro's absorbing all-zero state.
-func Xoshiro_Invariants(generator Xoshiro, _ invariant.Namespace) {
-	invariant.Always(
+func Xoshiro_Invariants(generator Xoshiro, _ aver.Namespace) {
+	aver.Always(
 		generator.State != [XOSHIRO_STATE_WORD_COUNT]Word{},
 		"A generator has nonzero xoshiro state.",
 	)
@@ -271,11 +271,11 @@ type Ratio struct {
 }
 
 // Ratio_Invariants rejects division by zero and probability above one.
-func Ratio_Invariants(ratio Ratio, namespace invariant.Namespace) {
+func Ratio_Invariants(ratio Ratio, namespace aver.Namespace) {
 	Ratio_Numerator_Invariants(ratio.Numerator, namespace)
 	Ratio_Denominator_Invariants(ratio.Denominator, namespace)
-	invariant.Always(ratio.Denominator > 0, "A probability denominator is positive.")
-	invariant.Always(
+	aver.Always(ratio.Denominator > 0, "A probability denominator is positive.")
+	aver.Always(
 		Weight(ratio.Numerator) <= Weight(ratio.Denominator),
 		"A probability numerator does not exceed its denominator.",
 	)
@@ -292,11 +292,11 @@ type Distribution[T any] struct {
 
 // Distribution_Invariants keeps the live fixed table nonempty and drawable.
 func Distribution_Invariants[T any](
-	distribution Distribution[T], namespace invariant.Namespace,
+	distribution Distribution[T], namespace aver.Namespace,
 ) {
 	Items_Invariants(distribution.Outcomes, namespace)
 	Weights_Invariants(distribution.Cumulative, namespace)
-	invariant.Always(
+	aver.Always(
 		distribution.Cumulative[DISTRIBUTION_COUNT_MAXIMUM-1] > 0,
 		"A distribution has positive total weight.",
 	)
@@ -351,7 +351,7 @@ func Xoshiro_Element[T any](
 	Xoshiro_Invariants(*generator, "xoshiro_element.generator")
 	Items_Invariants(*items, "xoshiro_element.items")
 	Item_Count_Invariants(count, "xoshiro_element.count")
-	invariant.Always(count > 0, "prng element count is not empty")
+	aver.Always(count > 0, "prng element count is not empty")
 	return items[Xoshiro_Below(generator, Bound(count))]
 }
 
@@ -384,7 +384,7 @@ func New_Distribution[T any](
 	running_total := Weight(0)
 	for index := 0; index < int(count); index++ {
 		Weight_Invariants(weights[index], "new_distribution.weight")
-		invariant.Always(
+		aver.Always(
 			weights[index] <= WEIGHT_MAXIMUM-running_total,
 			"Distribution cumulative weight does not overflow.",
 		)
@@ -392,7 +392,7 @@ func New_Distribution[T any](
 		distribution.Outcomes[index] = outcomes[index]
 		distribution.Cumulative[index] = running_total
 	}
-	invariant.Always(running_total > 0, "prng distribution total is positive")
+	aver.Always(running_total > 0, "prng distribution total is positive")
 	for index := int(count); index < DISTRIBUTION_COUNT_MAXIMUM; index++ {
 		distribution.Cumulative[index] = running_total
 	}
@@ -419,8 +419,8 @@ func Xoshiro_Sample[T any](generator *Xoshiro, distribution Distribution[T]) (it
 type Bimodal_Fast Word
 
 // Bimodal_Fast_Invariants preserves the caller's complete unit domain.
-func Bimodal_Fast_Invariants(value Bimodal_Fast, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Bimodal_Fast_Invariants(value Bimodal_Fast, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint64(uint64(value), uint64(WORD_MINIMUM), uint64(WORD_MAXIMUM)).
 		Ensure()
 }
@@ -429,8 +429,8 @@ func Bimodal_Fast_Invariants(value Bimodal_Fast, namespace invariant.Namespace) 
 type Bimodal_Slow Word
 
 // Bimodal_Slow_Invariants preserves the caller's complete unit domain.
-func Bimodal_Slow_Invariants(value Bimodal_Slow, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Bimodal_Slow_Invariants(value Bimodal_Slow, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint64(uint64(value), uint64(WORD_MINIMUM), uint64(WORD_MAXIMUM)).
 		Ensure()
 }
@@ -447,7 +447,7 @@ type Bimodal_Distribution_Input struct {
 
 // Bimodal_Distribution_Input_Invariants composes both modes and their probability.
 func Bimodal_Distribution_Input_Invariants(
-	input Bimodal_Distribution_Input, namespace invariant.Namespace,
+	input Bimodal_Distribution_Input, namespace aver.Namespace,
 ) {
 	Bimodal_Fast_Invariants(input.Fast, namespace)
 	Bimodal_Slow_Invariants(input.Slow, namespace)
@@ -478,8 +478,8 @@ func Bimodal_Distribution(
 type Percentile_25 Word
 
 // Percentile_25_Invariants preserves the caller's complete unit domain.
-func Percentile_25_Invariants(value Percentile_25, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Percentile_25_Invariants(value Percentile_25, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint64(uint64(value), uint64(WORD_MINIMUM), uint64(WORD_MAXIMUM)).
 		Ensure()
 }
@@ -488,8 +488,8 @@ func Percentile_25_Invariants(value Percentile_25, namespace invariant.Namespace
 type Percentile_50 Word
 
 // Percentile_50_Invariants preserves the caller's complete unit domain.
-func Percentile_50_Invariants(value Percentile_50, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Percentile_50_Invariants(value Percentile_50, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint64(uint64(value), uint64(WORD_MINIMUM), uint64(WORD_MAXIMUM)).
 		Ensure()
 }
@@ -498,8 +498,8 @@ func Percentile_50_Invariants(value Percentile_50, namespace invariant.Namespace
 type Percentile_75 Word
 
 // Percentile_75_Invariants preserves the caller's complete unit domain.
-func Percentile_75_Invariants(value Percentile_75, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Percentile_75_Invariants(value Percentile_75, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint64(uint64(value), uint64(WORD_MINIMUM), uint64(WORD_MAXIMUM)).
 		Ensure()
 }
@@ -508,8 +508,8 @@ func Percentile_75_Invariants(value Percentile_75, namespace invariant.Namespace
 type Percentile_95 Word
 
 // Percentile_95_Invariants preserves the caller's complete unit domain.
-func Percentile_95_Invariants(value Percentile_95, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Percentile_95_Invariants(value Percentile_95, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint64(uint64(value), uint64(WORD_MINIMUM), uint64(WORD_MAXIMUM)).
 		Ensure()
 }
@@ -518,8 +518,8 @@ func Percentile_95_Invariants(value Percentile_95, namespace invariant.Namespace
 type Percentile_99 Word
 
 // Percentile_99_Invariants preserves the caller's complete unit domain.
-func Percentile_99_Invariants(value Percentile_99, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Percentile_99_Invariants(value Percentile_99, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint64(uint64(value), uint64(WORD_MINIMUM), uint64(WORD_MAXIMUM)).
 		Ensure()
 }
@@ -528,8 +528,8 @@ func Percentile_99_Invariants(value Percentile_99, namespace invariant.Namespace
 type Percentile_100 Word
 
 // Percentile_100_Invariants preserves the caller's complete unit domain.
-func Percentile_100_Invariants(value Percentile_100, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Percentile_100_Invariants(value Percentile_100, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint64(uint64(value), uint64(WORD_MINIMUM), uint64(WORD_MAXIMUM)).
 		Ensure()
 }
@@ -552,7 +552,7 @@ type Percentile_Distribution_Input struct {
 
 // Percentile_Distribution_Input_Invariants keeps all six caller-unit values representable.
 func Percentile_Distribution_Input_Invariants(
-	input Percentile_Distribution_Input, namespace invariant.Namespace,
+	input Percentile_Distribution_Input, namespace aver.Namespace,
 ) {
 	Percentile_25_Invariants(input.P25, namespace)
 	Percentile_50_Invariants(input.P50, namespace)

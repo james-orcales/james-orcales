@@ -3,8 +3,8 @@ package asn1
 
 import (
 	"local/james-orcales/shared/bytes"
-	"local/james-orcales/shared/invariant/default"
 	"local/james-orcales/shared/math/bits"
+	"local/james-orcales/shared/simulation/aver/default"
 )
 
 // ENCODED_SIZE_MAXIMUM follows the repository byte-slice boundary.
@@ -123,8 +123,8 @@ const COUNT_HOLE = bytes.SLICE_SIZE_MINIMUM + 1
 type Class_Input uint8
 
 // Class_Input_Invariants covers the complete storage domain.
-func Class_Input_Invariants(value Class_Input, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Class_Input_Invariants(value Class_Input, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint8(uint8(value), bits.WORD_8_MINIMUM, bits.WORD_8_MAXIMUM).
 		Ensure()
 }
@@ -133,8 +133,8 @@ func Class_Input_Invariants(value Class_Input, namespace invariant.Namespace) {
 type Tag_Input uint32
 
 // Tag_Input_Invariants covers the complete storage domain.
-func Tag_Input_Invariants(value Tag_Input, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Tag_Input_Invariants(value Tag_Input, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint32(uint32(value), bits.WORD_32_MINIMUM, bits.WORD_32_MAXIMUM).
 		Ensure()
 }
@@ -143,8 +143,8 @@ func Tag_Input_Invariants(value Tag_Input, namespace invariant.Namespace) {
 type Class uint8
 
 // Class_Invariants bounds decoded classes to their bit field.
-func Class_Invariants(value Class, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Class_Invariants(value Class, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_4_Uint8(
 			uint8(value), CLASS_UNIVERSAL, CLASS_APPLICATION,
 			CLASS_CONTEXT_SPECIFIC, CLASS_PRIVATE,
@@ -156,8 +156,8 @@ func Class_Invariants(value Class, namespace invariant.Namespace) {
 type Tag uint32
 
 // Tag_Invariants keeps decoded accumulation within the DER tag boundary.
-func Tag_Invariants(value Tag, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Tag_Invariants(value Tag, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint32(uint32(value), bits.WORD_32_MINIMUM, TAG_MAXIMUM).
 		Ensure()
 }
@@ -166,8 +166,8 @@ func Tag_Invariants(value Tag, namespace invariant.Namespace) {
 type Constructed bool
 
 // Constructed_Invariants covers primitive and constructed identifiers.
-func Constructed_Invariants(value Constructed, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Constructed_Invariants(value Constructed, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Sometimes(bool(value), "A DER identifier is constructed.").
 		Ensure()
 }
@@ -176,8 +176,8 @@ func Constructed_Invariants(value Constructed, namespace invariant.Namespace) {
 type Content []byte
 
 // Content_Invariants leaves room for the largest canonical header.
-func Content_Invariants(value Content, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Content_Invariants(value Content, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), bytes.SLICE_SIZE_MINIMUM, CONTENT_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -186,8 +186,8 @@ func Content_Invariants(value Content, namespace invariant.Namespace) {
 type Encoded []byte
 
 // Encoded_Invariants enforces the shared source boundary.
-func Encoded_Invariants(value Encoded, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Encoded_Invariants(value Encoded, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), bytes.SLICE_SIZE_MINIMUM, ENCODED_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -196,8 +196,8 @@ func Encoded_Invariants(value Encoded, namespace invariant.Namespace) {
 type Output []byte
 
 // Output_Invariants enforces the shared destination boundary.
-func Output_Invariants(value Output, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Output_Invariants(value Output, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), bytes.SLICE_SIZE_MINIMUM, ENCODED_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -215,7 +215,7 @@ type Element_Input struct {
 }
 
 // Element_Input_Invariants composes complete caller storage domains.
-func Element_Input_Invariants(value Element_Input, namespace invariant.Namespace) {
+func Element_Input_Invariants(value Element_Input, namespace aver.Namespace) {
 	Class_Input_Invariants(value.Class, namespace)
 	Tag_Input_Invariants(value.Tag, namespace)
 	Constructed_Invariants(value.Constructed, namespace)
@@ -235,7 +235,7 @@ type Element struct {
 }
 
 // Element_Invariants composes canonical decoded fields.
-func Element_Invariants(value Element, namespace invariant.Namespace) {
+func Element_Invariants(value Element, namespace aver.Namespace) {
 	Class_Invariants(value.Class, namespace)
 	Tag_Invariants(value.Tag, namespace)
 	Constructed_Invariants(value.Constructed, namespace)
@@ -246,10 +246,10 @@ func Element_Invariants(value Element, namespace invariant.Namespace) {
 type Count int
 
 // Count_Invariants keeps results inside bounded output.
-func Count_Invariants(value Count, namespace invariant.Namespace) {
+func Count_Invariants(value Count, namespace aver.Namespace) {
 	valid := value == 0 || int(value) > COUNT_HOLE
-	invariant.Always(valid, "A nonzero DER count contains identifier and length.")
-	invariant.Tree(value, namespace).
+	aver.Always(valid, "A nonzero DER count contains identifier and length.")
+	aver.Tree(value, namespace).
 		Range_Holed_Int(
 			int(value), bytes.SLICE_SIZE_MINIMUM, ENCODED_SIZE_MAXIMUM,
 			COUNT_HOLE, COUNT_HOLE, COUNT_HOLE, COUNT_HOLE,
@@ -261,10 +261,10 @@ func Count_Invariants(value Count, namespace invariant.Namespace) {
 type Consumed_Count int
 
 // Consumed_Count_Invariants keeps consumption inside input.
-func Consumed_Count_Invariants(value Consumed_Count, namespace invariant.Namespace) {
+func Consumed_Count_Invariants(value Consumed_Count, namespace aver.Namespace) {
 	valid := value == 0 || int(value) > COUNT_HOLE
-	invariant.Always(valid, "A consumed DER prefix contains identifier and length.")
-	invariant.Tree(value, namespace).
+	aver.Always(valid, "A consumed DER prefix contains identifier and length.")
+	aver.Tree(value, namespace).
 		Range_Holed_Int(
 			int(value), bytes.SLICE_SIZE_MINIMUM, ENCODED_SIZE_MAXIMUM,
 			COUNT_HOLE, COUNT_HOLE, COUNT_HOLE, COUNT_HOLE,
@@ -276,8 +276,8 @@ func Consumed_Count_Invariants(value Consumed_Count, namespace invariant.Namespa
 type Position int
 
 // Position_Invariants includes unexpected end after maximum input.
-func Position_Invariants(value Position, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Position_Invariants(value Position, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), bytes.SLICE_SIZE_MINIMUM, POSITION_MAXIMUM).
 		Ensure()
 }
@@ -286,8 +286,8 @@ func Position_Invariants(value Position, namespace invariant.Namespace) {
 type Size_Status uint8
 
 // Size_Status_Invariants lists all sizing outcomes.
-func Size_Status_Invariants(value Size_Status, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Size_Status_Invariants(value Size_Status, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_3_Uint8(
 			uint8(value), STATUS_OK, STATUS_ELEMENT_INVALID,
 			STATUS_ELEMENT_TOO_LARGE,
@@ -299,8 +299,8 @@ func Size_Status_Invariants(value Size_Status, namespace invariant.Namespace) {
 type Encode_Status uint8
 
 // Encode_Status_Invariants lists every encode outcome.
-func Encode_Status_Invariants(value Encode_Status, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Encode_Status_Invariants(value Encode_Status, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint8(uint8(value), STATUS_OK, STATUS_STORAGE_INVALID).
 		Ensure()
 }
@@ -309,8 +309,8 @@ func Encode_Status_Invariants(value Encode_Status, namespace invariant.Namespace
 type Decode_Status uint8
 
 // Decode_Status_Invariants lists valid and invalid DER.
-func Decode_Status_Invariants(value Decode_Status, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Decode_Status_Invariants(value Decode_Status, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_Uint8(uint8(value), STATUS_OK, STATUS_INPUT_INVALID).
 		Ensure()
 }
@@ -320,9 +320,9 @@ type Identifier_Size_Count int
 
 // Identifier_Size_Count_Invariants follows the tag-word width.
 func Identifier_Size_Count_Invariants(
-	value Identifier_Size_Count, namespace invariant.Namespace,
+	value Identifier_Size_Count, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(int(value), IDENTIFIER_SIZE_MINIMUM, IDENTIFIER_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -332,9 +332,9 @@ type Content_Size_Field_Count int
 
 // Content_Size_Field_Count_Invariants follows bounded content size.
 func Content_Size_Field_Count_Invariants(
-	value Content_Size_Field_Count, namespace invariant.Namespace,
+	value Content_Size_Field_Count, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Enum_3_Int(
 			int(value), CONTENT_SIZE_FIELD_SIZE_MINIMUM,
 			CONTENT_SIZE_FIELD_SIZE_MIDDLE, CONTENT_SIZE_FIELD_SIZE_MAXIMUM,
@@ -347,9 +347,9 @@ type Content_Size_Count int
 
 // Content_Size_Count_Invariants keeps decoded content inside one element.
 func Content_Size_Count_Invariants(
-	value Content_Size_Count, namespace invariant.Namespace,
+	value Content_Size_Count, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(int(value), bytes.SLICE_SIZE_MINIMUM, CONTENT_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -358,8 +358,8 @@ func Content_Size_Count_Invariants(
 type Element_Valid bool
 
 // Element_Valid_Invariants covers accepted and rejected fields.
-func Element_Valid_Invariants(value Element_Valid, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Element_Valid_Invariants(value Element_Valid, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Sometimes(bool(value), "A caller DER element is valid.").
 		Ensure()
 }
@@ -368,8 +368,8 @@ func Element_Valid_Invariants(value Element_Valid, namespace invariant.Namespace
 type High_Tag_Value uint32
 
 // High_Tag_Value_Invariants prevents parser arithmetic from escaping tag storage.
-func High_Tag_Value_Invariants(value High_Tag_Value, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func High_Tag_Value_Invariants(value High_Tag_Value, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint32(uint32(value), bits.WORD_32_MINIMUM, TAG_MAXIMUM).
 		Ensure()
 }
@@ -379,9 +379,9 @@ type Identifier_End_Index int
 
 // Identifier_End_Index_Invariants excludes the impossible one-byte high-tag result.
 func Identifier_End_Index_Invariants(
-	value Identifier_End_Index, namespace invariant.Namespace,
+	value Identifier_End_Index, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Holed_Int(
 			int(value), bytes.SLICE_SIZE_MINIMUM, IDENTIFIER_SIZE_MAXIMUM,
 			COUNT_HOLE, COUNT_HOLE, COUNT_HOLE, COUNT_HOLE,
@@ -394,9 +394,9 @@ type Identifier_Position int
 
 // Identifier_Position_Invariants excludes the impossible position before the high tag.
 func Identifier_Position_Invariants(
-	value Identifier_Position, namespace invariant.Namespace,
+	value Identifier_Position, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Holed_Int(
 			int(value), bytes.SLICE_SIZE_MINIMUM, IDENTIFIER_POSITION_MAXIMUM,
 			COUNT_HOLE, COUNT_HOLE, COUNT_HOLE, COUNT_HOLE,
@@ -409,9 +409,9 @@ type Content_Start_Index int
 
 // Content_Start_Index_Invariants excludes a boundary inside the identifier lead octet.
 func Content_Start_Index_Invariants(
-	value Content_Start_Index, namespace invariant.Namespace,
+	value Content_Start_Index, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Holed_Int(
 			int(value), bytes.SLICE_SIZE_MINIMUM, CONTENT_START_INDEX_MAXIMUM,
 			COUNT_HOLE, COUNT_HOLE, COUNT_HOLE, COUNT_HOLE,
@@ -424,9 +424,9 @@ type Content_Size_Position int
 
 // Content_Size_Position_Invariants excludes the identifier lead octet.
 func Content_Size_Position_Invariants(
-	value Content_Size_Position, namespace invariant.Namespace,
+	value Content_Size_Position, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Holed_Int(
 			int(value), bytes.SLICE_SIZE_MINIMUM, CONTENT_SIZE_POSITION_MAXIMUM,
 			COUNT_HOLE, COUNT_HOLE, COUNT_HOLE, COUNT_HOLE,
@@ -447,7 +447,7 @@ type High_Tag_Result struct {
 }
 
 // High_Tag_Result_Invariants bounds raw parser state before public conversion.
-func High_Tag_Result_Invariants(value High_Tag_Result, namespace invariant.Namespace) {
+func High_Tag_Result_Invariants(value High_Tag_Result, namespace aver.Namespace) {
 	High_Tag_Value_Invariants(value.Tag, namespace)
 	Identifier_End_Index_Invariants(value.Next, namespace)
 	Identifier_Position_Invariants(value.Position, namespace)
@@ -468,7 +468,7 @@ type Content_Size_Result struct {
 
 // Content_Size_Result_Invariants bounds parser state before public conversion.
 func Content_Size_Result_Invariants(
-	value Content_Size_Result, namespace invariant.Namespace,
+	value Content_Size_Result, namespace aver.Namespace,
 ) {
 	Content_Size_Count_Invariants(value.Content_Size, namespace)
 	Content_Start_Index_Invariants(value.Next, namespace)

@@ -6,8 +6,8 @@ import (
 	"reflect"
 	"unsafe"
 
-	"local/james-orcales/shared/invariant/default"
 	"local/james-orcales/shared/math/bits"
+	"local/james-orcales/shared/simulation/aver/default"
 	"local/james-orcales/shared/simulation/nbio"
 )
 
@@ -153,8 +153,8 @@ var Error_Varint_Overflow = errors.New("binary: varint overflows a 64-bit intege
 type Byte_Order uint8
 
 // Byte_Order_Invariants covers two explicit orders and native-order identity.
-func Byte_Order_Invariants(value Byte_Order, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Byte_Order_Invariants(value Byte_Order, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_3_Uint8(
 			uint8(value), BYTE_ORDER_LITTLE_VALUE,
 			BYTE_ORDER_BIG_VALUE, BYTE_ORDER_NATIVE_VALUE,
@@ -166,8 +166,8 @@ func Byte_Order_Invariants(value Byte_Order, namespace invariant.Namespace) {
 type Byte_Order_Name string
 
 // Byte_Order_Name_Invariants admits short and long standard names.
-func Byte_Order_Name_Invariants(value Byte_Order_Name, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Byte_Order_Name_Invariants(value Byte_Order_Name, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_Int(
 			len(value), BYTE_ORDER_NAME_SIZE_MINIMUM, BYTE_ORDER_NAME_SIZE_MAXIMUM,
 		).
@@ -179,9 +179,9 @@ type Byte_Order_Go_Name string
 
 // Byte_Order_Go_Name_Invariants admits short and long Go-syntax names.
 func Byte_Order_Go_Name_Invariants(
-	value Byte_Order_Go_Name, namespace invariant.Namespace,
+	value Byte_Order_Go_Name, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Enum_Int(
 			len(value), BYTE_ORDER_GO_NAME_SIZE_MINIMUM,
 			BYTE_ORDER_GO_NAME_SIZE_MAXIMUM,
@@ -193,8 +193,8 @@ func Byte_Order_Go_Name_Invariants(
 type Boolean bool
 
 // Boolean_Invariants requires both decision states.
-func Boolean_Invariants(value Boolean, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Boolean_Invariants(value Boolean, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Sometimes(bool(value), "A binary decision is true.").
 		Ensure()
 }
@@ -203,8 +203,8 @@ func Boolean_Invariants(value Boolean, namespace invariant.Namespace) {
 type Word_16 uint16
 
 // Word_16_Invariants covers every 16-bit word.
-func Word_16_Invariants(value Word_16, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Word_16_Invariants(value Word_16, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint16(uint16(value), bits.WORD_16_MINIMUM, bits.WORD_16_MAXIMUM).
 		Ensure()
 }
@@ -213,8 +213,8 @@ func Word_16_Invariants(value Word_16, namespace invariant.Namespace) {
 type Word_32 uint32
 
 // Word_32_Invariants covers every 32-bit word.
-func Word_32_Invariants(value Word_32, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Word_32_Invariants(value Word_32, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint32(uint32(value), bits.WORD_32_MINIMUM, bits.WORD_32_MAXIMUM).
 		Ensure()
 }
@@ -223,8 +223,8 @@ func Word_32_Invariants(value Word_32, namespace invariant.Namespace) {
 type Word_64 uint64
 
 // Word_64_Invariants covers every 64-bit word.
-func Word_64_Invariants(value Word_64, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Word_64_Invariants(value Word_64, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint64(uint64(value), bits.WORD_64_MINIMUM, bits.WORD_64_MAXIMUM).
 		Ensure()
 }
@@ -233,8 +233,8 @@ func Word_64_Invariants(value Word_64, namespace invariant.Namespace) {
 type Integer_64 int64
 
 // Integer_64_Invariants covers every signed 64-bit value.
-func Integer_64_Invariants(value Integer_64, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Integer_64_Invariants(value Integer_64, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int64(int64(value), bits.INTEGER_64_MINIMUM, bits.INTEGER_64_MAXIMUM).
 		Ensure()
 }
@@ -243,8 +243,8 @@ func Integer_64_Invariants(value Integer_64, namespace invariant.Namespace) {
 type Initial_Depth int
 
 // Initial_Depth_Invariants admits only two traversal entry depths.
-func Initial_Depth_Invariants(value Initial_Depth, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Initial_Depth_Invariants(value Initial_Depth, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_Int(int(value), INITIAL_DEPTH_ROOT, INITIAL_DEPTH_SLICE_ELEMENT).
 		Ensure()
 }
@@ -254,9 +254,9 @@ type Active_Stack_Count int
 
 // Active_Stack_Count_Invariants keeps frame access inside stack storage.
 func Active_Stack_Count_Invariants(
-	value Active_Stack_Count, namespace invariant.Namespace,
+	value Active_Stack_Count, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(
 			int(value), ACTIVE_STACK_COUNT_MINIMUM, ACTIVE_STACK_COUNT_MAXIMUM,
 		).
@@ -267,8 +267,8 @@ func Active_Stack_Count_Invariants(
 type Element_Count int
 
 // Element_Count_Invariants applies package collection boundary.
-func Element_Count_Invariants(value Element_Count, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Element_Count_Invariants(value Element_Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), BYTE_SIZE_MINIMUM, VALUE_ELEMENT_COUNT_MAXIMUM).
 		Ensure()
 }
@@ -277,8 +277,8 @@ func Element_Count_Invariants(value Element_Count, namespace invariant.Namespace
 type Fixed_Size int
 
 // Fixed_Size_Invariants admits supported primitive widths.
-func Fixed_Size_Invariants(value Fixed_Size, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Fixed_Size_Invariants(value Fixed_Size, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_4_Int(int(value), UINT_8_SIZE, UINT_16_SIZE, UINT_32_SIZE, UINT_64_SIZE).
 		Ensure()
 }
@@ -287,8 +287,8 @@ func Fixed_Size_Invariants(value Fixed_Size, namespace invariant.Namespace) {
 type Bytes []byte
 
 // Bytes_Invariants applies shared binary byte boundary.
-func Bytes_Invariants(value Bytes, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Bytes_Invariants(value Bytes, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), BYTE_SIZE_MINIMUM, BYTE_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -297,8 +297,8 @@ func Bytes_Invariants(value Bytes, namespace invariant.Namespace) {
 type Nonempty_Bytes []byte
 
 // Nonempty_Bytes_Invariants excludes empty append result.
-func Nonempty_Bytes_Invariants(value Nonempty_Bytes, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Nonempty_Bytes_Invariants(value Nonempty_Bytes, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), NONEMPTY_BYTE_SIZE_MINIMUM, BYTE_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -307,8 +307,8 @@ func Nonempty_Bytes_Invariants(value Nonempty_Bytes, namespace invariant.Namespa
 type Uint_16_Bytes []byte
 
 // Uint_16_Bytes_Invariants excludes lengths that cannot contain the appended value.
-func Uint_16_Bytes_Invariants(value Uint_16_Bytes, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Uint_16_Bytes_Invariants(value Uint_16_Bytes, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), UINT_16_SIZE, BYTE_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -317,8 +317,8 @@ func Uint_16_Bytes_Invariants(value Uint_16_Bytes, namespace invariant.Namespace
 type Uint_32_Bytes []byte
 
 // Uint_32_Bytes_Invariants excludes lengths that cannot contain the appended value.
-func Uint_32_Bytes_Invariants(value Uint_32_Bytes, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Uint_32_Bytes_Invariants(value Uint_32_Bytes, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), UINT_32_SIZE, BYTE_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -327,8 +327,8 @@ func Uint_32_Bytes_Invariants(value Uint_32_Bytes, namespace invariant.Namespace
 type Uint_64_Bytes []byte
 
 // Uint_64_Bytes_Invariants excludes lengths that cannot contain the appended value.
-func Uint_64_Bytes_Invariants(value Uint_64_Bytes, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Uint_64_Bytes_Invariants(value Uint_64_Bytes, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), UINT_64_SIZE, BYTE_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -337,8 +337,8 @@ func Uint_64_Bytes_Invariants(value Uint_64_Bytes, namespace invariant.Namespace
 type Byte_Count int
 
 // Byte_Count_Invariants bounds one count to caller storage domain.
-func Byte_Count_Invariants(value Byte_Count, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Byte_Count_Invariants(value Byte_Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), BYTE_SIZE_MINIMUM, BYTE_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -347,8 +347,8 @@ func Byte_Count_Invariants(value Byte_Count, namespace invariant.Namespace) {
 type Varint_Size int
 
 // Varint_Size_Invariants matches the complete 64-bit varint width domain.
-func Varint_Size_Invariants(value Varint_Size, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Varint_Size_Invariants(value Varint_Size, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), VARINT_SIZE_MINIMUM, VARINT_SIZE_64_MAXIMUM).
 		Ensure()
 }
@@ -357,8 +357,8 @@ func Varint_Size_Invariants(value Varint_Size, namespace invariant.Namespace) {
 type Value_Size int
 
 // Value_Size_Invariants includes unsupported-value sentinel and bounded valid sizes.
-func Value_Size_Invariants(value Value_Size, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Value_Size_Invariants(value Value_Size, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), VALUE_SIZE_MINIMUM, VALUE_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -367,8 +367,8 @@ func Value_Size_Invariants(value Value_Size, namespace invariant.Namespace) {
 type Varint_Count int
 
 // Varint_Count_Invariants covers incomplete, valid, and overflow results.
-func Varint_Count_Invariants(value Varint_Count, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Varint_Count_Invariants(value Varint_Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Holed_Int(
 			int(value), VARINT_COUNT_MINIMUM, VARINT_COUNT_MAXIMUM,
 			VARINT_COUNT_GAP_NEGATIVE_NINE, VARINT_COUNT_GAP_NEGATIVE_EIGHT,
@@ -392,9 +392,9 @@ type Operation_Active bool
 
 // Operation_Active_Invariants covers idle and borrowed callback states.
 func Operation_Active_Invariants(
-	value Operation_Active, namespace invariant.Namespace,
+	value Operation_Active, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Sometimes(bool(value), "Binary Stream operation is active.").
 		Ensure()
 }
@@ -404,9 +404,9 @@ type Stream_Initialized bool
 
 // Stream_Initialized_Invariants covers unbound and initialized state.
 func Stream_Initialized_Invariants(
-	value Stream_Initialized, namespace invariant.Namespace,
+	value Stream_Initialized, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Sometimes(bool(value), "Binary Stream state is initialized.").
 		Ensure()
 }
@@ -416,9 +416,9 @@ type Submission_Active bool
 
 // Submission_Active_Invariants covers inline and deferred Stream retirement.
 func Submission_Active_Invariants(
-	value Submission_Active, namespace invariant.Namespace,
+	value Submission_Active, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Sometimes(bool(value), "Binary Stream submission frame is active.").
 		Ensure()
 }
@@ -427,8 +427,8 @@ func Submission_Active_Invariants(
 type Wait_Active bool
 
 // Wait_Active_Invariants covers idle and in-flight Reader transfers.
-func Wait_Active_Invariants(value Wait_Active, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Wait_Active_Invariants(value Wait_Active, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Sometimes(bool(value), "Binary Reader waits for Stream retirement.").
 		Ensure()
 }
@@ -438,9 +438,9 @@ type Submission_Continue bool
 
 // Submission_Continue_Invariants covers both trampoline decisions.
 func Submission_Continue_Invariants(
-	value Submission_Continue, namespace invariant.Namespace,
+	value Submission_Continue, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Sometimes(bool(value), "Binary Reader has inline retirement to process.").
 		Ensure()
 }
@@ -449,8 +449,8 @@ func Submission_Continue_Invariants(
 type Stream_Size int
 
 // Stream_Size_Invariants bounds valid structured width without invalid-type sentinel.
-func Stream_Size_Invariants(value Stream_Size, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Stream_Size_Invariants(value Stream_Size, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), BYTE_SIZE_MINIMUM, BYTE_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -486,9 +486,9 @@ type Reader struct {
 }
 
 // Reader_Invariants keeps transfer cursor inside caller scratch.
-func Reader_Invariants(value *Reader, namespace invariant.Namespace) {
-	invariant.Always(value != nil, "Binary Reader state exists.")
-	invariant.Always(
+func Reader_Invariants(value *Reader, namespace aver.Namespace) {
+	aver.Always(value != nil, "Binary Reader state exists.")
+	aver.Always(
 		unsafe.Pointer(value) == unsafe.Pointer(&value.Completion),
 		"Binary Reader completion stays first for static callback recovery.",
 	)
@@ -501,11 +501,11 @@ func Reader_Invariants(value *Reader, namespace invariant.Namespace) {
 	Submission_Active_Invariants(value.Submission_Active, namespace)
 	Wait_Active_Invariants(value.Wait_Active, namespace)
 	Submission_Continue_Invariants(value.Continue, namespace)
-	invariant.Always(
+	aver.Always(
 		int(value.Count) <= int(value.Size),
 		"Binary Reader cursor does not cross structured width.",
 	)
-	invariant.Always(
+	aver.Always(
 		int(value.Size) <= len(value.Scratch),
 		"Binary Reader operation stays inside caller scratch.",
 	)
@@ -532,9 +532,9 @@ type Writer struct {
 }
 
 // Writer_Invariants keeps encoded prefix inside caller scratch.
-func Writer_Invariants(value *Writer, namespace invariant.Namespace) {
-	invariant.Always(value != nil, "Binary Writer state exists.")
-	invariant.Always(
+func Writer_Invariants(value *Writer, namespace aver.Namespace) {
+	aver.Always(value != nil, "Binary Writer state exists.")
+	aver.Always(
 		unsafe.Pointer(value) == unsafe.Pointer(&value.Completion),
 		"Binary Writer completion stays first for static callback recovery.",
 	)
@@ -543,7 +543,7 @@ func Writer_Invariants(value *Writer, namespace invariant.Namespace) {
 	Stream_Size_Invariants(value.Size, namespace)
 	Operation_Active_Invariants(value.Active, namespace)
 	Stream_Initialized_Invariants(value.Initialized, namespace)
-	invariant.Always(
+	aver.Always(
 		int(value.Size) <= len(value.Scratch),
 		"Binary Writer operation stays inside caller scratch.",
 	)
@@ -811,11 +811,11 @@ func extend(buffer Bytes, additional Varint_Size) (result Nonempty_Bytes) {
 	Bytes_Invariants(buffer, "extend.buffer")
 	Varint_Size_Invariants(additional, "extend.additional")
 	size := len(buffer) + int(additional)
-	invariant.Always(
+	aver.Always(
 		size <= BYTE_SIZE_MAXIMUM,
 		"Extended binary bytes stay inside package size boundary.",
 	)
-	invariant.Always(
+	aver.Always(
 		size <= cap(buffer),
 		"Extended binary bytes fit caller-owned capacity.",
 	)
@@ -998,7 +998,7 @@ func Size(source any) (size Value_Size) {
 	if encoded_size == VALUE_SIZE_INVALID {
 		return VALUE_SIZE_INVALID
 	}
-	invariant.Always(
+	aver.Always(
 		encoded_size <= VALUE_SIZE_MAXIMUM,
 		"Structured binary value fits bounded byte storage.",
 	)
@@ -1013,7 +1013,7 @@ func reflected_size(value reflect.Value) (size Value_Size) {
 	}
 	element_count := Element_Count(value.Len())
 	Element_Count_Invariants(element_count, "reflected_size.element_count")
-	invariant.Always(
+	aver.Always(
 		int(element_count) <= VALUE_ELEMENT_COUNT_MAXIMUM,
 		"Structured slice stays inside package element boundary.",
 	)
@@ -1029,7 +1029,7 @@ func reflected_size(value reflect.Value) (size Value_Size) {
 func type_size(value_type reflect.Type, depth Initial_Depth) (size Value_Size) {
 	defer func() { Value_Size_Invariants(size, "type_size.size") }()
 	Initial_Depth_Invariants(depth, "type_size.depth")
-	invariant.Always(
+	aver.Always(
 		int(depth) <= VALUE_NESTING_MAXIMUM,
 		"Structured value stays inside package nesting boundary.",
 	)
@@ -1047,7 +1047,7 @@ func type_size(value_type reflect.Type, depth Initial_Depth) (size Value_Size) {
 		if current_type.Kind() == reflect.Array {
 			array_size := Element_Count(current_type.Len())
 			Element_Count_Invariants(array_size, "type_size.array_size")
-			invariant.Always(
+			aver.Always(
 				int(array_size) <= VALUE_ELEMENT_COUNT_MAXIMUM,
 				"Structured array stays inside package element boundary.",
 			)
@@ -1055,7 +1055,7 @@ func type_size(value_type reflect.Type, depth Initial_Depth) (size Value_Size) {
 				Byte_Count(multipliers[stack_index]), array_size,
 			)
 			depths[stack_index]++
-			invariant.Always(
+			aver.Always(
 				depths[stack_index] <= VALUE_NESTING_MAXIMUM,
 				"Structured array stays inside package nesting boundary.",
 			)
@@ -1076,7 +1076,7 @@ func type_size(value_type reflect.Type, depth Initial_Depth) (size Value_Size) {
 		field_size := multiplied_size(
 			Byte_Count(leaf_size), Element_Count(multipliers[stack_index]),
 		)
-		invariant.Always(
+		aver.Always(
 			int(size) <= VALUE_SIZE_MAXIMUM-int(field_size),
 			"Structured value stays inside package encoded-size boundary.",
 		)
@@ -1097,7 +1097,7 @@ func push_struct_field(
 	Active_Stack_Count_Invariants(*stack_count, "push_struct_field.stack_count")
 	stack_index := int(*stack_count) - 1
 	value_type := types[stack_index]
-	invariant.Always(
+	aver.Always(
 		value_type.NumField() <= VALUE_ELEMENT_COUNT_MAXIMUM,
 		"Structured record stays inside package field boundary.",
 	)
@@ -1106,7 +1106,7 @@ func push_struct_field(
 		return
 	}
 	child_depth := depths[stack_index] + 1
-	invariant.Always(
+	aver.Always(
 		child_depth <= VALUE_NESTING_MAXIMUM,
 		"Structured record stays inside package nesting boundary.",
 	)
@@ -1162,7 +1162,7 @@ func multiplied_size(
 	if count == 0 {
 		return 0
 	}
-	invariant.Always(
+	aver.Always(
 		int(element_size) <= VALUE_SIZE_MAXIMUM/int(count),
 		"Structured collection stays inside package encoded-size boundary.",
 	)
@@ -1203,11 +1203,11 @@ func Append(
 		return nil, Error_Invalid_Type
 	}
 	wanted := len(buffer) + int(size)
-	invariant.Always(
+	aver.Always(
 		wanted <= BYTE_SIZE_MAXIMUM,
 		"Appended structured binary value stays inside package size boundary.",
 	)
-	invariant.Always(
+	aver.Always(
 		wanted <= cap(buffer),
 		"Appended structured binary value fits caller-owned capacity.",
 	)
@@ -1258,7 +1258,7 @@ func decode_target(
 	if size == VALUE_SIZE_INVALID {
 		return reflect.Value{}, VALUE_SIZE_INVALID, false
 	}
-	invariant.Always(
+	aver.Always(
 		int(size) <= VALUE_SIZE_MAXIMUM,
 		"Decoded structured binary value fits bounded byte storage.",
 	)
@@ -1269,8 +1269,8 @@ func decode_target(
 func Reader_Init(reader *Reader, stream nbio.Stream, scratch Bytes) {
 	Reader_Invariants(reader, "Reader_Init.reader")
 	Bytes_Invariants(scratch, "Reader_Init.scratch")
-	invariant.Always(!reader.Active, "Reader_Init owns idle Reader state.")
-	invariant.Always(stream.Procedure != nil, "Reader_Init has concrete Stream.")
+	aver.Always(!reader.Active, "Reader_Init owns idle Reader state.")
+	aver.Always(stream.Procedure != nil, "Reader_Init has concrete Stream.")
 	*reader = Reader{Stream: stream, Scratch: scratch, Initialized: true}
 }
 
@@ -1281,14 +1281,14 @@ func Read(
 ) {
 	Reader_Invariants(reader, "Read.reader")
 	Byte_Order_Invariants(order, "Read.order")
-	invariant.Always(reader.Initialized, "Read uses initialized Reader.")
-	invariant.Always(completion != nil, "Read has completion storage.")
-	invariant.Always(
+	aver.Always(reader.Initialized, "Read uses initialized Reader.")
+	aver.Always(completion != nil, "Read has completion storage.")
+	aver.Always(
 		completion == &reader.Completion,
 		"Read submits completion owned by Reader.",
 	)
-	invariant.Always(callback != nil, "Read has callback.")
-	invariant.Always(!reader.Active, "Read owns free Reader callback slot.")
+	aver.Always(callback != nil, "Read has callback.")
+	aver.Always(!reader.Active, "Read owns free Reader callback slot.")
 	target := reflect.ValueOf(destination)
 	if !target.IsValid() {
 		completion.Data = 0
@@ -1309,7 +1309,7 @@ func Read(
 		callback(completion)
 		return
 	}
-	invariant.Always(
+	aver.Always(
 		len(reader.Scratch) >= int(size),
 		"Read scratch holds complete structured binary value.",
 	)
@@ -1352,8 +1352,8 @@ func reader_progress(completion *nbio.Completion) {
 
 func reader_stream_complete(completion *nbio.Completion) {
 	reader := (*Reader)(unsafe.Pointer(completion))
-	invariant.Always(reader.Active, "Reader callback belongs to active operation.")
-	invariant.Always(reader.Wait_Active, "Reader callback retires submitted transfer.")
+	aver.Always(reader.Active, "Reader callback belongs to active operation.")
+	aver.Always(reader.Wait_Active, "Reader callback retires submitted transfer.")
 	reader.Wait_Active = false
 	requested := int(reader.Size) - int(reader.Count)
 	count := completion.Data
@@ -1419,8 +1419,8 @@ func reader_finish(completion *nbio.Completion) {
 func Writer_Init(writer *Writer, stream nbio.Stream, scratch Bytes) {
 	Writer_Invariants(writer, "Writer_Init.writer")
 	Bytes_Invariants(scratch, "Writer_Init.scratch")
-	invariant.Always(!writer.Active, "Writer_Init owns idle Writer state.")
-	invariant.Always(stream.Procedure != nil, "Writer_Init has concrete Stream.")
+	aver.Always(!writer.Active, "Writer_Init owns idle Writer state.")
+	aver.Always(stream.Procedure != nil, "Writer_Init has concrete Stream.")
 	*writer = Writer{Stream: stream, Scratch: scratch, Initialized: true}
 }
 
@@ -1431,14 +1431,14 @@ func Write(
 ) {
 	Writer_Invariants(writer, "Write.writer")
 	Byte_Order_Invariants(order, "Write.order")
-	invariant.Always(writer.Initialized, "Write uses initialized Writer.")
-	invariant.Always(completion != nil, "Write has completion storage.")
-	invariant.Always(
+	aver.Always(writer.Initialized, "Write uses initialized Writer.")
+	aver.Always(completion != nil, "Write has completion storage.")
+	aver.Always(
 		completion == &writer.Completion,
 		"Write submits completion owned by Writer.",
 	)
-	invariant.Always(callback != nil, "Write has callback.")
-	invariant.Always(!writer.Active, "Write owns free Writer callback slot.")
+	aver.Always(callback != nil, "Write has callback.")
+	aver.Always(!writer.Active, "Write owns free Writer callback slot.")
 	size := Size(source)
 	if size == VALUE_SIZE_INVALID {
 		completion.Data = 0
@@ -1446,7 +1446,7 @@ func Write(
 		callback(completion)
 		return
 	}
-	invariant.Always(
+	aver.Always(
 		len(writer.Scratch) >= int(size),
 		"Write scratch holds complete structured binary value.",
 	)
@@ -1472,7 +1472,7 @@ func Write(
 
 func writer_stream_complete(completion *nbio.Completion) {
 	writer := (*Writer)(unsafe.Pointer(completion))
-	invariant.Always(writer.Active, "Writer callback belongs to active operation.")
+	aver.Always(writer.Active, "Writer callback belongs to active operation.")
 	count := completion.Data
 	if count < 0 {
 		count = 0

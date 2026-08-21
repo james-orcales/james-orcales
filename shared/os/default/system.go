@@ -11,8 +11,8 @@ import (
 	"syscall"
 	"unsafe"
 
-	"local/james-orcales/shared/invariant/default"
 	"local/james-orcales/shared/os"
+	"local/james-orcales/shared/simulation/aver/default"
 	"local/james-orcales/shared/slices"
 )
 
@@ -39,10 +39,10 @@ type Self_Exec_Path_Storage *[SELF_EXEC_PATH_STORAGE_BYTES]byte
 
 // Self_Exec_Path_Storage_Invariants fixes path storage capacity.
 func Self_Exec_Path_Storage_Invariants(
-	value Self_Exec_Path_Storage, _ invariant.Namespace,
+	value Self_Exec_Path_Storage, _ aver.Namespace,
 ) {
-	invariant.Always(value != nil, "Self-exec path storage exists.")
-	invariant.Always(
+	aver.Always(value != nil, "Self-exec path storage exists.")
+	aver.Always(
 		len(value) == SELF_EXEC_PATH_STORAGE_BYTES,
 		"Self-exec path storage holds maximum text and terminator.",
 	)
@@ -53,10 +53,10 @@ type Self_Exec_Argument_Storage *[SELF_EXEC_VECTOR_STORAGE_BYTES]byte
 
 // Self_Exec_Argument_Storage_Invariants fixes argument storage capacity.
 func Self_Exec_Argument_Storage_Invariants(
-	value Self_Exec_Argument_Storage, _ invariant.Namespace,
+	value Self_Exec_Argument_Storage, _ aver.Namespace,
 ) {
-	invariant.Always(value != nil, "Self-exec argument storage exists.")
-	invariant.Always(
+	aver.Always(value != nil, "Self-exec argument storage exists.")
+	aver.Always(
 		len(value) == SELF_EXEC_VECTOR_STORAGE_BYTES,
 		"Self-exec argument storage holds maximum vector text.",
 	)
@@ -67,10 +67,10 @@ type Self_Exec_Environment_Storage *[SELF_EXEC_VECTOR_STORAGE_BYTES]byte
 
 // Self_Exec_Environment_Storage_Invariants fixes environment storage capacity.
 func Self_Exec_Environment_Storage_Invariants(
-	value Self_Exec_Environment_Storage, _ invariant.Namespace,
+	value Self_Exec_Environment_Storage, _ aver.Namespace,
 ) {
-	invariant.Always(value != nil, "Self-exec environment storage exists.")
-	invariant.Always(
+	aver.Always(value != nil, "Self-exec environment storage exists.")
+	aver.Always(
 		len(value) == SELF_EXEC_VECTOR_STORAGE_BYTES,
 		"Self-exec environment storage holds maximum vector text.",
 	)
@@ -81,10 +81,10 @@ type Self_Exec_Argument_Pointers *[SELF_EXEC_VECTOR_POINTER_COUNT]*byte
 
 // Self_Exec_Argument_Pointers_Invariants fixes argument pointer capacity.
 func Self_Exec_Argument_Pointers_Invariants(
-	value Self_Exec_Argument_Pointers, _ invariant.Namespace,
+	value Self_Exec_Argument_Pointers, _ aver.Namespace,
 ) {
-	invariant.Always(value != nil, "Self-exec argument pointer storage exists.")
-	invariant.Always(
+	aver.Always(value != nil, "Self-exec argument pointer storage exists.")
+	aver.Always(
 		len(value) == SELF_EXEC_VECTOR_POINTER_COUNT,
 		"Self-exec argument pointers hold maximum vector and terminator.",
 	)
@@ -95,10 +95,10 @@ type Self_Exec_Environment_Pointers *[SELF_EXEC_VECTOR_POINTER_COUNT]*byte
 
 // Self_Exec_Environment_Pointers_Invariants fixes environment pointer capacity.
 func Self_Exec_Environment_Pointers_Invariants(
-	value Self_Exec_Environment_Pointers, _ invariant.Namespace,
+	value Self_Exec_Environment_Pointers, _ aver.Namespace,
 ) {
-	invariant.Always(value != nil, "Self-exec environment pointer storage exists.")
-	invariant.Always(
+	aver.Always(value != nil, "Self-exec environment pointer storage exists.")
+	aver.Always(
 		len(value) == SELF_EXEC_VECTOR_POINTER_COUNT,
 		"Self-exec environment pointers hold maximum vector and terminator.",
 	)
@@ -120,9 +120,9 @@ type Self_Exec_Workspace struct {
 
 // Self_Exec_Workspace_Invariants requires every caller-owned region.
 func Self_Exec_Workspace_Invariants(
-	workspace *Self_Exec_Workspace, namespace invariant.Namespace,
+	workspace *Self_Exec_Workspace, namespace aver.Namespace,
 ) {
-	invariant.Always(workspace != nil, "Self-exec has caller-owned workspace.")
+	aver.Always(workspace != nil, "Self-exec has caller-owned workspace.")
 	Self_Exec_Path_Storage_Invariants(workspace.Path, namespace)
 	Self_Exec_Argument_Storage_Invariants(workspace.Arguments, namespace)
 	Self_Exec_Environment_Storage_Invariants(workspace.Environment, namespace)
@@ -147,8 +147,8 @@ type Host struct {
 }
 
 // Host_Invariants keeps ambient state inside shared OS bound.
-func Host_Invariants(host *Host, namespace invariant.Namespace) {
-	invariant.Always(host != nil, "Host has caller-owned state.")
+func Host_Invariants(host *Host, namespace aver.Namespace) {
+	aver.Always(host != nil, "Host has caller-owned state.")
 	os.Arguments_Invariants(host.Arguments, namespace)
 	os.Environment_Invariants(host.Environment, namespace)
 	os.Executable_Path_Invariants(host.Executable, namespace)
@@ -227,7 +227,7 @@ func New_Operating_System(state *Host) (host os.OS) {
 			state unsafe.Pointer, destination os.Arguments,
 		) (count os.Entry_Count) {
 			arguments := (*Host)(state).Arguments
-			invariant.Always(len(destination) >= len(arguments),
+			aver.Always(len(destination) >= len(arguments),
 				"Caller-owned string storage holds complete host arguments.")
 			return os.Entry_Count(copy(destination, arguments))
 		},
@@ -235,7 +235,7 @@ func New_Operating_System(state *Host) (host os.OS) {
 			state unsafe.Pointer, destination os.Environment,
 		) (count os.Entry_Count) {
 			variables := (*Host)(state).Environment
-			invariant.Always(len(destination) >= len(variables),
+			aver.Always(len(destination) >= len(variables),
 				"Caller-owned string storage holds complete host environment.")
 			return os.Entry_Count(copy(destination, variables))
 		},

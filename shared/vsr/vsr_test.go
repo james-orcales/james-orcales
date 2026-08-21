@@ -3,7 +3,7 @@ package vsr_test
 import (
 	"testing"
 
-	"local/james-orcales/shared/invariant/default"
+	"local/james-orcales/shared/simulation/aver/default"
 	"local/james-orcales/shared/simulation/time"
 	"local/james-orcales/shared/vsr"
 )
@@ -13,7 +13,7 @@ import (
 // fuzzer and the cluster-wide invariants live in the sibling simulation package, which can spawn
 // the goroutines parallel seeds need (this deterministic package forbids them).
 func TestMain(m *testing.M) {
-	invariant.Run_Test_Main(m)
+	aver.Run_Test_Main(m)
 }
 
 // Folds one message into replica at time zero and returns the step output.

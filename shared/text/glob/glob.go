@@ -3,8 +3,8 @@ package glob
 
 import (
 	"local/james-orcales/shared/bytes"
-	"local/james-orcales/shared/invariant/default"
 	"local/james-orcales/shared/math/bits"
+	"local/james-orcales/shared/simulation/aver/default"
 	"local/james-orcales/shared/unicode/utf8"
 )
 
@@ -163,9 +163,9 @@ type Compile_Status uint8
 
 // Compile_Status_Invariants excludes matcher and output-only refusals.
 func Compile_Status_Invariants(
-	value Compile_Status, namespace invariant.Namespace,
+	value Compile_Status, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Enum_4_Uint8(
 			uint8(value), uint8(STATUS_OK), uint8(STATUS_INPUT_INVALID),
 			uint8(STATUS_WORKSPACE_INVALID), uint8(STATUS_SYNTAX_INVALID),
@@ -177,8 +177,8 @@ func Compile_Status_Invariants(
 type Syntax_Status uint8
 
 // Syntax_Status_Invariants admits success or malformed bounded syntax.
-func Syntax_Status_Invariants(value Syntax_Status, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Syntax_Status_Invariants(value Syntax_Status, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_Uint8(uint8(value), uint8(STATUS_OK), uint8(STATUS_SYNTAX_INVALID)).
 		Ensure()
 }
@@ -187,8 +187,8 @@ func Syntax_Status_Invariants(value Syntax_Status, namespace invariant.Namespace
 type Match_Status uint8
 
 // Match_Status_Invariants lists matcher-visible refusals.
-func Match_Status_Invariants(value Match_Status, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Match_Status_Invariants(value Match_Status, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_4_Uint8(
 			uint8(value), uint8(STATUS_OK), uint8(STATUS_INPUT_INVALID),
 			uint8(STATUS_WORKSPACE_INVALID), uint8(STATUS_PATTERN_INVALID),
@@ -200,8 +200,8 @@ func Match_Status_Invariants(value Match_Status, namespace invariant.Namespace) 
 type Pattern_Status uint8
 
 // Pattern_Status_Invariants admits success or hostile compiled state.
-func Pattern_Status_Invariants(value Pattern_Status, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Pattern_Status_Invariants(value Pattern_Status, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_Uint8(uint8(value), uint8(STATUS_OK), uint8(STATUS_PATTERN_INVALID)).
 		Ensure()
 }
@@ -210,8 +210,8 @@ func Pattern_Status_Invariants(value Pattern_Status, namespace invariant.Namespa
 type Quote_Status uint8
 
 // Quote_Status_Invariants lists quoting-visible refusals.
-func Quote_Status_Invariants(value Quote_Status, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Quote_Status_Invariants(value Quote_Status, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_3_Uint8(
 			uint8(value), uint8(STATUS_OK), uint8(STATUS_INPUT_INVALID),
 			uint8(STATUS_OUTPUT_TOO_SMALL),
@@ -242,9 +242,9 @@ type Pattern_Source_Unvalidated []byte
 
 // Pattern_Source_Unvalidated_Invariants bounds validation witness size.
 func Pattern_Source_Unvalidated_Invariants(
-	value Pattern_Source_Unvalidated, namespace invariant.Namespace,
+	value Pattern_Source_Unvalidated, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(
 			len(value), PATTERN_SIZE_MINIMUM,
 			PATTERN_SIZE_UNVALIDATED_MAXIMUM,
@@ -256,8 +256,8 @@ func Pattern_Source_Unvalidated_Invariants(
 type Pattern_Source []byte
 
 // Pattern_Source_Invariants keeps every parser read inside the public bound.
-func Pattern_Source_Invariants(value Pattern_Source, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Pattern_Source_Invariants(value Pattern_Source, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), PATTERN_SIZE_MINIMUM, PATTERN_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -267,9 +267,9 @@ type Nonempty_Pattern_Source []byte
 
 // Nonempty_Pattern_Source_Invariants excludes the parser-complete empty source.
 func Nonempty_Pattern_Source_Invariants(
-	value Nonempty_Pattern_Source, namespace invariant.Namespace,
+	value Nonempty_Pattern_Source, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(
 			len(value), PATTERN_SIZE_NONEMPTY_MINIMUM, PATTERN_SIZE_MAXIMUM,
 		).
@@ -281,9 +281,9 @@ type Class_Pattern_Source []byte
 
 // Class_Pattern_Source_Invariants follows minimum class-character syntax.
 func Class_Pattern_Source_Invariants(
-	value Class_Pattern_Source, namespace invariant.Namespace,
+	value Class_Pattern_Source, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(len(value), CLASS_SOURCE_SIZE_MINIMUM, PATTERN_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -292,8 +292,8 @@ func Class_Pattern_Source_Invariants(
 type Pattern_Position int
 
 // Pattern_Position_Invariants shares the exact public pattern bound.
-func Pattern_Position_Invariants(value Pattern_Position, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Pattern_Position_Invariants(value Pattern_Position, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), PATTERN_SIZE_MINIMUM, PATTERN_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -302,8 +302,8 @@ func Pattern_Position_Invariants(value Pattern_Position, namespace invariant.Nam
 type Pattern_Index int
 
 // Pattern_Index_Invariants excludes the end boundary.
-func Pattern_Index_Invariants(value Pattern_Index, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Pattern_Index_Invariants(value Pattern_Index, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), PATTERN_SIZE_MINIMUM, PATTERN_INDEX_MAXIMUM).
 		Ensure()
 }
@@ -313,9 +313,9 @@ type Nonzero_Pattern_Position int
 
 // Nonzero_Pattern_Position_Invariants excludes untouched source opening.
 func Nonzero_Pattern_Position_Invariants(
-	value Nonzero_Pattern_Position, namespace invariant.Namespace,
+	value Nonzero_Pattern_Position, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(
 			int(value), PATTERN_SIZE_NONEMPTY_MINIMUM, PATTERN_SIZE_MAXIMUM,
 		).
@@ -327,9 +327,9 @@ type Class_Character_Index int
 
 // Class_Character_Index_Invariants starts after the class opener.
 func Class_Character_Index_Invariants(
-	value Class_Character_Index, namespace invariant.Namespace,
+	value Class_Character_Index, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(
 			int(value), PATTERN_SIZE_NONEMPTY_MINIMUM, PATTERN_INDEX_MAXIMUM,
 		).
@@ -341,9 +341,9 @@ type Class_Character_End int
 
 // Class_Character_End_Invariants retains a consumed class character boundary.
 func Class_Character_End_Invariants(
-	value Class_Character_End, namespace invariant.Namespace,
+	value Class_Character_End, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(
 			int(value), CLASS_CHARACTER_END_MINIMUM, PATTERN_SIZE_MAXIMUM,
 		).
@@ -354,8 +354,8 @@ func Class_Character_End_Invariants(
 type Parser_Depth int
 
 // Parser_Depth_Invariants follows the shortest complete brace-group formula.
-func Parser_Depth_Invariants(value Parser_Depth, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Parser_Depth_Invariants(value Parser_Depth, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), PATTERN_DEPTH_MINIMUM, PATTERN_DEPTH_MAXIMUM).
 		Ensure()
 }
@@ -365,9 +365,9 @@ type Open_Parser_Depth int
 
 // Open_Parser_Depth_Invariants excludes parser state outside groups.
 func Open_Parser_Depth_Invariants(
-	value Open_Parser_Depth, namespace invariant.Namespace,
+	value Open_Parser_Depth, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(
 			int(value), PARSER_DEPTH_NONEMPTY_MINIMUM, PATTERN_DEPTH_MAXIMUM,
 		).
@@ -379,9 +379,9 @@ type Opened_Parser_Depth int
 
 // Opened_Parser_Depth_Invariants excludes group-free parser state.
 func Opened_Parser_Depth_Invariants(
-	value Opened_Parser_Depth, namespace invariant.Namespace,
+	value Opened_Parser_Depth, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(
 			int(value), PARSER_DEPTH_NONEMPTY_MINIMUM, PATTERN_DEPTH_MAXIMUM,
 		).
@@ -393,9 +393,9 @@ type Closed_Parser_Depth int
 
 // Closed_Parser_Depth_Invariants excludes impossible unchanged maximum depth.
 func Closed_Parser_Depth_Invariants(
-	value Closed_Parser_Depth, namespace invariant.Namespace,
+	value Closed_Parser_Depth, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(
 			int(value), PATTERN_DEPTH_MINIMUM, CLOSED_PARSER_DEPTH_MAXIMUM,
 		).
@@ -407,9 +407,9 @@ type Text_Unvalidated []byte
 
 // Text_Unvalidated_Invariants bounds validation witness size.
 func Text_Unvalidated_Invariants(
-	value Text_Unvalidated, namespace invariant.Namespace,
+	value Text_Unvalidated, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(
 			len(value), TEXT_SIZE_MINIMUM, TEXT_SIZE_UNVALIDATED_MAXIMUM,
 		).
@@ -421,9 +421,9 @@ type Separators_Unvalidated []rune
 
 // Separators_Unvalidated_Invariants bounds separator validation work.
 func Separators_Unvalidated_Invariants(
-	value Separators_Unvalidated, namespace invariant.Namespace,
+	value Separators_Unvalidated, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(
 			len(value), SEPARATOR_COUNT_MINIMUM,
 			SEPARATOR_COUNT_UNVALIDATED_MAXIMUM,
@@ -435,8 +435,8 @@ func Separators_Unvalidated_Invariants(
 type Output []byte
 
 // Output_Invariants follows maximum escaped pattern size.
-func Output_Invariants(value Output, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Output_Invariants(value Output, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), bytes.SLICE_SIZE_MINIMUM, QUOTED_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -445,8 +445,8 @@ func Output_Invariants(value Output, namespace invariant.Namespace) {
 type Output_Count uint16
 
 // Output_Count_Invariants follows maximum escaped pattern size.
-func Output_Count_Invariants(value Output_Count, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Output_Count_Invariants(value Output_Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint16(
 			uint16(value), uint16(bytes.SLICE_SIZE_MINIMUM),
 			uint16(QUOTED_SIZE_MAXIMUM),
@@ -459,9 +459,9 @@ type Diagnostic_Position uint16
 
 // Diagnostic_Position_Invariants follows bounded pattern source.
 func Diagnostic_Position_Invariants(
-	value Diagnostic_Position, namespace invariant.Namespace,
+	value Diagnostic_Position, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Uint16(
 			uint16(value), uint16(PATTERN_SIZE_MINIMUM),
 			uint16(PATTERN_SIZE_MAXIMUM),
@@ -478,7 +478,7 @@ type Diagnostic struct {
 }
 
 // Diagnostic_Invariants composes refusal code and position.
-func Diagnostic_Invariants(value Diagnostic, namespace invariant.Namespace) {
+func Diagnostic_Invariants(value Diagnostic, namespace aver.Namespace) {
 	Compile_Status_Invariants(value.Code, namespace)
 	Diagnostic_Position_Invariants(value.Position, namespace)
 }
@@ -487,8 +487,8 @@ func Diagnostic_Invariants(value Diagnostic, namespace invariant.Namespace) {
 type Matched bool
 
 // Matched_Invariants covers matching and rejected candidates.
-func Matched_Invariants(value Matched, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Matched_Invariants(value Matched, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Sometimes(bool(value), "Compiled glob matches candidate.").
 		Ensure()
 }
@@ -497,8 +497,8 @@ func Matched_Invariants(value Matched, namespace invariant.Namespace) {
 type Character byte
 
 // Character_Invariants covers complete byte domain.
-func Character_Invariants(value Character, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Character_Invariants(value Character, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint8(uint8(value), bits.WORD_8_MINIMUM, bits.WORD_8_MAXIMUM).
 		Ensure()
 }
@@ -508,9 +508,9 @@ type Special_Character bool
 
 // Special_Character_Invariants covers ordinary and quoted bytes.
 func Special_Character_Invariants(
-	value Special_Character, namespace invariant.Namespace,
+	value Special_Character, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Sometimes(bool(value), "Byte is glob metacharacter.").
 		Ensure()
 }
@@ -519,8 +519,8 @@ func Special_Character_Invariants(
 type Node_Kind uint8
 
 // Node_Kind_Invariants covers complete syntax union.
-func Node_Kind_Invariants(value Node_Kind, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Node_Kind_Invariants(value Node_Kind, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint8(uint8(value), uint8(NODE_SEQUENCE), uint8(NODE_CLASS)).
 		Ensure()
 }
@@ -550,8 +550,8 @@ const NODE_CLASS Node_Kind = NODE_SINGLE + utf8.CHARACTER_SIZE_MINIMUM
 type Atom_Kind uint8
 
 // Atom_Kind_Invariants lists exactly the atoms accepted by atom_append.
-func Atom_Kind_Invariants(value Atom_Kind, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Atom_Kind_Invariants(value Atom_Kind, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_4_Uint8(
 			uint8(value), uint8(NODE_LITERAL), uint8(NODE_STAR),
 			uint8(NODE_SUPER_STAR), uint8(NODE_SINGLE),
@@ -578,8 +578,8 @@ const ATOM_CHARACTER_EMPTY = utf8.Decoded_Character(utf8.DECODED_CHARACTER_MINIM
 type Leaf_Kind uint8
 
 // Leaf_Kind_Invariants excludes sequence and alternative containers.
-func Leaf_Kind_Invariants(value Leaf_Kind, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Leaf_Kind_Invariants(value Leaf_Kind, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint8(uint8(value), uint8(NODE_LITERAL), uint8(NODE_CLASS)).
 		Ensure()
 }
@@ -589,9 +589,9 @@ type Node_Reference uint16
 
 // Node_Reference_Invariants includes absent and complete arena boundary.
 func Node_Reference_Invariants(
-	value Node_Reference, namespace invariant.Namespace,
+	value Node_Reference, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Uint16(
 			uint16(value), uint16(NODE_NONE), uint16(NODE_COUNT_MAXIMUM),
 		).
@@ -628,9 +628,9 @@ type Root_Node_Reference uint16
 
 // Root_Node_Reference_Invariants fixes the formula-derived root slot.
 func Root_Node_Reference_Invariants(
-	value Root_Node_Reference, _ invariant.Namespace,
+	value Root_Node_Reference, _ aver.Namespace,
 ) {
-	invariant.Always(
+	aver.Always(
 		uint16(value) == uint16(ROOT_NODE_REFERENCE),
 		"Parsed syntax root occupies the first one-based node slot.",
 	)
@@ -641,9 +641,9 @@ type Container_Node_Reference uint16
 
 // Container_Node_Reference_Invariants excludes the first alternative slot.
 func Container_Node_Reference_Invariants(
-	value Container_Node_Reference, namespace invariant.Namespace,
+	value Container_Node_Reference, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Holed_Uint16(
 			uint16(value), uint16(NODE_ROOT), uint16(NODE_COUNT_MAXIMUM),
 			uint16(NODE_FIRST_ALTERNATIVE), uint16(NODE_FIRST_ALTERNATIVE),
@@ -657,9 +657,9 @@ type Nested_Sequence_Reference uint16
 
 // Nested_Sequence_Reference_Invariants excludes root and first alternative.
 func Nested_Sequence_Reference_Invariants(
-	value Nested_Sequence_Reference, namespace invariant.Namespace,
+	value Nested_Sequence_Reference, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Uint16(
 			uint16(value), uint16(NESTED_SEQUENCE_REFERENCE_MINIMUM),
 			uint16(NODE_COUNT_MAXIMUM),
@@ -672,9 +672,9 @@ type Opened_Sequence_Reference uint16
 
 // Opened_Sequence_Reference_Invariants follows nested sequence references.
 func Opened_Sequence_Reference_Invariants(
-	value Opened_Sequence_Reference, namespace invariant.Namespace,
+	value Opened_Sequence_Reference, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Uint16(
 			uint16(value), uint16(NESTED_SEQUENCE_REFERENCE_MINIMUM),
 			uint16(NODE_COUNT_MAXIMUM),
@@ -687,9 +687,9 @@ type Branch_Sequence_Reference uint16
 
 // Branch_Sequence_Reference_Invariants starts at the first branch-created sequence.
 func Branch_Sequence_Reference_Invariants(
-	value Branch_Sequence_Reference, namespace invariant.Namespace,
+	value Branch_Sequence_Reference, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Uint16(
 			uint16(value), uint16(BRANCH_SEQUENCE_REFERENCE_MINIMUM),
 			uint16(NODE_COUNT_MAXIMUM),
@@ -702,9 +702,9 @@ type Suspended_Sequence_Reference uint16
 
 // Suspended_Sequence_Reference_Invariants reserves the opened node pair.
 func Suspended_Sequence_Reference_Invariants(
-	value Suspended_Sequence_Reference, namespace invariant.Namespace,
+	value Suspended_Sequence_Reference, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Holed_Uint16(
 			uint16(value), uint16(NODE_ROOT),
 			uint16(SUSPENDED_SEQUENCE_REFERENCE_MAXIMUM),
@@ -719,9 +719,9 @@ type Child_Node_Reference uint16
 
 // Child_Node_Reference_Invariants excludes absent and root references.
 func Child_Node_Reference_Invariants(
-	value Child_Node_Reference, namespace invariant.Namespace,
+	value Child_Node_Reference, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Uint16(
 			uint16(value), uint16(NODE_FIRST_ALTERNATIVE),
 			uint16(NODE_COUNT_MAXIMUM),
@@ -734,9 +734,9 @@ type Child_Parent_Reference uint16
 
 // Child_Parent_Reference_Invariants excludes absent and full-arena parent state.
 func Child_Parent_Reference_Invariants(
-	value Child_Parent_Reference, namespace invariant.Namespace,
+	value Child_Parent_Reference, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Uint16(
 			uint16(value), uint16(NODE_ROOT),
 			uint16(CHILD_PARENT_REFERENCE_MAXIMUM),
@@ -749,9 +749,9 @@ type First_Child_Reference uint16
 
 // First_Child_Reference_Invariants excludes root as its own child.
 func First_Child_Reference_Invariants(
-	value First_Child_Reference, namespace invariant.Namespace,
+	value First_Child_Reference, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Holed_Uint16(
 			uint16(value), uint16(NODE_NONE), uint16(NODE_COUNT_MAXIMUM),
 			uint16(NODE_ROOT), uint16(NODE_ROOT), uint16(NODE_ROOT),
@@ -764,9 +764,9 @@ type Last_Child_Reference uint16
 
 // Last_Child_Reference_Invariants excludes root as its own child.
 func Last_Child_Reference_Invariants(
-	value Last_Child_Reference, namespace invariant.Namespace,
+	value Last_Child_Reference, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Holed_Uint16(
 			uint16(value), uint16(NODE_NONE), uint16(NODE_COUNT_MAXIMUM),
 			uint16(NODE_ROOT), uint16(NODE_ROOT), uint16(NODE_ROOT),
@@ -779,9 +779,9 @@ type Next_Sibling_Reference uint16
 
 // Next_Sibling_Reference_Invariants excludes absent predecessors and root.
 func Next_Sibling_Reference_Invariants(
-	value Next_Sibling_Reference, namespace invariant.Namespace,
+	value Next_Sibling_Reference, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Holed_Uint16(
 			uint16(value), uint16(NODE_NONE), uint16(NODE_COUNT_MAXIMUM),
 			uint16(NODE_ROOT), uint16(NODE_FIRST_ALTERNATIVE),
@@ -795,9 +795,9 @@ type Previous_Sibling_Reference uint16
 
 // Previous_Sibling_Reference_Invariants leaves one later sibling arena slot.
 func Previous_Sibling_Reference_Invariants(
-	value Previous_Sibling_Reference, namespace invariant.Namespace,
+	value Previous_Sibling_Reference, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Holed_Uint16(
 			uint16(value), uint16(NODE_NONE),
 			uint16(CHILD_PARENT_REFERENCE_MAXIMUM),
@@ -819,7 +819,7 @@ type Node_Links struct {
 }
 
 // Node_Links_Invariants composes exact link roles.
-func Node_Links_Invariants(value Node_Links, namespace invariant.Namespace) {
+func Node_Links_Invariants(value Node_Links, namespace aver.Namespace) {
 	First_Child_Reference_Invariants(value.First_Child, namespace)
 	Last_Child_Reference_Invariants(value.Last_Child, namespace)
 	Next_Sibling_Reference_Invariants(value.Next_Sibling, namespace)
@@ -842,8 +842,8 @@ const NODE_CLASS_FIELD_COUNT = NODE_CLASS_NEGATED + utf8.CHARACTER_SIZE_MINIMUM
 type Node_Class [NODE_CLASS_FIELD_COUNT]uint16
 
 // Node_Class_Invariants fixes class metadata shape.
-func Node_Class_Invariants(value Node_Class, _ invariant.Namespace) {
-	invariant.Always(
+func Node_Class_Invariants(value Node_Class, _ aver.Namespace) {
+	aver.Always(
 		len(value) == NODE_CLASS_FIELD_COUNT,
 		"Syntax class has complete range metadata.",
 	)
@@ -859,8 +859,8 @@ const NODE_CHARACTER_FIELD_COUNT = NODE_CHARACTER_FIELD + utf8.CHARACTER_SIZE_MI
 type Node_Character [NODE_CHARACTER_FIELD_COUNT]rune
 
 // Node_Character_Invariants fixes literal payload shape.
-func Node_Character_Invariants(value Node_Character, _ invariant.Namespace) {
-	invariant.Always(
+func Node_Character_Invariants(value Node_Character, _ aver.Namespace) {
+	aver.Always(
 		len(value) == NODE_CHARACTER_FIELD_COUNT,
 		"Syntax literal has one decoded character field.",
 	)
@@ -879,7 +879,7 @@ type Node struct {
 }
 
 // Node_Invariants composes bounded syntax record.
-func Node_Invariants(value Node, namespace invariant.Namespace) {
+func Node_Invariants(value Node, namespace aver.Namespace) {
 	Node_Kind_Invariants(value.Kind, namespace)
 	Node_Character_Invariants(value.Character, namespace)
 	Node_Class_Invariants(value.Class, namespace)
@@ -897,7 +897,7 @@ type Leaf_Node struct {
 }
 
 // Leaf_Node_Invariants composes one compiler leaf.
-func Leaf_Node_Invariants(value Leaf_Node, namespace invariant.Namespace) {
+func Leaf_Node_Invariants(value Leaf_Node, namespace aver.Namespace) {
 	Leaf_Kind_Invariants(value.Kind, namespace)
 	Node_Character_Invariants(value.Character, namespace)
 	Node_Class_Invariants(value.Class, namespace)
@@ -907,8 +907,8 @@ func Leaf_Node_Invariants(value Leaf_Node, namespace invariant.Namespace) {
 type Nodes [NODE_COUNT_MAXIMUM]Node
 
 // Nodes_Invariants fixes complete parser capacity.
-func Nodes_Invariants(value Nodes, _ invariant.Namespace) {
-	invariant.Always(
+func Nodes_Invariants(value Nodes, _ aver.Namespace) {
+	aver.Always(
 		len(value) == NODE_COUNT_MAXIMUM,
 		"Glob syntax arena has complete formula-derived capacity.",
 	)
@@ -923,9 +923,9 @@ type Parser_Alternative_Reference uint16
 
 // Parser_Alternative_Reference_Invariants reserves its first sequence child.
 func Parser_Alternative_Reference_Invariants(
-	value Parser_Alternative_Reference, namespace invariant.Namespace,
+	value Parser_Alternative_Reference, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Uint16(
 			uint16(value), uint16(NODE_FIRST_ALTERNATIVE),
 			uint16(PARSER_ALTERNATIVE_REFERENCE_MAXIMUM),
@@ -945,7 +945,7 @@ type Parser_References struct {
 
 // Parser_References_Invariants composes exact continuation roles.
 func Parser_References_Invariants(
-	value Parser_References, namespace invariant.Namespace,
+	value Parser_References, namespace aver.Namespace,
 ) {
 	Suspended_Sequence_Reference_Invariants(value.Parent, namespace)
 	Parser_Alternative_Reference_Invariants(value.Alternative, namespace)
@@ -959,7 +959,7 @@ type Parser_Frame struct {
 }
 
 // Parser_Frame_Invariants composes fixed parser continuation.
-func Parser_Frame_Invariants(value Parser_Frame, namespace invariant.Namespace) {
+func Parser_Frame_Invariants(value Parser_Frame, namespace aver.Namespace) {
 	Parser_References_Invariants(value.References, namespace)
 }
 
@@ -967,8 +967,8 @@ func Parser_Frame_Invariants(value Parser_Frame, namespace invariant.Namespace) 
 type Parser_Frames [PATTERN_DEPTH_MAXIMUM]Parser_Frame
 
 // Parser_Frames_Invariants fixes valid nesting capacity.
-func Parser_Frames_Invariants(value Parser_Frames, _ invariant.Namespace) {
-	invariant.Always(
+func Parser_Frames_Invariants(value Parser_Frames, _ aver.Namespace) {
+	aver.Always(
 		len(value) == PATTERN_DEPTH_MAXIMUM,
 		"Brace parser stack covers maximum valid nesting.",
 	)
@@ -978,8 +978,8 @@ func Parser_Frames_Invariants(value Parser_Frames, _ invariant.Namespace) {
 type Class_Low rune
 
 // Class_Low_Invariants covers decoder output.
-func Class_Low_Invariants(value Class_Low, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Class_Low_Invariants(value Class_Low, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int32(
 			int32(value), utf8.DECODED_CHARACTER_MINIMUM,
 			utf8.DECODED_CHARACTER_MAXIMUM,
@@ -991,8 +991,8 @@ func Class_Low_Invariants(value Class_Low, namespace invariant.Namespace) {
 type Class_High rune
 
 // Class_High_Invariants covers decoder output.
-func Class_High_Invariants(value Class_High, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Class_High_Invariants(value Class_High, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int32(
 			int32(value), utf8.DECODED_CHARACTER_MINIMUM,
 			utf8.DECODED_CHARACTER_MAXIMUM,
@@ -1009,7 +1009,7 @@ type Class_Range struct {
 }
 
 // Class_Range_Invariants composes decoded interval boundaries.
-func Class_Range_Invariants(value Class_Range, namespace invariant.Namespace) {
+func Class_Range_Invariants(value Class_Range, namespace aver.Namespace) {
 	Class_Low_Invariants(value.Low, namespace)
 	Class_High_Invariants(value.High, namespace)
 }
@@ -1018,8 +1018,8 @@ func Class_Range_Invariants(value Class_Range, namespace invariant.Namespace) {
 type Class_Ranges [CLASS_RANGE_STORAGE_COUNT_MAXIMUM]Class_Range
 
 // Class_Ranges_Invariants fixes complete class capacity.
-func Class_Ranges_Invariants(value Class_Ranges, _ invariant.Namespace) {
-	invariant.Always(
+func Class_Ranges_Invariants(value Class_Ranges, _ aver.Namespace) {
+	aver.Always(
 		len(value) == CLASS_RANGE_STORAGE_COUNT_MAXIMUM,
 		"Class range arena has complete pattern-derived capacity.",
 	)
@@ -1030,9 +1030,9 @@ type Instruction_Kind uint8
 
 // Instruction_Kind_Invariants covers complete VM operation set.
 func Instruction_Kind_Invariants(
-	value Instruction_Kind, namespace invariant.Namespace,
+	value Instruction_Kind, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Uint8(
 			uint8(value), uint8(INSTRUCTION_MATCH), uint8(INSTRUCTION_SPLIT),
 		).
@@ -1064,8 +1064,8 @@ const INSTRUCTION_SPLIT Instruction_Kind = INSTRUCTION_CLASS + utf8.CHARACTER_SI
 type Instruction_PC uint16
 
 // Instruction_PC_Invariants follows complete instruction arena.
-func Instruction_PC_Invariants(value Instruction_PC, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Instruction_PC_Invariants(value Instruction_PC, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint16(
 			uint16(value), uint16(INSTRUCTION_PC_MINIMUM),
 			uint16(INSTRUCTION_PC_MAXIMUM),
@@ -1078,9 +1078,9 @@ type Instruction_Continuation uint16
 
 // Instruction_Continuation_Invariants excludes the already-final arena slot.
 func Instruction_Continuation_Invariants(
-	value Instruction_Continuation, namespace invariant.Namespace,
+	value Instruction_Continuation, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Uint16(
 			uint16(value), uint16(INSTRUCTION_PC_MINIMUM),
 			uint16(INSTRUCTION_CONTINUATION_MAXIMUM),
@@ -1093,9 +1093,9 @@ type Emitted_Instruction_PC uint16
 
 // Emitted_Instruction_PC_Invariants excludes terminal match slot zero.
 func Emitted_Instruction_PC_Invariants(
-	value Emitted_Instruction_PC, namespace invariant.Namespace,
+	value Emitted_Instruction_PC, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Uint16(
 			uint16(value), uint16(EMITTED_INSTRUCTION_PC_MINIMUM),
 			uint16(INSTRUCTION_PC_MAXIMUM),
@@ -1108,9 +1108,9 @@ type Alternative_Result_PC uint16
 
 // Alternative_Result_PC_Invariants reserves minimum alternative syntax emissions.
 func Alternative_Result_PC_Invariants(
-	value Alternative_Result_PC, namespace invariant.Namespace,
+	value Alternative_Result_PC, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Uint16(
 			uint16(value), uint16(INSTRUCTION_PC_MINIMUM),
 			uint16(ALTERNATIVE_RESULT_PC_MAXIMUM),
@@ -1123,9 +1123,9 @@ type Alternative_Updated_PC uint16
 
 // Alternative_Updated_PC_Invariants reserves remaining enclosing emission slots.
 func Alternative_Updated_PC_Invariants(
-	value Alternative_Updated_PC, namespace invariant.Namespace,
+	value Alternative_Updated_PC, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Uint16(
 			uint16(value), uint16(INSTRUCTION_PC_MINIMUM),
 			uint16(ALTERNATIVE_UPDATED_PC_MAXIMUM),
@@ -1144,9 +1144,9 @@ type Instruction_Kind_Storage [INSTRUCTION_KIND_FIELD_COUNT]Instruction_Kind
 
 // Instruction_Kind_Storage_Invariants fixes operation storage shape.
 func Instruction_Kind_Storage_Invariants(
-	value Instruction_Kind_Storage, _ invariant.Namespace,
+	value Instruction_Kind_Storage, _ aver.Namespace,
 ) {
-	invariant.Always(
+	aver.Always(
 		len(value) == INSTRUCTION_KIND_FIELD_COUNT,
 		"NFA instruction has one operation field.",
 	)
@@ -1163,9 +1163,9 @@ type Instruction_Character_Storage [INSTRUCTION_CHARACTER_FIELD_COUNT]rune
 
 // Instruction_Character_Storage_Invariants fixes literal storage shape.
 func Instruction_Character_Storage_Invariants(
-	value Instruction_Character_Storage, _ invariant.Namespace,
+	value Instruction_Character_Storage, _ aver.Namespace,
 ) {
-	invariant.Always(
+	aver.Always(
 		len(value) == INSTRUCTION_CHARACTER_FIELD_COUNT,
 		"NFA instruction has one literal field.",
 	)
@@ -1185,9 +1185,9 @@ type Instruction_Targets [INSTRUCTION_TARGET_COUNT]Instruction_PC
 
 // Instruction_Targets_Invariants fixes control-flow shape.
 func Instruction_Targets_Invariants(
-	value Instruction_Targets, _ invariant.Namespace,
+	value Instruction_Targets, _ aver.Namespace,
 ) {
-	invariant.Always(
+	aver.Always(
 		len(value) == INSTRUCTION_TARGET_COUNT,
 		"NFA instruction has continuation and branch targets.",
 	)
@@ -1210,9 +1210,9 @@ type Instruction_Class_Storage [INSTRUCTION_CLASS_FIELD_COUNT]uint16
 
 // Instruction_Class_Storage_Invariants fixes class payload shape.
 func Instruction_Class_Storage_Invariants(
-	value Instruction_Class_Storage, _ invariant.Namespace,
+	value Instruction_Class_Storage, _ aver.Namespace,
 ) {
-	invariant.Always(
+	aver.Always(
 		len(value) == INSTRUCTION_CLASS_FIELD_COUNT,
 		"NFA class instruction has complete range metadata.",
 	)
@@ -1231,7 +1231,7 @@ type Instruction struct {
 }
 
 // Instruction_Invariants composes shape-safe NFA record.
-func Instruction_Invariants(value Instruction, namespace invariant.Namespace) {
+func Instruction_Invariants(value Instruction, namespace aver.Namespace) {
 	Instruction_Kind_Storage_Invariants(value.Kind, namespace)
 	Instruction_Character_Storage_Invariants(value.Character, namespace)
 	Instruction_Targets_Invariants(value.Targets, namespace)
@@ -1243,9 +1243,9 @@ type Instruction_Kinds [INSTRUCTION_COUNT_MAXIMUM]Instruction_Kind
 
 // Instruction_Kinds_Invariants fixes complete operation capacity.
 func Instruction_Kinds_Invariants(
-	value Instruction_Kinds, _ invariant.Namespace,
+	value Instruction_Kinds, _ aver.Namespace,
 ) {
-	invariant.Always(
+	aver.Always(
 		len(value) == INSTRUCTION_COUNT_MAXIMUM,
 		"NFA kind arena covers every pattern byte plus terminal match.",
 	)
@@ -1256,9 +1256,9 @@ type Instruction_Characters [INSTRUCTION_COUNT_MAXIMUM]rune
 
 // Instruction_Characters_Invariants fixes complete literal capacity.
 func Instruction_Characters_Invariants(
-	value Instruction_Characters, _ invariant.Namespace,
+	value Instruction_Characters, _ aver.Namespace,
 ) {
-	invariant.Always(
+	aver.Always(
 		len(value) == INSTRUCTION_COUNT_MAXIMUM,
 		"NFA literal arena covers every pattern byte plus terminal match.",
 	)
@@ -1269,9 +1269,9 @@ type Instruction_Next_Targets [INSTRUCTION_COUNT_MAXIMUM]Instruction_PC
 
 // Instruction_Next_Targets_Invariants fixes continuation capacity.
 func Instruction_Next_Targets_Invariants(
-	value Instruction_Next_Targets, _ invariant.Namespace,
+	value Instruction_Next_Targets, _ aver.Namespace,
 ) {
-	invariant.Always(
+	aver.Always(
 		len(value) == INSTRUCTION_COUNT_MAXIMUM,
 		"NFA continuation arena covers every instruction.",
 	)
@@ -1282,9 +1282,9 @@ type Instruction_Branch_Targets [INSTRUCTION_COUNT_MAXIMUM]Instruction_PC
 
 // Instruction_Branch_Targets_Invariants fixes branch capacity.
 func Instruction_Branch_Targets_Invariants(
-	value Instruction_Branch_Targets, _ invariant.Namespace,
+	value Instruction_Branch_Targets, _ aver.Namespace,
 ) {
-	invariant.Always(
+	aver.Always(
 		len(value) == INSTRUCTION_COUNT_MAXIMUM,
 		"NFA branch arena covers every instruction.",
 	)
@@ -1295,9 +1295,9 @@ type Instruction_Class_Indexes [INSTRUCTION_COUNT_MAXIMUM]uint16
 
 // Instruction_Class_Indexes_Invariants fixes class index capacity.
 func Instruction_Class_Indexes_Invariants(
-	value Instruction_Class_Indexes, _ invariant.Namespace,
+	value Instruction_Class_Indexes, _ aver.Namespace,
 ) {
-	invariant.Always(
+	aver.Always(
 		len(value) == INSTRUCTION_COUNT_MAXIMUM,
 		"NFA class-index arena covers every instruction.",
 	)
@@ -1308,9 +1308,9 @@ type Instruction_Class_Counts [INSTRUCTION_COUNT_MAXIMUM]uint16
 
 // Instruction_Class_Counts_Invariants fixes class count capacity.
 func Instruction_Class_Counts_Invariants(
-	value Instruction_Class_Counts, _ invariant.Namespace,
+	value Instruction_Class_Counts, _ aver.Namespace,
 ) {
-	invariant.Always(
+	aver.Always(
 		len(value) == INSTRUCTION_COUNT_MAXIMUM,
 		"NFA class-count arena covers every instruction.",
 	)
@@ -1321,9 +1321,9 @@ type Instruction_Class_Negations [INSTRUCTION_COUNT_MAXIMUM]uint16
 
 // Instruction_Class_Negations_Invariants fixes class polarity capacity.
 func Instruction_Class_Negations_Invariants(
-	value Instruction_Class_Negations, _ invariant.Namespace,
+	value Instruction_Class_Negations, _ aver.Namespace,
 ) {
-	invariant.Always(
+	aver.Always(
 		len(value) == INSTRUCTION_COUNT_MAXIMUM,
 		"NFA class-polarity arena covers every instruction.",
 	)
@@ -1343,9 +1343,9 @@ type Compile_References [COMPILE_REFERENCE_COUNT]Node_Reference
 
 // Compile_References_Invariants fixes compiler traversal shape.
 func Compile_References_Invariants(
-	value Compile_References, _ invariant.Namespace,
+	value Compile_References, _ aver.Namespace,
 ) {
-	invariant.Always(
+	aver.Always(
 		len(value) == COMPILE_REFERENCE_COUNT,
 		"NFA compiler frame has node and child references.",
 	)
@@ -1364,8 +1364,8 @@ const COMPILE_TARGET_COUNT = COMPILE_TARGET_ACCUMULATED + utf8.CHARACTER_SIZE_MI
 type Compile_Targets [COMPILE_TARGET_COUNT]Instruction_PC
 
 // Compile_Targets_Invariants fixes compiler target shape.
-func Compile_Targets_Invariants(value Compile_Targets, _ invariant.Namespace) {
-	invariant.Always(
+func Compile_Targets_Invariants(value Compile_Targets, _ aver.Namespace) {
+	aver.Always(
 		len(value) == COMPILE_TARGET_COUNT,
 		"NFA compiler frame has continuation and accumulated targets.",
 	)
@@ -1385,9 +1385,9 @@ type Compile_Frame_Control [COMPILE_FRAME_CONTROL_COUNT]uint8
 
 // Compile_Frame_Control_Invariants fixes compiler control shape.
 func Compile_Frame_Control_Invariants(
-	value Compile_Frame_Control, _ invariant.Namespace,
+	value Compile_Frame_Control, _ aver.Namespace,
 ) {
-	invariant.Always(
+	aver.Always(
 		len(value) == COMPILE_FRAME_CONTROL_COUNT,
 		"NFA compiler frame has stage and branch state.",
 	)
@@ -1426,7 +1426,7 @@ type Compile_Frame struct {
 }
 
 // Compile_Frame_Invariants composes fixed iterative compiler frame.
-func Compile_Frame_Invariants(value Compile_Frame, namespace invariant.Namespace) {
+func Compile_Frame_Invariants(value Compile_Frame, namespace aver.Namespace) {
 	Compile_References_Invariants(value.References, namespace)
 	Compile_Targets_Invariants(value.Targets, namespace)
 	Compile_Frame_Control_Invariants(value.Control, namespace)
@@ -1436,8 +1436,8 @@ func Compile_Frame_Invariants(value Compile_Frame, namespace invariant.Namespace
 type Compile_Frames [NODE_COUNT_MAXIMUM]Compile_Frame
 
 // Compile_Frames_Invariants fixes nonrecursive compiler depth.
-func Compile_Frames_Invariants(value Compile_Frames, _ invariant.Namespace) {
-	invariant.Always(
+func Compile_Frames_Invariants(value Compile_Frames, _ aver.Namespace) {
+	aver.Always(
 		len(value) == NODE_COUNT_MAXIMUM,
 		"NFA compiler stack covers every nested syntax node.",
 	)
@@ -1447,8 +1447,8 @@ func Compile_Frames_Invariants(value Compile_Frames, _ invariant.Namespace) {
 type Compile_Depth int
 
 // Compile_Depth_Invariants follows the one-frame-per-node formula.
-func Compile_Depth_Invariants(value Compile_Depth, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Compile_Depth_Invariants(value Compile_Depth, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(
 			int(value), bytes.SLICE_SIZE_MINIMUM, NODE_COUNT_MAXIMUM,
 		).
@@ -1470,9 +1470,9 @@ type Nonzero_Compile_Depth int
 
 // Nonzero_Compile_Depth_Invariants excludes the completed empty stack.
 func Nonzero_Compile_Depth_Invariants(
-	value Nonzero_Compile_Depth, namespace invariant.Namespace,
+	value Nonzero_Compile_Depth, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(
 			int(value), COMPILE_DEPTH_NONZERO_MINIMUM, NODE_COUNT_MAXIMUM,
 		).
@@ -1484,9 +1484,9 @@ type Push_Compile_Depth int
 
 // Push_Compile_Depth_Invariants excludes empty and full compiler stacks.
 func Push_Compile_Depth_Invariants(
-	value Push_Compile_Depth, namespace invariant.Namespace,
+	value Push_Compile_Depth, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(
 			int(value), COMPILE_DEPTH_NONZERO_MINIMUM,
 			COMPILE_PUSH_DEPTH_MAXIMUM,
@@ -1499,9 +1499,9 @@ type Pushed_Compile_Depth int
 
 // Pushed_Compile_Depth_Invariants excludes root-only compiler state.
 func Pushed_Compile_Depth_Invariants(
-	value Pushed_Compile_Depth, namespace invariant.Namespace,
+	value Pushed_Compile_Depth, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(
 			int(value), COMPILE_PUSHED_DEPTH_MINIMUM, NODE_COUNT_MAXIMUM,
 		).
@@ -1513,9 +1513,9 @@ type Sequence_Compile_Level int
 
 // Sequence_Compile_Level_Invariants follows root through maximum brace nesting.
 func Sequence_Compile_Level_Invariants(
-	value Sequence_Compile_Level, namespace invariant.Namespace,
+	value Sequence_Compile_Level, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(
 			int(value), PATTERN_DEPTH_MINIMUM, PATTERN_DEPTH_MAXIMUM,
 		).
@@ -1527,9 +1527,9 @@ type Alternative_Compile_Level int
 
 // Alternative_Compile_Level_Invariants starts at the first open group.
 func Alternative_Compile_Level_Invariants(
-	value Alternative_Compile_Level, namespace invariant.Namespace,
+	value Alternative_Compile_Level, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(
 			int(value), PARSER_DEPTH_NONEMPTY_MINIMUM, PATTERN_DEPTH_MAXIMUM,
 		).
@@ -1541,9 +1541,9 @@ type Sequence_Updated_Level int
 
 // Sequence_Updated_Level_Invariants follows complete or pushed sequence state.
 func Sequence_Updated_Level_Invariants(
-	value Sequence_Updated_Level, namespace invariant.Namespace,
+	value Sequence_Updated_Level, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(
 			int(value), PATTERN_DEPTH_MINIMUM, PATTERN_DEPTH_MAXIMUM,
 		).
@@ -1555,9 +1555,9 @@ type Alternative_Updated_Level int
 
 // Alternative_Updated_Level_Invariants follows returned or pushed alternative state.
 func Alternative_Updated_Level_Invariants(
-	value Alternative_Updated_Level, namespace invariant.Namespace,
+	value Alternative_Updated_Level, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(
 			int(value), PATTERN_DEPTH_MINIMUM, PATTERN_DEPTH_MAXIMUM,
 		).
@@ -1568,8 +1568,8 @@ func Alternative_Updated_Level_Invariants(
 type Separator rune
 
 // Separator_Invariants covers complete rune-storage domain.
-func Separator_Invariants(value Separator, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Separator_Invariants(value Separator, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int32(
 			int32(value), utf8.CHARACTER_MINIMUM, utf8.CHARACTER_MAXIMUM,
 		).
@@ -1580,8 +1580,8 @@ func Separator_Invariants(value Separator, namespace invariant.Namespace) {
 type Separators [SEPARATOR_COUNT_MAXIMUM]Separator
 
 // Separators_Invariants fixes complete separator capacity.
-func Separators_Invariants(value Separators, _ invariant.Namespace) {
-	invariant.Always(
+func Separators_Invariants(value Separators, _ aver.Namespace) {
+	aver.Always(
 		len(value) == SEPARATOR_COUNT_MAXIMUM,
 		"Separator storage covers maximum hostile count.",
 	)
@@ -1591,8 +1591,8 @@ func Separators_Invariants(value Separators, _ invariant.Namespace) {
 type Compile_Control [COMPILE_CONTROL_COUNT]uint16
 
 // Compile_Control_Invariants fixes compiler cursor shape.
-func Compile_Control_Invariants(value Compile_Control, _ invariant.Namespace) {
-	invariant.Always(
+func Compile_Control_Invariants(value Compile_Control, _ aver.Namespace) {
+	aver.Always(
 		len(value) == COMPILE_CONTROL_COUNT,
 		"Compile workspace has complete arena cursors.",
 	)
@@ -1630,9 +1630,9 @@ type Compile_Workspace struct {
 
 // Compile_Workspace_Invariants composes fixed caller-owned storage.
 func Compile_Workspace_Invariants(
-	value *Compile_Workspace, namespace invariant.Namespace,
+	value *Compile_Workspace, namespace aver.Namespace,
 ) {
-	invariant.Always(value != nil, "Compile workspace is present.")
+	aver.Always(value != nil, "Compile workspace is present.")
 	Nodes_Invariants(value.Nodes, namespace)
 	Parser_Frames_Invariants(value.Parser_Frames, namespace)
 	Class_Ranges_Invariants(value.Ranges, namespace)
@@ -1663,9 +1663,9 @@ type Compile_Workspace_Storage [WORKSPACE_FIELD_COUNT]*Compile_Workspace
 
 // Compile_Workspace_Storage_Invariants fixes pointer input shape.
 func Compile_Workspace_Storage_Invariants(
-	value Compile_Workspace_Storage, _ invariant.Namespace,
+	value Compile_Workspace_Storage, _ aver.Namespace,
 ) {
-	invariant.Always(
+	aver.Always(
 		len(value) == WORKSPACE_FIELD_COUNT,
 		"Compile input has one workspace pointer field.",
 	)
@@ -1679,7 +1679,7 @@ type Compile_Workspace_Input struct {
 
 // Compile_Workspace_Input_Invariants fixes optional pointer shape.
 func Compile_Workspace_Input_Invariants(
-	value Compile_Workspace_Input, namespace invariant.Namespace,
+	value Compile_Workspace_Input, namespace aver.Namespace,
 ) {
 	Compile_Workspace_Storage_Invariants(value.State, namespace)
 }
@@ -1695,7 +1695,7 @@ type Compile_Input struct {
 }
 
 // Compile_Input_Invariants composes hostile compile boundary.
-func Compile_Input_Invariants(value Compile_Input, namespace invariant.Namespace) {
+func Compile_Input_Invariants(value Compile_Input, namespace aver.Namespace) {
 	Pattern_Source_Unvalidated_Invariants(value.Source, namespace)
 	Separators_Unvalidated_Invariants(value.Separators, namespace)
 	Compile_Workspace_Input_Invariants(value.Workspace, namespace)
@@ -1706,9 +1706,9 @@ type Pattern_Workspace_Storage [PATTERN_WORKSPACE_FIELD_COUNT]*Compile_Workspace
 
 // Pattern_Workspace_Storage_Invariants fixes compiled pointer shape.
 func Pattern_Workspace_Storage_Invariants(
-	value Pattern_Workspace_Storage, _ invariant.Namespace,
+	value Pattern_Workspace_Storage, _ aver.Namespace,
 ) {
-	invariant.Always(
+	aver.Always(
 		len(value) == PATTERN_WORKSPACE_FIELD_COUNT,
 		"Compiled pattern has one workspace pointer field.",
 	)
@@ -1718,8 +1718,8 @@ func Pattern_Workspace_Storage_Invariants(
 type Pattern_Control [PATTERN_CONTROL_COUNT]uint16
 
 // Pattern_Control_Invariants fixes compiled scalar header shape.
-func Pattern_Control_Invariants(value Pattern_Control, _ invariant.Namespace) {
-	invariant.Always(
+func Pattern_Control_Invariants(value Pattern_Control, _ aver.Namespace) {
+	aver.Always(
 		len(value) == PATTERN_CONTROL_COUNT,
 		"Compiled pattern has complete scalar header.",
 	)
@@ -1734,7 +1734,7 @@ type Pattern struct {
 }
 
 // Pattern_Invariants verifies shape without dereferencing hostile pointer.
-func Pattern_Invariants(value Pattern, namespace invariant.Namespace) {
+func Pattern_Invariants(value Pattern, namespace aver.Namespace) {
 	Pattern_Workspace_Storage_Invariants(value.Workspace, namespace)
 	Pattern_Control_Invariants(value.Control, namespace)
 }
@@ -1743,8 +1743,8 @@ func Pattern_Invariants(value Pattern, namespace invariant.Namespace) {
 type Current_States [INSTRUCTION_COUNT_MAXIMUM]Instruction_PC
 
 // Current_States_Invariants fixes active-state capacity.
-func Current_States_Invariants(value Current_States, _ invariant.Namespace) {
-	invariant.Always(
+func Current_States_Invariants(value Current_States, _ aver.Namespace) {
+	aver.Always(
 		len(value) == INSTRUCTION_COUNT_MAXIMUM,
 		"Current NFA state set covers every instruction once.",
 	)
@@ -1754,8 +1754,8 @@ func Current_States_Invariants(value Current_States, _ invariant.Namespace) {
 type Next_States [INSTRUCTION_COUNT_MAXIMUM]Instruction_PC
 
 // Next_States_Invariants fixes next-state capacity.
-func Next_States_Invariants(value Next_States, _ invariant.Namespace) {
-	invariant.Always(
+func Next_States_Invariants(value Next_States, _ aver.Namespace) {
+	aver.Always(
 		len(value) == INSTRUCTION_COUNT_MAXIMUM,
 		"Next NFA state set covers every instruction once.",
 	)
@@ -1765,8 +1765,8 @@ func Next_States_Invariants(value Next_States, _ invariant.Namespace) {
 type Closure_States [INSTRUCTION_COUNT_MAXIMUM]Instruction_PC
 
 // Closure_States_Invariants fixes epsilon traversal capacity.
-func Closure_States_Invariants(value Closure_States, _ invariant.Namespace) {
-	invariant.Always(
+func Closure_States_Invariants(value Closure_States, _ aver.Namespace) {
+	aver.Always(
 		len(value) == INSTRUCTION_COUNT_MAXIMUM,
 		"NFA closure stack covers every instruction once.",
 	)
@@ -1777,9 +1777,9 @@ type State_Generation uint16
 
 // State_Generation_Invariants follows candidate characters plus initial closure.
 func State_Generation_Invariants(
-	value State_Generation, namespace invariant.Namespace,
+	value State_Generation, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Uint16(
 			uint16(value), uint16(STATE_GENERATION_MINIMUM),
 			uint16(STATE_GENERATION_MAXIMUM),
@@ -1792,9 +1792,9 @@ type Closure_Generation uint16
 
 // Closure_Generation_Invariants excludes the cleared visited-set marker.
 func Closure_Generation_Invariants(
-	value Closure_Generation, namespace invariant.Namespace,
+	value Closure_Generation, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Uint16(
 			uint16(value), uint16(CLOSURE_GENERATION_MINIMUM),
 			uint16(STATE_GENERATION_MAXIMUM),
@@ -1807,9 +1807,9 @@ type Consume_Generation uint16
 
 // Consume_Generation_Invariants starts after initial closure generation.
 func Consume_Generation_Invariants(
-	value Consume_Generation, namespace invariant.Namespace,
+	value Consume_Generation, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Uint16(
 			uint16(value), uint16(CONSUME_GENERATION_MINIMUM),
 			uint16(STATE_GENERATION_MAXIMUM),
@@ -1822,9 +1822,9 @@ type State_Generations [INSTRUCTION_COUNT_MAXIMUM]State_Generation
 
 // State_Generations_Invariants fixes visited-set capacity.
 func State_Generations_Invariants(
-	value State_Generations, _ invariant.Namespace,
+	value State_Generations, _ aver.Namespace,
 ) {
-	invariant.Always(
+	aver.Always(
 		len(value) == INSTRUCTION_COUNT_MAXIMUM,
 		"NFA visited set covers every instruction.",
 	)
@@ -1835,9 +1835,9 @@ type Active_Instruction_States []Instruction_PC
 
 // Active_Instruction_States_Invariants follows the compiled instruction bound.
 func Active_Instruction_States_Invariants(
-	value Active_Instruction_States, namespace invariant.Namespace,
+	value Active_Instruction_States, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(
 			len(value), bytes.SLICE_SIZE_MINIMUM, ACTIVE_STATE_COUNT_MAXIMUM,
 		).
@@ -1849,9 +1849,9 @@ type Instruction_State_Storage []Instruction_PC
 
 // Instruction_State_Storage_Invariants fixes matcher arena capacity.
 func Instruction_State_Storage_Invariants(
-	value Instruction_State_Storage, _ invariant.Namespace,
+	value Instruction_State_Storage, _ aver.Namespace,
 ) {
-	invariant.Always(
+	aver.Always(
 		len(value) == INSTRUCTION_COUNT_MAXIMUM,
 		"Matcher state view retains complete instruction-derived capacity.",
 	)
@@ -1861,8 +1861,8 @@ func Instruction_State_Storage_Invariants(
 type State_Count int
 
 // State_Count_Invariants follows maximum simultaneously consuming branches.
-func State_Count_Invariants(value State_Count, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func State_Count_Invariants(value State_Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(
 			int(value), bytes.SLICE_SIZE_MINIMUM, ACTIVE_STATE_COUNT_MAXIMUM,
 		).
@@ -1874,9 +1874,9 @@ type Append_State_Count int
 
 // Append_State_Count_Invariants excludes the already-full active prefix.
 func Append_State_Count_Invariants(
-	value Append_State_Count, namespace invariant.Namespace,
+	value Append_State_Count, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(
 			int(value), bytes.SLICE_SIZE_MINIMUM, APPEND_STATE_COUNT_MAXIMUM,
 		).
@@ -1888,9 +1888,9 @@ type Nonempty_State_Count int
 
 // Nonempty_State_Count_Invariants requires one reached instruction.
 func Nonempty_State_Count_Invariants(
-	value Nonempty_State_Count, namespace invariant.Namespace,
+	value Nonempty_State_Count, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(
 			int(value), utf8.CHARACTER_SIZE_MINIMUM,
 			ACTIVE_STATE_COUNT_MAXIMUM,
@@ -1902,8 +1902,8 @@ func Nonempty_State_Count_Invariants(
 type Closure_Count int
 
 // Closure_Count_Invariants follows maximum suspended comma branches.
-func Closure_Count_Invariants(value Closure_Count, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Closure_Count_Invariants(value Closure_Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(
 			int(value), bytes.SLICE_SIZE_MINIMUM, CLOSURE_COUNT_MAXIMUM,
 		).
@@ -1915,9 +1915,9 @@ type Closure_Append_Count int
 
 // Closure_Append_Count_Invariants excludes the already-full closure stack.
 func Closure_Append_Count_Invariants(
-	value Closure_Append_Count, namespace invariant.Namespace,
+	value Closure_Append_Count, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(
 			int(value), bytes.SLICE_SIZE_MINIMUM, CLOSURE_APPEND_COUNT_MAXIMUM,
 		).
@@ -1929,9 +1929,9 @@ type Instruction_Count int
 
 // Instruction_Count_Invariants retains terminal match and every bounded instruction.
 func Instruction_Count_Invariants(
-	value Instruction_Count, namespace invariant.Namespace,
+	value Instruction_Count, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(
 			int(value), utf8.CHARACTER_SIZE_MINIMUM, INSTRUCTION_COUNT_MAXIMUM,
 		).
@@ -1943,9 +1943,9 @@ type Class_Range_Count int
 
 // Class_Range_Count_Invariants follows the caller-owned class-range arena.
 func Class_Range_Count_Invariants(
-	value Class_Range_Count, namespace invariant.Namespace,
+	value Class_Range_Count, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(
 			int(value), bytes.SLICE_SIZE_MINIMUM, CLASS_RANGE_COUNT_MAXIMUM,
 		).
@@ -1957,9 +1957,9 @@ type Separator_Count int
 
 // Separator_Count_Invariants follows the caller-owned separator arena.
 func Separator_Count_Invariants(
-	value Separator_Count, namespace invariant.Namespace,
+	value Separator_Count, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(
 			int(value), SEPARATOR_COUNT_MINIMUM, SEPARATOR_COUNT_MAXIMUM,
 		).
@@ -1970,8 +1970,8 @@ func Separator_Count_Invariants(
 type Contains bool
 
 // Contains_Invariants requires both membership outcomes across registered paths.
-func Contains_Invariants(value Contains, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Contains_Invariants(value Contains, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Sometimes(bool(value), "Membership succeeds.").
 		Ensure()
 }
@@ -1990,9 +1990,9 @@ type Match_Workspace struct {
 
 // Match_Workspace_Invariants composes fixed caller-owned state sets.
 func Match_Workspace_Invariants(
-	value *Match_Workspace, namespace invariant.Namespace,
+	value *Match_Workspace, namespace aver.Namespace,
 ) {
-	invariant.Always(value != nil, "Match workspace is present.")
+	aver.Always(value != nil, "Match workspace is present.")
 	Current_States_Invariants(value.Current, namespace)
 	Next_States_Invariants(value.Next, namespace)
 	Closure_States_Invariants(value.Closure, namespace)
@@ -2004,9 +2004,9 @@ type Match_Workspace_Storage [WORKSPACE_FIELD_COUNT]*Match_Workspace
 
 // Match_Workspace_Storage_Invariants fixes pointer input shape.
 func Match_Workspace_Storage_Invariants(
-	value Match_Workspace_Storage, _ invariant.Namespace,
+	value Match_Workspace_Storage, _ aver.Namespace,
 ) {
-	invariant.Always(
+	aver.Always(
 		len(value) == WORKSPACE_FIELD_COUNT,
 		"Match input has one workspace pointer field.",
 	)
@@ -2020,7 +2020,7 @@ type Match_Workspace_Input struct {
 
 // Match_Workspace_Input_Invariants fixes optional pointer shape.
 func Match_Workspace_Input_Invariants(
-	value Match_Workspace_Input, namespace invariant.Namespace,
+	value Match_Workspace_Input, namespace aver.Namespace,
 ) {
 	Match_Workspace_Storage_Invariants(value.State, namespace)
 }
@@ -2036,7 +2036,7 @@ type Match_Input struct {
 }
 
 // Match_Input_Invariants composes hostile match boundary.
-func Match_Input_Invariants(value Match_Input, namespace invariant.Namespace) {
+func Match_Input_Invariants(value Match_Input, namespace aver.Namespace) {
 	Pattern_Invariants(value.Pattern, namespace)
 	Text_Unvalidated_Invariants(value.Text, namespace)
 	Match_Workspace_Input_Invariants(value.Workspace, namespace)
@@ -2620,7 +2620,7 @@ func range_append(
 	utf8.Decoded_Character_Invariants(high, "range_append.high")
 	workspace := (*Compile_Workspace)(workspace_state)
 	count := workspace.Control[COMPILE_CONTROL_RANGE_COUNT]
-	invariant.Always(
+	aver.Always(
 		int(count) < len(workspace.Ranges),
 		"One class shell leaves one formula-derived range slot per source byte.",
 	)
@@ -2715,8 +2715,8 @@ func compile_enter(
 	frame := (*Compile_Frame)(frame_state)
 	updated_result = Instruction_PC(result)
 	reference := frame.References[COMPILE_REFERENCE_NODE]
-	invariant.Always(reference != NODE_NONE, "Compiler frame references one syntax node.")
-	invariant.Always(
+	aver.Always(reference != NODE_NONE, "Compiler frame references one syntax node.")
+	aver.Always(
 		int(reference) <= int(workspace.Control[COMPILE_CONTROL_NODE_COUNT]),
 		"Compiler frame reference stays inside parsed syntax.",
 	)
@@ -2832,7 +2832,7 @@ func compile_alternative(
 	frame := (*Compile_Frame)(frame_state)
 	child := frame.References[COMPILE_REFERENCE_CHILD]
 	if child == NODE_NONE {
-		invariant.Always(
+		aver.Always(
 			frame.Control[COMPILE_FRAME_FIRST] != CONTROL_TRUE,
 			"Parsed alternative retains at least one sequence branch.",
 		)
@@ -2903,7 +2903,7 @@ func compile_push(
 	Instruction_Continuation_Invariants(continuation, "compile_push.continuation")
 	Push_Compile_Depth_Invariants(depth, "compile_push.depth")
 	workspace := (*Compile_Workspace)(workspace_state)
-	invariant.Always(
+	aver.Always(
 		depth < Push_Compile_Depth(len(workspace.Compile_Frames)),
 		"Parsed syntax depth fits formula-derived compiler stack.",
 	)
@@ -2973,7 +2973,7 @@ func instruction_emit(
 	Instruction_Invariants(instruction, "instruction_emit.instruction")
 	workspace := (*Compile_Workspace)(workspace_state)
 	count := workspace.Control[COMPILE_CONTROL_INSTRUCTION_COUNT]
-	invariant.Always(
+	aver.Always(
 		int(count) < len(workspace.Instruction_Kinds),
 		"One pattern byte cannot emit more than one instruction.",
 	)
@@ -3203,7 +3203,7 @@ func state_consume(
 	separator := separator_contains(pattern, character)
 	for index := range current {
 		pc := current[index]
-		invariant.Always(
+		aver.Always(
 			int(pc) < instruction_count,
 			"Validated active state references one compiled instruction.",
 		)
@@ -3326,14 +3326,14 @@ func state_enqueue(
 	Instruction_Count_Invariants(instruction_count, "state_enqueue.instruction_count")
 	workspace := (*Match_Workspace)(workspace_state)
 	closure_count = Closure_Count(closure_count_value)
-	invariant.Always(
+	aver.Always(
 		int(pc) < int(instruction_count),
 		"Validated closure edge references one compiled instruction.",
 	)
 	if workspace.Seen[pc] == State_Generation(generation) {
 		return closure_count
 	}
-	invariant.Always(
+	aver.Always(
 		closure_count < Closure_Count(len(closure)),
 		"One closure generation cannot contain duplicate instructions.",
 	)
@@ -3354,7 +3354,7 @@ func state_append(
 	Append_State_Count_Invariants(state_count_value, "state_append.state_count_value")
 	Instruction_PC_Invariants(pc, "state_append.pc")
 	state_count = Nonempty_State_Count(state_count_value)
-	invariant.Always(
+	aver.Always(
 		state_count < Nonempty_State_Count(len(states)),
 		"One active generation cannot contain duplicate instructions.",
 	)

@@ -4,8 +4,8 @@
 package rational
 
 import (
-	"local/james-orcales/shared/invariant/default"
 	"local/james-orcales/shared/math/integer"
+	"local/james-orcales/shared/simulation/aver/default"
 )
 
 // TEXT_SIZE_MINIMUM admits no output.
@@ -22,8 +22,8 @@ const SEPARATOR = '/'
 type Numerator integer.Integer
 
 // Numerator_Invariants states the width a numerator holds.
-func Numerator_Invariants(value Numerator, namespace invariant.Namespace) {
-	invariant.Always(
+func Numerator_Invariants(value Numerator, namespace aver.Namespace) {
+	aver.Always(
 		len(value.Limbs) == integer.LIMB_COUNT,
 		"A numerator holds one limb for every piece of its width.",
 	)
@@ -33,8 +33,8 @@ func Numerator_Invariants(value Numerator, namespace invariant.Namespace) {
 type Denominator integer.Integer
 
 // Denominator_Invariants states the width a denominator holds.
-func Denominator_Invariants(value Denominator, namespace invariant.Namespace) {
-	invariant.Always(
+func Denominator_Invariants(value Denominator, namespace aver.Namespace) {
+	aver.Always(
 		len(value.Limbs) == integer.LIMB_COUNT,
 		"A denominator holds one limb for every piece of its width.",
 	)
@@ -44,8 +44,8 @@ func Denominator_Invariants(value Denominator, namespace invariant.Namespace) {
 type Boolean bool
 
 // Boolean_Invariants states both ratio reports as obligations.
-func Boolean_Invariants(value Boolean, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Boolean_Invariants(value Boolean, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Sometimes(bool(value), "The rational report is true.").
 		Ensure()
 }
@@ -54,8 +54,8 @@ func Boolean_Invariants(value Boolean, namespace invariant.Namespace) {
 type Text_Count int
 
 // Text_Count_Invariants states the byte count of the longest written form.
-func Text_Count_Invariants(value Text_Count, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Text_Count_Invariants(value Text_Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), TEXT_SIZE_MINIMUM, TEXT_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -64,8 +64,8 @@ func Text_Count_Invariants(value Text_Count, namespace invariant.Namespace) {
 type Digits []byte
 
 // Digits_Invariants states the storage the longest written form needs.
-func Digits_Invariants(value Digits, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Digits_Invariants(value Digits, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), TEXT_SIZE_MINIMUM, TEXT_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -79,7 +79,7 @@ type Rational struct {
 }
 
 // Rational_Invariants composes both halves of one ratio.
-func Rational_Invariants(value Rational, namespace invariant.Namespace) {
+func Rational_Invariants(value Rational, namespace aver.Namespace) {
 	Numerator_Invariants(value.Numerator, namespace)
 	Denominator_Invariants(value.Denominator, namespace)
 }

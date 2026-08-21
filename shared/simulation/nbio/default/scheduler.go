@@ -8,8 +8,8 @@ import (
 	"runtime"
 	"syscall"
 
-	"local/james-orcales/shared/invariant/default"
 	"local/james-orcales/shared/path"
+	"local/james-orcales/shared/simulation/aver/default"
 	"local/james-orcales/shared/simulation/nbio"
 	"local/james-orcales/shared/simulation/time"
 )
@@ -237,7 +237,7 @@ func operating_system_operation_register(
 	if !stable_event_identifier {
 		operation.Completion.Kernel_Identifier = operation.Identifier
 	}
-	invariant.Always(len(state.Operations) < cap(state.Operations),
+	aver.Always(len(state.Operations) < cap(state.Operations),
 		"The caller-owned operation registry has capacity before submission.")
 	state.Operations = append(state.Operations, operation)
 }
@@ -254,7 +254,7 @@ func operating_system_operation_acquire(
 		state.Operation_Memory[index] = value
 		return &state.Operation_Memory[index]
 	}
-	invariant.Always(false, "The caller-owned operation pool has capacity before submission.")
+	aver.Always(false, "The caller-owned operation pool has capacity before submission.")
 	return nil
 }
 
@@ -284,7 +284,7 @@ func operating_system_operation_unregister(
 		kept = append(kept, candidate)
 	}
 	state.Operations = kept
-	invariant.Always(found, "A completed operation was registered exactly once.")
+	aver.Always(found, "A completed operation was registered exactly once.")
 }
 
 func operating_system_operation_release(operation *Operating_System_Operation) {
@@ -326,7 +326,7 @@ func operating_system_operation_submit_path(
 func operating_system_completion_add(
 	state *Operating_System, completion *nbio.Completion,
 ) {
-	invariant.Always(len(state.Completed) < cap(state.Completed),
+	aver.Always(len(state.Completed) < cap(state.Completed),
 		"The caller-owned completion queue has capacity before publication.")
 	state.Completed = append(state.Completed, completion)
 }
@@ -384,7 +384,7 @@ func operating_system_descriptor_add(state *Operating_System, descriptor int) {
 		}
 		return
 	}
-	invariant.Always(false, "The caller-owned descriptor census has capacity before ownership.")
+	aver.Always(false, "The caller-owned descriptor census has capacity before ownership.")
 }
 
 func operating_system_descriptor_remove(state *Operating_System, descriptor int) {
@@ -400,7 +400,7 @@ func operating_system_descriptor_remove(state *Operating_System, descriptor int)
 		found = true
 		break
 	}
-	invariant.Always(found, "A released descriptor belonged to the backend.")
+	aver.Always(found, "A released descriptor belonged to the backend.")
 }
 
 func operating_system_descriptor_count(state *Operating_System) (count int) {

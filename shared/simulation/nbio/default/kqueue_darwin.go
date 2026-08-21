@@ -6,7 +6,7 @@ import (
 	"syscall"
 	"unsafe"
 
-	"local/james-orcales/shared/invariant/default"
+	"local/james-orcales/shared/simulation/aver/default"
 	"local/james-orcales/shared/simulation/nbio"
 	"local/james-orcales/shared/simulation/time"
 )
@@ -293,7 +293,7 @@ func platform_submit_registered(
 func platform_backlog_add(
 	state *Operating_System, operation *Operating_System_Operation,
 ) {
-	invariant.Always(len(state.Platform.IO_Backlog) < cap(state.Platform.IO_Backlog),
+	aver.Always(len(state.Platform.IO_Backlog) < cap(state.Platform.IO_Backlog),
 		"The caller-owned Darwin backlog has capacity before readiness wait.")
 	state.Platform.IO_Backlog = append(state.Platform.IO_Backlog, operation)
 }
@@ -644,7 +644,7 @@ func platform_expire_operation(
 		}
 	}
 	operation.Kernel_Submitted = false
-	invariant.Always(state.Platform.IO_Inflight > 0,
+	aver.Always(state.Platform.IO_Inflight > 0,
 		"An expired kqueue operation was counted in flight.")
 	state.Platform.IO_Inflight--
 	return nil
@@ -666,7 +666,7 @@ func platform_event_open(state *Operating_System) (event nbio.Event, err error) 
 	if open_err != nil {
 		return 0, open_err
 	}
-	invariant.Always(count == 0, "Opening an EVFILT_USER Event returns no completion.")
+	aver.Always(count == 0, "Opening an EVFILT_USER Event returns no completion.")
 	return event, nil
 }
 
@@ -692,8 +692,8 @@ func platform_event_trigger(
 		Changes:    []Kernel_Event{change},
 		Wait:       POLL_FOREVER,
 	})
-	invariant.Always(trigger_err == nil, "Triggering an EVFILT_USER Event succeeds.")
-	invariant.Always(
+	aver.Always(trigger_err == nil, "Triggering an EVFILT_USER Event succeeds.")
+	aver.Always(
 		count == 0, "Triggering an EVFILT_USER Event returns no completion inline.",
 	)
 }
@@ -708,8 +708,8 @@ func platform_event_close(state *Operating_System, event nbio.Event) {
 		Changes:    []Kernel_Event{change},
 		Wait:       POLL_FOREVER,
 	})
-	invariant.Always(close_err == nil, "Closing an EVFILT_USER Event succeeds.")
-	invariant.Always(count == 0, "Closing an EVFILT_USER Event returns no completion.")
+	aver.Always(close_err == nil, "Closing an EVFILT_USER Event succeeds.")
+	aver.Always(count == 0, "Closing an EVFILT_USER Event returns no completion.")
 }
 
 // Platform in flight report work that can wake unbounded drive.

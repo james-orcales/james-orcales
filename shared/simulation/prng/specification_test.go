@@ -7,7 +7,7 @@ import (
 	"local/james-orcales/shared/simulation/prng"
 
 	crypto_prng "local/james-orcales/shared/crypto/prng"
-	"local/james-orcales/shared/invariant/default"
+	"local/james-orcales/shared/simulation/aver/default"
 )
 
 // Test_Seed_Expands_To_State checks New is deterministic and seed-sensitive.
@@ -496,11 +496,11 @@ func generator_for_next(value prng.Word) (generator prng.Xoshiro) {
 // Exit for a panic — and silences the recorder's stderr — for the duration, then recovers it, so
 // the exit is observable in-process. Exit and Output are restored before returning.
 func did_die(action func()) (died bool) {
-	exit, output := invariant.Default.Exit, invariant.Default.Output
-	invariant.Default.Exit = func(int) { panic(tripped_invariant{}) }
-	invariant.Default.Output = discard_writer{}
+	exit, output := aver.Default.Exit, aver.Default.Output
+	aver.Default.Exit = func(int) { panic(tripped_invariant{}) }
+	aver.Default.Output = discard_writer{}
 	defer func() {
-		invariant.Default.Exit, invariant.Default.Output = exit, output
+		aver.Default.Exit, aver.Default.Output = exit, output
 		if recover() != nil {
 			died = true
 		}

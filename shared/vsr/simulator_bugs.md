@@ -7,7 +7,7 @@ reproduces exactly on demand.
 
 Why the simulator catches them: the core is a pure deterministic step function (no goroutines,
 I/O, or ambient clock — the linter enforces it); one seeded PRNG drives every fault (drop, delay,
-duplicate, reorder, partition, crash-restart, client retry and recovery); `invariant.Sometimes`
+duplicate, reorder, partition, crash-restart, client retry and recovery); `aver.Sometimes`
 coverage forces the buggy paths (view change, recovery, state transfer) to actually run; and the
 cluster-wide safety assertions run after every single delivery, pinning a violation to the step
 that caused it. Each fix changes `vsr.go`, never the assertion.

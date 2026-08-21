@@ -3,8 +3,8 @@ package hex
 
 import (
 	"local/james-orcales/shared/bytes"
-	"local/james-orcales/shared/invariant/default"
 	"local/james-orcales/shared/math/bits"
+	"local/james-orcales/shared/simulation/aver/default"
 )
 
 // NIBBLE_BIT_COUNT follows the two equal halves of one byte.
@@ -192,8 +192,8 @@ const STATUS_STORAGE_INVALID = STATUS_OUTPUT_TOO_SMALL + 1
 type Source []byte
 
 // Source_Invariants rejects source whose encoded representation cannot stay bounded.
-func Source_Invariants(value Source, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Source_Invariants(value Source, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), SIZE_MINIMUM, SOURCE_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -202,8 +202,8 @@ func Source_Invariants(value Source, namespace invariant.Namespace) {
 type Encoded []byte
 
 // Encoded_Invariants keeps hexadecimal storage within repository bounds.
-func Encoded_Invariants(value Encoded, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Encoded_Invariants(value Encoded, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), SIZE_MINIMUM, ENCODED_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -212,8 +212,8 @@ func Encoded_Invariants(value Encoded, namespace invariant.Namespace) {
 type Decoded []byte
 
 // Decoded_Invariants keeps decoded output within its encoded-input-derived bound.
-func Decoded_Invariants(value Decoded, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Decoded_Invariants(value Decoded, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), SIZE_MINIMUM, DECODED_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -222,8 +222,8 @@ func Decoded_Invariants(value Decoded, namespace invariant.Namespace) {
 type Dump_Source []byte
 
 // Dump_Source_Invariants rejects source whose exact dump cannot fit bounded output.
-func Dump_Source_Invariants(value Dump_Source, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Dump_Source_Invariants(value Dump_Source, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), SIZE_MINIMUM, DUMP_SOURCE_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -232,8 +232,8 @@ func Dump_Source_Invariants(value Dump_Source, namespace invariant.Namespace) {
 type Dump []byte
 
 // Dump_Invariants keeps dump output within repository bounds.
-func Dump_Invariants(value Dump, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Dump_Invariants(value Dump, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), SIZE_MINIMUM, DUMP_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -242,8 +242,8 @@ func Dump_Invariants(value Dump, namespace invariant.Namespace) {
 type Source_Count int
 
 // Source_Count_Invariants follows Source's complete length domain.
-func Source_Count_Invariants(value Source_Count, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Source_Count_Invariants(value Source_Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), SIZE_MINIMUM, SOURCE_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -253,9 +253,9 @@ type Encoded_Input_Count int
 
 // Encoded_Input_Count_Invariants follows Encoded's complete length domain.
 func Encoded_Input_Count_Invariants(
-	value Encoded_Input_Count, namespace invariant.Namespace,
+	value Encoded_Input_Count, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(int(value), SIZE_MINIMUM, ENCODED_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -264,12 +264,12 @@ func Encoded_Input_Count_Invariants(
 type Encoded_Count int
 
 // Encoded_Count_Invariants excludes counts that cannot represent whole source bytes.
-func Encoded_Count_Invariants(value Encoded_Count, namespace invariant.Namespace) {
-	invariant.Always(
+func Encoded_Count_Invariants(value Encoded_Count, namespace aver.Namespace) {
+	aver.Always(
 		int(value)%ENCODED_BYTE_SIZE == 0,
 		"Encoded count contains complete hexadecimal byte pairs.",
 	)
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Holed_Int(
 			int(value), SIZE_MINIMUM, ENCODED_SIZE_MAXIMUM,
 			COUNT_HOLE_FIRST, COUNT_HOLE_FIRST, COUNT_HOLE_FIRST, COUNT_HOLE_FIRST,
@@ -281,8 +281,8 @@ func Encoded_Count_Invariants(value Encoded_Count, namespace invariant.Namespace
 type Decoded_Count int
 
 // Decoded_Count_Invariants follows bounded encoded input contraction.
-func Decoded_Count_Invariants(value Decoded_Count, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Decoded_Count_Invariants(value Decoded_Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), SIZE_MINIMUM, DECODED_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -291,8 +291,8 @@ func Decoded_Count_Invariants(value Decoded_Count, namespace invariant.Namespace
 type Dump_Source_Count int
 
 // Dump_Source_Count_Invariants follows Dump_Source's complete length domain.
-func Dump_Source_Count_Invariants(value Dump_Source_Count, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Dump_Source_Count_Invariants(value Dump_Source_Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), SIZE_MINIMUM, DUMP_SOURCE_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -301,11 +301,11 @@ func Dump_Source_Count_Invariants(value Dump_Source_Count, namespace invariant.N
 type Dump_Count int
 
 // Dump_Count_Invariants excludes counts that cannot end at a canonical line boundary.
-func Dump_Count_Invariants(value Dump_Count, namespace invariant.Namespace) {
+func Dump_Count_Invariants(value Dump_Count, namespace aver.Namespace) {
 	remainder := int(value) % DUMP_LINE_SIZE
 	valid := remainder == SIZE_MINIMUM || remainder >= DUMP_PARTIAL_LINE_FIXED_SIZE+1
-	invariant.Always(valid, "Dump count ends after a complete canonical line.")
-	invariant.Tree(value, namespace).
+	aver.Always(valid, "Dump count ends after a complete canonical line.")
+	aver.Tree(value, namespace).
 		Range_Holed_Int(
 			int(value), SIZE_MINIMUM, DUMP_SIZE_MAXIMUM,
 			COUNT_HOLE_FIRST, COUNT_HOLE_SECOND, COUNT_HOLE_SECOND, COUNT_HOLE_SECOND,
@@ -317,8 +317,8 @@ func Dump_Count_Invariants(value Dump_Count, namespace invariant.Namespace) {
 type Dump_Line_Size int
 
 // Dump_Line_Size_Invariants excludes empty calls to line writers.
-func Dump_Line_Size_Invariants(value Dump_Line_Size, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Dump_Line_Size_Invariants(value Dump_Line_Size, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), DUMP_LINE_SOURCE_SIZE_MINIMUM, DUMP_SOURCE_GROUP_SIZE).
 		Ensure()
 }
@@ -328,9 +328,9 @@ type Dump_Write_Destination []byte
 
 // Dump_Write_Destination_Invariants requires storage for one nonempty line.
 func Dump_Write_Destination_Invariants(
-	value Dump_Write_Destination, namespace invariant.Namespace,
+	value Dump_Write_Destination, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(len(value), DUMP_WRITE_DESTINATION_SIZE_MINIMUM, DUMP_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -340,9 +340,9 @@ type Dump_Write_Source []byte
 
 // Dump_Write_Source_Invariants requires at least one source byte.
 func Dump_Write_Source_Invariants(
-	value Dump_Write_Source, namespace invariant.Namespace,
+	value Dump_Write_Source, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(len(value), DUMP_LINE_SOURCE_SIZE_MINIMUM, DUMP_SOURCE_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -352,12 +352,12 @@ type Dump_Written_Count int
 
 // Dump_Written_Count_Invariants preserves canonical nonempty line endings.
 func Dump_Written_Count_Invariants(
-	value Dump_Written_Count, namespace invariant.Namespace,
+	value Dump_Written_Count, namespace aver.Namespace,
 ) {
 	remainder := int(value) % DUMP_LINE_SIZE
 	valid := remainder == SIZE_MINIMUM || remainder >= DUMP_WRITE_DESTINATION_SIZE_MINIMUM
-	invariant.Always(valid, "Written dump ends after a complete canonical line.")
-	invariant.Tree(value, namespace).
+	aver.Always(valid, "Written dump ends after a complete canonical line.")
+	aver.Tree(value, namespace).
 		Range_Int(int(value), DUMP_WRITE_DESTINATION_SIZE_MINIMUM, DUMP_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -367,13 +367,13 @@ type Dump_Line_Position int
 
 // Dump_Line_Position_Invariants excludes impossible initial byte offsets.
 func Dump_Line_Position_Invariants(
-	value Dump_Line_Position, namespace invariant.Namespace,
+	value Dump_Line_Position, namespace aver.Namespace,
 ) {
-	invariant.Always(
+	aver.Always(
 		int(value)%DUMP_LINE_SIZE == SIZE_MINIMUM,
 		"Dump line position follows fixed line geometry.",
 	)
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Holed_Int(
 			int(value), SIZE_MINIMUM, DUMP_LINE_POSITION_MAXIMUM,
 			COUNT_HOLE_FIRST, COUNT_HOLE_SECOND, COUNT_HOLE_SECOND, COUNT_HOLE_SECOND,
@@ -386,13 +386,13 @@ type Dump_Source_Position int
 
 // Dump_Source_Position_Invariants excludes impossible initial source offsets.
 func Dump_Source_Position_Invariants(
-	value Dump_Source_Position, namespace invariant.Namespace,
+	value Dump_Source_Position, namespace aver.Namespace,
 ) {
-	invariant.Always(
+	aver.Always(
 		int(value)%DUMP_SOURCE_GROUP_SIZE == SIZE_MINIMUM,
 		"Dump source position follows fixed group geometry.",
 	)
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Holed_Int(
 			int(value), SIZE_MINIMUM, DUMP_SOURCE_POSITION_MAXIMUM,
 			COUNT_HOLE_FIRST, COUNT_HOLE_SECOND, COUNT_HOLE_SECOND, COUNT_HOLE_SECOND,
@@ -405,13 +405,13 @@ type Dump_Offset_Position int
 
 // Dump_Offset_Position_Invariants preserves one fixed offset per line.
 func Dump_Offset_Position_Invariants(
-	value Dump_Offset_Position, namespace invariant.Namespace,
+	value Dump_Offset_Position, namespace aver.Namespace,
 ) {
-	invariant.Always(
+	aver.Always(
 		(int(value)-DUMP_OFFSET_POSITION_MINIMUM)%DUMP_LINE_SIZE == SIZE_MINIMUM,
 		"Dump offset position follows fixed line geometry.",
 	)
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(int(value), DUMP_OFFSET_POSITION_MINIMUM, DUMP_OFFSET_POSITION_MAXIMUM).
 		Ensure()
 }
@@ -421,13 +421,13 @@ type Dump_ASCII_Position int
 
 // Dump_ASCII_Position_Invariants preserves one fixed left column per line.
 func Dump_ASCII_Position_Invariants(
-	value Dump_ASCII_Position, namespace invariant.Namespace,
+	value Dump_ASCII_Position, namespace aver.Namespace,
 ) {
-	invariant.Always(
+	aver.Always(
 		(int(value)-DUMP_ASCII_POSITION_MINIMUM)%DUMP_LINE_SIZE == SIZE_MINIMUM,
 		"Dump ASCII position follows fixed line geometry.",
 	)
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(int(value), DUMP_ASCII_POSITION_MINIMUM, DUMP_ASCII_POSITION_MAXIMUM).
 		Ensure()
 }
@@ -436,8 +436,8 @@ func Dump_ASCII_Position_Invariants(
 type Encode_Status uint8
 
 // Encode_Status_Invariants lists every encoder outcome.
-func Encode_Status_Invariants(value Encode_Status, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Encode_Status_Invariants(value Encode_Status, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_3_Uint8(
 			uint8(value), uint8(STATUS_OK), uint8(STATUS_OUTPUT_TOO_SMALL),
 			uint8(STATUS_STORAGE_INVALID),
@@ -449,8 +449,8 @@ func Encode_Status_Invariants(value Encode_Status, namespace invariant.Namespace
 type Decode_Status uint8
 
 // Decode_Status_Invariants lists every decoder outcome.
-func Decode_Status_Invariants(value Decode_Status, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Decode_Status_Invariants(value Decode_Status, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint8(
 			uint8(value), uint8(STATUS_OK), uint8(STATUS_STORAGE_INVALID),
 		).
@@ -461,8 +461,8 @@ func Decode_Status_Invariants(value Decode_Status, namespace invariant.Namespace
 type Dump_Status uint8
 
 // Dump_Status_Invariants lists every dumper outcome.
-func Dump_Status_Invariants(value Dump_Status, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Dump_Status_Invariants(value Dump_Status, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_3_Uint8(
 			uint8(value), uint8(STATUS_OK), uint8(STATUS_OUTPUT_TOO_SMALL),
 			uint8(STATUS_STORAGE_INVALID),

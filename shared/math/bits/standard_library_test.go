@@ -3,14 +3,14 @@ package bits_test
 import (
 	"testing"
 
-	"local/james-orcales/shared/invariant/default"
 	"local/james-orcales/shared/math/bits"
+	"local/james-orcales/shared/simulation/aver/default"
 	"local/james-orcales/shared/testify"
 )
 
 // TestMain registers the package invariant roots before the suites run.
 func TestMain(m *testing.M) {
-	invariant.Run_Test_Main(m)
+	aver.Run_Test_Main(m)
 }
 
 // DE_BRUIJN_64 is the 64-bit de Bruijn sequence the standard library rotates and reverses

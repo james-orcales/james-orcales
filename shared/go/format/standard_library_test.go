@@ -4,13 +4,13 @@ import (
 	"go/format"
 	"testing"
 
-	"local/james-orcales/shared/invariant/default"
+	"local/james-orcales/shared/simulation/aver/default"
 	"local/james-orcales/shared/testify"
 )
 
 // TestMain lets production entry points prove every registered format domain.
 func TestMain(m *testing.M) {
-	invariant.Run_Test_Main(m)
+	aver.Run_Test_Main(m)
 }
 
 // STANDARD_FLAT_SOURCE states a file the author wrote with no empty line and no tab, which is the

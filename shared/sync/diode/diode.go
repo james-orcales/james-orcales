@@ -23,7 +23,7 @@ import (
 	"sync/atomic"
 	"unsafe"
 
-	"local/james-orcales/shared/invariant/default"
+	"local/james-orcales/shared/simulation/aver/default"
 	"local/james-orcales/shared/simulation/time"
 )
 
@@ -78,8 +78,8 @@ const SEQUENCE_MAXIMUM uint64 = ^uint64(0)
 type Missed_Count int
 
 // Missed_Count_Invariants bounds one observed lap.
-func Missed_Count_Invariants(value Missed_Count, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Missed_Count_Invariants(value Missed_Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), MISSED_COUNT_MINIMUM, MISSED_COUNT_MAXIMUM).
 		Ensure()
 }
@@ -88,8 +88,8 @@ func Missed_Count_Invariants(value Missed_Count, namespace invariant.Namespace) 
 type Boolean bool
 
 // Boolean_Invariants requires both decision outcomes.
-func Boolean_Invariants(value Boolean, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Boolean_Invariants(value Boolean, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Sometimes(bool(value), "A diode decision is true.").
 		Ensure()
 }
@@ -98,8 +98,8 @@ func Boolean_Invariants(value Boolean, namespace invariant.Namespace) {
 type Line_Size int
 
 // Line_Size_Invariants applies the pooled buffer bound.
-func Line_Size_Invariants(value Line_Size, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Line_Size_Invariants(value Line_Size, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), DATA_SIZE_MINIMUM, MAXIMUM_POOLED_BUFFER).
 		Ensure()
 }
@@ -108,8 +108,8 @@ func Line_Size_Invariants(value Line_Size, namespace invariant.Namespace) {
 type Message string
 
 // Message_Invariants spans the static explanations below.
-func Message_Invariants(value Message, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Message_Invariants(value Message, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), MESSAGE_SIZE_MINIMUM, MESSAGE_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -121,8 +121,8 @@ var ERR_DATA_TOO_LARGE = errors.New("diode: line exceeds byte limit")
 type Drop_Cause int
 
 // Drop_Cause_Invariants admits every declared loss source.
-func Drop_Cause_Invariants(value Drop_Cause, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Drop_Cause_Invariants(value Drop_Cause, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_Int(int(value), int(DROP_OVERFLOW), int(DROP_RATE_LIMIT)).
 		Ensure()
 }
@@ -146,8 +146,8 @@ type Close func(state unsafe.Pointer) (err error)
 type Byte_Rate int
 
 // Byte_Rate_Invariants keeps throughput inside machine storage.
-func Byte_Rate_Invariants(value Byte_Rate, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Byte_Rate_Invariants(value Byte_Rate, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), CONFIGURATION_MINIMUM, BYTE_RATE_MAXIMUM).
 		Ensure()
 }
@@ -156,8 +156,8 @@ func Byte_Rate_Invariants(value Byte_Rate, namespace invariant.Namespace) {
 type Burst_Size int
 
 // Burst_Size_Invariants keeps burst size inside machine storage.
-func Burst_Size_Invariants(value Burst_Size, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Burst_Size_Invariants(value Burst_Size, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), CONFIGURATION_MINIMUM, BURST_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -173,7 +173,7 @@ type Rate_Limit struct {
 }
 
 // Rate_Limit_Invariants composes its two bounded quantities.
-func Rate_Limit_Invariants(value Rate_Limit, namespace invariant.Namespace) {
+func Rate_Limit_Invariants(value Rate_Limit, namespace aver.Namespace) {
 	Byte_Rate_Invariants(value.Bytes_Per_Second, namespace)
 	Burst_Size_Invariants(value.Burst, namespace)
 }
@@ -186,16 +186,16 @@ type Writer struct {
 }
 
 // Writer_Invariants rejects an uninitialized handle.
-func Writer_Invariants(value Writer, _ invariant.Namespace) {
-	invariant.Always(value.State != nil, "A diode writer has internal state.")
+func Writer_Invariants(value Writer, _ aver.Namespace) {
+	aver.Always(value.State != nil, "A diode writer has internal state.")
 }
 
 // Poll_Interval is one positive bounded idle wait.
 type Poll_Interval time.Duration
 
 // Poll_Interval_Invariants keeps polling below the process uptime bound.
-func Poll_Interval_Invariants(value Poll_Interval, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Poll_Interval_Invariants(value Poll_Interval, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int64(int64(value), int64(time.NANOSECOND), int64(time.DAY)).
 		Ensure()
 }
@@ -205,9 +205,9 @@ type Stored_Poll_Interval time.Duration
 
 // Stored_Poll_Interval_Invariants bounds caller configuration.
 func Stored_Poll_Interval_Invariants(
-	value Stored_Poll_Interval, namespace invariant.Namespace,
+	value Stored_Poll_Interval, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int64(int64(value), CONFIGURATION_MINIMUM, int64(time.DAY)).
 		Ensure()
 }
@@ -216,8 +216,8 @@ func Stored_Poll_Interval_Invariants(
 type Slots []unsafe.Pointer
 
 // Slots_Invariants requires active bounded ring storage.
-func Slots_Invariants(value Slots, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Slots_Invariants(value Slots, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), SLOT_COUNT_MINIMUM, SLOT_COUNT_MAXIMUM).
 		Ensure()
 }
@@ -226,8 +226,8 @@ func Slots_Invariants(value Slots, namespace invariant.Namespace) {
 type Sequence uint64
 
 // Sequence_Invariants states the fixed-width cursor domain.
-func Sequence_Invariants(value Sequence, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Sequence_Invariants(value Sequence, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint64(uint64(value), SEQUENCE_MINIMUM, SEQUENCE_MAXIMUM).
 		Ensure()
 }
@@ -236,8 +236,8 @@ func Sequence_Invariants(value Sequence, namespace invariant.Namespace) {
 type Token_Count int64
 
 // Token_Count_Invariants keeps the balance inside configured burst bounds.
-func Token_Count_Invariants(value Token_Count, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Token_Count_Invariants(value Token_Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int64(int64(value), CONFIGURATION_MINIMUM, int64(BURST_SIZE_MAXIMUM)).
 		Ensure()
 }
@@ -279,7 +279,7 @@ type Writer_State struct {
 }
 
 // Writer_State_Invariants composes the ring's bounded state.
-func Writer_State_Invariants(value Writer_State, namespace invariant.Namespace) {
+func Writer_State_Invariants(value Writer_State, namespace aver.Namespace) {
 	time.Clock_Invariants(value.Clock, namespace)
 	Poll_Interval_Invariants(value.Poll_Interval, namespace)
 	Slots_Invariants(value.Slots, namespace)
@@ -293,8 +293,8 @@ func Writer_State_Invariants(value Writer_State, namespace invariant.Namespace) 
 type Slot_Count int
 
 // Slot_Count_Invariants states the complete machine input domain.
-func Slot_Count_Invariants(value Slot_Count, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Slot_Count_Invariants(value Slot_Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), CONFIGURATION_MINIMUM, SLOT_COUNT_MAXIMUM).
 		Ensure()
 }
@@ -322,7 +322,7 @@ type New_Input struct {
 }
 
 // New_Input_Invariants composes every caller-stated bounded scalar.
-func New_Input_Invariants(value New_Input, namespace invariant.Namespace) {
+func New_Input_Invariants(value New_Input, namespace aver.Namespace) {
 	Slot_Count_Invariants(value.Count, namespace)
 	time.Clock_Invariants(value.Clock, namespace)
 	Stored_Poll_Interval_Invariants(value.Poll_Interval, namespace)
@@ -333,8 +333,8 @@ func New_Input_Invariants(value New_Input, namespace invariant.Namespace) {
 type Data []byte
 
 // Data_Invariants keeps pooled capacity from becoming retained hostile input.
-func Data_Invariants(value Data, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Data_Invariants(value Data, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), DATA_SIZE_MINIMUM, MAXIMUM_POOLED_BUFFER).
 		Ensure()
 }
@@ -343,8 +343,8 @@ func Data_Invariants(value Data, namespace invariant.Namespace) {
 type Data_Size int
 
 // Data_Size_Invariants applies the line storage bound.
-func Data_Size_Invariants(value Data_Size, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Data_Size_Invariants(value Data_Size, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), DATA_SIZE_MINIMUM, MAXIMUM_POOLED_BUFFER).
 		Ensure()
 }
@@ -365,7 +365,7 @@ type Bucket struct {
 }
 
 // Bucket_Invariants applies the line byte bound.
-func Bucket_Invariants(value Bucket, namespace invariant.Namespace) {
+func Bucket_Invariants(value Bucket, namespace aver.Namespace) {
 	Data_Invariants(value.Data, namespace)
 }
 

@@ -8,9 +8,9 @@ package time
 import (
 	"unsafe"
 
-	"local/james-orcales/shared/invariant/default"
 	"local/james-orcales/shared/math/bits"
 	"local/james-orcales/shared/math/fixedpoint"
+	"local/james-orcales/shared/simulation/aver/default"
 )
 
 // Moment is a clock reading in nanoseconds. Its epoch is arbitrary and belongs to one clock.
@@ -19,8 +19,8 @@ import (
 type Moment int64
 
 // Moment_Invariants state complete clock-reading domain.
-func Moment_Invariants(moment Moment, namespace invariant.Namespace) {
-	invariant.Tree(moment, namespace).
+func Moment_Invariants(moment Moment, namespace aver.Namespace) {
+	aver.Tree(moment, namespace).
 		Range_Int64(int64(moment), bits.INTEGER_64_MINIMUM, bits.INTEGER_64_MAXIMUM).
 		Ensure()
 }
@@ -29,8 +29,8 @@ func Moment_Invariants(moment Moment, namespace invariant.Namespace) {
 type Duration int64
 
 // Duration_Invariants state complete nanosecond-span domain.
-func Duration_Invariants(duration Duration, namespace invariant.Namespace) {
-	invariant.Tree(duration, namespace).
+func Duration_Invariants(duration Duration, namespace aver.Namespace) {
+	aver.Tree(duration, namespace).
 		Range_Int64(int64(duration), bits.INTEGER_64_MINIMUM, bits.INTEGER_64_MAXIMUM).
 		Ensure()
 }
@@ -208,8 +208,8 @@ const ZONE_OFFSET_SECONDS_UTC = ZONE_OFFSET_SECONDS_MINIMUM - ZONE_OFFSET_SECOND
 type Nanosecond_Count int32
 
 // Nanosecond_Count_Invariants rejects fraction outside one second.
-func Nanosecond_Count_Invariants(value Nanosecond_Count, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Nanosecond_Count_Invariants(value Nanosecond_Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int32(int32(value), NANOSECOND_COUNT_MINIMUM, NANOSECOND_COUNT_MAXIMUM).
 		Ensure()
 }
@@ -219,9 +219,9 @@ type Zone_Offset_Seconds int32
 
 // Zone_Offset_Seconds_Invariants rejects offsets outside current civil range.
 func Zone_Offset_Seconds_Invariants(
-	value Zone_Offset_Seconds, namespace invariant.Namespace,
+	value Zone_Offset_Seconds, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int32(int32(value), ZONE_OFFSET_SECONDS_MINIMUM, ZONE_OFFSET_SECONDS_MAXIMUM).
 		Ensure()
 }
@@ -230,8 +230,8 @@ func Zone_Offset_Seconds_Invariants(
 type Unix_Second_Count int64
 
 // Unix_Second_Count_Invariants prevents later nanosecond conversion overflow.
-func Unix_Second_Count_Invariants(value Unix_Second_Count, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Unix_Second_Count_Invariants(value Unix_Second_Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int64(int64(value), UNIX_SECOND_COUNT_MINIMUM, UNIX_SECOND_COUNT_MAXIMUM).
 		Ensure()
 }
@@ -240,8 +240,8 @@ func Unix_Second_Count_Invariants(value Unix_Second_Count, namespace invariant.N
 type Calendar_Day_Count int64
 
 // Calendar_Day_Count_Invariants keeps Gregorian arithmetic inside Moment domain.
-func Calendar_Day_Count_Invariants(value Calendar_Day_Count, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Calendar_Day_Count_Invariants(value Calendar_Day_Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int64(int64(value), CALENDAR_DAY_COUNT_MINIMUM, CALENDAR_DAY_COUNT_MAXIMUM).
 		Ensure()
 }
@@ -250,8 +250,8 @@ func Calendar_Day_Count_Invariants(value Calendar_Day_Count, namespace invariant
 type Civil_Year int64
 
 // Civil_Year_Invariants includes partial years at both Moment boundaries.
-func Civil_Year_Invariants(value Civil_Year, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Civil_Year_Invariants(value Civil_Year, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int64(int64(value), CIVIL_YEAR_MINIMUM, CIVIL_YEAR_MAXIMUM).
 		Ensure()
 }
@@ -260,8 +260,8 @@ func Civil_Year_Invariants(value Civil_Year, namespace invariant.Namespace) {
 type Civil_Month int
 
 // Civil_Month_Invariants rejects non-calendar month numbers.
-func Civil_Month_Invariants(value Civil_Month, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Civil_Month_Invariants(value Civil_Month, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), CIVIL_MONTH_MINIMUM, CIVIL_MONTH_MAXIMUM).
 		Ensure()
 }
@@ -270,8 +270,8 @@ func Civil_Month_Invariants(value Civil_Month, namespace invariant.Namespace) {
 type Civil_Day int
 
 // Civil_Day_Invariants rejects numbers no Gregorian month can contain.
-func Civil_Day_Invariants(value Civil_Day, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Civil_Day_Invariants(value Civil_Day, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), CIVIL_DAY_MINIMUM, CIVIL_DAY_MAXIMUM).
 		Ensure()
 }
@@ -280,8 +280,8 @@ func Civil_Day_Invariants(value Civil_Day, namespace invariant.Namespace) {
 type Day_Second_Count int64
 
 // Day_Second_Count_Invariants rejects seconds outside one civil day.
-func Day_Second_Count_Invariants(value Day_Second_Count, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Day_Second_Count_Invariants(value Day_Second_Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int64(int64(value), DAY_SECOND_COUNT_MINIMUM, DAY_SECOND_COUNT_MAXIMUM).
 		Ensure()
 }
@@ -390,8 +390,8 @@ const MONOTONIC_MOMENT_MINIMUM Monotonic_Moment = 0
 const MONOTONIC_MOMENT_MAXIMUM Monotonic_Moment = Monotonic_Moment(DAY * 365)
 
 // Monotonic_Moment_Invariants state complete uptime domain.
-func Monotonic_Moment_Invariants(moment Monotonic_Moment, namespace invariant.Namespace) {
-	invariant.Tree(moment, namespace).
+func Monotonic_Moment_Invariants(moment Monotonic_Moment, namespace aver.Namespace) {
+	aver.Tree(moment, namespace).
 		Range_Int64(
 			int64(moment),
 			int64(MONOTONIC_MOMENT_MINIMUM),
@@ -427,11 +427,11 @@ func Clock_Now_Realtime(clock Clock) (moment Moment) {
 // Clock_Invariants state both readers bound. Clock is vtable. One property only:
 // every slot full. Zero Clock read as Clock, then panic on first use. Backend that
 // fill one slot and forget other fail one call later.
-func Clock_Invariants(clock Clock, namespace invariant.Namespace) {
-	invariant.Always(
+func Clock_Invariants(clock Clock, namespace aver.Namespace) {
+	aver.Always(
 		clock.Now_Monotonic != nil, "A Clock has a monotonic reader.",
 	)
-	invariant.Always(
+	aver.Always(
 		clock.Now_Realtime != nil, "A Clock has a realtime reader.",
 	)
 }
@@ -440,8 +440,8 @@ func Clock_Invariants(clock Clock, namespace invariant.Namespace) {
 type Tick_Count int64
 
 // Tick_Count_Invariants state complete tick-count domain.
-func Tick_Count_Invariants(ticks Tick_Count, namespace invariant.Namespace) {
-	invariant.Tree(ticks, namespace).
+func Tick_Count_Invariants(ticks Tick_Count, namespace aver.Namespace) {
+	aver.Tree(ticks, namespace).
 		Range_Int64(int64(ticks), bits.INTEGER_64_MINIMUM, bits.INTEGER_64_MAXIMUM).
 		Ensure()
 }
@@ -471,14 +471,14 @@ type Virtual_Clock struct {
 }
 
 // Virtual_Clock_Invariants leaves skew coefficients to their own typed invariant chain.
-func Virtual_Clock_Invariants(virtual Virtual_Clock, namespace invariant.Namespace) {
+func Virtual_Clock_Invariants(virtual Virtual_Clock, namespace aver.Namespace) {
 	Duration_Invariants(virtual.Resolution, namespace)
 	Moment_Invariants(virtual.Epoch, namespace)
 }
 
 // Virtual_Clock_To_Clock binds caller-owned state without a captured function environment.
 func Virtual_Clock_To_Clock(virtual *Virtual_Clock) (clock Clock) {
-	invariant.Always(virtual != nil, "A virtual clock has caller-owned state.")
+	aver.Always(virtual != nil, "A virtual clock has caller-owned state.")
 	Virtual_Clock_Invariants(*virtual, "virtual_clock_to_clock.virtual")
 	virtual.Ticks = 0
 	clock = Clock{
@@ -492,7 +492,7 @@ func Virtual_Clock_To_Clock(virtual *Virtual_Clock) (clock Clock) {
 
 // Virtual_Clock_Tick keeps advancement with the root that owns mutable clock state.
 func Virtual_Clock_Tick(virtual *Virtual_Clock) {
-	invariant.Always(virtual != nil, "A tick advances caller-owned virtual-clock state.")
+	aver.Always(virtual != nil, "A tick advances caller-owned virtual-clock state.")
 	virtual.Ticks++
 }
 
@@ -525,8 +525,8 @@ type Skew_Kind uint8
 
 // Skew_Kind_Invariants hold kind to three models that Skew build. Default arm of that switch
 // is linear model. Unlisted kind would drift in silence, not fail.
-func Skew_Kind_Invariants(kind Skew_Kind, namespace invariant.Namespace) {
-	invariant.Tree(kind, namespace).
+func Skew_Kind_Invariants(kind Skew_Kind, namespace aver.Namespace) {
+	aver.Tree(kind, namespace).
 		Enum_3_Uint8(
 			uint8(kind),
 			uint8(SKEW_KIND_LINEAR),

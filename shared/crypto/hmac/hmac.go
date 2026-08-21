@@ -11,8 +11,8 @@ import (
 	"local/james-orcales/shared/crypto/sha512"
 	"local/james-orcales/shared/crypto/subtle"
 	"local/james-orcales/shared/encoding/binary"
-	"local/james-orcales/shared/invariant/default"
 	"local/james-orcales/shared/math/bits"
+	"local/james-orcales/shared/simulation/aver/default"
 )
 
 // KIND_MD5 selects RFC 1321 compression.
@@ -125,8 +125,8 @@ const HASH_STATE_WORD_COUNT = (int(unsafe.Sizeof(sha512.Digest{})) +
 type Kind uint8
 
 // Kind_Invariants covers contiguous supported algorithms.
-func Kind_Invariants(value Kind, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Kind_Invariants(value Kind, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint8(uint8(value), uint8(KIND_MD5), uint8(KIND_SHA_512)).
 		Ensure()
 }
@@ -135,8 +135,8 @@ func Kind_Invariants(value Kind, namespace invariant.Namespace) {
 type Key []byte
 
 // Key_Invariants bounds initialization work without inspecting key bytes.
-func Key_Invariants(value Key, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Key_Invariants(value Key, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), KEY_SIZE_MINIMUM, KEY_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -145,8 +145,8 @@ func Key_Invariants(value Key, namespace invariant.Namespace) {
 type Reduced_Key []byte
 
 // Reduced_Key_Invariants narrows hash_key to reachable key lengths.
-func Reduced_Key_Invariants(value Reduced_Key, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Reduced_Key_Invariants(value Reduced_Key, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), REDUCED_KEY_SIZE_MINIMUM, KEY_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -155,8 +155,8 @@ func Reduced_Key_Invariants(value Reduced_Key, namespace invariant.Namespace) {
 type Source []byte
 
 // Source_Invariants bounds write work without inspecting message bytes.
-func Source_Invariants(value Source, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Source_Invariants(value Source, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), SOURCE_SIZE_MINIMUM, SOURCE_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -165,8 +165,8 @@ func Source_Invariants(value Source, namespace invariant.Namespace) {
 type Destination []byte
 
 // Destination_Invariants binds output storage to repository byte limits.
-func Destination_Invariants(value Destination, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Destination_Invariants(value Destination, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), DESTINATION_SIZE_MINIMUM, DESTINATION_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -175,8 +175,8 @@ func Destination_Invariants(value Destination, namespace invariant.Namespace) {
 type Tag []byte
 
 // Tag_Invariants bounds equality work without inspecting tag bytes.
-func Tag_Invariants(value Tag, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Tag_Invariants(value Tag, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), TAG_SIZE_MINIMUM, TAG_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -185,8 +185,8 @@ func Tag_Invariants(value Tag, namespace invariant.Namespace) {
 type Count int
 
 // Count_Invariants covers complete source consumption.
-func Count_Invariants(value Count, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Count_Invariants(value Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), COUNT_MINIMUM, COUNT_MAXIMUM).
 		Ensure()
 }
@@ -195,8 +195,8 @@ func Count_Invariants(value Count, namespace invariant.Namespace) {
 type Output_Count uint8
 
 // Output_Count_Invariants spans supported tag widths.
-func Output_Count_Invariants(value Output_Count, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Output_Count_Invariants(value Output_Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint8(
 			uint8(value), uint8(OUTPUT_COUNT_MINIMUM), uint8(OUTPUT_COUNT_MAXIMUM),
 		).
@@ -207,8 +207,8 @@ func Output_Count_Invariants(value Output_Count, namespace invariant.Namespace) 
 type Output_Status uint8
 
 // Output_Status_Invariants covers complete and short output.
-func Output_Status_Invariants(value Output_Status, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Output_Status_Invariants(value Output_Status, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_Uint8(uint8(value), uint8(OUTPUT_STATUS_OK), uint8(OUTPUT_STATUS_TOO_SMALL)).
 		Ensure()
 }
@@ -217,8 +217,8 @@ func Output_Status_Invariants(value Output_Status, namespace invariant.Namespace
 type Size uint8
 
 // Size_Invariants spans supported tag widths.
-func Size_Invariants(value Size, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Size_Invariants(value Size, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint8(uint8(value), DIGEST_SIZE_MINIMUM, DIGEST_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -227,8 +227,8 @@ func Size_Invariants(value Size, namespace invariant.Namespace) {
 type Block_Size uint8
 
 // Block_Size_Invariants spans supported block widths.
-func Block_Size_Invariants(value Block_Size, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Block_Size_Invariants(value Block_Size, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint8(uint8(value), BLOCK_SIZE_MINIMUM, BLOCK_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -237,16 +237,16 @@ func Block_Size_Invariants(value Block_Size, namespace invariant.Namespace) {
 type Ready [READY_WORD_COUNT]byte
 
 // Ready_Invariants fixes caller-state identity storage width.
-func Ready_Invariants(value Ready, _ invariant.Namespace) {
-	invariant.Always(len(value) == READY_WORD_COUNT, "HMAC identity has fixed width.")
+func Ready_Invariants(value Ready, _ aver.Namespace) {
+	aver.Always(len(value) == READY_WORD_COUNT, "HMAC identity has fixed width.")
 }
 
 // Equality exposes constant-time comparison result.
 type Equality bool
 
 // Equality_Invariants covers equal and unequal tags.
-func Equality_Invariants(value Equality, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Equality_Invariants(value Equality, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Sometimes(bool(value), "HMAC tags are equal.").
 		Ensure()
 }
@@ -255,24 +255,24 @@ func Equality_Invariants(value Equality, namespace invariant.Namespace) {
 type Value [DIGEST_SIZE_MAXIMUM]byte
 
 // Value_Invariants fixes caller-independent return width.
-func Value_Invariants(value Value, _ invariant.Namespace) {
-	invariant.Always(len(value) == DIGEST_SIZE_MAXIMUM, "HMAC value has fixed width.")
+func Value_Invariants(value Value, _ aver.Namespace) {
+	aver.Always(len(value) == DIGEST_SIZE_MAXIMUM, "HMAC value has fixed width.")
 }
 
 // Pad holds widest RFC 2104 compression pad.
 type Pad [BLOCK_SIZE_MAXIMUM]byte
 
 // Pad_Invariants fixes stack-owned pad capacity.
-func Pad_Invariants(value Pad, _ invariant.Namespace) {
-	invariant.Always(len(value) == BLOCK_SIZE_MAXIMUM, "HMAC pad has fixed width.")
+func Pad_Invariants(value Pad, _ aver.Namespace) {
+	aver.Always(len(value) == BLOCK_SIZE_MAXIMUM, "HMAC pad has fixed width.")
 }
 
 // Initial_State stores selected keyed inner baseline in aligned caller storage.
 type Initial_State [HASH_STATE_WORD_COUNT]uint64
 
 // Initial_State_Invariants proves widest digest fits without heap storage.
-func Initial_State_Invariants(value Initial_State, _ invariant.Namespace) {
-	invariant.Always(
+func Initial_State_Invariants(value Initial_State, _ aver.Namespace) {
+	aver.Always(
 		len(value) == HASH_STATE_WORD_COUNT,
 		"HMAC initial state has fixed width.",
 	)
@@ -282,16 +282,16 @@ func Initial_State_Invariants(value Initial_State, _ invariant.Namespace) {
 type Inner_State [HASH_STATE_WORD_COUNT]uint64
 
 // Inner_State_Invariants proves widest digest fits without heap storage.
-func Inner_State_Invariants(value Inner_State, _ invariant.Namespace) {
-	invariant.Always(len(value) == HASH_STATE_WORD_COUNT, "HMAC inner state has fixed width.")
+func Inner_State_Invariants(value Inner_State, _ aver.Namespace) {
+	aver.Always(len(value) == HASH_STATE_WORD_COUNT, "HMAC inner state has fixed width.")
 }
 
 // Outer_State stores selected keyed outer digest in aligned caller storage.
 type Outer_State [HASH_STATE_WORD_COUNT]uint64
 
 // Outer_State_Invariants proves widest digest fits without heap storage.
-func Outer_State_Invariants(value Outer_State, _ invariant.Namespace) {
-	invariant.Always(len(value) == HASH_STATE_WORD_COUNT, "HMAC outer state has fixed width.")
+func Outer_State_Invariants(value Outer_State, _ aver.Namespace) {
+	aver.Always(len(value) == HASH_STATE_WORD_COUNT, "HMAC outer state has fixed width.")
 }
 
 // Digest keeps selected inner, initial, and outer states in caller storage.
@@ -309,7 +309,7 @@ type Digest struct {
 }
 
 // Digest_Invariants composes selector, identity, and aligned fixed-capacity hash states.
-func Digest_Invariants(value Digest, namespace invariant.Namespace) {
+func Digest_Invariants(value Digest, namespace aver.Namespace) {
 	Kind_Invariants(value.Kind, namespace)
 	Ready_Invariants(value.Ready, namespace)
 	Initial_State_Invariants(value.Initial, namespace)
@@ -758,7 +758,7 @@ func digest_require(digest *Digest) {
 	if digest.Kind > KIND_SHA_512 {
 		panic("hmac: kind is invalid")
 	}
-	invariant.Always(
+	aver.Always(
 		digest.Ready[READY_INDEX] == READY_COMPLETE_MARKER,
 		"HMAC operations require Digest_Init.",
 	)

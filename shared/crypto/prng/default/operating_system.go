@@ -6,7 +6,7 @@ package prng
 import (
 	"local/james-orcales/shared/crypto/prng"
 
-	"local/james-orcales/shared/invariant/default"
+	"local/james-orcales/shared/simulation/aver/default"
 )
 
 // SEED_BYTE_COUNT gives ChaCha20 the full key width from one operating-system read.
@@ -23,10 +23,10 @@ func New_Operating_System_Chacha(
 		prng.Chacha_Invariants(generator, "new_operating_system_chacha.generator")
 	}()
 	prng.Cursor_Invariants(position, "new_operating_system_chacha.position")
-	invariant.Always(read != nil, "operating system entropy reader is injected")
+	aver.Always(read != nil, "operating system entropy reader is injected")
 	var seed [SEED_BYTE_COUNT]byte
 	count, read_error := read(seed[:])
-	invariant.Always(read_error == nil, "operating system entropy read succeeds")
-	invariant.Always(count == len(seed), "operating system entropy fills the complete seed")
+	aver.Always(read_error == nil, "operating system entropy read succeeds")
+	aver.Always(count == len(seed), "operating system entropy fills the complete seed")
 	return prng.New(seed, position)
 }

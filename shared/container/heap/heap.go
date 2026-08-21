@@ -5,7 +5,7 @@
 package heap
 
 import (
-	"local/james-orcales/shared/invariant/default"
+	"local/james-orcales/shared/simulation/aver/default"
 	"local/james-orcales/shared/slices"
 )
 
@@ -32,8 +32,8 @@ const CHILD_COUNT = 2
 type Position int
 
 // Position_Invariants states the complete element-position domain.
-func Position_Invariants(value Position, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Position_Invariants(value Position, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), POSITION_MINIMUM, POSITION_MAXIMUM).
 		Ensure()
 }
@@ -42,8 +42,8 @@ func Position_Invariants(value Position, namespace invariant.Namespace) {
 type Count int
 
 // Count_Invariants states the complete element-count domain.
-func Count_Invariants(value Count, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Count_Invariants(value Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), COUNT_MINIMUM, COUNT_MAXIMUM).
 		Ensure()
 }
@@ -52,8 +52,8 @@ func Count_Invariants(value Count, namespace invariant.Namespace) {
 type Boolean bool
 
 // Boolean_Invariants states both report results as obligations.
-func Boolean_Invariants(value Boolean, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Boolean_Invariants(value Boolean, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Sometimes(bool(value), "The heap report is true.").
 		Ensure()
 }
@@ -61,7 +61,7 @@ func Boolean_Invariants(value Boolean, namespace invariant.Namespace) {
 // Enforces the package-wide size boundary at one source root. One generic boundary avoids a
 // wrapper type that would discard a caller's named slice type.
 func enforce_heap[S ~[]E, E any](elements S) {
-	invariant.Always(
+	aver.Always(
 		len(elements) <= ELEMENT_COUNT_MAXIMUM,
 		"A heap boundary admits at most ELEMENT_COUNT_MAXIMUM elements.",
 	)
@@ -71,7 +71,7 @@ func enforce_heap[S ~[]E, E any](elements S) {
 // the largest admitted heap, thus only the slice states which of those positions exists.
 func enforce_position[S ~[]E, E any](elements S, position Position) {
 	Position_Invariants(position, "enforce_position.position")
-	invariant.Always(
+	aver.Always(
 		int(position) < len(elements),
 		"A heap position names an element that the slice holds.",
 	)
@@ -97,11 +97,11 @@ func Push[S ~[]E, E any](
 ) (result S) {
 	defer func() { enforce_heap(result) }()
 	enforce_heap(elements)
-	invariant.Always(
+	aver.Always(
 		len(elements) < ELEMENT_COUNT_MAXIMUM,
 		"A heap Push keeps room for the new element.",
 	)
-	invariant.Always(
+	aver.Always(
 		len(elements) < cap(elements),
 		"A heap Push uses room in caller-owned storage.",
 	)

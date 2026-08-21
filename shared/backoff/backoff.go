@@ -16,8 +16,8 @@ import (
 	"errors"
 	"unsafe"
 
-	"local/james-orcales/shared/invariant/default"
 	"local/james-orcales/shared/math/bits"
+	"local/james-orcales/shared/simulation/aver/default"
 	"local/james-orcales/shared/simulation/nbio"
 	"local/james-orcales/shared/simulation/prng"
 	"local/james-orcales/shared/simulation/time"
@@ -37,8 +37,8 @@ const DEFAULT_INTERVAL_MAX = 60 * time.SECOND
 type Initial_Interval time.Duration
 
 // Initial_Interval_Invariants bounds first delay to one process uptime year.
-func Initial_Interval_Invariants(interval Initial_Interval, namespace invariant.Namespace) {
-	invariant.Tree(interval, namespace).
+func Initial_Interval_Invariants(interval Initial_Interval, namespace aver.Namespace) {
+	aver.Tree(interval, namespace).
 		Range_Int64(int64(interval), INTERVAL_MINIMUM_INT64, INTERVAL_MAXIMUM_INT64).
 		Ensure()
 }
@@ -47,8 +47,8 @@ func Initial_Interval_Invariants(interval Initial_Interval, namespace invariant.
 type Current_Interval time.Duration
 
 // Current_Interval_Invariants bounds mutable exponential base.
-func Current_Interval_Invariants(interval Current_Interval, namespace invariant.Namespace) {
-	invariant.Tree(interval, namespace).
+func Current_Interval_Invariants(interval Current_Interval, namespace aver.Namespace) {
+	aver.Tree(interval, namespace).
 		Range_Int64(int64(interval), INTERVAL_MINIMUM_INT64, INTERVAL_MAXIMUM_INT64).
 		Ensure()
 }
@@ -57,8 +57,8 @@ func Current_Interval_Invariants(interval Current_Interval, namespace invariant.
 type Maximum_Interval time.Duration
 
 // Maximum_Interval_Invariants bounds exponential cap.
-func Maximum_Interval_Invariants(interval Maximum_Interval, namespace invariant.Namespace) {
-	invariant.Tree(interval, namespace).
+func Maximum_Interval_Invariants(interval Maximum_Interval, namespace aver.Namespace) {
+	aver.Tree(interval, namespace).
 		Range_Int64(int64(interval), INTERVAL_MINIMUM_INT64, INTERVAL_MAXIMUM_INT64).
 		Ensure()
 }
@@ -76,8 +76,8 @@ const INTERVAL_MAXIMUM_INT64 int64 = int64(INTERVAL_MAXIMUM)
 type Delay time.Duration
 
 // Delay_Invariants bounds delay to complete timeline duration domain.
-func Delay_Invariants(delay Delay, namespace invariant.Namespace) {
-	invariant.Tree(delay, namespace).
+func Delay_Invariants(delay Delay, namespace aver.Namespace) {
+	aver.Tree(delay, namespace).
 		Range_Int64(int64(delay), DELAY_MINIMUM, DELAY_MAXIMUM).
 		Ensure()
 }
@@ -92,8 +92,8 @@ const DELAY_MAXIMUM int64 = int64(INTERVAL_MAXIMUM)
 type Wait time.Duration
 
 // Wait_Invariants bounds nonnegative wait.
-func Wait_Invariants(wait Wait, namespace invariant.Namespace) {
-	invariant.Tree(wait, namespace).
+func Wait_Invariants(wait Wait, namespace aver.Namespace) {
+	aver.Tree(wait, namespace).
 		Range_Int64(int64(wait), INTERVAL_MINIMUM_INT64, INTERVAL_MAXIMUM_INT64).
 		Ensure()
 }
@@ -102,8 +102,8 @@ func Wait_Invariants(wait Wait, namespace invariant.Namespace) {
 type Retry_Delay time.Duration
 
 // Retry_Delay_Invariants bounds override wait.
-func Retry_Delay_Invariants(delay Retry_Delay, namespace invariant.Namespace) {
-	invariant.Tree(delay, namespace).
+func Retry_Delay_Invariants(delay Retry_Delay, namespace aver.Namespace) {
+	aver.Tree(delay, namespace).
 		Range_Int64(int64(delay), INTERVAL_MINIMUM_INT64, INTERVAL_MAXIMUM_INT64).
 		Ensure()
 }
@@ -112,8 +112,8 @@ func Retry_Delay_Invariants(delay Retry_Delay, namespace invariant.Namespace) {
 type Boolean bool
 
 // Boolean_Invariants requires both report values across package runs.
-func Boolean_Invariants(value Boolean, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Boolean_Invariants(value Boolean, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Sometimes(bool(value), "Backoff report is true.").
 		Ensure()
 }
@@ -132,9 +132,9 @@ type Multiplier_Numerator uint64
 
 // Multiplier_Numerator_Invariants preserves complete storage while constructor validates use.
 func Multiplier_Numerator_Invariants(
-	value Multiplier_Numerator, namespace invariant.Namespace,
+	value Multiplier_Numerator, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Uint64(
 			uint64(value), RATIO_PART_POSITIVE_MINIMUM, RATIO_PART_MAXIMUM,
 		).
@@ -146,9 +146,9 @@ type Multiplier_Denominator uint64
 
 // Multiplier_Denominator_Invariants preserves complete storage while constructor validates use.
 func Multiplier_Denominator_Invariants(
-	value Multiplier_Denominator, namespace invariant.Namespace,
+	value Multiplier_Denominator, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Uint64(
 			uint64(value), RATIO_PART_POSITIVE_MINIMUM, RATIO_PART_MAXIMUM,
 		).
@@ -164,10 +164,10 @@ type Multiplier struct {
 }
 
 // Multiplier_Invariants rejects a shrinking interval.
-func Multiplier_Invariants(multiplier Multiplier, namespace invariant.Namespace) {
+func Multiplier_Invariants(multiplier Multiplier, namespace aver.Namespace) {
 	Multiplier_Numerator_Invariants(multiplier.Numerator, namespace)
 	Multiplier_Denominator_Invariants(multiplier.Denominator, namespace)
-	invariant.Always(
+	aver.Always(
 		multiplier.Numerator >= Multiplier_Numerator(multiplier.Denominator),
 		"Multiplier never shrinks interval.",
 	)
@@ -177,8 +177,8 @@ func Multiplier_Invariants(multiplier Multiplier, namespace invariant.Namespace)
 type Jitter_Numerator uint64
 
 // Jitter_Numerator_Invariants preserves every representable spread mass.
-func Jitter_Numerator_Invariants(value Jitter_Numerator, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Jitter_Numerator_Invariants(value Jitter_Numerator, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint64(uint64(value), RATIO_PART_MINIMUM, RATIO_PART_MAXIMUM).
 		Ensure()
 }
@@ -187,8 +187,8 @@ func Jitter_Numerator_Invariants(value Jitter_Numerator, namespace invariant.Nam
 type Jitter_Denominator uint64
 
 // Jitter_Denominator_Invariants preserves complete storage while constructor validates use.
-func Jitter_Denominator_Invariants(value Jitter_Denominator, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Jitter_Denominator_Invariants(value Jitter_Denominator, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint64(
 			uint64(value), RATIO_PART_POSITIVE_MINIMUM, RATIO_PART_MAXIMUM,
 		).
@@ -204,10 +204,10 @@ type Jitter struct {
 }
 
 // Jitter_Invariants rejects spread beyond a complete interval.
-func Jitter_Invariants(jitter Jitter, namespace invariant.Namespace) {
+func Jitter_Invariants(jitter Jitter, namespace aver.Namespace) {
 	Jitter_Numerator_Invariants(jitter.Numerator, namespace)
 	Jitter_Denominator_Invariants(jitter.Denominator, namespace)
-	invariant.Always(
+	aver.Always(
 		jitter.Numerator <= Jitter_Numerator(jitter.Denominator),
 		"Jitter never exceeds complete interval.",
 	)
@@ -218,9 +218,9 @@ type Stored_Multiplier_Numerator uint64
 
 // Stored_Multiplier_Numerator_Invariants spans complete caller storage.
 func Stored_Multiplier_Numerator_Invariants(
-	value Stored_Multiplier_Numerator, namespace invariant.Namespace,
+	value Stored_Multiplier_Numerator, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Uint64(uint64(value), RATIO_PART_MINIMUM, RATIO_PART_MAXIMUM).
 		Ensure()
 }
@@ -230,9 +230,9 @@ type Stored_Multiplier_Denominator uint64
 
 // Stored_Multiplier_Denominator_Invariants spans complete caller storage.
 func Stored_Multiplier_Denominator_Invariants(
-	value Stored_Multiplier_Denominator, namespace invariant.Namespace,
+	value Stored_Multiplier_Denominator, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Uint64(uint64(value), RATIO_PART_MINIMUM, RATIO_PART_MAXIMUM).
 		Ensure()
 }
@@ -246,7 +246,7 @@ type Stored_Multiplier struct {
 }
 
 // Stored_Multiplier_Invariants composes complete caller storage.
-func Stored_Multiplier_Invariants(value Stored_Multiplier, namespace invariant.Namespace) {
+func Stored_Multiplier_Invariants(value Stored_Multiplier, namespace aver.Namespace) {
 	Stored_Multiplier_Numerator_Invariants(value.Numerator, namespace)
 	Stored_Multiplier_Denominator_Invariants(value.Denominator, namespace)
 }
@@ -256,9 +256,9 @@ type Stored_Jitter_Numerator uint64
 
 // Stored_Jitter_Numerator_Invariants spans complete caller storage.
 func Stored_Jitter_Numerator_Invariants(
-	value Stored_Jitter_Numerator, namespace invariant.Namespace,
+	value Stored_Jitter_Numerator, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Uint64(uint64(value), RATIO_PART_MINIMUM, RATIO_PART_MAXIMUM).
 		Ensure()
 }
@@ -268,9 +268,9 @@ type Stored_Jitter_Denominator uint64
 
 // Stored_Jitter_Denominator_Invariants spans complete caller storage.
 func Stored_Jitter_Denominator_Invariants(
-	value Stored_Jitter_Denominator, namespace invariant.Namespace,
+	value Stored_Jitter_Denominator, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Uint64(uint64(value), RATIO_PART_MINIMUM, RATIO_PART_MAXIMUM).
 		Ensure()
 }
@@ -284,7 +284,7 @@ type Stored_Jitter struct {
 }
 
 // Stored_Jitter_Invariants composes complete caller storage.
-func Stored_Jitter_Invariants(value Stored_Jitter, namespace invariant.Namespace) {
+func Stored_Jitter_Invariants(value Stored_Jitter, namespace aver.Namespace) {
 	Stored_Jitter_Numerator_Invariants(value.Numerator, namespace)
 	Stored_Jitter_Denominator_Invariants(value.Denominator, namespace)
 }
@@ -293,8 +293,8 @@ func Stored_Jitter_Invariants(value Stored_Jitter, namespace invariant.Namespace
 type Generator_Storage prng.Xoshiro
 
 // Generator_Storage_Invariants fixes the xoshiro state width without requiring initialization.
-func Generator_Storage_Invariants(generator Generator_Storage, _ invariant.Namespace) {
-	invariant.Always(
+func Generator_Storage_Invariants(generator Generator_Storage, _ aver.Namespace) {
+	aver.Always(
 		len(generator.State) == prng.XOSHIRO_STATE_WORD_COUNT,
 		"Generator storage keeps the xoshiro state width.",
 	)
@@ -304,8 +304,8 @@ func Generator_Storage_Invariants(generator Generator_Storage, _ invariant.Names
 type Required_Generator *prng.Xoshiro
 
 // Required_Generator_Invariants rejects missing entropy before dereferencing caller storage.
-func Required_Generator_Invariants(generator Required_Generator, namespace invariant.Namespace) {
-	invariant.Always(generator != nil, "Jitter has caller-owned entropy.")
+func Required_Generator_Invariants(generator Required_Generator, namespace aver.Namespace) {
+	aver.Always(generator != nil, "Jitter has caller-owned entropy.")
 	prng.Xoshiro_Invariants(*generator, namespace)
 }
 
@@ -330,17 +330,17 @@ type Policy struct {
 }
 
 // Policy_Invariants requires complete static procedure table.
-func Policy_Invariants(policy Policy, _ invariant.Namespace) {
-	invariant.Always(policy.Next != nil, "Policy has next procedure.")
-	invariant.Always(policy.Reset != nil, "Policy has reset procedure.")
+func Policy_Invariants(policy Policy, _ aver.Namespace) {
+	aver.Always(policy.Next != nil, "Policy has next procedure.")
+	aver.Always(policy.Reset != nil, "Policy has reset procedure.")
 }
 
 // Policy_Kind selects closed retry strategy.
 type Policy_Kind uint8
 
 // Policy_Kind_Invariants closes dispatch to implemented strategies.
-func Policy_Kind_Invariants(kind Policy_Kind, namespace invariant.Namespace) {
-	invariant.Tree(kind, namespace).
+func Policy_Kind_Invariants(kind Policy_Kind, namespace aver.Namespace) {
+	aver.Tree(kind, namespace).
 		Enum_3_Uint8(
 			uint8(kind), uint8(POLICY_KIND_CONSTANT), uint8(POLICY_KIND_STOPPED),
 			uint8(POLICY_KIND_EXPONENTIAL),
@@ -376,7 +376,7 @@ type Policy_State struct {
 }
 
 // Policy_State_Invariants closes kind and bounds interval state.
-func Policy_State_Invariants(state Policy_State, namespace invariant.Namespace) {
+func Policy_State_Invariants(state Policy_State, namespace aver.Namespace) {
 	Policy_Kind_Invariants(state.Kind, namespace)
 	Initial_Interval_Invariants(state.Initial_Interval, namespace)
 	Current_Interval_Invariants(state.Current_Interval, namespace)
@@ -384,7 +384,7 @@ func Policy_State_Invariants(state Policy_State, namespace invariant.Namespace) 
 	Stored_Multiplier_Invariants(state.Multiplier, namespace)
 	Stored_Jitter_Invariants(state.Jitter, namespace)
 	Generator_Storage_Invariants(state.Generator, namespace)
-	invariant.Always(
+	aver.Always(
 		state.Initial_Interval <= Initial_Interval(state.Interval_Max),
 		"Policy initial interval fits maximum.",
 	)
@@ -448,13 +448,13 @@ type Exponential_Input struct {
 }
 
 // Exponential_Input_Invariants bounds configured duration and ratio domains.
-func Exponential_Input_Invariants(input Exponential_Input, namespace invariant.Namespace) {
+func Exponential_Input_Invariants(input Exponential_Input, namespace aver.Namespace) {
 	Initial_Interval_Invariants(input.Initial_Interval, namespace)
 	Maximum_Interval_Invariants(input.Interval_Max, namespace)
 	Multiplier_Invariants(input.Multiplier, namespace)
 	Jitter_Invariants(input.Jitter, namespace)
 	prng.Xoshiro_Invariants(input.Generator, namespace)
-	invariant.Always(
+	aver.Always(
 		input.Initial_Interval <= Initial_Interval(input.Interval_Max),
 		"Exponential initial interval fits maximum.",
 	)
@@ -637,8 +637,8 @@ type Permanent_Error struct {
 }
 
 // Permanent_Error_Invariants requires original failure.
-func Permanent_Error_Invariants(permanent Permanent_Error, _ invariant.Namespace) {
-	invariant.Always((&permanent).Error() != "", "Permanent error has text.")
+func Permanent_Error_Invariants(permanent Permanent_Error, _ aver.Namespace) {
+	aver.Always((&permanent).Error() != "", "Permanent error has text.")
 }
 
 // Error satisfies error without formatting storage.
@@ -657,9 +657,9 @@ type Retry_After_Error struct {
 
 // Retry_After_Error_Invariants bounds override delay and requires original failure.
 func Retry_After_Error_Invariants(
-	retry_after *Retry_After_Error, namespace invariant.Namespace,
+	retry_after *Retry_After_Error, namespace aver.Namespace,
 ) {
-	invariant.Always(retry_after != nil, "Retry-after error has caller storage.")
+	aver.Always(retry_after != nil, "Retry-after error has caller storage.")
 	Retry_Delay_Invariants(retry_after.Duration, namespace)
 }
 
@@ -685,8 +685,8 @@ type Exhausted_Error struct {
 }
 
 // Exhausted_Error_Invariants requires final failed attempt.
-func Exhausted_Error_Invariants(exhausted Exhausted_Error, _ invariant.Namespace) {
-	invariant.Always((&exhausted).Error() != "", "Exhausted error has text.")
+func Exhausted_Error_Invariants(exhausted Exhausted_Error, _ aver.Namespace) {
+	aver.Always((&exhausted).Error() != "", "Exhausted error has text.")
 }
 
 // Error satisfies error without formatting storage.
@@ -701,8 +701,8 @@ type Elapsed_Limit_Error struct {
 }
 
 // Elapsed_Error_Max_Invariants requires final failure.
-func Elapsed_Limit_Error_Invariants(elapsed Elapsed_Limit_Error, _ invariant.Namespace) {
-	invariant.Always((&elapsed).Error() != "", "Elapsed error has text.")
+func Elapsed_Limit_Error_Invariants(elapsed Elapsed_Limit_Error, _ aver.Namespace) {
+	aver.Always((&elapsed).Error() != "", "Elapsed error has text.")
 }
 
 // Error satisfies error without formatting storage.
@@ -735,8 +735,8 @@ type Operation[T any] func(state *Retry_State[T]) (result T, err error)
 type Try_Count uint
 
 // Try_Count_Invariants bounds attempt count to shared collection capacity.
-func Try_Count_Invariants(count Try_Count, namespace invariant.Namespace) {
-	invariant.Tree(count, namespace).
+func Try_Count_Invariants(count Try_Count, namespace aver.Namespace) {
+	aver.Tree(count, namespace).
 		Range_Uint(uint(count), TRY_COUNT_MINIMUM_UINT, TRY_COUNT_MAXIMUM_UINT).
 		Ensure()
 }
@@ -760,8 +760,8 @@ const TRY_COUNT_MINIMUM_UINT uint = uint(TRY_COUNT_MINIMUM)
 type Attempt_Count uint
 
 // Attempt_Count_Invariants bounds progress by attempt capacity.
-func Attempt_Count_Invariants(count Attempt_Count, namespace invariant.Namespace) {
-	invariant.Tree(count, namespace).
+func Attempt_Count_Invariants(count Attempt_Count, namespace aver.Namespace) {
+	aver.Tree(count, namespace).
 		Range_Uint(uint(count), COUNT_MINIMUM_UINT, TRY_COUNT_MAXIMUM_UINT).
 		Ensure()
 }
@@ -770,8 +770,8 @@ func Attempt_Count_Invariants(count Attempt_Count, namespace invariant.Namespace
 type Elapsed_Limit time.Duration
 
 // Elapsed_Limit_Invariants keeps retry timeline inside process uptime.
-func Elapsed_Limit_Invariants(limit Elapsed_Limit, namespace invariant.Namespace) {
-	invariant.Tree(limit, namespace).
+func Elapsed_Limit_Invariants(limit Elapsed_Limit, namespace aver.Namespace) {
+	aver.Tree(limit, namespace).
 		Range_Int64(int64(limit), INTERVAL_MINIMUM_INT64, INTERVAL_MAXIMUM_INT64).
 		Ensure()
 }
@@ -780,8 +780,8 @@ func Elapsed_Limit_Invariants(limit Elapsed_Limit, namespace invariant.Namespace
 type Started_Moment time.Monotonic_Moment
 
 // Started_Moment_Invariants keeps retry origin inside process uptime.
-func Started_Moment_Invariants(started Started_Moment, namespace invariant.Namespace) {
-	invariant.Tree(started, namespace).
+func Started_Moment_Invariants(started Started_Moment, namespace aver.Namespace) {
+	aver.Tree(started, namespace).
 		Range_Int64(int64(started), INTERVAL_MINIMUM_INT64, INTERVAL_MAXIMUM_INT64).
 		Ensure()
 }
@@ -803,7 +803,7 @@ type Retry_Input struct {
 }
 
 // Retry_Input_Invariants bounds total attempts.
-func Retry_Input_Invariants(input Retry_Input, namespace invariant.Namespace) {
+func Retry_Input_Invariants(input Retry_Input, namespace aver.Namespace) {
 	nbio.Timeline_Invariants(input.Timer, namespace)
 	Policy_Invariants(input.Policy, namespace)
 	Try_Count_Invariants(input.Tries_Max, namespace)
@@ -838,15 +838,15 @@ type Retry_State[T any] struct {
 }
 
 // Retry_State_Invariants keeps attempt count inside configured bound.
-func Retry_State_Invariants[T any](state *Retry_State[T], namespace invariant.Namespace) {
-	invariant.Always(state != nil, "Retry has caller state.")
+func Retry_State_Invariants[T any](state *Retry_State[T], namespace aver.Namespace) {
+	aver.Always(state != nil, "Retry has caller state.")
 	Retry_Input_Invariants(state.Input, namespace)
 	Boolean_Invariants(state.Stopped, namespace)
 	Attempt_Count_Invariants(state.Try_Count, namespace)
 	Started_Moment_Invariants(state.Started, namespace)
 	Exhausted_Error_Invariants(state.Exhausted, namespace)
 	Elapsed_Limit_Error_Invariants(state.Elapsed, namespace)
-	invariant.Always(
+	aver.Always(
 		state.Try_Count <= Attempt_Count(state.Input.Tries_Max),
 		"Retry state attempt count stays within configured bound.",
 	)
@@ -858,8 +858,8 @@ func Retry[T any](
 	state *Retry_State[T], operation Operation[T],
 ) {
 	Retry_State_Invariants(state, "retry.state")
-	invariant.Always(operation != nil, "Retry has operation.")
-	invariant.Always(!state.Completion.Armed, "Retry state has no armed wait.")
+	aver.Always(operation != nil, "Retry has operation.")
+	aver.Always(!state.Completion.Armed, "Retry state has no armed wait.")
 	state.Operation = operation
 	var zero T
 	state.Result = zero
@@ -887,7 +887,7 @@ func Retry_Rearm[T any](state *Retry_State[T]) (rearmed Boolean) {
 	if state.Completion.Data != RETRY_WORK_READY {
 		return false
 	}
-	invariant.Always(state.Operation != nil, "Active Retry has operation.")
+	aver.Always(state.Operation != nil, "Active Retry has operation.")
 	state.Completion.Data = RETRY_WORK_IDLE
 	result, attempt_error := state.Operation(state)
 	state.Try_Count++
@@ -934,7 +934,7 @@ func Retry_Rearm[T any](state *Retry_State[T]) (rearmed Boolean) {
 	// Root rearm follows driver return. Remove that handoff so virtual resolution cannot
 	// become hidden backoff between attempts.
 	now := time.Clock_Now_Monotonic(state.Input.Clock)
-	invariant.Always(now >= wait_started, "Retry wait starts on monotonic past.")
+	aver.Always(now >= wait_started, "Retry wait starts on monotonic past.")
 	duration := time.Duration(delay)
 	late := time.Duration(now - wait_started)
 	if duration <= late {

@@ -8,7 +8,7 @@ import (
 	"local/james-orcales/shared/go/ast"
 	"local/james-orcales/shared/go/constant"
 	"local/james-orcales/shared/go/token"
-	"local/james-orcales/shared/invariant/default"
+	"local/james-orcales/shared/simulation/aver/default"
 )
 
 // FILE_COUNT_MAXIMUM caps the files one module holds.
@@ -442,8 +442,8 @@ const MESSAGE_HOLE_SECOND = 2
 type Boolean bool
 
 // Boolean_Invariants states both module reports as obligations.
-func Boolean_Invariants(value Boolean, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Boolean_Invariants(value Boolean, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Sometimes(bool(value), "The module report is true.").
 		Ensure()
 }
@@ -452,8 +452,8 @@ func Boolean_Invariants(value Boolean, namespace invariant.Namespace) {
 type Name []byte
 
 // Name_Invariants caps one identifier.
-func Name_Invariants(value Name, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Name_Invariants(value Name, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), INDEX_MINIMUM, NAME_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -462,8 +462,8 @@ func Name_Invariants(value Name, namespace invariant.Namespace) {
 type Path string
 
 // Path_Invariants caps one import path.
-func Path_Invariants(value Path, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Path_Invariants(value Path, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), INDEX_MINIMUM, PATH_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -473,8 +473,8 @@ type Message string
 
 // Message_Invariants caps one failure sentence. No sentence spans one byte or two, because a
 // sentence states what to do about a refusal and no word of that width says anything.
-func Message_Invariants(value Message, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Message_Invariants(value Message, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Holed_Int(len(value), INDEX_MINIMUM, MESSAGE_SIZE_MAXIMUM,
 			MESSAGE_HOLE_FIRST, MESSAGE_HOLE_SECOND, MESSAGE_HOLE_SECOND,
 			MESSAGE_HOLE_SECOND).
@@ -486,8 +486,8 @@ func Message_Invariants(value Message, namespace invariant.Namespace) {
 type Count int
 
 // Count_Invariants states the widest thing one counter counts.
-func Count_Invariants(value Count, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Count_Invariants(value Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), INDEX_MINIMUM, COUNT_MAXIMUM).
 		Ensure()
 }
@@ -497,8 +497,8 @@ func Count_Invariants(value Count, namespace invariant.Namespace) {
 type Element_Count int64
 
 // Element_Count_Invariants admits the unknown element_count, which is a element_count of its own.
-func Element_Count_Invariants(value Element_Count, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Element_Count_Invariants(value Element_Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int64(int64(value), int64(ELEMENT_COUNT_UNKNOWN), ELEMENT_COUNT_MAXIMUM).
 		Ensure()
 }
@@ -507,8 +507,8 @@ func Element_Count_Invariants(value Element_Count, namespace invariant.Namespace
 type File_Index int32
 
 // File_Index_Invariants states the complete file arena.
-func File_Index_Invariants(value File_Index, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func File_Index_Invariants(value File_Index, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int32(int32(value), INDEX_MINIMUM, FILE_INDEX_MAXIMUM).
 		Ensure()
 }
@@ -517,8 +517,8 @@ func File_Index_Invariants(value File_Index, namespace invariant.Namespace) {
 type Package_Index int32
 
 // Package_Index_Invariants states the complete package arena.
-func Package_Index_Invariants(value Package_Index, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Package_Index_Invariants(value Package_Index, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int32(int32(value), INDEX_MINIMUM, PACKAGE_INDEX_MAXIMUM).
 		Ensure()
 }
@@ -527,8 +527,8 @@ func Package_Index_Invariants(value Package_Index, namespace invariant.Namespace
 type Symbol_Index int32
 
 // Symbol_Index_Invariants states the complete symbol arena.
-func Symbol_Index_Invariants(value Symbol_Index, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Symbol_Index_Invariants(value Symbol_Index, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int32(int32(value), INDEX_MINIMUM, SYMBOL_INDEX_MAXIMUM).
 		Ensure()
 }
@@ -538,8 +538,8 @@ type Symbol_Successor int32
 
 // Symbol_Successor_Invariants states the complete symbol arena. A chain link is never the first
 // slot, because a symbol links to a symbol the table already held.
-func Symbol_Successor_Invariants(value Symbol_Successor, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Symbol_Successor_Invariants(value Symbol_Successor, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int32(int32(value), INDEX_MINIMUM, SYMBOL_INDEX_MAXIMUM).
 		Ensure()
 }
@@ -548,8 +548,8 @@ func Symbol_Successor_Invariants(value Symbol_Successor, namespace invariant.Nam
 type Symbol_Head int32
 
 // Symbol_Head_Invariants states the complete symbol arena.
-func Symbol_Head_Invariants(value Symbol_Head, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Symbol_Head_Invariants(value Symbol_Head, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int32(int32(value), INDEX_MINIMUM, SYMBOL_INDEX_MAXIMUM).
 		Ensure()
 }
@@ -558,8 +558,8 @@ func Symbol_Head_Invariants(value Symbol_Head, namespace invariant.Namespace) {
 type Symbol_Count int32
 
 // Symbol_Count_Invariants states the symbol count one file can spend.
-func Symbol_Count_Invariants(value Symbol_Count, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Symbol_Count_Invariants(value Symbol_Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int32(int32(value), INDEX_MINIMUM, SYMBOL_INDEX_MAXIMUM).
 		Ensure()
 }
@@ -568,8 +568,8 @@ func Symbol_Count_Invariants(value Symbol_Count, namespace invariant.Namespace) 
 type Type_Index int32
 
 // Type_Index_Invariants states the complete type arena.
-func Type_Index_Invariants(value Type_Index, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Type_Index_Invariants(value Type_Index, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int32(int32(value), INDEX_MINIMUM, TYPE_INDEX_MAXIMUM).
 		Ensure()
 }
@@ -579,8 +579,8 @@ func Type_Index_Invariants(value Type_Index, namespace invariant.Namespace) {
 type Type_Element int32
 
 // Type_Element_Invariants states the complete type arena.
-func Type_Element_Invariants(value Type_Element, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Type_Element_Invariants(value Type_Element, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int32(int32(value), INDEX_MINIMUM, TYPE_INDEX_MAXIMUM).
 		Ensure()
 }
@@ -589,8 +589,8 @@ func Type_Element_Invariants(value Type_Element, namespace invariant.Namespace) 
 type Type_Key int32
 
 // Type_Key_Invariants states the complete type arena.
-func Type_Key_Invariants(value Type_Key, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Type_Key_Invariants(value Type_Key, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int32(int32(value), INDEX_MINIMUM, TYPE_INDEX_MAXIMUM).
 		Ensure()
 }
@@ -600,8 +600,8 @@ type Type_Symbol int32
 
 // Type_Symbol_Invariants excludes the first predeclared symbols. A type stands for a declaration
 // a file states, and the first symbol slots hold the words the universe binds.
-func Type_Symbol_Invariants(value Type_Symbol, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Type_Symbol_Invariants(value Type_Symbol, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Holed_Int32(int32(value), INDEX_MINIMUM, SYMBOL_INDEX_MAXIMUM,
 			SYMBOL_HOLE_FIRST, SYMBOL_HOLE_SECOND,
 			SYMBOL_HOLE_SECOND, SYMBOL_HOLE_SECOND).
@@ -612,8 +612,8 @@ func Type_Symbol_Invariants(value Type_Symbol, namespace invariant.Namespace) {
 type Member_Index int32
 
 // Member_Index_Invariants states the complete member arena.
-func Member_Index_Invariants(value Member_Index, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Member_Index_Invariants(value Member_Index, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int32(int32(value), INDEX_MINIMUM, MEMBER_INDEX_MAXIMUM).
 		Ensure()
 }
@@ -622,8 +622,8 @@ func Member_Index_Invariants(value Member_Index, namespace invariant.Namespace) 
 type Member_Head int32
 
 // Member_Head_Invariants states the complete member arena.
-func Member_Head_Invariants(value Member_Head, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Member_Head_Invariants(value Member_Head, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int32(int32(value), INDEX_MINIMUM, MEMBER_INDEX_MAXIMUM).
 		Ensure()
 }
@@ -633,8 +633,8 @@ type Member_Successor int32
 
 // Member_Successor_Invariants excludes the first member slot. One member links to a member the
 // arena took after it, thus the first slot the arena ever takes follows nothing.
-func Member_Successor_Invariants(value Member_Successor, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Member_Successor_Invariants(value Member_Successor, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Holed_Int32(int32(value), INDEX_MINIMUM, MEMBER_INDEX_MAXIMUM,
 			MEMBER_HOLE_FIRST, MEMBER_HOLE_FIRST, MEMBER_HOLE_FIRST, MEMBER_HOLE_FIRST).
 		Ensure()
@@ -645,8 +645,8 @@ type Member_Symbol int32
 
 // Member_Symbol_Invariants excludes the first predeclared symbols. A field wears a name a file
 // states, and the first symbol slots hold the words the universe binds before any file runs.
-func Member_Symbol_Invariants(value Member_Symbol, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Member_Symbol_Invariants(value Member_Symbol, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Holed_Int32(int32(value), INDEX_MINIMUM, SYMBOL_INDEX_MAXIMUM,
 			SYMBOL_HOLE_FIRST, SYMBOL_HOLE_SECOND,
 			SYMBOL_HOLE_SECOND, SYMBOL_HOLE_SECOND).
@@ -657,8 +657,8 @@ func Member_Symbol_Invariants(value Member_Symbol, namespace invariant.Namespace
 type Member_Type int32
 
 // Member_Type_Invariants states the complete type arena.
-func Member_Type_Invariants(value Member_Type, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Member_Type_Invariants(value Member_Type, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int32(int32(value), INDEX_MINIMUM, TYPE_INDEX_MAXIMUM).
 		Ensure()
 }
@@ -680,8 +680,8 @@ const DECLARED_FUNCTION Declared_Kind = Declared_Kind(SYMBOL_FUNCTION)
 type Value_Kind uint8
 
 // Value_Kind_Invariants states both kinds a value declaration binds.
-func Value_Kind_Invariants(value Value_Kind, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Value_Kind_Invariants(value Value_Kind, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_Uint8(uint8(value), uint8(VALUE_CONSTANT), uint8(VALUE_VARIABLE)).
 		Ensure()
 }
@@ -691,8 +691,8 @@ func Value_Kind_Invariants(value Value_Kind, namespace invariant.Namespace) {
 type Declared_Kind uint8
 
 // Declared_Kind_Invariants states every kind that binds a package name.
-func Declared_Kind_Invariants(value Declared_Kind, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Declared_Kind_Invariants(value Declared_Kind, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_4_Uint8(uint8(value), uint8(VALUE_CONSTANT), uint8(VALUE_VARIABLE),
 			uint8(DECLARED_TYPE), uint8(DECLARED_FUNCTION)).
 		Ensure()
@@ -702,8 +702,8 @@ func Declared_Kind_Invariants(value Declared_Kind, namespace invariant.Namespace
 type Symbol_Kind uint8
 
 // Symbol_Kind_Invariants states every kind a symbol declares.
-func Symbol_Kind_Invariants(value Symbol_Kind, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Symbol_Kind_Invariants(value Symbol_Kind, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint8(uint8(value), SYMBOL_KIND_MINIMUM, SYMBOL_KIND_MAXIMUM).
 		Ensure()
 }
@@ -712,8 +712,8 @@ func Symbol_Kind_Invariants(value Symbol_Kind, namespace invariant.Namespace) {
 type Type_Kind uint8
 
 // Type_Kind_Invariants states every kind a type wears.
-func Type_Kind_Invariants(value Type_Kind, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Type_Kind_Invariants(value Type_Kind, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint8(uint8(value), TYPE_KIND_MINIMUM, TYPE_KIND_MAXIMUM).
 		Ensure()
 }
@@ -723,8 +723,8 @@ func Type_Kind_Invariants(value Type_Kind, namespace invariant.Namespace) {
 type Basic_Kind uint8
 
 // Basic_Kind_Invariants states every predeclared type kind.
-func Basic_Kind_Invariants(value Basic_Kind, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Basic_Kind_Invariants(value Basic_Kind, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint8(uint8(value), BASIC_KIND_MINIMUM, BASIC_KIND_MAXIMUM).
 		Ensure()
 }
@@ -733,8 +733,8 @@ func Basic_Kind_Invariants(value Basic_Kind, namespace invariant.Namespace) {
 type Failure_Code uint8
 
 // Failure_Code_Invariants states every code a caller reads back.
-func Failure_Code_Invariants(value Failure_Code, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Failure_Code_Invariants(value Failure_Code, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint8(uint8(value), FAILURE_CODE_MINIMUM, FAILURE_CODE_MAXIMUM).
 		Ensure()
 }
@@ -744,8 +744,8 @@ func Failure_Code_Invariants(value Failure_Code, namespace invariant.Namespace) 
 type Cause uint8
 
 // Cause_Invariants states every cause a refusal names.
-func Cause_Invariants(value Cause, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Cause_Invariants(value Cause, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint8(uint8(value), CAUSE_MINIMUM, CAUSE_MAXIMUM).
 		Ensure()
 }
@@ -771,7 +771,7 @@ type Symbol struct {
 }
 
 // Symbol_Invariants composes every link one symbol holds.
-func Symbol_Invariants(value Symbol, namespace invariant.Namespace) {
+func Symbol_Invariants(value Symbol, namespace aver.Namespace) {
 	File_Index_Invariants(value.File, namespace)
 	Package_Index_Invariants(value.Owner, namespace)
 	Type_Index_Invariants(value.Type, namespace)
@@ -797,7 +797,7 @@ type Type struct {
 }
 
 // Type_Invariants composes every link one type holds.
-func Type_Invariants(value Type, namespace invariant.Namespace) {
+func Type_Invariants(value Type, namespace aver.Namespace) {
 	Type_Element_Invariants(value.Element, namespace)
 	Type_Key_Invariants(value.Key, namespace)
 	Member_Head_Invariants(value.Members, namespace)
@@ -816,7 +816,7 @@ type Member struct {
 }
 
 // Member_Invariants composes every link one member holds.
-func Member_Invariants(value Member, namespace invariant.Namespace) {
+func Member_Invariants(value Member, namespace aver.Namespace) {
 	Member_Symbol_Invariants(value.Symbol, namespace)
 	Member_Type_Invariants(value.Type, namespace)
 	Member_Successor_Invariants(value.Next, namespace)
@@ -835,7 +835,7 @@ type File struct {
 }
 
 // File_Invariants composes every link one file holds.
-func File_Invariants(value File, namespace invariant.Namespace) {
+func File_Invariants(value File, namespace aver.Namespace) {
 	Package_Index_Invariants(value.Owner, namespace)
 	Symbol_Head_Invariants(value.First, namespace)
 	Symbol_Count_Invariants(value.Count, namespace)
@@ -848,8 +848,8 @@ type Package struct {
 }
 
 // Package_Invariants states the storage one package holds.
-func Package_Invariants(value Package, namespace invariant.Namespace) {
-	invariant.Always(
+func Package_Invariants(value Package, namespace aver.Namespace) {
+	aver.Always(
 		len(value.Paths) == PATH_SLOT_COUNT,
 		"A package holds one slot for the path it answers to.",
 	)
@@ -893,8 +893,8 @@ type Module struct {
 
 // Module_Invariants states the storage the caller supplies. Each cursor is an array slot, thus
 // it proves its own domain where a body reads it.
-func Module_Invariants(subject *Module, namespace invariant.Namespace) {
-	invariant.Always(
+func Module_Invariants(subject *Module, namespace aver.Namespace) {
+	aver.Always(
 		len(subject.Symbols) == SYMBOL_COUNT_MAXIMUM,
 		"A module holds one symbol slot for every admitted name.",
 	)
@@ -908,8 +908,8 @@ const TREE_ROOT ast.Index = 1
 type Target_Package int32
 
 // Target_Package_Invariants states the complete package arena.
-func Target_Package_Invariants(value Target_Package, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Target_Package_Invariants(value Target_Package, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int32(int32(value), INDEX_MINIMUM, PACKAGE_INDEX_MAXIMUM).
 		Ensure()
 }
@@ -958,7 +958,7 @@ func define_basic(subject *Module, kind Basic_Kind) {
 	Module_Invariants(subject, "define_basic.subject")
 	Basic_Kind_Invariants(kind, "define_basic.kind")
 	index := add_type(subject, Type_Kind(kind))
-	invariant.Always(
+	aver.Always(
 		index == Type_Index(kind),
 		"A predeclared type takes the arena slot its kind names.",
 	)
@@ -1353,7 +1353,7 @@ func open_walk(subject *Module, tree *ast.Parse_State) {
 	subject.Counts[COUNT_DEPTH] = 0
 	subject.Nodes[0] = TREE_ROOT
 	subject.Counts[COUNT_PARAMETER] = 0
-	invariant.Always(
+	aver.Always(
 		node_kind(subject, tree) == ast.NODE_FILE,
 		"A tree a pass reads holds one file node at its root.",
 	)
@@ -2080,8 +2080,8 @@ const WRAPPER_CHANNEL Wrapper_Kind = Wrapper_Kind(TYPE_CHANNEL)
 type Wrapper_Kind uint8
 
 // Wrapper_Kind_Invariants states every kind that stands over one element alone.
-func Wrapper_Kind_Invariants(value Wrapper_Kind, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Wrapper_Kind_Invariants(value Wrapper_Kind, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_3_Uint8(uint8(value), uint8(WRAPPER_POINTER), uint8(WRAPPER_SLICE),
 			uint8(WRAPPER_CHANNEL)).
 		Ensure()
@@ -2619,8 +2619,8 @@ const EMBEDDED_DEPTH_MAXIMUM = 8
 type Local_Index int32
 
 // Local_Index_Invariants states the complete local stack.
-func Local_Index_Invariants(value Local_Index, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Local_Index_Invariants(value Local_Index, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int32(int32(value), INDEX_MINIMUM, LOCAL_INDEX_MAXIMUM).
 		Ensure()
 }
@@ -2634,7 +2634,7 @@ type Local struct {
 }
 
 // Local_Invariants composes the type one local wears.
-func Local_Invariants(value Local, namespace invariant.Namespace) {
+func Local_Invariants(value Local, namespace aver.Namespace) {
 	Type_Index_Invariants(value.Type, namespace)
 }
 
@@ -2654,8 +2654,8 @@ type Body struct {
 }
 
 // Body_Invariants states the storage the caller supplies.
-func Body_Invariants(subject *Body, namespace invariant.Namespace) {
-	invariant.Always(
+func Body_Invariants(subject *Body, namespace aver.Namespace) {
+	aver.Always(
 		len(subject.Types) == ast.NODE_COUNT_MAXIMUM,
 		"A body holds one type slot for every tree slot the parser admits.",
 	)
@@ -3736,7 +3736,7 @@ func read_embedded(subject *Module) {
 				return
 			}
 		}
-		invariant.Always(
+		aver.Always(
 			step < EMBEDDED_DEPTH_MAXIMUM,
 			"An embedded walk stops inside the depth it holds.",
 		)

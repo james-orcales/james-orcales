@@ -20,8 +20,8 @@ import (
 	"errors"
 	"unsafe"
 
-	"local/james-orcales/shared/invariant/default"
 	"local/james-orcales/shared/math/bits"
+	"local/james-orcales/shared/simulation/aver/default"
 	"local/james-orcales/shared/slices"
 )
 
@@ -32,8 +32,8 @@ const PROCESS_IDENTIFIER_MINIMUM = slices.COUNT_MINIMUM + 1
 type Arguments []string
 
 // Arguments_Invariants bounds caller and backend work.
-func Arguments_Invariants(value Arguments, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Arguments_Invariants(value Arguments, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), slices.COUNT_MINIMUM, slices.COUNT_MAXIMUM).
 		Ensure()
 }
@@ -42,8 +42,8 @@ func Arguments_Invariants(value Arguments, namespace invariant.Namespace) {
 type Environment []string
 
 // Environment_Invariants bounds caller and backend work.
-func Environment_Invariants(value Environment, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Environment_Invariants(value Environment, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), slices.COUNT_MINIMUM, slices.COUNT_MAXIMUM).
 		Ensure()
 }
@@ -52,8 +52,8 @@ func Environment_Invariants(value Environment, namespace invariant.Namespace) {
 type Entry_Count int
 
 // Entry_Count_Invariants bounds populated prefix size.
-func Entry_Count_Invariants(value Entry_Count, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Entry_Count_Invariants(value Entry_Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), slices.COUNT_MINIMUM, slices.COUNT_MAXIMUM).
 		Ensure()
 }
@@ -62,8 +62,8 @@ func Entry_Count_Invariants(value Entry_Count, namespace invariant.Namespace) {
 type Variable_Name string
 
 // Variable_Name_Invariants bounds lookup work.
-func Variable_Name_Invariants(value Variable_Name, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Variable_Name_Invariants(value Variable_Name, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), slices.COUNT_MINIMUM, slices.COUNT_MAXIMUM).
 		Ensure()
 }
@@ -72,8 +72,8 @@ func Variable_Name_Invariants(value Variable_Name, namespace invariant.Namespace
 type Variable_Value string
 
 // Variable_Value_Invariants bounds returned ambient data.
-func Variable_Value_Invariants(value Variable_Value, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Variable_Value_Invariants(value Variable_Value, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), slices.COUNT_MINIMUM, slices.COUNT_MAXIMUM).
 		Ensure()
 }
@@ -82,8 +82,8 @@ func Variable_Value_Invariants(value Variable_Value, namespace invariant.Namespa
 type Variable_Found bool
 
 // Variable_Found_Invariants covers both lookup outcomes.
-func Variable_Found_Invariants(value Variable_Found, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Variable_Found_Invariants(value Variable_Found, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Sometimes(
 			bool(value), "Environment variable lookup covers found and absent names.",
 		).
@@ -94,8 +94,8 @@ func Variable_Found_Invariants(value Variable_Found, namespace invariant.Namespa
 type Executable_Path string
 
 // Executable_Path_Invariants bounds returned and supplied image path text.
-func Executable_Path_Invariants(value Executable_Path, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Executable_Path_Invariants(value Executable_Path, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), slices.COUNT_MINIMUM, slices.COUNT_MAXIMUM).
 		Ensure()
 }
@@ -105,9 +105,9 @@ type Working_Directory_Path string
 
 // Working_Directory_Path_Invariants bounds returned directory path text.
 func Working_Directory_Path_Invariants(
-	value Working_Directory_Path, namespace invariant.Namespace,
+	value Working_Directory_Path, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(len(value), slices.COUNT_MINIMUM, slices.COUNT_MAXIMUM).
 		Ensure()
 }
@@ -116,8 +116,8 @@ func Working_Directory_Path_Invariants(
 type Hostname string
 
 // Hostname_Invariants bounds returned machine name.
-func Hostname_Invariants(value Hostname, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Hostname_Invariants(value Hostname, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), slices.COUNT_MINIMUM, slices.COUNT_MAXIMUM).
 		Ensure()
 }
@@ -126,8 +126,8 @@ func Hostname_Invariants(value Hostname, namespace invariant.Namespace) {
 type Process_Identifier int
 
 // Process_Identifier_Invariants excludes kernel-invalid nonpositive identity.
-func Process_Identifier_Invariants(value Process_Identifier, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Process_Identifier_Invariants(value Process_Identifier, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), PROCESS_IDENTIFIER_MINIMUM, bits.INTEGER_MAXIMUM).
 		Ensure()
 }
@@ -137,9 +137,9 @@ type Effective_User_Identifier int
 
 // Effective_User_Identifier_Invariants admits root and every nonnegative identity.
 func Effective_User_Identifier_Invariants(
-	value Effective_User_Identifier, namespace invariant.Namespace,
+	value Effective_User_Identifier, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(int(value), slices.COUNT_MINIMUM, bits.INTEGER_MAXIMUM).
 		Ensure()
 }
@@ -183,17 +183,17 @@ type OS struct {
 // OS_Invariants states that every reader is bound. An OS is a vtable, so its only property is
 // that every slot is filled: the zero OS reads as an OS but panics on first use, and a backend
 // that fills eight slots and forgets the ninth is the same failure one call later.
-func OS_Invariants(system OS, namespace invariant.Namespace) {
-	invariant.Always(system.Arguments != nil, "An OS reads its arguments.")
-	invariant.Always(system.Environment != nil, "An OS reads its environment.")
-	invariant.Always(system.Variable != nil, "An OS reads one environment variable.")
-	invariant.Always(system.Executable != nil, "An OS reads its executable path.")
-	invariant.Always(system.Working_Directory != nil, "An OS reads its working directory.")
-	invariant.Always(system.Hostname != nil, "An OS reads its host name.")
-	invariant.Always(system.Process_Identifier != nil, "An OS reads its process id.")
-	invariant.Always(
+func OS_Invariants(system OS, namespace aver.Namespace) {
+	aver.Always(system.Arguments != nil, "An OS reads its arguments.")
+	aver.Always(system.Environment != nil, "An OS reads its environment.")
+	aver.Always(system.Variable != nil, "An OS reads one environment variable.")
+	aver.Always(system.Executable != nil, "An OS reads its executable path.")
+	aver.Always(system.Working_Directory != nil, "An OS reads its working directory.")
+	aver.Always(system.Hostname != nil, "An OS reads its host name.")
+	aver.Always(system.Process_Identifier != nil, "An OS reads its process id.")
+	aver.Always(
 		system.Effective_User_Identifier != nil, "An OS reads its effective user id.")
-	invariant.Always(system.Self_Exec != nil, "An OS replaces its own image.")
+	aver.Always(system.Self_Exec != nil, "An OS replaces its own image.")
 }
 
 // OS_Arguments keeps backend state explicit so reader needs no captured environment.
@@ -306,8 +306,8 @@ type Virtual_OS struct {
 // Virtual_OS_Invariants states the complete simulated domain. A process id is positive on every
 // kernel this repository targets, and pid 1 is init, so a simulation that states zero has left
 // the field unset rather than described a real process.
-func Virtual_OS_Invariants(virtual *Virtual_OS, namespace invariant.Namespace) {
-	invariant.Always(virtual != nil, "A virtual OS has caller-owned state.")
+func Virtual_OS_Invariants(virtual *Virtual_OS, namespace aver.Namespace) {
+	aver.Always(virtual != nil, "A virtual OS has caller-owned state.")
 	Arguments_Invariants(virtual.Arguments, namespace)
 	Environment_Invariants(virtual.Environment, namespace)
 	Executable_Path_Invariants(virtual.Executable, namespace)
@@ -441,7 +441,7 @@ func Environment_Lookup(
 // Caller destination prevents result ownership from allocating or reaching backend slice.
 func copy_strings[Strings ~[]string](destination Strings, source Strings) (count Entry_Count) {
 	defer func() { Entry_Count_Invariants(count, "copy_strings.count") }()
-	invariant.Always(len(destination) >= len(source),
+	aver.Always(len(destination) >= len(source),
 		"Caller-owned string storage holds complete OS answer.")
 	return Entry_Count(copy(destination, source))
 }

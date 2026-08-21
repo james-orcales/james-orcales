@@ -6,8 +6,8 @@ import (
 	"local/james-orcales/shared/crypto/prng"
 	"local/james-orcales/shared/crypto/sha256"
 	"local/james-orcales/shared/encoding/binary"
-	"local/james-orcales/shared/invariant/default"
 	"local/james-orcales/shared/math/bits"
+	"local/james-orcales/shared/simulation/aver/default"
 )
 
 // MODULUS_LIMB_COUNT fixes RSA-2048 storage to 32 machine words.
@@ -157,16 +157,16 @@ const PKCS1_SHA_256_PREFIX_SIZE = len(PKCS1_SHA_256_PREFIX)
 type Modulus [MODULUS_SIZE]byte
 
 // Modulus_Invariants fixes modulus storage width.
-func Modulus_Invariants(value Modulus, _ invariant.Namespace) {
-	invariant.Always(len(value) == MODULUS_SIZE, "An RSA modulus has exact 2048-bit storage.")
+func Modulus_Invariants(value Modulus, _ aver.Namespace) {
+	aver.Always(len(value) == MODULUS_SIZE, "An RSA modulus has exact 2048-bit storage.")
 }
 
 // Private_Exponent is one exact-width private exponent.
 type Private_Exponent [MODULUS_SIZE]byte
 
 // Private_Exponent_Invariants fixes private exponent storage width.
-func Private_Exponent_Invariants(value Private_Exponent, _ invariant.Namespace) {
-	invariant.Always(
+func Private_Exponent_Invariants(value Private_Exponent, _ aver.Namespace) {
+	aver.Always(
 		len(value) == MODULUS_SIZE,
 		"An RSA private exponent has modulus width.",
 	)
@@ -176,8 +176,8 @@ func Private_Exponent_Invariants(value Private_Exponent, _ invariant.Namespace) 
 type Ready [READY_WORD_COUNT]byte
 
 // Ready_Invariants fixes key-state storage width.
-func Ready_Invariants(value Ready, _ invariant.Namespace) {
-	invariant.Always(len(value) == READY_WORD_COUNT, "RSA key state has fixed width.")
+func Ready_Invariants(value Ready, _ aver.Namespace) {
+	aver.Always(len(value) == READY_WORD_COUNT, "RSA key state has fixed width.")
 }
 
 // Public_Key stores validated modulus authority for fixed exponent 65537.
@@ -189,15 +189,15 @@ type Public_Key struct {
 }
 
 // Public_Key_Invariants relates complete state to a valid supported modulus.
-func Public_Key_Invariants(value Public_Key, namespace invariant.Namespace) {
+func Public_Key_Invariants(value Public_Key, namespace aver.Namespace) {
 	Modulus_Invariants(value.Modulus, namespace)
 	Ready_Invariants(value.Ready, namespace)
-	invariant.Always(
+	aver.Always(
 		value.Ready[READY_INDEX] <= READY_COMPLETE,
 		"An RSA public key has empty or complete state.",
 	)
 	valid := modulus_encoding_valid(&value.Modulus)
-	invariant.Always(
+	aver.Always(
 		uint64(value.Ready[READY_INDEX])&valid[bits.BIT_COUNT_MINIMUM] ==
 			uint64(value.Ready[READY_INDEX]),
 		"A complete RSA public key has an odd 2048-bit modulus.",
@@ -215,11 +215,11 @@ type Private_Key struct {
 }
 
 // Private_Key_Invariants relates complete state to valid bounded integers.
-func Private_Key_Invariants(value Private_Key, namespace invariant.Namespace) {
+func Private_Key_Invariants(value Private_Key, namespace aver.Namespace) {
 	Modulus_Invariants(value.Modulus, namespace)
 	Private_Exponent_Invariants(value.Exponent, namespace)
 	Ready_Invariants(value.Ready, namespace)
-	invariant.Always(
+	aver.Always(
 		value.Ready[READY_INDEX] <= READY_COMPLETE,
 		"An RSA private key has empty or complete state.",
 	)
@@ -227,7 +227,7 @@ func Private_Key_Invariants(value Private_Key, namespace invariant.Namespace) {
 	exponent_valid := private_exponent_encoding_valid(&value.Exponent, &value.Modulus)
 	valid := modulus_valid[bits.BIT_COUNT_MINIMUM] &
 		exponent_valid[bits.BIT_COUNT_MINIMUM]
-	invariant.Always(
+	aver.Always(
 		uint64(value.Ready[READY_INDEX])&valid ==
 			uint64(value.Ready[READY_INDEX]),
 		"A complete RSA private key has valid bounded integers.",
@@ -239,14 +239,14 @@ type Public_Key_Destination *Public_Key
 
 // Public_Key_Destination_Invariants proves caller storage exists.
 func Public_Key_Destination_Invariants(
-	value Public_Key_Destination, _ invariant.Namespace,
+	value Public_Key_Destination, _ aver.Namespace,
 ) {
-	invariant.Always(value != nil, "An RSA public key destination exists.")
-	invariant.Always(
+	aver.Always(value != nil, "An RSA public key destination exists.")
+	aver.Always(
 		len(value.Modulus) == MODULUS_SIZE,
 		"An RSA public key destination has modulus storage.",
 	)
-	invariant.Always(
+	aver.Always(
 		len(value.Ready) == READY_WORD_COUNT,
 		"An RSA public key destination has state storage.",
 	)
@@ -257,18 +257,18 @@ type Private_Key_Destination *Private_Key
 
 // Private_Key_Destination_Invariants proves caller storage exists.
 func Private_Key_Destination_Invariants(
-	value Private_Key_Destination, _ invariant.Namespace,
+	value Private_Key_Destination, _ aver.Namespace,
 ) {
-	invariant.Always(value != nil, "An RSA private key destination exists.")
-	invariant.Always(
+	aver.Always(value != nil, "An RSA private key destination exists.")
+	aver.Always(
 		len(value.Modulus) == MODULUS_SIZE,
 		"An RSA private key destination has modulus storage.",
 	)
-	invariant.Always(
+	aver.Always(
 		len(value.Exponent) == MODULUS_SIZE,
 		"An RSA private key destination has exponent storage.",
 	)
-	invariant.Always(
+	aver.Always(
 		len(value.Ready) == READY_WORD_COUNT,
 		"An RSA private key destination has state storage.",
 	)
@@ -279,9 +279,9 @@ type Modulus_Destination *Modulus
 
 // Modulus_Destination_Invariants proves caller storage exists.
 func Modulus_Destination_Invariants(
-	value Modulus_Destination, _ invariant.Namespace,
+	value Modulus_Destination, _ aver.Namespace,
 ) {
-	invariant.Always(value != nil, "An RSA modulus destination exists.")
+	aver.Always(value != nil, "An RSA modulus destination exists.")
 }
 
 // Modulus_Unvalidated is one bounded hostile modulus encoding.
@@ -289,9 +289,9 @@ type Modulus_Unvalidated []byte
 
 // Modulus_Unvalidated_Invariants bounds public integer parsing.
 func Modulus_Unvalidated_Invariants(
-	value Modulus_Unvalidated, namespace invariant.Namespace,
+	value Modulus_Unvalidated, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(
 			len(value), MODULUS_UNVALIDATED_SIZE_MINIMUM,
 			MODULUS_UNVALIDATED_SIZE_MAXIMUM,
@@ -304,9 +304,9 @@ type Private_Exponent_Unvalidated []byte
 
 // Private_Exponent_Unvalidated_Invariants bounds private integer parsing.
 func Private_Exponent_Unvalidated_Invariants(
-	value Private_Exponent_Unvalidated, namespace invariant.Namespace,
+	value Private_Exponent_Unvalidated, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(
 			len(value), PRIVATE_EXPONENT_UNVALIDATED_SIZE_MINIMUM,
 			PRIVATE_EXPONENT_UNVALIDATED_SIZE_MAXIMUM,
@@ -318,8 +318,8 @@ func Private_Exponent_Unvalidated_Invariants(
 type Ciphertext [MODULUS_SIZE]byte
 
 // Ciphertext_Invariants fixes caller-owned ciphertext width.
-func Ciphertext_Invariants(value Ciphertext, _ invariant.Namespace) {
-	invariant.Always(len(value) == MODULUS_SIZE, "An RSA ciphertext has modulus width.")
+func Ciphertext_Invariants(value Ciphertext, _ aver.Namespace) {
+	aver.Always(len(value) == MODULUS_SIZE, "An RSA ciphertext has modulus width.")
 }
 
 // Ciphertext_Destination is nonnil caller-owned ciphertext storage.
@@ -327,9 +327,9 @@ type Ciphertext_Destination *Ciphertext
 
 // Ciphertext_Destination_Invariants proves caller storage exists.
 func Ciphertext_Destination_Invariants(
-	value Ciphertext_Destination, _ invariant.Namespace,
+	value Ciphertext_Destination, _ aver.Namespace,
 ) {
-	invariant.Always(value != nil, "An RSA ciphertext destination exists.")
+	aver.Always(value != nil, "An RSA ciphertext destination exists.")
 }
 
 // Ciphertext_Unvalidated is one bounded hostile ciphertext.
@@ -337,9 +337,9 @@ type Ciphertext_Unvalidated []byte
 
 // Ciphertext_Unvalidated_Invariants bounds private-operation parsing.
 func Ciphertext_Unvalidated_Invariants(
-	value Ciphertext_Unvalidated, namespace invariant.Namespace,
+	value Ciphertext_Unvalidated, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(
 			len(value), CIPHERTEXT_UNVALIDATED_SIZE_MINIMUM,
 			CIPHERTEXT_UNVALIDATED_SIZE_MAXIMUM,
@@ -351,8 +351,8 @@ func Ciphertext_Unvalidated_Invariants(
 type Signature [MODULUS_SIZE]byte
 
 // Signature_Invariants fixes caller-owned signature width.
-func Signature_Invariants(value Signature, _ invariant.Namespace) {
-	invariant.Always(len(value) == MODULUS_SIZE, "An RSA signature has modulus width.")
+func Signature_Invariants(value Signature, _ aver.Namespace) {
+	aver.Always(len(value) == MODULUS_SIZE, "An RSA signature has modulus width.")
 }
 
 // Signature_Destination is nonnil caller-owned signature storage.
@@ -360,9 +360,9 @@ type Signature_Destination *Signature
 
 // Signature_Destination_Invariants proves caller storage exists.
 func Signature_Destination_Invariants(
-	value Signature_Destination, _ invariant.Namespace,
+	value Signature_Destination, _ aver.Namespace,
 ) {
-	invariant.Always(value != nil, "An RSA signature destination exists.")
+	aver.Always(value != nil, "An RSA signature destination exists.")
 }
 
 // Signature_Unvalidated is one bounded hostile signature.
@@ -370,9 +370,9 @@ type Signature_Unvalidated []byte
 
 // Signature_Unvalidated_Invariants bounds public-operation parsing.
 func Signature_Unvalidated_Invariants(
-	value Signature_Unvalidated, namespace invariant.Namespace,
+	value Signature_Unvalidated, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(
 			len(value), SIGNATURE_UNVALIDATED_SIZE_MINIMUM,
 			SIGNATURE_UNVALIDATED_SIZE_MAXIMUM,
@@ -384,8 +384,8 @@ func Signature_Unvalidated_Invariants(
 type Message []byte
 
 // Message_Invariants bounds OAEP encoding work.
-func Message_Invariants(value Message, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Message_Invariants(value Message, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), MESSAGE_SIZE_MINIMUM, MESSAGE_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -394,8 +394,8 @@ func Message_Invariants(value Message, namespace invariant.Namespace) {
 type Destination []byte
 
 // Destination_Invariants bounds plaintext commit storage.
-func Destination_Invariants(value Destination, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Destination_Invariants(value Destination, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), DESTINATION_SIZE_MINIMUM, DESTINATION_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -404,16 +404,16 @@ func Destination_Invariants(value Destination, namespace invariant.Namespace) {
 type Digest [HASH_SIZE]byte
 
 // Digest_Invariants fixes signature digest width.
-func Digest_Invariants(value Digest, _ invariant.Namespace) {
-	invariant.Always(len(value) == HASH_SIZE, "An RSA digest has SHA-256 width.")
+func Digest_Invariants(value Digest, _ aver.Namespace) {
+	aver.Always(len(value) == HASH_SIZE, "An RSA digest has SHA-256 width.")
 }
 
 // Count is one complete plaintext byte count.
 type Count int
 
 // Count_Invariants spans empty through maximum OAEP plaintext.
-func Count_Invariants(value Count, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Count_Invariants(value Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), int(COUNT_MINIMUM), int(COUNT_MAXIMUM)).
 		Ensure()
 }
@@ -422,8 +422,8 @@ func Count_Invariants(value Count, namespace invariant.Namespace) {
 type Key_Status uint8
 
 // Key_Status_Invariants covers committed and refused key input.
-func Key_Status_Invariants(value Key_Status, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Key_Status_Invariants(value Key_Status, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_Uint8(uint8(value), uint8(KEY_STATUS_OK), uint8(KEY_STATUS_INPUT_INVALID)).
 		Ensure()
 }
@@ -432,8 +432,8 @@ func Key_Status_Invariants(value Key_Status, namespace invariant.Namespace) {
 type Decrypt_Status uint8
 
 // Decrypt_Status_Invariants covers every transactional decryption outcome.
-func Decrypt_Status_Invariants(value Decrypt_Status, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Decrypt_Status_Invariants(value Decrypt_Status, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_3_Uint8(
 			uint8(value), uint8(DECRYPT_STATUS_OK),
 			uint8(DECRYPT_STATUS_INPUT_INVALID),
@@ -446,8 +446,8 @@ func Decrypt_Status_Invariants(value Decrypt_Status, namespace invariant.Namespa
 type Verification bool
 
 // Verification_Invariants covers accepted and refused signatures.
-func Verification_Invariants(value Verification, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Verification_Invariants(value Verification, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Sometimes(bool(value), "An RSA signature verifies.").
 		Ensure()
 }

@@ -9,8 +9,8 @@ import (
 	"local/james-orcales/shared/crypto/sha256"
 	"local/james-orcales/shared/crypto/sha512"
 	"local/james-orcales/shared/encoding/binary"
-	"local/james-orcales/shared/invariant/default"
 	"local/james-orcales/shared/math/bits"
+	"local/james-orcales/shared/simulation/aver/default"
 )
 
 // INPUT_SIZE_MINIMUM admits absent optional salt and info.
@@ -68,8 +68,8 @@ const EXPAND_STATUS_TOO_LARGE Expand_Status = EXPAND_STATUS_OK + binary.UINT_8_S
 type Secret []byte
 
 // Secret_Invariants bounds extraction input without inspecting secret bytes.
-func Secret_Invariants(value Secret, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Secret_Invariants(value Secret, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), INPUT_SIZE_MINIMUM, INPUT_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -78,8 +78,8 @@ func Secret_Invariants(value Secret, namespace invariant.Namespace) {
 type Salt []byte
 
 // Salt_Invariants bounds extraction work without inspecting salt bytes.
-func Salt_Invariants(value Salt, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Salt_Invariants(value Salt, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), INPUT_SIZE_MINIMUM, INPUT_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -88,8 +88,8 @@ func Salt_Invariants(value Salt, namespace invariant.Namespace) {
 type Pseudorandom_Key []byte
 
 // Pseudorandom_Key_Invariants bounds expansion key work without inspecting bytes.
-func Pseudorandom_Key_Invariants(value Pseudorandom_Key, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Pseudorandom_Key_Invariants(value Pseudorandom_Key, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), INPUT_SIZE_MINIMUM, INPUT_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -98,8 +98,8 @@ func Pseudorandom_Key_Invariants(value Pseudorandom_Key, namespace invariant.Nam
 type Info []byte
 
 // Info_Invariants bounds expansion work without inspecting context bytes.
-func Info_Invariants(value Info, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Info_Invariants(value Info, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), INPUT_SIZE_MINIMUM, INPUT_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -108,8 +108,8 @@ func Info_Invariants(value Info, namespace invariant.Namespace) {
 type Destination []byte
 
 // Destination_Invariants bounds expansion to full RFC counter capacity.
-func Destination_Invariants(value Destination, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Destination_Invariants(value Destination, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), OUTPUT_SIZE_MINIMUM, OUTPUT_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -120,9 +120,9 @@ type Extract_Destination []byte
 // Extract_Destination_Invariants bounds storage to widest digest.
 func Extract_Destination_Invariants(
 	value Extract_Destination,
-	namespace invariant.Namespace,
+	namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(
 			len(value), EXTRACT_DESTINATION_SIZE_MINIMUM,
 			EXTRACT_DESTINATION_SIZE_MAXIMUM,
@@ -134,8 +134,8 @@ func Extract_Destination_Invariants(
 type Count int
 
 // Count_Invariants spans empty refusal through widest RFC output.
-func Count_Invariants(value Count, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Count_Invariants(value Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), int(COUNT_EMPTY), int(COUNT_MAXIMUM)).
 		Ensure()
 }
@@ -144,8 +144,8 @@ func Count_Invariants(value Count, namespace invariant.Namespace) {
 type Extract_Count uint8
 
 // Extract_Count_Invariants spans supported digest widths.
-func Extract_Count_Invariants(value Extract_Count, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Extract_Count_Invariants(value Extract_Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint8(
 			uint8(value), uint8(EXTRACT_COUNT_MINIMUM), uint8(EXTRACT_COUNT_MAXIMUM),
 		).
@@ -156,8 +156,8 @@ func Extract_Count_Invariants(value Extract_Count, namespace invariant.Namespace
 type Extract_Status uint8
 
 // Extract_Status_Invariants covers complete and short extraction output.
-func Extract_Status_Invariants(value Extract_Status, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Extract_Status_Invariants(value Extract_Status, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_Uint8(
 			uint8(value), uint8(EXTRACT_STATUS_OK), uint8(EXTRACT_STATUS_TOO_SMALL),
 		).
@@ -168,8 +168,8 @@ func Extract_Status_Invariants(value Extract_Status, namespace invariant.Namespa
 type Expand_Status uint8
 
 // Expand_Status_Invariants covers complete and refused expansion.
-func Expand_Status_Invariants(value Expand_Status, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Expand_Status_Invariants(value Expand_Status, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_Uint8(
 			uint8(value), uint8(EXPAND_STATUS_OK), uint8(EXPAND_STATUS_TOO_LARGE),
 		).
@@ -180,8 +180,8 @@ func Expand_Status_Invariants(value Expand_Status, namespace invariant.Namespace
 type Size int
 
 // Size_Invariants spans 255 blocks of shortest through longest digest.
-func Size_Invariants(value Size, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Size_Invariants(value Size, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(
 			int(value), SELECTED_OUTPUT_SIZE_MINIMUM, OUTPUT_SIZE_MAXIMUM,
 		).

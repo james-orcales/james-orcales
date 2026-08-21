@@ -2,8 +2,8 @@
 package utf16
 
 import (
-	"local/james-orcales/shared/invariant/default"
 	"local/james-orcales/shared/math/bits"
+	"local/james-orcales/shared/simulation/aver/default"
 )
 
 // REPLACEMENT_CHARACTER substitutes for invalid characters and surrogate sequences.
@@ -91,8 +91,8 @@ const COMBINED_CHARACTER_HOLE_FINAL int32 = int32(bits.WORD_16_MAXIMUM)
 type Character rune
 
 // Character_Invariants covers the complete rune-storage domain.
-func Character_Invariants(value Character, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Character_Invariants(value Character, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int32(int32(value), CHARACTER_MINIMUM, CHARACTER_MAXIMUM).
 		Ensure()
 }
@@ -102,9 +102,9 @@ type Decoded_Character rune
 
 // Decoded_Character_Invariants covers all valid decoded code points.
 func Decoded_Character_Invariants(
-	value Decoded_Character, namespace invariant.Namespace,
+	value Decoded_Character, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int32(
 			int32(value), DECODED_CHARACTER_MINIMUM, DECODED_CHARACTER_MAXIMUM,
 		).
@@ -116,9 +116,9 @@ type Combined_Character rune
 
 // Combined_Character_Invariants excludes the two noncharacters below supplementary storage.
 func Combined_Character_Invariants(
-	value Combined_Character, namespace invariant.Namespace,
+	value Combined_Character, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Holed_Int32(
 			int32(value), COMBINED_CHARACTER_MINIMUM, COMBINED_CHARACTER_MAXIMUM,
 			COMBINED_CHARACTER_HOLE_FIRST, COMBINED_CHARACTER_HOLE_FINAL,
@@ -132,15 +132,15 @@ type First_Encoded_Character rune
 
 // First_Encoded_Character_Invariants permits the valid first results.
 func First_Encoded_Character_Invariants(
-	value First_Encoded_Character, namespace invariant.Namespace,
+	value First_Encoded_Character, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int32(
 			int32(value), FIRST_ENCODED_CHARACTER_MINIMUM,
 			FIRST_ENCODED_CHARACTER_MAXIMUM,
 		).
 		Ensure()
-	invariant.Always(
+	aver.Always(
 		(Character(value) < LOW_SURROGATE_FIRST) ==
 			(Character(value) != REPLACEMENT_CHARACTER),
 		"An encoded first character is a high surrogate or the replacement character.",
@@ -152,15 +152,15 @@ type Second_Encoded_Character rune
 
 // Second_Encoded_Character_Invariants permits the valid second results.
 func Second_Encoded_Character_Invariants(
-	value Second_Encoded_Character, namespace invariant.Namespace,
+	value Second_Encoded_Character, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int32(
 			int32(value), SECOND_ENCODED_CHARACTER_MINIMUM,
 			SECOND_ENCODED_CHARACTER_MAXIMUM,
 		).
 		Ensure()
-	invariant.Always(
+	aver.Always(
 		(Character(value) < SURROGATE_LIMIT) ==
 			(Character(value) != REPLACEMENT_CHARACTER),
 		"An encoded second character is a low surrogate or the replacement character.",
@@ -171,8 +171,8 @@ func Second_Encoded_Character_Invariants(
 type Size int
 
 // Size_Invariants covers invalidity and both UTF-16 encoding sizes.
-func Size_Invariants(value Size, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Size_Invariants(value Size, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_3_Int(
 			int(value), CHARACTER_SIZE_INVALID,
 			CHARACTER_SIZE_MINIMUM, CHARACTER_SIZE_MAXIMUM,
@@ -184,8 +184,8 @@ func Size_Invariants(value Size, namespace invariant.Namespace) {
 type Words []uint16
 
 // Words_Invariants applies the package sequence limit.
-func Words_Invariants(value Words, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Words_Invariants(value Words, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), SEQUENCE_SIZE_MINIMUM, SEQUENCE_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -194,8 +194,8 @@ func Words_Invariants(value Words, namespace invariant.Namespace) {
 type Nonempty_Words []uint16
 
 // Nonempty_Words_Invariants excludes an empty append result.
-func Nonempty_Words_Invariants(value Nonempty_Words, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Nonempty_Words_Invariants(value Nonempty_Words, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), CHARACTER_SIZE_MINIMUM, SEQUENCE_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -204,8 +204,8 @@ func Nonempty_Words_Invariants(value Nonempty_Words, namespace invariant.Namespa
 type Characters []Character
 
 // Characters_Invariants applies the package sequence limit.
-func Characters_Invariants(value Characters, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Characters_Invariants(value Characters, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), SEQUENCE_SIZE_MINIMUM, SEQUENCE_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -215,9 +215,9 @@ type Decoded_Characters []Decoded_Character
 
 // Decoded_Characters_Invariants applies the package sequence limit.
 func Decoded_Characters_Invariants(
-	value Decoded_Characters, namespace invariant.Namespace,
+	value Decoded_Characters, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(len(value), SEQUENCE_SIZE_MINIMUM, SEQUENCE_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -226,8 +226,8 @@ func Decoded_Characters_Invariants(
 type Boolean bool
 
 // Boolean_Invariants requires both report values.
-func Boolean_Invariants(value Boolean, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Boolean_Invariants(value Boolean, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Sometimes(bool(value), "A UTF-16 report is true.").
 		Ensure()
 }
@@ -316,11 +316,11 @@ func Encode(buffer Words, source Characters) (result Words) {
 			}
 		}
 	}
-	invariant.Always(
+	aver.Always(
 		result_size <= SEQUENCE_SIZE_MAXIMUM,
 		"A UTF-16 encoding result does not exceed the sequence limit.",
 	)
-	invariant.Always(
+	aver.Always(
 		result_size <= cap(buffer),
 		"Caller storage holds the UTF-16 encoding result.",
 	)
@@ -362,11 +362,11 @@ func Append_Character(buffer Words, character Character) (result Nonempty_Words)
 		character_size = CHARACTER_SIZE_MINIMUM
 	}
 	result_size := len(buffer) + character_size
-	invariant.Always(
+	aver.Always(
 		result_size <= SEQUENCE_SIZE_MAXIMUM,
 		"A UTF-16 append result does not exceed the sequence limit.",
 	)
-	invariant.Always(
+	aver.Always(
 		result_size <= cap(buffer),
 		"Caller storage holds the appended UTF-16 encoding.",
 	)
@@ -414,11 +414,11 @@ func Decode(
 		decoded_count++
 	}
 	result_size := len(buffer) + decoded_count
-	invariant.Always(
+	aver.Always(
 		result_size <= SEQUENCE_SIZE_MAXIMUM,
 		"A UTF-16 decoding result does not exceed the sequence limit.",
 	)
-	invariant.Always(
+	aver.Always(
 		result_size <= cap(buffer),
 		"Caller storage holds the UTF-16 decoding result.",
 	)

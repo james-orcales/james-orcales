@@ -2,7 +2,7 @@
 package levenshtein
 
 import (
-	"local/james-orcales/shared/invariant/default"
+	"local/james-orcales/shared/simulation/aver/default"
 	"local/james-orcales/shared/slices"
 	"local/james-orcales/shared/strings"
 )
@@ -32,8 +32,8 @@ const STATUS_INPUT_INVALID Status = 1
 type Status uint8
 
 // Status_Invariants lists both operation outcomes.
-func Status_Invariants(value Status, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Status_Invariants(value Status, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_Uint8(uint8(value), uint8(STATUS_OK), uint8(STATUS_INPUT_INVALID)).
 		Ensure()
 }
@@ -42,8 +42,8 @@ func Status_Invariants(value Status, namespace invariant.Namespace) {
 type Found bool
 
 // Found_Invariants requires match and miss coverage.
-func Found_Invariants(value Found, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Found_Invariants(value Found, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Sometimes(bool(value), "Closest finds one candidate.").
 		Ensure()
 }
@@ -52,8 +52,8 @@ func Found_Invariants(value Found, namespace invariant.Namespace) {
 type Distance_Value int
 
 // Distance_Value_Invariants follows maximum decoded rune count.
-func Distance_Value_Invariants(value Distance_Value, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Distance_Value_Invariants(value Distance_Value, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), strings.TEXT_SIZE_MINIMUM, RUNE_COUNT_MAXIMUM).
 		Ensure()
 }
@@ -62,8 +62,8 @@ func Distance_Value_Invariants(value Distance_Value, namespace invariant.Namespa
 type Match string
 
 // Match_Invariants keeps result inside accepted text bound.
-func Match_Invariants(value Match, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Match_Invariants(value Match, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), strings.TEXT_SIZE_MINIMUM, TEXT_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -73,9 +73,9 @@ type From_Text_Unvalidated string
 
 // From_Text_Unvalidated_Invariants admits first rejected source byte.
 func From_Text_Unvalidated_Invariants(
-	value From_Text_Unvalidated, namespace invariant.Namespace,
+	value From_Text_Unvalidated, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(len(value), strings.TEXT_SIZE_MINIMUM, TEXT_SIZE_UNVALIDATED_MAXIMUM).
 		Ensure()
 }
@@ -85,9 +85,9 @@ type To_Text_Unvalidated string
 
 // To_Text_Unvalidated_Invariants admits first rejected destination byte.
 func To_Text_Unvalidated_Invariants(
-	value To_Text_Unvalidated, namespace invariant.Namespace,
+	value To_Text_Unvalidated, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(len(value), strings.TEXT_SIZE_MINIMUM, TEXT_SIZE_UNVALIDATED_MAXIMUM).
 		Ensure()
 }
@@ -97,9 +97,9 @@ type Target_Text_Unvalidated string
 
 // Target_Text_Unvalidated_Invariants admits first rejected target byte.
 func Target_Text_Unvalidated_Invariants(
-	value Target_Text_Unvalidated, namespace invariant.Namespace,
+	value Target_Text_Unvalidated, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(len(value), strings.TEXT_SIZE_MINIMUM, TEXT_SIZE_UNVALIDATED_MAXIMUM).
 		Ensure()
 }
@@ -109,9 +109,9 @@ type Candidates_Unvalidated []string
 
 // Candidates_Unvalidated_Invariants bounds candidate search count.
 func Candidates_Unvalidated_Invariants(
-	value Candidates_Unvalidated, namespace invariant.Namespace,
+	value Candidates_Unvalidated, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(len(value), slices.COUNT_MINIMUM, CANDIDATE_COUNT_MAXIMUM).
 		Ensure()
 }
@@ -120,8 +120,8 @@ func Candidates_Unvalidated_Invariants(
 type From_Runes [RUNE_COUNT_MAXIMUM]rune
 
 // From_Runes_Invariants fixes source workspace capacity.
-func From_Runes_Invariants(value From_Runes, _ invariant.Namespace) {
-	invariant.Always(
+func From_Runes_Invariants(value From_Runes, _ aver.Namespace) {
+	aver.Always(
 		len(value) == RUNE_COUNT_MAXIMUM,
 		"From rune workspace has fixed text capacity.",
 	)
@@ -131,8 +131,8 @@ func From_Runes_Invariants(value From_Runes, _ invariant.Namespace) {
 type To_Runes [RUNE_COUNT_MAXIMUM]rune
 
 // To_Runes_Invariants fixes destination workspace capacity.
-func To_Runes_Invariants(value To_Runes, _ invariant.Namespace) {
-	invariant.Always(
+func To_Runes_Invariants(value To_Runes, _ aver.Namespace) {
+	aver.Always(
 		len(value) == RUNE_COUNT_MAXIMUM,
 		"To rune workspace has fixed text capacity.",
 	)
@@ -142,16 +142,16 @@ func To_Runes_Invariants(value To_Runes, _ invariant.Namespace) {
 type Previous_Row [ROW_COUNT]int
 
 // Previous_Row_Invariants fixes one slot per destination boundary.
-func Previous_Row_Invariants(value Previous_Row, _ invariant.Namespace) {
-	invariant.Always(len(value) == ROW_COUNT, "Previous row has every rune boundary.")
+func Previous_Row_Invariants(value Previous_Row, _ aver.Namespace) {
+	aver.Always(len(value) == ROW_COUNT, "Previous row has every rune boundary.")
 }
 
 // Current_Row owns current dynamic-programming row.
 type Current_Row [ROW_COUNT]int
 
 // Current_Row_Invariants fixes one slot per destination boundary.
-func Current_Row_Invariants(value Current_Row, _ invariant.Namespace) {
-	invariant.Always(len(value) == ROW_COUNT, "Current row has every rune boundary.")
+func Current_Row_Invariants(value Current_Row, _ aver.Namespace) {
+	aver.Always(len(value) == ROW_COUNT, "Current row has every rune boundary.")
 }
 
 // Workspace owns every rune and matrix row used by Distance and Closest.
@@ -167,7 +167,7 @@ type Workspace struct {
 }
 
 // Workspace_Invariants composes fixed caller-owned storage.
-func Workspace_Invariants(value Workspace, namespace invariant.Namespace) {
+func Workspace_Invariants(value Workspace, namespace aver.Namespace) {
 	From_Runes_Invariants(value.From, namespace)
 	To_Runes_Invariants(value.To, namespace)
 	Previous_Row_Invariants(value.Previous, namespace)
@@ -185,7 +185,7 @@ type Distance_Input struct {
 }
 
 // Distance_Input_Invariants composes storage and both text boundaries.
-func Distance_Input_Invariants(value Distance_Input, namespace invariant.Namespace) {
+func Distance_Input_Invariants(value Distance_Input, namespace aver.Namespace) {
 	Workspace_Invariants(*value.Workspace, namespace)
 	From_Text_Unvalidated_Invariants(value.From, namespace)
 	To_Text_Unvalidated_Invariants(value.To, namespace)
@@ -246,7 +246,7 @@ type Closest_Input struct {
 }
 
 // Closest_Input_Invariants composes search storage and values.
-func Closest_Input_Invariants(value Closest_Input, namespace invariant.Namespace) {
+func Closest_Input_Invariants(value Closest_Input, namespace aver.Namespace) {
 	Workspace_Invariants(*value.Workspace, namespace)
 	Target_Text_Unvalidated_Invariants(value.Target, namespace)
 	Candidates_Unvalidated_Invariants(value.Candidates, namespace)

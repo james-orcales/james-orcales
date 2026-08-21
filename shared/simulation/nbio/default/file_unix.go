@@ -8,8 +8,8 @@ import (
 	"unsafe"
 
 	"local/james-orcales/shared/encoding/binary"
-	"local/james-orcales/shared/invariant/default"
 	"local/james-orcales/shared/math/bits"
+	"local/james-orcales/shared/simulation/aver/default"
 	"local/james-orcales/shared/simulation/nbio"
 	"local/james-orcales/shared/simulation/time"
 )
@@ -149,15 +149,15 @@ func file_directory_pass(
 	for offset := 0; offset < count; {
 		record := (*syscall.Dirent)(unsafe.Pointer(&buffer[offset]))
 		record_bytes := int(record.Reclen)
-		invariant.Always(record_bytes > 0, "A directory record spans at least one byte.")
-		invariant.Always(offset+record_bytes <= count,
+		aver.Always(record_bytes > 0, "A directory record spans at least one byte.")
+		aver.Always(offset+record_bytes <= count,
 			"A directory record ends inside the bytes the kernel returned.")
 		entry, keep, entry_err := file_directory_entry(descriptor, record, record_bytes)
 		if entry_err != nil {
 			return 0, entry_err
 		}
 		if keep {
-			invariant.Always(entry_count < len(entries),
+			aver.Always(entry_count < len(entries),
 				"Caller-owned directory entry storage holds one complete pass.")
 			entries[entry_count] = entry
 			entry_count++
@@ -195,7 +195,7 @@ func file_directory_entry(
 // Linux does not, and terminator serve both.
 func file_directory_name(record *syscall.Dirent, record_bytes int) (name string) {
 	start := int(unsafe.Offsetof(record.Name))
-	invariant.Always(record_bytes > start, "A directory record holds at least one name byte.")
+	aver.Always(record_bytes > start, "A directory record holds at least one name byte.")
 	bytes := unsafe.Slice((*byte)(unsafe.Pointer(&record.Name[0])), record_bytes-start)
 	for index, value := range bytes {
 		if value == 0 {

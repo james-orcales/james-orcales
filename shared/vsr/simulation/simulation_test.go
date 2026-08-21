@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"testing"
 
-	"local/james-orcales/shared/invariant/default"
 	"local/james-orcales/shared/jlog"
+	"local/james-orcales/shared/simulation/aver/default"
 	"local/james-orcales/shared/simulation/prng"
 	"local/james-orcales/shared/simulation/time"
 	"local/james-orcales/shared/vsr"
@@ -15,7 +15,7 @@ import (
 // Always reached must hold and every Sometimes must be observed both true and false — a coverage
 // gap or a violated assertion fails the run.
 func TestMain(m *testing.M) {
-	invariant.Run_Test_Main(m)
+	aver.Run_Test_Main(m)
 }
 
 // How many virtual ticks one simulated run spans.
@@ -1664,33 +1664,33 @@ func byte_slices_equal(left []byte, right []byte) (equal bool) {
 // recovery completions detected against its previous status.
 func simulator_record_replica_coverage(state *simulator, index int) {
 	replica := &state.Replicas[index]
-	invariant.Sometimes(replica.Status == vsr.STATUS_NORMAL, "replica is normal")
-	invariant.Sometimes(
+	aver.Sometimes(replica.Status == vsr.STATUS_NORMAL, "replica is normal")
+	aver.Sometimes(
 		replica.Status == vsr.STATUS_VIEW_CHANGE,
 		"replica is view-changing",
 	)
-	invariant.Sometimes(replica.Status == vsr.STATUS_RECOVERY, "replica is recovering")
+	aver.Sometimes(replica.Status == vsr.STATUS_RECOVERY, "replica is recovering")
 	// The §7 reconfiguration statuses must be witnessed across the sweep: a replica mid epoch
 	// handoff (transitioning) and a replaced replica that has shut down.
-	invariant.Sometimes(
+	aver.Sometimes(
 		replica.Status == vsr.STATUS_TRANSITION,
 		"replica is transitioning",
 	)
-	invariant.Sometimes(replica.Status == vsr.STATUS_SHUTDOWN, "replica is shut down")
-	invariant.Sometimes(replica.View > 0, "replica view advanced past zero")
+	aver.Sometimes(replica.Status == vsr.STATUS_SHUTDOWN, "replica is shut down")
+	aver.Sometimes(replica.View > 0, "replica view advanced past zero")
 	// The epoch must sometimes advance past 0, witnessing a reconfiguration ran.
-	invariant.Sometimes(replica.Epoch > 0, "replica epoch advanced past zero")
+	aver.Sometimes(replica.Epoch > 0, "replica epoch advanced past zero")
 	if replica.Epoch > state.Result.Epoch_Max {
 		state.Result.Epoch_Max = replica.Epoch
 	}
 	// Compaction must actually run: a replica's Log_Start must sometimes advance past zero,
 	// witnessing the log prefix was garbage-collected rather than the cluster idling below the
 	// first checkpoint.
-	invariant.Sometimes(replica.Log_Start > 0, "replica log prefix was compacted")
+	aver.Sometimes(replica.Log_Start > 0, "replica log prefix was compacted")
 	// A standby must sometimes exist and follow — be a non-voting member (§6.1) holding
 	// committed log — so the standby paths (no vote, no execute, follow) are genuinely
 	// exercised rather than every member always being active.
-	invariant.Sometimes(
+	aver.Sometimes(
 		is_standby(replica) && replica.Op > 0,
 		"standby exists and holds log",
 	)
@@ -1754,7 +1754,7 @@ func simulator_record_coverage(state *simulator) {
 	// A client must sometimes have a request unanswered and sometimes not, so the request/reply
 	// path is genuinely exercised rather than idling.
 	for index := range state.Clients {
-		invariant.Sometimes(
+		aver.Sometimes(
 			state.Clients[index].Unanswered,
 			"client has an unanswered request",
 		)
@@ -1762,13 +1762,13 @@ func simulator_record_coverage(state *simulator) {
 	// Clock skew must be witnessed both ways: the spread between the fastest and slowest
 	// replica's perceived time sometimes exceeds five milliseconds (the skew sweep) and
 	// sometimes does not (the default shared-clock runs), so the model is genuinely exercised.
-	invariant.Sometimes(
+	aver.Sometimes(
 		simulator_clock_skew(state) > time.Moment(5)*time.Moment(time.MILLISECOND),
 		"replica clocks skewed past five milliseconds",
 	)
 	// A transient clock fault must sometimes be active (the skew sweep injects them) and
 	// sometimes not, so the fault path is witnessed both ways across the sweep.
-	invariant.Sometimes(
+	aver.Sometimes(
 		simulator_clock_fault_active(state),
 		"a replica host is faulted",
 	)
@@ -1818,8 +1818,8 @@ func simulator_record_result_coverage(state *simulator) {
 	// Both new exactly-once branches must be witnessed across the sweep: a duplicate's cached
 	// reply re-sent, and a client recovering its forgotten request-number. Each reads false on
 	// a run's early ticks and true once the event occurs, covering both outcomes.
-	invariant.Sometimes(state.Result.Cached_Replies > 0, "a cached reply was re-sent")
-	invariant.Sometimes(
+	aver.Sometimes(state.Result.Cached_Replies > 0, "a cached reply was re-sent")
+	aver.Sometimes(
 		state.Result.Client_Recoveries > 0,
 		"a client recovered its request number",
 	)
@@ -1827,22 +1827,22 @@ func simulator_record_result_coverage(state *simulator) {
 	// carry a non-empty predetermined value, and the pre-step variant must sometimes open a
 	// round (it runs only on odd seeds, so a sweep over both parities witnesses both true and
 	// false).
-	invariant.Sometimes(
+	aver.Sometimes(
 		state.Result.Predictions_Stamped > 0,
 		"a committed op carried a prediction",
 	)
-	invariant.Sometimes(
+	aver.Sometimes(
 		state.Result.Pre_Step_Rounds > 0,
 		"a pre-step prediction round opened",
 	)
 	// The §5.1/§5.2 checkpoint paths must genuinely run across the sweep: the gap response
 	// must sometimes ship a checkpoint to a requester behind a GC'd prefix, and a crash must
 	// sometimes recover warm from a surviving checkpoint.
-	invariant.Sometimes(
+	aver.Sometimes(
 		state.Result.Checkpoint_Gaps > 0,
 		"a gap response shipped a checkpoint",
 	)
-	invariant.Sometimes(
+	aver.Sometimes(
 		state.Result.Warm_Recoveries_Started > 0,
 		"a warm recovery started",
 	)
@@ -1850,32 +1850,32 @@ func simulator_record_result_coverage(state *simulator) {
 	// sometimes carry a bounded suffix shorter than its op (dropping held entries), and the
 	// new primary must sometimes defer its install to fetch the selected log it could not
 	// reconstruct from that suffix alone.
-	invariant.Sometimes(
+	aver.Sometimes(
 		state.Result.Do_View_Change_Suffixes > 0,
 		"a do-view-change carried a bounded suffix",
 	)
-	invariant.Sometimes(
+	aver.Sometimes(
 		state.Result.View_Change_Fetches > 0,
 		"a new primary deferred to fetch the selected log",
 	)
 	// A reconfiguration must run to completion across the sweep: the epoch advanced and a new
 	// group came up.
-	invariant.Sometimes(
+	aver.Sometimes(
 		state.Result.Reconfigurations_Completed > 0,
 		"a reconfiguration completed",
 	)
 	// The §7 edge cases must genuinely run across the sweep: a brand-new node restoring a
 	// checkpoint to catch up to the epoch start, a reconfiguration overlapping a view change,
 	// and one overlapping recovery — the concurrent paths reconfiguration must survive.
-	invariant.Sometimes(
+	aver.Sometimes(
 		state.Result.Epoch_Checkpoint_Catch_Ups > 0,
 		"a new node restored a checkpoint to catch up to the epoch",
 	)
-	invariant.Sometimes(
+	aver.Sometimes(
 		state.Result.Reconfigure_Over_View_Change > 0,
 		"a reconfiguration overlapped a view change",
 	)
-	invariant.Sometimes(
+	aver.Sometimes(
 		state.Result.Reconfigure_Over_Recovery > 0,
 		"a reconfiguration overlapped a recovery",
 	)

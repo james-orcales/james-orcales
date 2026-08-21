@@ -10,8 +10,8 @@ import (
 	"syscall"
 	"unsafe"
 
-	"local/james-orcales/shared/invariant/default"
 	"local/james-orcales/shared/math/bits"
+	"local/james-orcales/shared/simulation/aver/default"
 	"local/james-orcales/shared/simulation/nbio"
 	"local/james-orcales/shared/simulation/time"
 )
@@ -118,20 +118,20 @@ func New_Operating_System_IO(
 	state *Operating_System, memory Operating_System_Memory,
 	host time.Clock, entries uint16, flags uint32,
 ) (loop nbio.IO, driver nbio.Driver, err error) {
-	invariant.Always(state != nil, "An operating-system IO backend has caller-owned state.")
-	invariant.Always(len(memory.Timeouts) > 0,
+	aver.Always(state != nil, "An operating-system IO backend has caller-owned state.")
+	aver.Always(len(memory.Timeouts) > 0,
 		"An operating-system IO backend has timeout capacity.")
-	invariant.Always(len(memory.Completed) > 0,
+	aver.Always(len(memory.Completed) > 0,
 		"An operating-system IO backend has completion capacity.")
-	invariant.Always(len(memory.Operations) > 0,
+	aver.Always(len(memory.Operations) > 0,
 		"An operating-system IO backend has operation capacity.")
-	invariant.Always(len(memory.Descriptors) > 0,
+	aver.Always(len(memory.Descriptors) > 0,
 		"An operating-system IO backend has descriptor capacity.")
-	invariant.Always(len(memory.Signal_Waiters) > 0,
+	aver.Always(len(memory.Signal_Waiters) > 0,
 		"An operating-system IO backend has signal-waiter capacity.")
-	invariant.Always(len(memory.Spawns) > 0,
+	aver.Always(len(memory.Spawns) > 0,
 		"An operating-system IO backend has spawn capacity.")
-	invariant.Always(len(memory.Platform_Operations) > 0,
+	aver.Always(len(memory.Platform_Operations) > 0,
 		"An operating-system IO backend has platform-operation capacity.")
 	if entries == 0 {
 		return nbio.IO{}, nbio.Driver{}, scheduler_entries_outside_range
@@ -180,10 +180,10 @@ func New_Operating_System_IO(
 // (shared/simulation/time/time.go:535-540), thus both backend read alike.
 func operating_system_submit(completion *nbio.Completion) {
 	original := completion.Self == nil || completion.Self == completion
-	invariant.Always(original,
+	aver.Always(original,
 		"A submitted completion is its own original, never a by-value copy.")
 	completion.Self = completion
-	invariant.Always(!completion.Armed, "An armed completion is never armed a second clock.")
+	aver.Always(!completion.Armed, "An armed completion is never armed a second clock.")
 	completion.Data = 0
 	completion.Error = nil
 	completion.Armed = true
@@ -201,7 +201,7 @@ func operating_system_watch_signal_procedure(
 	deadline time.Duration, callback nbio.Signal_Callback,
 ) {
 	state := (*Operating_System)(state_pointer)
-	invariant.Always(deadline > 0, "A signal-watch deadline is positive and finite.")
+	aver.Always(deadline > 0, "A signal-watch deadline is positive and finite.")
 	state.Extension_Submitted++
 	operating_system_submit(completion)
 	operating_system_watch_signal(state, completion, signal, deadline, callback)
@@ -212,7 +212,7 @@ func operating_system_spawn_procedure(
 	deadline time.Duration, callback nbio.Process_Callback,
 ) {
 	state := (*Operating_System)(state_pointer)
-	invariant.Always(deadline > 0, "A spawn deadline is positive and finite.")
+	aver.Always(deadline > 0, "A spawn deadline is positive and finite.")
 	state.Extension_Submitted++
 	operating_system_submit(completion)
 	operating_system_spawn(state, completion, request, deadline, callback)
@@ -311,7 +311,7 @@ func operating_system_spawn(
 	spawn.Request = request
 	spawn.Started = time.Clock_Now_Monotonic(state.Host)
 	spawn.Used = true
-	invariant.Always(len(state.Spawns) < cap(state.Spawns),
+	aver.Always(len(state.Spawns) < cap(state.Spawns),
 		"The caller-owned spawn registry has capacity before child ownership.")
 	state.Spawns = append(state.Spawns, spawn)
 	process_arm_pipes(state)
@@ -775,7 +775,7 @@ func operating_system_spawn_remove(state *Operating_System, spawn *Spawn) {
 	}
 	state.Spawns = kept
 	spawn.Used = false
-	invariant.Always(found, "A reaped child occupied one caller-owned registry slot.")
+	aver.Always(found, "A reaped child occupied one caller-owned registry slot.")
 }
 
 // Release every pipe end loop still hold.
@@ -845,7 +845,7 @@ func operating_system_storage_read(
 	offset int64, timeout time.Duration, callback nbio.Callback,
 ) {
 	state := (*Operating_System)(state_pointer)
-	invariant.Always(timeout > 0, "A storage read timeout is positive and finite.")
+	aver.Always(timeout > 0, "A storage read timeout is positive and finite.")
 	deadline := platform_storage_deadline(state, timeout)
 	operating_system_submit(completion)
 	operating_system_read(state, completion, file, buffer, offset, deadline, callback)
@@ -856,7 +856,7 @@ func operating_system_storage_write(
 	offset int64, timeout time.Duration, callback nbio.Callback,
 ) {
 	state := (*Operating_System)(state_pointer)
-	invariant.Always(timeout > 0, "A storage write timeout is positive and finite.")
+	aver.Always(timeout > 0, "A storage write timeout is positive and finite.")
 	deadline := platform_storage_deadline(state, timeout)
 	operating_system_submit(completion)
 	operating_system_write(state, completion, file, buffer, offset, deadline, callback)
@@ -867,7 +867,7 @@ func operating_system_storage_fsync(
 	timeout time.Duration, callback nbio.Callback,
 ) {
 	state := (*Operating_System)(state_pointer)
-	invariant.Always(timeout > 0, "A storage fsync timeout is positive and finite.")
+	aver.Always(timeout > 0, "A storage fsync timeout is positive and finite.")
 	deadline := platform_storage_deadline(state, timeout)
 	operating_system_submit(completion)
 	operating_system_fsync(state, completion, file, deadline, callback)
@@ -878,7 +878,7 @@ func operating_system_storage_open_at(
 	file_path string, options nbio.Open_At_Options, callback nbio.Callback,
 ) {
 	state := (*Operating_System)(state_pointer)
-	invariant.Always(options.Flags & ^nbio.OPEN_AT_NO_FOLLOW == 0,
+	aver.Always(options.Flags & ^nbio.OPEN_AT_NO_FOLLOW == 0,
 		"Open_At options contain only known flags.")
 	operating_system_submit(completion)
 	operating_system_open_at(state, completion, directory, file_path, options, callback)
@@ -983,7 +983,7 @@ func operating_system_close_procedure(
 
 func operating_system_deinit_procedure(state_pointer unsafe.Pointer) {
 	state := (*Operating_System)(state_pointer)
-	invariant.Always(operating_system_descriptor_count(state) == 0,
+	aver.Always(operating_system_descriptor_count(state) == 0,
 		"Every descriptor the backend opened is closed before Deinit.")
 }
 
@@ -1001,7 +1001,7 @@ func operating_system_event_listen(
 	})
 	operating_system_operation_register(state, operation)
 	listen_err := platform_event_listen(state, operation)
-	invariant.Always(listen_err == nil, "An Event listener arms successfully.")
+	aver.Always(listen_err == nil, "An Event listener arms successfully.")
 }
 
 // Assert no Event listener stay armed before backend Event resource is closed.
@@ -1014,7 +1014,7 @@ func operating_system_assert_event_drained(state *Operating_System, event nbio.E
 			}
 		}
 	}
-	invariant.Always(!armed, "An Event listener is drained before Close_Event.")
+	aver.Always(!armed, "An Event listener is drained before Close_Event.")
 }
 
 // Assert no submitted operation still borrow file. Owner join every submitted operation before
@@ -1027,7 +1027,7 @@ func operating_system_assert_file_drained(state *Operating_System, file nbio.Fil
 			borrowed = true
 		}
 	}
-	invariant.Always(!borrowed,
+	aver.Always(!borrowed,
 		"A descriptor is drained before Close releases it.")
 }
 
@@ -1069,7 +1069,7 @@ func operating_system_socket_accept(
 	timeout time.Duration, callback nbio.Callback,
 ) {
 	state := (*Operating_System)(state_pointer)
-	invariant.Always(timeout > 0, "An accept timeout is positive and finite.")
+	aver.Always(timeout > 0, "An accept timeout is positive and finite.")
 	operating_system_submit(completion)
 	operating_system_accept(state, completion, listener, timeout, callback)
 }
@@ -1101,7 +1101,7 @@ func operating_system_socket_connect(
 	address nbio.Address, timeout time.Duration, callback nbio.Callback,
 ) {
 	state := (*Operating_System)(state_pointer)
-	invariant.Always(timeout > 0, "A connect timeout is positive and finite.")
+	aver.Always(timeout > 0, "A connect timeout is positive and finite.")
 	operating_system_submit(completion)
 	operating_system_connect(state, completion, socket, address, timeout, callback)
 }
@@ -1129,7 +1129,7 @@ func operating_system_socket_receive(
 	timeout time.Duration, callback nbio.Callback,
 ) {
 	state := (*Operating_System)(state_pointer)
-	invariant.Always(timeout > 0, "A receive timeout is positive and finite.")
+	aver.Always(timeout > 0, "A receive timeout is positive and finite.")
 	operating_system_submit(completion)
 	operating_system_receive(state, completion, socket, buffer, timeout, callback)
 }
@@ -1139,7 +1139,7 @@ func operating_system_socket_send(
 	timeout time.Duration, callback nbio.Callback,
 ) {
 	state := (*Operating_System)(state_pointer)
-	invariant.Always(timeout > 0, "A send timeout is positive and finite.")
+	aver.Always(timeout > 0, "A send timeout is positive and finite.")
 	operating_system_submit(completion)
 	operating_system_send(state, completion, socket, buffer, timeout, callback)
 }
@@ -1420,7 +1420,7 @@ func operating_system_in_flight(state *Operating_System) (in_flight bool) {
 // inside completion callback fail loud instead of re-enter driver. Internal run functions call
 // one another direct, not through here, thus own iteration of drive does not trip it.
 func operating_system_drive_begin(state *Operating_System) {
-	invariant.Always(!state.Drive_Active,
+	aver.Always(!state.Drive_Active,
 		"A drive begins at top level, never from within a completion callback.")
 	state.Drive_Active = true
 }
@@ -1522,7 +1522,7 @@ func operating_system_wait_cap(
 		}
 	}
 	if capped < 0 {
-		invariant.Always(operating_system_in_flight(state),
+		aver.Always(operating_system_in_flight(state),
 			"An unbounded run holds an operation in flight that can advance it.")
 	}
 	return capped
@@ -1578,7 +1578,7 @@ func operating_system_expired_operation(
 func operating_system_flush_completed(state *Operating_System) {
 	for len(state.Completed) > 0 {
 		completion := operating_system_completion_pop(&state.Completed)
-		invariant.Always(completion.Armed, "A delivered completion was armed.")
+		aver.Always(completion.Armed, "A delivered completion was armed.")
 		completion.Armed = false
 		callback := completion.Callback
 		completion.Callback = nil
@@ -1603,7 +1603,7 @@ func operating_system_insert(state *Operating_System, completion *nbio.Completio
 	for index < len(state.Timeouts) && state.Timeouts[index].Ready_At <= completion.Ready_At {
 		index++
 	}
-	invariant.Always(len(state.Timeouts) < cap(state.Timeouts),
+	aver.Always(len(state.Timeouts) < cap(state.Timeouts),
 		"The caller-owned timeout queue has capacity before insertion.")
 	state.Timeouts = append(state.Timeouts, nil)
 	copy(state.Timeouts[index+1:], state.Timeouts[index:])
@@ -1701,13 +1701,13 @@ func operating_system_close(
 // Operating system deinitialize enforce join-before-deinit contract and release
 // scheduler.
 func operating_system_deinitialize(state *Operating_System) {
-	invariant.Always(state.Extension_Submitted == 0,
+	aver.Always(state.Extension_Submitted == 0,
 		"Driver Deinit follows joining every repository-extension completion.")
-	invariant.Always(len(state.Spawns) == 0,
+	aver.Always(len(state.Spawns) == 0,
 		"Every spawned child is reaped before backend deinit.")
-	invariant.Always(len(state.Timeouts) == 0,
+	aver.Always(len(state.Timeouts) == 0,
 		"Driver Deinit follows joining every userspace timeout.")
-	invariant.Always(len(state.Operations) == 0,
+	aver.Always(len(state.Operations) == 0,
 		"Driver Deinit follows joining every operation.")
 	if state.Signals.Channel != nil {
 		operating_system_signal_stop(state.Signals)
@@ -1722,7 +1722,7 @@ func operating_system_watch_signal(
 ) {
 	operating_system_signal_ensure(state)
 	system := signal_to_operating_system(kind)
-	invariant.Always(len(state.Signal_Waiters) < cap(state.Signal_Waiters),
+	aver.Always(len(state.Signal_Waiters) < cap(state.Signal_Waiters),
 		"The caller-owned signal-waiter queue has capacity before registration.")
 	state.Signal_Waiters = append(state.Signal_Waiters, Signal_Waiter{
 		System: system, Kind: kind, Completion: completion, Callback: callback,

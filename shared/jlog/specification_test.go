@@ -388,7 +388,7 @@ type recording_buffer []byte
 func (buffer recording_buffer) String() (text string) { return string(buffer) }
 
 // A clock whose realtime reading is always FIXED_MOMENT.
-func frozen_clock() (clock time.Clock) {
+func frozen_clock() (host time.Clock) {
 	return time.Clock{Now_Realtime: frozen_realtime}
 }
 
@@ -822,14 +822,14 @@ func Fuzz_Encode(f *testing.F) {
 	f.Add([]byte("hello"), int64(1700000000000000000), int64(42), float64_bits(3.14))
 	f.Fuzz(func(t *testing.T, raw []byte, moment int64, number int64, float_bits uint64) {
 		buffer := &recording_buffer{}
-		clock := time.Clock{
+		host := time.Clock{
 			State:        unsafe.Pointer(&moment),
 			Now_Realtime: pointer_realtime,
 		}
 		logger := jlog.New(jlog.New_Input{
 			Writer_State:   unsafe.Pointer(buffer),
 			Write:          buffer_write,
-			Clock:          clock,
+			Clock:          host,
 			Floor:          jlog.LEVEL_TRACE,
 			Auto_Timestamp: true,
 		})

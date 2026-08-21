@@ -10,7 +10,7 @@
 package ring
 
 import (
-	"local/james-orcales/shared/invariant/default"
+	"local/james-orcales/shared/simulation/aver/default"
 	"local/james-orcales/shared/slices"
 )
 
@@ -56,8 +56,8 @@ const OFFSET_MAXIMUM = COUNT_MAXIMUM
 type Position int
 
 // Position_Invariants states the complete node-handle domain.
-func Position_Invariants(value Position, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Position_Invariants(value Position, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Holed_Int(
 			int(value), POSITION_MINIMUM, POSITION_MAXIMUM,
 			FREE_POSITION, FREE_POSITION, FREE_POSITION, FREE_POSITION,
@@ -71,8 +71,8 @@ func Position_Invariants(value Position, namespace invariant.Namespace) {
 type Element_Position int
 
 // Element_Position_Invariants states the domain of one live ring node.
-func Element_Position_Invariants(value Element_Position, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Element_Position_Invariants(value Element_Position, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), FIRST_ELEMENT_POSITION, POSITION_MAXIMUM).
 		Ensure()
 }
@@ -81,8 +81,8 @@ func Element_Position_Invariants(value Element_Position, namespace invariant.Nam
 type Successor int
 
 // Successor_Invariants states the complete neighbor domain.
-func Successor_Invariants(value Successor, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Successor_Invariants(value Successor, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), POSITION_MINIMUM, POSITION_MAXIMUM).
 		Ensure()
 }
@@ -91,8 +91,8 @@ func Successor_Invariants(value Successor, namespace invariant.Namespace) {
 type Predecessor int
 
 // Predecessor_Invariants states the complete neighbor domain.
-func Predecessor_Invariants(value Predecessor, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Predecessor_Invariants(value Predecessor, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), POSITION_MINIMUM, POSITION_MAXIMUM).
 		Ensure()
 }
@@ -101,8 +101,8 @@ func Predecessor_Invariants(value Predecessor, namespace invariant.Namespace) {
 type Count int
 
 // Count_Invariants states the complete node-count domain.
-func Count_Invariants(value Count, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Count_Invariants(value Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), COUNT_MINIMUM, COUNT_MAXIMUM).
 		Ensure()
 }
@@ -111,8 +111,8 @@ func Count_Invariants(value Count, namespace invariant.Namespace) {
 type Offset int
 
 // Offset_Invariants states the complete walk domain.
-func Offset_Invariants(value Offset, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Offset_Invariants(value Offset, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), OFFSET_MINIMUM, OFFSET_MAXIMUM).
 		Ensure()
 }
@@ -121,8 +121,8 @@ func Offset_Invariants(value Offset, namespace invariant.Namespace) {
 type Boolean bool
 
 // Boolean_Invariants states both report results as obligations.
-func Boolean_Invariants(value Boolean, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Boolean_Invariants(value Boolean, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Sometimes(bool(value), "The node report is true.").
 		Ensure()
 }
@@ -146,7 +146,7 @@ type Element[Value any] struct {
 
 // Element_Invariants composes both neighbors and the use report of one node.
 func Element_Invariants[Value any](
-	element Element[Value], namespace invariant.Namespace,
+	element Element[Value], namespace aver.Namespace,
 ) {
 	Successor_Invariants(element.Next, namespace)
 	Predecessor_Invariants(element.Previous, namespace)
@@ -166,7 +166,7 @@ type Pool[Value any] struct {
 // Pool_Invariants states the free-chain count of one pool. The subject is a pointer, because
 // a pool holds its whole storage and a value parameter would copy it at each assertion.
 func Pool_Invariants[Value any](
-	subject *Pool[Value], namespace invariant.Namespace,
+	subject *Pool[Value], namespace aver.Namespace,
 ) {
 	Count_Invariants(subject.Free_Count, namespace)
 }
@@ -199,7 +199,7 @@ func lazy_initialize[Value any](subject *Pool[Value]) {
 func enforce_live[Value any](subject *Pool[Value], position Element_Position) {
 	Element_Position_Invariants(position, "enforce_live.position")
 	Pool_Invariants(subject, "enforce_live.subject")
-	invariant.Always(
+	aver.Always(
 		bool(subject.Nodes[position].Used),
 		"A live handle names a node that a ring holds.",
 	)
@@ -212,7 +212,7 @@ func allocate[Value any](
 ) (position Element_Position) {
 	defer func() { Element_Position_Invariants(position, "allocate.position") }()
 	vacancy := nodes[FREE_POSITION].Next
-	invariant.Always(
+	aver.Always(
 		vacancy != Successor(POSITION_NONE),
 		"A pool allocation reads one node from its free chain.",
 	)
@@ -253,7 +253,7 @@ func New[Value any](subject *Pool[Value], count Count) (position Position) {
 	Count_Invariants(count, "new.count")
 	Pool_Invariants(subject, "new.subject")
 	lazy_initialize(subject)
-	invariant.Always(
+	aver.Always(
 		count <= subject.Free_Count,
 		"A new ring takes no more nodes than the pool holds free.",
 	)
@@ -400,7 +400,7 @@ func Unlink[Value any](
 	Count_Invariants(count, "unlink.count")
 	Pool_Invariants(subject, "unlink.subject")
 	enforce_live(subject, position)
-	invariant.Always(
+	aver.Always(
 		count < Element_Count(subject, Position(position)),
 		"An unlinked count leaves at least one node in the ring.",
 	)

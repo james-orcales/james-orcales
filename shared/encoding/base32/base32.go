@@ -3,8 +3,8 @@ package base32
 
 import (
 	"local/james-orcales/shared/bytes"
-	"local/james-orcales/shared/invariant/default"
 	"local/james-orcales/shared/math/bits"
+	"local/james-orcales/shared/simulation/aver/default"
 )
 
 // ALPHABET_SIZE follows the base32 radix.
@@ -133,8 +133,8 @@ const STATUS_PADDING_INVALID = STATUS_ALPHABET_INVALID + 1
 type Alphabet [ALPHABET_SIZE]byte
 
 // Alphabet_Invariants keeps content validation in New_Encoding while proving fixed storage.
-func Alphabet_Invariants(value Alphabet, _ invariant.Namespace) {
-	invariant.Always(
+func Alphabet_Invariants(value Alphabet, _ aver.Namespace) {
+	aver.Always(
 		len(value) == ALPHABET_SIZE,
 		"A base32 alphabet has one byte for every symbol.",
 	)
@@ -144,8 +144,8 @@ func Alphabet_Invariants(value Alphabet, _ invariant.Namespace) {
 type Padding int16
 
 // Padding_Invariants keeps unvalidated padding in its complete concrete scalar domain.
-func Padding_Invariants(value Padding, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Padding_Invariants(value Padding, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int16(
 			int16(value), bits.INTEGER_16_MINIMUM, bits.INTEGER_16_MAXIMUM,
 		).
@@ -156,8 +156,8 @@ func Padding_Invariants(value Padding, namespace invariant.Namespace) {
 type Padding_Enabled bool
 
 // Padding_Enabled_Invariants covers padded and unpadded configurations.
-func Padding_Enabled_Invariants(value Padding_Enabled, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Padding_Enabled_Invariants(value Padding_Enabled, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Sometimes(bool(value), "Padding is enabled.").
 		Ensure()
 }
@@ -166,8 +166,8 @@ func Padding_Enabled_Invariants(value Padding_Enabled, namespace invariant.Names
 type Padding_Storage [PADDING_STORAGE_SIZE]byte
 
 // Padding_Storage_Invariants proves fixed representation; operations validate its marker.
-func Padding_Storage_Invariants(value Padding_Storage, _ invariant.Namespace) {
-	invariant.Always(
+func Padding_Storage_Invariants(value Padding_Storage, _ aver.Namespace) {
+	aver.Always(
 		len(value) == PADDING_STORAGE_SIZE,
 		"Padding storage retains value and presence.",
 	)
@@ -177,8 +177,8 @@ func Padding_Storage_Invariants(value Padding_Storage, _ invariant.Namespace) {
 type Decode_Map [DECODE_MAP_SIZE]uint8
 
 // Decode_Map_Invariants proves the fixed lookup size without imposing content validity.
-func Decode_Map_Invariants(value Decode_Map, _ invariant.Namespace) {
-	invariant.Always(
+func Decode_Map_Invariants(value Decode_Map, _ aver.Namespace) {
+	aver.Always(
 		len(value) == DECODE_MAP_SIZE,
 		"A decode map covers every possible input byte.",
 	)
@@ -188,8 +188,8 @@ func Decode_Map_Invariants(value Decode_Map, _ invariant.Namespace) {
 type Encoding_Valid bool
 
 // Encoding_Valid_Invariants states its complete concrete boolean domain.
-func Encoding_Valid_Invariants(value Encoding_Valid, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Encoding_Valid_Invariants(value Encoding_Valid, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Sometimes(bool(value), "An encoding configuration is valid.").
 		Ensure()
 }
@@ -205,7 +205,7 @@ type Encoding struct {
 }
 
 // Encoding_Invariants composes storage while validity stays an operation result.
-func Encoding_Invariants(value Encoding, namespace invariant.Namespace) {
+func Encoding_Invariants(value Encoding, namespace aver.Namespace) {
 	Alphabet_Invariants(value.Alphabet, namespace)
 	Decode_Map_Invariants(value.Decode_Map, namespace)
 	Padding_Storage_Invariants(value.Padding, namespace)
@@ -215,8 +215,8 @@ func Encoding_Invariants(value Encoding, namespace invariant.Namespace) {
 type Source []byte
 
 // Source_Invariants enforces the worst-case padded source bound.
-func Source_Invariants(value Source, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Source_Invariants(value Source, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), SIZE_MINIMUM, SOURCE_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -225,8 +225,8 @@ func Source_Invariants(value Source, namespace invariant.Namespace) {
 type Encoded []byte
 
 // Encoded_Invariants keeps wire storage within repository byte boundary.
-func Encoded_Invariants(value Encoded, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Encoded_Invariants(value Encoded, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), SIZE_MINIMUM, ENCODED_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -235,8 +235,8 @@ func Encoded_Invariants(value Encoded, namespace invariant.Namespace) {
 type Decoded []byte
 
 // Decoded_Invariants bounds output to the maximum admitted encoded input.
-func Decoded_Invariants(value Decoded, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Decoded_Invariants(value Decoded, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), SIZE_MINIMUM, DECODED_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -246,9 +246,9 @@ type Decoded_Write_Destination []byte
 
 // Decoded_Write_Destination_Invariants excludes storage unable to receive a quantum.
 func Decoded_Write_Destination_Invariants(
-	value Decoded_Write_Destination, namespace invariant.Namespace,
+	value Decoded_Write_Destination, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(
 			len(value), DECODED_WRITE_DESTINATION_SIZE_MINIMUM,
 			DECODED_SIZE_MAXIMUM,
@@ -260,8 +260,8 @@ func Decoded_Write_Destination_Invariants(
 type Source_Count int
 
 // Source_Count_Invariants follows Source's complete length domain.
-func Source_Count_Invariants(value Source_Count, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Source_Count_Invariants(value Source_Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), SIZE_MINIMUM, SOURCE_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -270,16 +270,16 @@ func Source_Count_Invariants(value Source_Count, namespace invariant.Namespace) 
 type Encoded_Count int
 
 // Encoded_Count_Invariants excludes the shortest impossible representation.
-func Encoded_Count_Invariants(value Encoded_Count, namespace invariant.Namespace) {
+func Encoded_Count_Invariants(value Encoded_Count, namespace aver.Namespace) {
 	remainder := int(value) % ENCODED_GROUP_SIZE
 	valid := remainder == SIZE_MINIMUM || remainder == ENCODED_TAIL_SIZE_ONE ||
 		remainder == ENCODED_TAIL_SIZE_TWO || remainder == ENCODED_TAIL_SIZE_THREE ||
 		remainder == ENCODED_TAIL_SIZE_FINAL
-	invariant.Always(
+	aver.Always(
 		valid,
 		"Encoded output ends after a complete decoded-byte boundary.",
 	)
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Holed_Int(
 			int(value), SIZE_MINIMUM, ENCODED_SIZE_MAXIMUM,
 			ENCODED_COUNT_IMPOSSIBLE_MINIMUM, ENCODED_COUNT_IMPOSSIBLE_MINIMUM,
@@ -293,9 +293,9 @@ type Encoded_Input_Count int
 
 // Encoded_Input_Count_Invariants follows Encoded's complete raw length domain.
 func Encoded_Input_Count_Invariants(
-	value Encoded_Input_Count, namespace invariant.Namespace,
+	value Encoded_Input_Count, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(int(value), SIZE_MINIMUM, ENCODED_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -304,8 +304,8 @@ func Encoded_Input_Count_Invariants(
 type Decoded_Count int
 
 // Decoded_Count_Invariants follows Decoded's complete length domain.
-func Decoded_Count_Invariants(value Decoded_Count, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Decoded_Count_Invariants(value Decoded_Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), SIZE_MINIMUM, DECODED_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -315,9 +315,9 @@ type Bulk_Group_Count int
 
 // Bulk_Group_Count_Invariants covers every complete bulk group.
 func Bulk_Group_Count_Invariants(
-	value Bulk_Group_Count, namespace invariant.Namespace,
+	value Bulk_Group_Count, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(int(value), SIZE_MINIMUM, BULK_GROUP_COUNT_MAXIMUM).
 		Ensure()
 }
@@ -327,9 +327,9 @@ type Tail_Quantum_Count int
 
 // Tail_Quantum_Count_Invariants keeps only incomplete quantum state.
 func Tail_Quantum_Count_Invariants(
-	value Tail_Quantum_Count, namespace invariant.Namespace,
+	value Tail_Quantum_Count, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(int(value), SIZE_MINIMUM, TAIL_QUANTUM_COUNT_MAXIMUM).
 		Ensure()
 }
@@ -338,8 +338,8 @@ func Tail_Quantum_Count_Invariants(
 type Padding_Count int
 
 // Padding_Count_Invariants permits no padding through one complete quantum.
-func Padding_Count_Invariants(value Padding_Count, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Padding_Count_Invariants(value Padding_Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), SIZE_MINIMUM, ENCODED_GROUP_SIZE).
 		Ensure()
 }
@@ -349,9 +349,9 @@ type Decoded_Write_Symbol_Count int
 
 // Decoded_Write_Symbol_Count_Invariants bounds one publishable quantum.
 func Decoded_Write_Symbol_Count_Invariants(
-	value Decoded_Write_Symbol_Count, namespace invariant.Namespace,
+	value Decoded_Write_Symbol_Count, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(int(value), ENCODED_TAIL_SIZE_ONE, ENCODED_GROUP_SIZE).
 		Ensure()
 }
@@ -361,13 +361,13 @@ type Decoded_Prefix_Count int
 
 // Decoded_Prefix_Count_Invariants keeps published prefixes group-aligned.
 func Decoded_Prefix_Count_Invariants(
-	value Decoded_Prefix_Count, namespace invariant.Namespace,
+	value Decoded_Prefix_Count, namespace aver.Namespace,
 ) {
-	invariant.Always(
+	aver.Always(
 		int(value)%DECODED_GROUP_SIZE == SIZE_MINIMUM,
 		"Decoded prefix contains only complete groups.",
 	)
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Holed_Int(
 			int(value), SIZE_MINIMUM, DECODED_SIZE_MAXIMUM,
 			SIZE_MINIMUM+1, SIZE_MINIMUM+2, SIZE_MINIMUM+2, SIZE_MINIMUM+2,
@@ -379,8 +379,8 @@ func Decoded_Prefix_Count_Invariants(
 type Quantum [ENCODED_GROUP_SIZE]uint8
 
 // Quantum_Invariants proves fixed storage for the current encoded group.
-func Quantum_Invariants(value Quantum, _ invariant.Namespace) {
-	invariant.Always(
+func Quantum_Invariants(value Quantum, _ aver.Namespace) {
+	aver.Always(
 		len(value) == ENCODED_GROUP_SIZE,
 		"A quantum has one slot for every encoded symbol.",
 	)
@@ -391,9 +391,9 @@ type Configuration_Status uint8
 
 // Configuration_Status_Invariants lists constructor outcomes.
 func Configuration_Status_Invariants(
-	value Configuration_Status, namespace invariant.Namespace,
+	value Configuration_Status, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Enum_3_Uint8(
 			uint8(value), uint8(STATUS_OK), uint8(STATUS_ALPHABET_INVALID),
 			uint8(STATUS_PADDING_INVALID),
@@ -405,8 +405,8 @@ func Configuration_Status_Invariants(
 type Padding_Status uint8
 
 // Padding_Status_Invariants lists replacement outcomes.
-func Padding_Status_Invariants(value Padding_Status, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Padding_Status_Invariants(value Padding_Status, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_3_Uint8(
 			uint8(value), uint8(STATUS_OK), uint8(STATUS_ENCODING_INVALID),
 			uint8(STATUS_PADDING_INVALID),
@@ -418,8 +418,8 @@ func Padding_Status_Invariants(value Padding_Status, namespace invariant.Namespa
 type Size_Status uint8
 
 // Size_Status_Invariants lists size outcomes.
-func Size_Status_Invariants(value Size_Status, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Size_Status_Invariants(value Size_Status, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_Uint8(
 			uint8(value), uint8(STATUS_OK), uint8(STATUS_ENCODING_INVALID),
 		).
@@ -430,8 +430,8 @@ func Size_Status_Invariants(value Size_Status, namespace invariant.Namespace) {
 type Encode_Status uint8
 
 // Encode_Status_Invariants lists encoder outcomes.
-func Encode_Status_Invariants(value Encode_Status, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Encode_Status_Invariants(value Encode_Status, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_4_Uint8(
 			uint8(value), uint8(STATUS_OK), uint8(STATUS_OUTPUT_TOO_SMALL),
 			uint8(STATUS_STORAGE_INVALID), uint8(STATUS_ENCODING_INVALID),
@@ -443,8 +443,8 @@ func Encode_Status_Invariants(value Encode_Status, namespace invariant.Namespace
 type Decode_Status uint8
 
 // Decode_Status_Invariants covers its contiguous five-value outcome domain.
-func Decode_Status_Invariants(value Decode_Status, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Decode_Status_Invariants(value Decode_Status, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint8(
 			uint8(value), uint8(STATUS_OK), uint8(STATUS_ENCODING_INVALID),
 		).
@@ -456,9 +456,9 @@ type Decode_Data_Status uint8
 
 // Decode_Data_Status_Invariants lists wire parser outcomes.
 func Decode_Data_Status_Invariants(
-	value Decode_Data_Status, namespace invariant.Namespace,
+	value Decode_Data_Status, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Enum_3_Uint8(
 			uint8(value), uint8(STATUS_OK), uint8(STATUS_INPUT_INVALID),
 			uint8(STATUS_OUTPUT_TOO_SMALL),
@@ -522,7 +522,7 @@ func Standard_Encoding() (encoding Encoding) {
 	var alphabet Alphabet
 	copy(alphabet[:], "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567")
 	encoding, status := New_Encoding(alphabet, STANDARD_PADDING)
-	invariant.Always(status == STATUS_OK, "Standard base32 alphabet is valid.")
+	aver.Always(status == STATUS_OK, "Standard base32 alphabet is valid.")
 	return encoding
 }
 
@@ -532,7 +532,7 @@ func Hexadecimal_Encoding() (encoding Encoding) {
 	var alphabet Alphabet
 	copy(alphabet[:], "0123456789ABCDEFGHIJKLMNOPQRSTUV")
 	encoding, status := New_Encoding(alphabet, STANDARD_PADDING)
-	invariant.Always(status == STATUS_OK, "Hex base32 alphabet is valid.")
+	aver.Always(status == STATUS_OK, "Hex base32 alphabet is valid.")
 	return encoding
 }
 

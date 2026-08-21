@@ -3,8 +3,8 @@ package ascii85
 
 import (
 	"local/james-orcales/shared/bytes"
-	"local/james-orcales/shared/invariant/default"
 	"local/james-orcales/shared/math/bits"
+	"local/james-orcales/shared/simulation/aver/default"
 )
 
 // DECODED_GROUP_SIZE follows ASCII85's 32-bit source word.
@@ -94,8 +94,8 @@ const STATUS_OUTPUT_TOO_SMALL = STATUS_INPUT_INVALID + 1
 type Encode_Source []byte
 
 // Encode_Source_Invariants bounds input before encoder reads it.
-func Encode_Source_Invariants(value Encode_Source, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Encode_Source_Invariants(value Encode_Source, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), SIZE_MINIMUM, ENCODE_SOURCE_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -104,8 +104,8 @@ func Encode_Source_Invariants(value Encode_Source, namespace invariant.Namespace
 type Encoded []byte
 
 // Encoded_Invariants bounds every encoded view.
-func Encoded_Invariants(value Encoded, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Encoded_Invariants(value Encoded, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), SIZE_MINIMUM, ENCODED_INPUT_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -114,8 +114,8 @@ func Encoded_Invariants(value Encoded, namespace invariant.Namespace) {
 type Decoded []byte
 
 // Decoded_Invariants bounds decoded caller storage.
-func Decoded_Invariants(value Decoded, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Decoded_Invariants(value Decoded, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), SIZE_MINIMUM, DECODED_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -125,9 +125,9 @@ type Decoded_Write_Destination []byte
 
 // Decoded_Write_Destination_Invariants excludes storage that cannot receive any group.
 func Decoded_Write_Destination_Invariants(
-	value Decoded_Write_Destination, namespace invariant.Namespace,
+	value Decoded_Write_Destination, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(
 			len(value), DECODED_WRITE_DESTINATION_SIZE_MINIMUM, DECODED_SIZE_MAXIMUM,
 		).
@@ -138,8 +138,8 @@ func Decoded_Write_Destination_Invariants(
 type Decoded_Word uint32
 
 // Decoded_Word_Invariants retains every possible four-byte group.
-func Decoded_Word_Invariants(value Decoded_Word, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Decoded_Word_Invariants(value Decoded_Word, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint32(uint32(value), bits.WORD_32_MINIMUM, bits.WORD_32_MAXIMUM).
 		Ensure()
 }
@@ -149,9 +149,9 @@ type Decoded_Write_Count int
 
 // Decoded_Write_Count_Invariants permits each nonempty group prefix.
 func Decoded_Write_Count_Invariants(
-	value Decoded_Write_Count, namespace invariant.Namespace,
+	value Decoded_Write_Count, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Enum_4_Int(
 			int(value), DECODED_WRITE_DESTINATION_SIZE_MINIMUM,
 			DECODED_WRITE_COUNT_SECOND,
@@ -165,8 +165,8 @@ func Decoded_Write_Count_Invariants(
 type Source_Count int
 
 // Source_Count_Invariants bounds size calculation input.
-func Source_Count_Invariants(value Source_Count, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Source_Count_Invariants(value Source_Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), SIZE_MINIMUM, ENCODE_SOURCE_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -175,8 +175,8 @@ func Source_Count_Invariants(value Source_Count, namespace invariant.Namespace) 
 type Encoded_Count int
 
 // Encoded_Count_Invariants bounds every encoded result.
-func Encoded_Count_Invariants(value Encoded_Count, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Encoded_Count_Invariants(value Encoded_Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), SIZE_MINIMUM, ENCODED_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -186,13 +186,13 @@ type Maximum_Encoded_Count int
 
 // Maximum_Encoded_Count_Invariants removes counts impossible under five-byte group rounding.
 func Maximum_Encoded_Count_Invariants(
-	value Maximum_Encoded_Count, namespace invariant.Namespace,
+	value Maximum_Encoded_Count, namespace aver.Namespace,
 ) {
-	invariant.Always(
+	aver.Always(
 		int(value)%ENCODED_GROUP_SIZE == 0,
 		"Maximum encoded count is whole encoded groups.",
 	)
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Holed_Int(
 			int(value), SIZE_MINIMUM, ENCODED_SIZE_MAXIMUM,
 			MAXIMUM_ENCODED_COUNT_HOLE_FIRST, MAXIMUM_ENCODED_COUNT_HOLE_SECOND,
@@ -205,8 +205,8 @@ func Maximum_Encoded_Count_Invariants(
 type Decoded_Count int
 
 // Decoded_Count_Invariants bounds every decoded result.
-func Decoded_Count_Invariants(value Decoded_Count, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Decoded_Count_Invariants(value Decoded_Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), SIZE_MINIMUM, DECODED_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -215,8 +215,8 @@ func Decoded_Count_Invariants(value Decoded_Count, namespace invariant.Namespace
 type Bulk_Group_Count int
 
 // Bulk_Group_Count_Invariants covers every complete bulk group.
-func Bulk_Group_Count_Invariants(value Bulk_Group_Count, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Bulk_Group_Count_Invariants(value Bulk_Group_Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), SIZE_MINIMUM, BULK_GROUP_COUNT_MAXIMUM).
 		Ensure()
 }
@@ -225,8 +225,8 @@ func Bulk_Group_Count_Invariants(value Bulk_Group_Count, namespace invariant.Nam
 type Consumed_Count int
 
 // Consumed_Count_Invariants bounds consumed input through complete source.
-func Consumed_Count_Invariants(value Consumed_Count, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Consumed_Count_Invariants(value Consumed_Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), SIZE_MINIMUM, ENCODED_INPUT_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -235,8 +235,8 @@ func Consumed_Count_Invariants(value Consumed_Count, namespace invariant.Namespa
 type Flush bool
 
 // Flush_Invariants reaches streaming and final decode modes.
-func Flush_Invariants(value Flush, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Flush_Invariants(value Flush, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Sometimes(bool(value), "A decode flushes final input.").
 		Ensure()
 }
@@ -245,8 +245,8 @@ func Flush_Invariants(value Flush, namespace invariant.Namespace) {
 type Status uint8
 
 // Status_Invariants lists complete operation outcomes.
-func Status_Invariants(value Status, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Status_Invariants(value Status, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_3_Uint8(
 			uint8(value), uint8(STATUS_OK), uint8(STATUS_INPUT_INVALID),
 			uint8(STATUS_OUTPUT_TOO_SMALL),
@@ -258,8 +258,8 @@ func Status_Invariants(value Status, namespace invariant.Namespace) {
 type Encode_Status uint8
 
 // Encode_Status_Invariants lists encoder outcomes.
-func Encode_Status_Invariants(value Encode_Status, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Encode_Status_Invariants(value Encode_Status, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_Uint8(
 			uint8(value), uint8(STATUS_OK), uint8(STATUS_OUTPUT_TOO_SMALL),
 		).
@@ -314,7 +314,7 @@ func Encode_Into(
 	}()
 	Encoded_Invariants(destination, "Encode_Into.destination")
 	Encode_Source_Invariants(source, "Encode_Into.source")
-	invariant.Always(
+	aver.Always(
 		!bool(bytes.Overlap(bytes.Slice(destination), bytes.Slice(source))),
 		"ASCII85 encode source and destination do not overlap.",
 	)
@@ -390,7 +390,7 @@ func Decode_Into(
 	Encoded_Invariants(source, "Decode_Into.source")
 	Flush_Invariants(flush, "Decode_Into.flush")
 	overlap := bytes.Overlap(bytes.Slice(destination), bytes.Slice(source))
-	invariant.Always(!bool(overlap), "ASCII85 decode source and destination do not overlap.")
+	aver.Always(!bool(overlap), "ASCII85 decode source and destination do not overlap.")
 	group_count := decode_bulk_unchecked(destination, source)
 	decoded = Decoded_Count(int(group_count) * DECODED_GROUP_SIZE)
 	consumed = Consumed_Count(int(group_count) * ENCODED_GROUP_SIZE)

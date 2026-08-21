@@ -4,8 +4,8 @@ package adler32
 import (
 	"local/james-orcales/shared/bytes"
 	"local/james-orcales/shared/encoding/binary"
-	"local/james-orcales/shared/invariant/default"
 	"local/james-orcales/shared/math/bits"
+	"local/james-orcales/shared/simulation/aver/default"
 )
 
 // MODULUS is the largest prime below one 16-bit word, selected by RFC 1950.
@@ -93,8 +93,8 @@ const READY_COMPLETE Ready = READY_EMPTY + 1
 type Ready uint8
 
 // Ready_Invariants admits zero storage and initialized state.
-func Ready_Invariants(value Ready, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Ready_Invariants(value Ready, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_Uint8(uint8(value), uint8(READY_EMPTY), uint8(READY_COMPLETE)).
 		Ensure()
 }
@@ -103,8 +103,8 @@ func Ready_Invariants(value Ready, namespace invariant.Namespace) {
 type Source []byte
 
 // Source_Invariants binds one call to repository byte boundary.
-func Source_Invariants(value Source, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Source_Invariants(value Source, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), SOURCE_SIZE_MINIMUM, SOURCE_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -113,8 +113,8 @@ func Source_Invariants(value Source, namespace invariant.Namespace) {
 type Destination []byte
 
 // Destination_Invariants binds output to repository byte boundary.
-func Destination_Invariants(value Destination, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Destination_Invariants(value Destination, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), DESTINATION_SIZE_MINIMUM, DESTINATION_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -123,8 +123,8 @@ func Destination_Invariants(value Destination, namespace invariant.Namespace) {
 type Count int
 
 // Count_Invariants covers complete source count.
-func Count_Invariants(value Count, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Count_Invariants(value Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), COUNT_MINIMUM, COUNT_MAXIMUM).
 		Ensure()
 }
@@ -133,8 +133,8 @@ func Count_Invariants(value Count, namespace invariant.Namespace) {
 type Output_Count uint8
 
 // Output_Count_Invariants excludes partial checksum output.
-func Output_Count_Invariants(value Output_Count, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Output_Count_Invariants(value Output_Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_Uint8(
 			uint8(value), uint8(OUTPUT_COUNT_EMPTY), uint8(OUTPUT_COUNT_COMPLETE),
 		).
@@ -145,8 +145,8 @@ func Output_Count_Invariants(value Output_Count, namespace invariant.Namespace) 
 type Output_Status uint8
 
 // Output_Status_Invariants covers complete and short output.
-func Output_Status_Invariants(value Output_Status, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Output_Status_Invariants(value Output_Status, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_Uint8(uint8(value), uint8(OUTPUT_STATUS_OK), uint8(OUTPUT_STATUS_TOO_SMALL)).
 		Ensure()
 }
@@ -160,7 +160,7 @@ type Digest struct {
 }
 
 // Digest_Invariants preserves every serialized state the standard library accepts.
-func Digest_Invariants(value Digest, namespace invariant.Namespace) {
+func Digest_Invariants(value Digest, namespace aver.Namespace) {
 	Digest_Value_Invariants(value.Value, namespace)
 	Ready_Invariants(value.Ready, namespace)
 }
@@ -169,8 +169,8 @@ func Digest_Invariants(value Digest, namespace invariant.Namespace) {
 type Digest_Value uint32
 
 // Digest_Value_Invariants preserves every value standard state can contain.
-func Digest_Value_Invariants(value Digest_Value, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Digest_Value_Invariants(value Digest_Value, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint32(uint32(value), bits.WORD_32_MINIMUM, bits.WORD_32_MAXIMUM).
 		Ensure()
 }
@@ -179,8 +179,8 @@ func Digest_Value_Invariants(value Digest_Value, namespace invariant.Namespace) 
 type Sum_1 uint16
 
 // Sum_1_Invariants keeps computed low state below MODULUS.
-func Sum_1_Invariants(value Sum_1, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Sum_1_Invariants(value Sum_1, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint16(uint16(value), COMPONENT_MINIMUM, COMPONENT_MAXIMUM).
 		Ensure()
 }
@@ -189,8 +189,8 @@ func Sum_1_Invariants(value Sum_1, namespace invariant.Namespace) {
 type Sum_2 uint16
 
 // Sum_2_Invariants keeps computed high state below MODULUS.
-func Sum_2_Invariants(value Sum_2, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Sum_2_Invariants(value Sum_2, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint16(uint16(value), COMPONENT_MINIMUM, COMPONENT_MAXIMUM).
 		Ensure()
 }
@@ -204,7 +204,7 @@ type Value struct {
 }
 
 // Value_Invariants composes the two independently reduced components.
-func Value_Invariants(value Value, namespace invariant.Namespace) {
+func Value_Invariants(value Value, namespace aver.Namespace) {
 	Sum_1_Invariants(value.Sum_1, namespace)
 	Sum_2_Invariants(value.Sum_2, namespace)
 }
@@ -213,8 +213,8 @@ func Value_Invariants(value Value, namespace invariant.Namespace) {
 type State_Count uint8
 
 // State_Count_Invariants excludes partial serialized state.
-func State_Count_Invariants(value State_Count, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func State_Count_Invariants(value State_Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_Uint8(
 			uint8(value), uint8(STATE_COUNT_EMPTY), uint8(STATE_COUNT_COMPLETE),
 		).
@@ -225,8 +225,8 @@ func State_Count_Invariants(value State_Count, namespace invariant.Namespace) {
 type State_Output_Status uint8
 
 // State_Output_Status_Invariants covers both state-output outcomes.
-func State_Output_Status_Invariants(value State_Output_Status, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func State_Output_Status_Invariants(value State_Output_Status, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_Uint8(
 			uint8(value), uint8(STATE_OUTPUT_STATUS_OK),
 			uint8(STATE_OUTPUT_STATUS_TOO_SMALL),
@@ -238,8 +238,8 @@ func State_Output_Status_Invariants(value State_Output_Status, namespace invaria
 type State_Input_Status uint8
 
 // State_Input_Status_Invariants covers every state-input outcome.
-func State_Input_Status_Invariants(value State_Input_Status, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func State_Input_Status_Invariants(value State_Input_Status, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_3_Uint8(
 			uint8(value), uint8(STATE_INPUT_STATUS_OK),
 			uint8(STATE_INPUT_STATUS_SIZE_INVALID),
@@ -253,7 +253,7 @@ func Digest_Init(digest *Digest) {
 	Digest_Invariants(*digest, "Digest_Init.digest.input")
 	digest.Value = 1
 	digest.Ready = READY_COMPLETE
-	invariant.Always(digest.Value == 1, "Fresh Adler-32 state starts at one.")
+	aver.Always(digest.Value == 1, "Fresh Adler-32 state starts at one.")
 }
 
 // Digest_Reset makes existing caller storage equal to freshly initialized state.
@@ -261,7 +261,7 @@ func Digest_Reset(digest *Digest) {
 	Digest_Invariants(*digest, "Digest_Reset.digest.input")
 	digest_require(digest)
 	digest.Value = 1
-	invariant.Always(digest.Value == 1, "Reset Adler-32 state starts at one.")
+	aver.Always(digest.Value == 1, "Reset Adler-32 state starts at one.")
 }
 
 // Digest_Write can defer reduction because one bounded call stays below uint32 overflow even when
@@ -429,7 +429,7 @@ func Digest_Clone_Into(destination *Digest, source *Digest) {
 // Readiness blocks zero caller storage from becoming attacker-selected checksum state.
 func digest_require(digest *Digest) {
 	Digest_Invariants(*digest, "digest_require.digest")
-	invariant.Always(
+	aver.Always(
 		digest.Ready == READY_COMPLETE,
 		"Adler-32 operations require Digest_Init or Digest_Unmarshal.",
 	)

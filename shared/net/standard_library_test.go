@@ -7,15 +7,15 @@ import (
 	"testing"
 
 	"local/james-orcales/shared/crypto/prng"
-	"local/james-orcales/shared/invariant/default"
 	"local/james-orcales/shared/net"
+	"local/james-orcales/shared/simulation/aver/default"
 	"local/james-orcales/shared/simulation/nbio"
 	"local/james-orcales/shared/simulation/time"
 )
 
 // TestMain registers resolver invariant roots before all tests.
 func TestMain(m *testing.M) {
-	invariant.Run_Test_Main(m)
+	aver.Run_Test_Main(m)
 }
 
 // Test_Standard_Library_Resolver_Injected_IO ports A and AAAA parts of net.TestResolverDialFunc.

@@ -6,7 +6,7 @@ package ast
 
 import (
 	"local/james-orcales/shared/go/token"
-	"local/james-orcales/shared/invariant/default"
+	"local/james-orcales/shared/simulation/aver/default"
 )
 
 // TOKEN_COUNT_MAXIMUM caps the token run. The densest first-party file in this repository
@@ -506,8 +506,8 @@ const NODE_KIND_MAXIMUM = uint8(NODE_PARAMETER_NAME)
 type Failure_Code uint8
 
 // Failure_Code_Invariants states the clean parse and every cause.
-func Failure_Code_Invariants(value Failure_Code, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Failure_Code_Invariants(value Failure_Code, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint8(uint8(value), FAILURE_CODE_MINIMUM, FAILURE_CODE_MAXIMUM).
 		Ensure()
 }
@@ -516,8 +516,8 @@ func Failure_Code_Invariants(value Failure_Code, namespace invariant.Namespace) 
 type Cause uint8
 
 // Cause_Invariants excludes the clean parse, which is no reason to stop.
-func Cause_Invariants(value Cause, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Cause_Invariants(value Cause, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint8(uint8(value), CAUSE_MINIMUM, CAUSE_MAXIMUM).
 		Ensure()
 }
@@ -526,8 +526,8 @@ func Cause_Invariants(value Cause, namespace invariant.Namespace) {
 type Reject_Cause uint8
 
 // Reject_Cause_Invariants states the causes that mark one token.
-func Reject_Cause_Invariants(value Reject_Cause, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Reject_Cause_Invariants(value Reject_Cause, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint8(uint8(value), REJECT_CAUSE_MINIMUM, REJECT_CAUSE_MAXIMUM).
 		Ensure()
 }
@@ -537,8 +537,8 @@ func Reject_Cause_Invariants(value Reject_Cause, namespace invariant.Namespace) 
 type Message string
 
 // Message_Invariants states the band every failure sentence spans.
-func Message_Invariants(value Message, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Message_Invariants(value Message, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), MESSAGE_SIZE_MINIMUM, MESSAGE_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -547,8 +547,8 @@ func Message_Invariants(value Message, namespace invariant.Namespace) {
 type Node_Kind uint8
 
 // Node_Kind_Invariants states the complete syntactic class domain.
-func Node_Kind_Invariants(value Node_Kind, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Node_Kind_Invariants(value Node_Kind, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint8(uint8(value), NODE_KIND_MINIMUM, NODE_KIND_MAXIMUM).
 		Ensure()
 }
@@ -557,8 +557,8 @@ func Node_Kind_Invariants(value Node_Kind, namespace invariant.Namespace) {
 type Index int32
 
 // Index_Invariants admits the absent slot, because a missing child is a slot number of its own.
-func Index_Invariants(value Index, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Index_Invariants(value Index, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int32(int32(value), INDEX_MINIMUM, INDEX_MAXIMUM).
 		Ensure()
 }
@@ -567,8 +567,8 @@ func Index_Invariants(value Index, namespace invariant.Namespace) {
 type Token_Index int32
 
 // Token_Index_Invariants states the complete token run domain.
-func Token_Index_Invariants(value Token_Index, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Token_Index_Invariants(value Token_Index, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int32(int32(value), TOKEN_INDEX_MINIMUM, TOKEN_INDEX_MAXIMUM).
 		Ensure()
 }
@@ -577,8 +577,8 @@ func Token_Index_Invariants(value Token_Index, namespace invariant.Namespace) {
 type Token_Run []token.Token
 
 // Token_Run_Invariants bounds the borrowed prefix inside Parse_State storage.
-func Token_Run_Invariants(value Token_Run, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Token_Run_Invariants(value Token_Run, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), TOKEN_RUN_SIZE_MINIMUM, TOKEN_COUNT_MAXIMUM).
 		Ensure()
 }
@@ -589,8 +589,8 @@ type Ancestor int32
 
 // Ancestor_Invariants excludes the final slot, which no node can hold as its parent, and the
 // slot after the file, which opens the child chain and therefore holds no child of its own.
-func Ancestor_Invariants(value Ancestor, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Ancestor_Invariants(value Ancestor, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Holed_Int32(
 			int32(value), INDEX_MINIMUM, ANCESTOR_MAXIMUM,
 			LINK_HOLE_FIRST, LINK_HOLE_FIRST, LINK_HOLE_FIRST, LINK_HOLE_FIRST,
@@ -602,8 +602,8 @@ func Ancestor_Invariants(value Ancestor, namespace invariant.Namespace) {
 type Head int32
 
 // Head_Invariants holes the file slot, which is the root and therefore no node's child.
-func Head_Invariants(value Head, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Head_Invariants(value Head, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Holed_Int32(
 			int32(value), INDEX_MINIMUM, INDEX_MAXIMUM,
 			LINK_HOLE_ROOT, LINK_HOLE_ROOT, LINK_HOLE_ROOT, LINK_HOLE_ROOT,
@@ -616,8 +616,8 @@ type Successor int32
 
 // Successor_Invariants holes the file slot and the slot after it: the first opens no chain it
 // belongs to and the second opens the chain of the file, so neither follows a sibling.
-func Successor_Invariants(value Successor, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Successor_Invariants(value Successor, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Holed_Int32(
 			int32(value), INDEX_MINIMUM, INDEX_MAXIMUM,
 			LINK_HOLE_ROOT, LINK_HOLE_FIRST, LINK_HOLE_FIRST, LINK_HOLE_FIRST,
@@ -629,8 +629,8 @@ func Successor_Invariants(value Successor, namespace invariant.Namespace) {
 type Root int32
 
 // Root_Invariants states the two slots a parse can return.
-func Root_Invariants(value Root, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Root_Invariants(value Root, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_Int32(int32(value), INDEX_MINIMUM, int32(INDEX_FIRST)).
 		Ensure()
 }
@@ -640,8 +640,8 @@ func Root_Invariants(value Root, namespace invariant.Namespace) {
 type Wrap_Kind int
 
 // Wrap_Kind_Invariants states the block of kinds that reach back for an earlier node.
-func Wrap_Kind_Invariants(value Wrap_Kind, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Wrap_Kind_Invariants(value Wrap_Kind, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), WRAP_KIND_MINIMUM, WRAP_KIND_MAXIMUM).
 		Ensure()
 }
@@ -650,8 +650,8 @@ func Wrap_Kind_Invariants(value Wrap_Kind, namespace invariant.Namespace) {
 type Prefix_Kind int
 
 // Prefix_Kind_Invariants states the block of prefix type kinds.
-func Prefix_Kind_Invariants(value Prefix_Kind, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Prefix_Kind_Invariants(value Prefix_Kind, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), PREFIX_KIND_MINIMUM, PREFIX_KIND_MAXIMUM).
 		Ensure()
 }
@@ -660,8 +660,8 @@ func Prefix_Kind_Invariants(value Prefix_Kind, namespace invariant.Namespace) {
 type Clause_Kind int
 
 // Clause_Kind_Invariants states the block of simple statement kinds.
-func Clause_Kind_Invariants(value Clause_Kind, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Clause_Kind_Invariants(value Clause_Kind, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), CLAUSE_KIND_MINIMUM, CLAUSE_KIND_MAXIMUM).
 		Ensure()
 }
@@ -670,8 +670,8 @@ func Clause_Kind_Invariants(value Clause_Kind, namespace invariant.Namespace) {
 type Group_Kind uint8
 
 // Group_Kind_Invariants states the two halves of a signature.
-func Group_Kind_Invariants(value Group_Kind, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Group_Kind_Invariants(value Group_Kind, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_Uint8(uint8(value), GROUP_KIND_PARAMETER, GROUP_KIND_RESULT).
 		Ensure()
 }
@@ -681,8 +681,8 @@ func Group_Kind_Invariants(value Group_Kind, namespace invariant.Namespace) {
 type Value_Kind uint8
 
 // Value_Kind_Invariants states the two declarations that bind a value name.
-func Value_Kind_Invariants(value Value_Kind, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Value_Kind_Invariants(value Value_Kind, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_Uint8(uint8(value), VALUE_KIND_CONSTANT, VALUE_KIND_VARIABLE).
 		Ensure()
 }
@@ -691,8 +691,8 @@ func Value_Kind_Invariants(value Value_Kind, namespace invariant.Namespace) {
 type Literal_Kind int
 
 // Literal_Kind_Invariants states the block of literal kinds.
-func Literal_Kind_Invariants(value Literal_Kind, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Literal_Kind_Invariants(value Literal_Kind, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), LITERAL_KIND_MINIMUM, LITERAL_KIND_MAXIMUM).
 		Ensure()
 }
@@ -701,8 +701,8 @@ func Literal_Kind_Invariants(value Literal_Kind, namespace invariant.Namespace) 
 type Suffix_Kind int
 
 // Suffix_Kind_Invariants states the three classes a bracket suffix can open.
-func Suffix_Kind_Invariants(value Suffix_Kind, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Suffix_Kind_Invariants(value Suffix_Kind, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_3_Int(int(value), SUFFIX_KIND_GENERIC, SUFFIX_KIND_INDEX, SUFFIX_KIND_SLICE).
 		Ensure()
 }
@@ -712,8 +712,8 @@ type Precedence int
 
 // Precedence_Invariants admits the level of a token that binds nothing and the three levels this
 // dialect states.
-func Precedence_Invariants(value Precedence, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Precedence_Invariants(value Precedence, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_4_Int(
 			int(value), int(PRECEDENCE_NONE), int(PRECEDENCE_COMPARISON),
 			int(PRECEDENCE_ADDITION), int(PRECEDENCE_MULTIPLICATION)).
@@ -724,8 +724,8 @@ func Precedence_Invariants(value Precedence, namespace invariant.Namespace) {
 type Boolean bool
 
 // Boolean_Invariants states both parse reports as obligations.
-func Boolean_Invariants(value Boolean, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Boolean_Invariants(value Boolean, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Sometimes(bool(value), "The parse step report is true.").
 		Ensure()
 }
@@ -751,7 +751,7 @@ type Node struct {
 // Node_Invariants composes the class, the naming token, and the five tree links of one node.
 // Each link carries a type of its own, because one assertion tree holds one type at one
 // position and five links of one type would give five paths one identity.
-func Node_Invariants(value Node, namespace invariant.Namespace) {
+func Node_Invariants(value Node, namespace aver.Namespace) {
 	Node_Kind_Invariants(value.Kind, namespace)
 	Token_Index_Invariants(value.Token, namespace)
 	Ancestor_Invariants(value.Parent, namespace)
@@ -790,8 +790,8 @@ type Parse_State struct {
 // Parse_State_Invariants states the storage the caller supplies. The cursors are array slots,
 // so this bundle states the storage width and each cursor proves its own domain where it is
 // read, which keeps one parse step from owing a cursor value it can never see.
-func Parse_State_Invariants(subject *Parse_State, namespace invariant.Namespace) {
-	invariant.Always(
+func Parse_State_Invariants(subject *Parse_State, namespace aver.Namespace) {
+	aver.Always(
 		len(subject.Nodes) == NODE_COUNT_MAXIMUM,
 		"A parse state holds one arena slot for every admitted node.",
 	)
@@ -831,7 +831,7 @@ func Node_At(subject *Parse_State, index Index) (node Node) {
 	defer func() { Node_Invariants(node, "node_at.node") }()
 	Parse_State_Invariants(subject, "node_at.subject")
 	Index_Invariants(index, "node_at.index")
-	invariant.Always(
+	aver.Always(
 		index < subject.Node_Cursors[CURSOR_NODE_COUNT],
 		"A read node lies inside the count the parse wrote.",
 	)
@@ -843,7 +843,7 @@ func Token_At(subject *Parse_State, index Token_Index) (one token.Token) {
 	defer func() { token.Token_Invariants(one, "token_at.one") }()
 	Parse_State_Invariants(subject, "token_at.subject")
 	Token_Index_Invariants(index, "token_at.index")
-	invariant.Always(
+	aver.Always(
 		index < subject.Token_Cursors[CURSOR_TOKEN_COUNT],
 		"A read token lies inside the count the scan wrote.",
 	)

@@ -18,23 +18,32 @@ import (
 	"testing"
 	"unsafe"
 
-	"local/james-orcales/shared/random/prng"
+	"local/james-orcales/shared/simulation/nbio"
+	"local/james-orcales/shared/simulation/prng"
 	"local/james-orcales/shared/simulation/time"
 )
 
 // Builds a fresh simulated io loop for the Expirable ports: the submit surface to inject, the
 // driver the test pumps, and the clock expiry is stamped against.
-func new_expirable_loop() (loop time.Timeline, driver time.Driver, clock time.Clock) {
-	state := new(time.Virtual_Timeline)
-	queue := make([]*time.Completion, 64)
-	events := make([]time.Virtual_Event, 1)
-	virtual := time.Virtual_Clock{Resolution: 1}
-	memory := time.Virtual_Timeline_Memory{
-		Queue:  queue,
-		Events: events,
-	}
-	return time.New_Virtual_Timeline(state, virtual, memory)
+func new_expirable_loop() (loop nbio.Timeline, driver nbio.Driver, host time.Clock) {
+	state := new(nbio.Sim)
+	surface, driver := nbio.New_Simulated_IO(state, 0, time.NANOSECOND, nbio.Sim_Memory{
+		Nodes:       make([]nbio.Sim_Node, EXPIRABLE_LOOP_SLOT_CAPACITY),
+		Descriptors: make([]nbio.Sim_Descriptor, EXPIRABLE_LOOP_SLOT_CAPACITY),
+		Operations:  make([]nbio.Sim_Operation, EXPIRABLE_LOOP_SLOT_CAPACITY),
+		Queue:       make([]*nbio.Completion, EXPIRABLE_LOOP_QUEUE_CAPACITY),
+		Events:      make([]nbio.Virtual_Event, EXPIRABLE_LOOP_SLOT_CAPACITY),
+		Clocks:      make([]nbio.Sim_Clock, EXPIRABLE_LOOP_SLOT_CAPACITY),
+	})
+	return surface.Timeline, driver, nbio.Sim_Clock_To_Clock(&state.Clocks[0])
 }
+
+// Expirable arms one reaper timer per cache; the queue leaves room for the tests that arm
+// many caches on one loop.
+const EXPIRABLE_LOOP_QUEUE_CAPACITY = 64
+
+// Every other simulator resource is one slot: expiry touches no endpoint and reads one clock.
+const EXPIRABLE_LOOP_SLOT_CAPACITY = 1
 
 // Allocates test ownership outside production initialization.
 func new_simple_cache[K Key_Kind, V Value_Kind](
@@ -446,8 +455,8 @@ func Test_Two_Queue_Random_Ops(t *testing.T) {
 	generator := prng.New(3)
 	c := new_two_queue_cache[int, int](Two_Queue_Input{Capacity: Capacity(size)})
 	for op_index := 0; op_index < 200000; op_index++ {
-		key := int(prng.Generator_Below(&generator, 512))
-		switch prng.Generator_Below(&generator, 3) {
+		key := int(prng.Xoshiro_Below(&generator, 512))
+		switch prng.Xoshiro_Below(&generator, 3) {
 		case 0:
 			Two_Queue_Add(c, key, key)
 		case 1:
@@ -612,11 +621,11 @@ func Test_Two_Queue_Peek(t *testing.T) {
 // Test_Expirable_No_Purge ports TestLRUNoPurge: a long-TTL cache serves an entry without expiring
 // it and reports membership and keys correctly. The upstream ttl=0 and Resize modes were removed.
 func Test_Expirable_No_Purge(t *testing.T) {
-	loop, _, clock := new_expirable_loop()
+	loop, _, host := new_expirable_loop()
 	c := new_expirable_cache[string, string](Expirable_Input[string, string]{
 		Capacity: 10,
 		TTL:      TTL(time.HOUR),
-		Clock:    clock,
+		Clock:    host,
 		Timeline: loop,
 	})
 	Expirable_Add(c, "key1", "val1")
@@ -644,11 +653,11 @@ func Test_Expirable_No_Purge(t *testing.T) {
 // Test_Expirable_Edge_Cases ports TestLRUEdgeCases: a nil value stores and reads back, and an
 // overwrite replaces it.
 func Test_Expirable_Edge_Cases(t *testing.T) {
-	loop, _, clock := new_expirable_loop()
+	loop, _, host := new_expirable_loop()
 	c := new_expirable_cache[string, *string](Expirable_Input[string, *string]{
 		Capacity: 2,
 		TTL:      TTL(time.HOUR),
-		Clock:    clock,
+		Clock:    host,
 		Timeline: loop,
 	})
 	Expirable_Add(c, "key1", nil)
@@ -672,11 +681,11 @@ func Test_Expirable_Edge_Cases(t *testing.T) {
 
 // Test_Expirable_Values ports TestLRU_Values.
 func Test_Expirable_Values(t *testing.T) {
-	loop, _, clock := new_expirable_loop()
+	loop, _, host := new_expirable_loop()
 	c := new_expirable_cache[string, string](Expirable_Input[string, string]{
 		Capacity: 3,
 		TTL:      TTL(time.HOUR),
-		Clock:    clock,
+		Clock:    host,
 		Timeline: loop,
 	})
 	Expirable_Add(c, "key1", "val1")
@@ -691,18 +700,18 @@ func Test_Expirable_Values(t *testing.T) {
 // Test_Expirable_With_Purge_Expiry ports the expiry half of TestLRUWithPurge, driving the io loop
 // so the repeating timer reaps the expired entry and fires the callback.
 func Test_Expirable_With_Purge_Expiry(t *testing.T) {
-	loop, driver, clock := new_expirable_loop()
+	loop, driver, host := new_expirable_loop()
 	var evicted []string
 	c := new_expirable_cache[string, string](Expirable_Input[string, string]{
 		Capacity: 10,
 		TTL:      TTL(time.MICROSECOND),
-		Clock:    clock,
+		Clock:    host,
 		Timeline: loop,
 		On_Evict: func(key string, value string) { evicted = append(evicted, key, value) },
 	})
 	Expirable_Add(c, "key1", "val1")
 	// A short drive stays under the TTL, so the entry is still live.
-	time.Driver_Run_For(driver, 200*time.NANOSECOND)
+	nbio.Driver_Run_For(driver, 200*time.NANOSECOND)
 	value, ok := Expirable_Get(c, "key1")
 	if value != "val1" {
 		t.Fatalf("value differs from expected")
@@ -714,7 +723,7 @@ func Test_Expirable_With_Purge_Expiry(t *testing.T) {
 	empty := func() (finished bool) {
 		return Expirable_Count(c) == 0
 	}
-	completed, drive_err := time.Driver_Run_Until(driver, time.MILLISECOND, empty)
+	completed, drive_err := nbio.Driver_Run_Until(driver, time.MILLISECOND, empty)
 	if drive_err != nil {
 		t.Fatalf("drive until the timer reaps the expired entry: %v", drive_err)
 	}
@@ -729,13 +738,13 @@ func Test_Expirable_With_Purge_Expiry(t *testing.T) {
 // Test_Expirable_Purge_Fires_Callback ports the Purge tail of TestLRUWithPurge: an undriven timer
 // leaves live entries in place, and Purge clears the cache and fires the callback for each.
 func Test_Expirable_Purge_Fires_Callback(t *testing.T) {
-	loop, _, clock := new_expirable_loop()
+	loop, _, host := new_expirable_loop()
 	evicted := make(map[string]string)
 	eviction_count := 0
 	c := new_expirable_cache[string, string](Expirable_Input[string, string]{
 		Capacity: 10,
 		TTL:      TTL(time.HOUR),
-		Clock:    clock,
+		Clock:    host,
 		Timeline: loop,
 		On_Evict: func(key string, value string) {
 			eviction_count++
@@ -761,11 +770,11 @@ func Test_Expirable_Purge_Fires_Callback(t *testing.T) {
 
 // Test_Expirable_Purge_Enforced_By_Size ports TestLRUWithPurgeEnforcedBySize.
 func Test_Expirable_Purge_Enforced_By_Size(t *testing.T) {
-	loop, _, clock := new_expirable_loop()
+	loop, _, host := new_expirable_loop()
 	c := new_expirable_cache[string, string](Expirable_Input[string, string]{
 		Capacity: 10,
 		TTL:      TTL(time.HOUR),
-		Clock:    clock,
+		Clock:    host,
 		Timeline: loop,
 	})
 	for i_index := 0; i_index < 100; i_index++ {
@@ -791,12 +800,12 @@ func Test_Expirable_Purge_Enforced_By_Size(t *testing.T) {
 // Test_Expirable_Invalidate_And_Evict ports TestLRUInvalidateAndEvict: a remove fires the eviction
 // callback. The upstream size=-1 unlimited mode was removed, so a bounded size stands in.
 func Test_Expirable_Invalidate_And_Evict(t *testing.T) {
-	loop, _, clock := new_expirable_loop()
+	loop, _, host := new_expirable_loop()
 	evicted := 0
 	c := new_expirable_cache[string, string](Expirable_Input[string, string]{
 		Capacity: 10,
 		TTL:      TTL(time.HOUR),
-		Clock:    clock,
+		Clock:    host,
 		Timeline: loop,
 		On_Evict: func(key string, value string) { evicted++ },
 	})
@@ -825,11 +834,11 @@ func Test_Expirable_Invalidate_And_Evict(t *testing.T) {
 // Test_Expirable_Loading_Expired ports TestLoadingExpired: reads reject an entry once its TTL has
 // passed on the virtual clock.
 func Test_Expirable_Loading_Expired(t *testing.T) {
-	loop, driver, clock := new_expirable_loop()
+	loop, driver, host := new_expirable_loop()
 	c := new_expirable_cache[string, string](Expirable_Input[string, string]{
 		Capacity: 8,
 		TTL:      TTL(time.MICROSECOND),
-		Clock:    clock,
+		Clock:    host,
 		Timeline: loop,
 	})
 	Expirable_Add(c, "key1", "val1")
@@ -847,7 +856,7 @@ func Test_Expirable_Loading_Expired(t *testing.T) {
 	if !ok {
 		t.Fatalf("should be true")
 	}
-	time.Driver_Run_For(driver, 4*time.MICROSECOND) // Past TTL.
+	nbio.Driver_Run_For(driver, 4*time.MICROSECOND) // Past TTL.
 	_, ok = Expirable_Peek(c, "key1")
 	if ok {
 		t.Fatalf("expired key1 should peek as a miss")
@@ -860,11 +869,11 @@ func Test_Expirable_Loading_Expired(t *testing.T) {
 
 // Test_Expirable_Remove_Oldest ports TestLRURemoveOldest.
 func Test_Expirable_Remove_Oldest(t *testing.T) {
-	loop, _, clock := new_expirable_loop()
+	loop, _, host := new_expirable_loop()
 	c := new_expirable_cache[string, string](Expirable_Input[string, string]{
 		Capacity: 2,
 		TTL:      TTL(time.HOUR),
-		Clock:    clock,
+		Clock:    host,
 		Timeline: loop,
 	})
 	if Expirable_Cap(c) != 2 {
@@ -902,13 +911,13 @@ func Test_Expirable_Remove_Oldest(t *testing.T) {
 
 // Test_Expirable_Eviction_Same_Key ports the expirable TestCache_EvictionSameKey.
 func Test_Expirable_Eviction_Same_Key(t *testing.T) {
-	loop, _, clock := new_expirable_loop()
+	loop, _, host := new_expirable_loop()
 	var evicted_keys []int
 	record := func(key int, value struct{}) { evicted_keys = append(evicted_keys, key) }
 	c := new_expirable_cache[int, struct{}](Expirable_Input[int, struct{}]{
 		Capacity: 2,
 		TTL:      TTL(time.HOUR),
-		Clock:    clock,
+		Clock:    host,
 		Timeline: loop,
 		On_Evict: record,
 	})
@@ -938,11 +947,11 @@ func Test_Expirable_Eviction_Same_Key(t *testing.T) {
 // Test_Expirable_Lifecycle ports ExampleLRU as a test: a hit before expiry, a miss after, and a
 // count of one once the expired entry is reaped and a fresh key is added.
 func Test_Expirable_Lifecycle(t *testing.T) {
-	loop, driver, clock := new_expirable_loop()
+	loop, driver, host := new_expirable_loop()
 	c := new_expirable_cache[string, string](Expirable_Input[string, string]{
 		Capacity: 5,
 		TTL:      TTL(time.MICROSECOND),
-		Clock:    clock,
+		Clock:    host,
 		Timeline: loop,
 	})
 	Expirable_Add(c, "key1", "val1")
@@ -957,7 +966,7 @@ func Test_Expirable_Lifecycle(t *testing.T) {
 	gone := func() (finished bool) {
 		return Expirable_Count(c) == 0
 	}
-	completed, drive_err := time.Driver_Run_Until(driver, time.MILLISECOND, gone)
+	completed, drive_err := nbio.Driver_Run_Until(driver, time.MILLISECOND, gone)
 	if drive_err != nil {
 		t.Fatalf("drive until the timer reaps key1: %v", drive_err)
 	}
@@ -974,11 +983,11 @@ func Test_Expirable_Lifecycle(t *testing.T) {
 // concurrency: the upstream's 1000 racing adds of overlapping keys become a deterministic
 // interleaving of the same operations, which must still converge to one entry per distinct key.
 func Test_Expirable_Concurrent_Adds(t *testing.T) {
-	loop, _, clock := new_expirable_loop()
+	loop, _, host := new_expirable_loop()
 	c := new_expirable_cache[string, string](Expirable_Input[string, string]{
 		Capacity: 100,
 		TTL:      TTL(time.HOUR),
-		Clock:    clock,
+		Clock:    host,
 		Timeline: loop,
 	})
 	for i_index := 0; i_index < 1000; i_index++ {
@@ -1004,7 +1013,7 @@ func Test_Simple_Operations_Allocation_Free(t *testing.T) {
 	}
 	generator := prng.New(1)
 	allocations := testing.AllocsPerRun(4000, func() {
-		key := int(prng.Generator_Below(&generator, 256))
+		key := int(prng.Xoshiro_Below(&generator, 256))
 		Simple_Add(c, key, key)
 		Simple_Get(c, key)
 		Simple_Peek(c, key)
@@ -1075,7 +1084,7 @@ func Test_Two_Queue_Operations_Allocation_Free(t *testing.T) {
 	}
 	generator := prng.New(1)
 	allocations := testing.AllocsPerRun(4000, func() {
-		key := int(prng.Generator_Below(&generator, 256))
+		key := int(prng.Xoshiro_Below(&generator, 256))
 		Two_Queue_Add(c, key, key)
 		Two_Queue_Get(c, key)
 		Two_Queue_Peek(c, key)
@@ -1107,7 +1116,7 @@ func Test_Expirable_Operations_Allocation_Free(t *testing.T) {
 	}
 	generator := prng.New(1)
 	allocations := testing.AllocsPerRun(4000, func() {
-		key := int(prng.Generator_Below(&generator, 256))
+		key := int(prng.Xoshiro_Below(&generator, 256))
 		Expirable_Add(c, key, key)
 		Expirable_Get(c, key)
 		Expirable_Peek(c, key)
@@ -1588,7 +1597,7 @@ func attempt(action func()) {
 }
 
 // Invariant clock supplies allocation-free injected time for domain probes.
-func invariant_clock() (clock time.Clock) {
+func invariant_clock() (host time.Clock) {
 	return time.Clock{
 		Now_Monotonic: invariant_now_monotonic,
 		Now_Realtime:  invariant_now_realtime,
@@ -1596,22 +1605,15 @@ func invariant_clock() (clock time.Clock) {
 }
 
 // Invariant timeline supplies allocation-free timer submission for domain probes.
-func invariant_timeline() (timeline time.Timeline) {
-	return time.Timeline{
+func invariant_timeline() (timeline nbio.Timeline) {
+	return nbio.Timeline{
 		Submit:        invariant_timeout,
 		Timeout:       invariant_timeout,
-		Stop_Timer:    invariant_stop_timer,
 		Open_Event:    invariant_open_event,
 		Event_Listen:  invariant_event_listen,
 		Event_Trigger: invariant_event_trigger,
 		Close_Event:   invariant_close_event,
 	}
-}
-
-func invariant_stop_timer(
-	_ unsafe.Pointer, _ *time.Completion,
-) (stopped bool) {
-	return false
 }
 
 // Invariant monotonic clock returns boot moment.
@@ -1626,30 +1628,30 @@ func invariant_now_realtime(_ unsafe.Pointer) (moment time.Moment) {
 
 // Invariant timeout accepts one timer without retaining it.
 func invariant_timeout(
-	_ unsafe.Pointer, _ *time.Completion, _ time.Duration, _ time.Callback,
+	_ unsafe.Pointer, _ *nbio.Completion, _ time.Duration, _ nbio.Callback,
 ) {
 	return
 }
 
 // Invariant event opener returns one inert event.
-func invariant_open_event(_ unsafe.Pointer) (event time.Event, err error) {
+func invariant_open_event(_ unsafe.Pointer) (event nbio.Event, err error) {
 	return 0, nil
 }
 
 // Invariant event listener accepts one inert listener.
 func invariant_event_listen(
-	_ unsafe.Pointer, _ time.Event, _ *time.Completion, _ time.Callback,
+	_ unsafe.Pointer, _ nbio.Event, _ *nbio.Completion, _ nbio.Callback,
 ) {
 	return
 }
 
 // Invariant event trigger accepts one inert trigger.
-func invariant_event_trigger(_ unsafe.Pointer, _ time.Event, _ *time.Completion) {
+func invariant_event_trigger(_ unsafe.Pointer, _ nbio.Event, _ *nbio.Completion) {
 	return
 }
 
 // Invariant event closer accepts one inert event close.
-func invariant_close_event(_ unsafe.Pointer, _ time.Event) {
+func invariant_close_event(_ unsafe.Pointer, _ nbio.Event) {
 	return
 }
 
@@ -1659,7 +1661,7 @@ func Benchmark_Simple_Random(b *testing.B) {
 	c := new_simple_cache[int, int](COUNT_MAXIMUM, nil)
 	b.ResetTimer()
 	for op_index := 0; op_index < b.N; op_index++ {
-		key := int(prng.Generator_Below(&generator, 32768))
+		key := int(prng.Xoshiro_Below(&generator, 32768))
 		if op_index%2 == 0 {
 			Simple_Add(c, key, key)
 		} else {
@@ -1675,9 +1677,9 @@ func Benchmark_Simple_Frequent(b *testing.B) {
 	b.ResetTimer()
 	for op_index := 0; op_index < b.N; op_index++ {
 		if op_index%2 == 0 {
-			Simple_Add(c, int(prng.Generator_Below(&generator, 16384)), op_index)
+			Simple_Add(c, int(prng.Xoshiro_Below(&generator, 16384)), op_index)
 		} else {
-			Simple_Get(c, int(prng.Generator_Below(&generator, 32768)))
+			Simple_Get(c, int(prng.Xoshiro_Below(&generator, 32768)))
 		}
 	}
 }
@@ -1688,7 +1690,7 @@ func Benchmark_Two_Queue_Random(b *testing.B) {
 	c := new_two_queue_cache[int, int](Two_Queue_Input{Capacity: COUNT_MAXIMUM})
 	b.ResetTimer()
 	for op_index := 0; op_index < b.N; op_index++ {
-		key := int(prng.Generator_Below(&generator, 32768))
+		key := int(prng.Xoshiro_Below(&generator, 32768))
 		if op_index%2 == 0 {
 			Two_Queue_Add(c, key, key)
 		} else {
@@ -1704,9 +1706,9 @@ func Benchmark_Two_Queue_Frequent(b *testing.B) {
 	b.ResetTimer()
 	for op_index := 0; op_index < b.N; op_index++ {
 		if op_index%2 == 0 {
-			Two_Queue_Add(c, int(prng.Generator_Below(&generator, 16384)), op_index)
+			Two_Queue_Add(c, int(prng.Xoshiro_Below(&generator, 16384)), op_index)
 		} else {
-			Two_Queue_Get(c, int(prng.Generator_Below(&generator, 32768)))
+			Two_Queue_Get(c, int(prng.Xoshiro_Below(&generator, 32768)))
 		}
 	}
 }
@@ -1714,17 +1716,17 @@ func Benchmark_Two_Queue_Frequent(b *testing.B) {
 // Benchmark_Expirable_Random ports BenchmarkLRU_Rand_WithExpire; the loop is not driven, so the
 // run measures the bucket bookkeeping rather than reaping.
 func Benchmark_Expirable_Random(b *testing.B) {
-	loop, _, clock := new_expirable_loop()
+	loop, _, host := new_expirable_loop()
 	generator := prng.New(1)
 	c := new_expirable_cache[int, int](Expirable_Input[int, int]{
 		Capacity: COUNT_MAXIMUM,
 		TTL:      TTL(10 * time.MICROSECOND),
-		Clock:    clock,
+		Clock:    host,
 		Timeline: loop,
 	})
 	b.ResetTimer()
 	for op_index := 0; op_index < b.N; op_index++ {
-		key := int(prng.Generator_Below(&generator, 32768))
+		key := int(prng.Xoshiro_Below(&generator, 32768))
 		if op_index%2 == 0 {
 			Expirable_Add(c, key, key)
 		} else {

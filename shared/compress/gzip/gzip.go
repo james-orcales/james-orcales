@@ -6,7 +6,7 @@ import (
 
 	"local/james-orcales/shared/compress/flate"
 	"local/james-orcales/shared/encoding/binary"
-	"local/james-orcales/shared/invariant/default"
+	"local/james-orcales/shared/simulation/aver/default"
 	"local/james-orcales/shared/unicode/utf8"
 )
 
@@ -146,9 +146,9 @@ type Encode_Status uint8
 
 // Encode_Status_Invariants keeps every encoder result scalar.
 func Encode_Status_Invariants(
-	value Encode_Status, namespace invariant.Namespace,
+	value Encode_Status, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Uint8(uint8(value), STATUS_MINIMUM, STATUS_MAXIMUM).
 		Ensure()
 }
@@ -158,9 +158,9 @@ type Decode_Status uint8
 
 // Decode_Status_Invariants bounds all decoder results.
 func Decode_Status_Invariants(
-	value Decode_Status, namespace invariant.Namespace,
+	value Decode_Status, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Uint8(uint8(value), uint8(STATUS_MINIMUM), uint8(STATUS_MAXIMUM)).
 		Ensure()
 }
@@ -170,9 +170,9 @@ type Header_Status uint8
 
 // Header_Status_Invariants states metadata parser outcomes.
 func Header_Status_Invariants(
-	value Header_Status, namespace invariant.Namespace,
+	value Header_Status, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Enum_3_Uint8(
 			uint8(value), STATUS_OK, STATUS_HEADER_INVALID,
 			STATUS_HEADER_STORAGE_TOO_SMALL,
@@ -185,9 +185,9 @@ type Header_Validation_Status uint8
 
 // Header_Validation_Status_Invariants keeps pure parse result scalar.
 func Header_Validation_Status_Invariants(
-	value Header_Validation_Status, namespace invariant.Namespace,
+	value Header_Validation_Status, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Enum_3_Uint8(
 			uint8(value), STATUS_OK, STATUS_INPUT_INVALID,
 			STATUS_HEADER_INVALID,
@@ -200,9 +200,9 @@ type Member_Status uint8
 
 // Member_Status_Invariants bounds member parser results.
 func Member_Status_Invariants(
-	value Member_Status, namespace invariant.Namespace,
+	value Member_Status, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Uint8(
 			uint8(value), STATUS_MINIMUM, STATUS_HEADER_STORAGE_TOO_SMALL,
 		).
@@ -237,8 +237,8 @@ const STATUS_STORAGE_INVALID = 7
 type Count int
 
 // Count_Invariants keeps every public cursor inside caller storage domain.
-func Count_Invariants(value Count, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Count_Invariants(value Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), BYTE_COUNT_MINIMUM, BYTE_COUNT_MAXIMUM).
 		Ensure()
 }
@@ -248,9 +248,9 @@ type Encoded_Count int
 
 // Encoded_Count_Invariants keeps committed output inside caller byte bound.
 func Encoded_Count_Invariants(
-	value Encoded_Count, namespace invariant.Namespace,
+	value Encoded_Count, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(int(value), BYTE_COUNT_MINIMUM, BYTE_COUNT_MAXIMUM).
 		Ensure()
 }
@@ -260,9 +260,9 @@ type Compressed_Count int
 
 // Compressed_Count_Invariants keeps input progress inside caller byte bound.
 func Compressed_Count_Invariants(
-	value Compressed_Count, namespace invariant.Namespace,
+	value Compressed_Count, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(int(value), BYTE_COUNT_MINIMUM, BYTE_COUNT_MAXIMUM).
 		Ensure()
 }
@@ -271,8 +271,8 @@ func Compressed_Count_Invariants(
 type Boolean bool
 
 // Boolean_Invariants forces witnesses for both decisions.
-func Boolean_Invariants(value Boolean, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Boolean_Invariants(value Boolean, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Sometimes(bool(value), "Gzip decision is true.").
 		Ensure()
 }
@@ -281,8 +281,8 @@ func Boolean_Invariants(value Boolean, namespace invariant.Namespace) {
 type Capture_Header bool
 
 // Capture_Header_Invariants forces first and later member witnesses.
-func Capture_Header_Invariants(value Capture_Header, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Capture_Header_Invariants(value Capture_Header, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Sometimes(bool(value), "Current member metadata reaches caller storage.").
 		Ensure()
 }
@@ -291,8 +291,8 @@ func Capture_Header_Invariants(value Capture_Header, namespace invariant.Namespa
 type Bytes []byte
 
 // Bytes_Invariants prevents alias scans outside package byte bound.
-func Bytes_Invariants(value Bytes, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Bytes_Invariants(value Bytes, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), BYTE_COUNT_MINIMUM, BYTE_COUNT_MAXIMUM).
 		Ensure()
 }
@@ -301,8 +301,8 @@ func Bytes_Invariants(value Bytes, namespace invariant.Namespace) {
 type Header_Size int
 
 // Header_Size_Invariants bounds one complete fixed and optional header.
-func Header_Size_Invariants(value Header_Size, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Header_Size_Invariants(value Header_Size, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), HEADER_SIZE, HEADER_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -312,9 +312,9 @@ type Header_Position int
 
 // Header_Position_Invariants bounds cursors after one complete fixed prefix.
 func Header_Position_Invariants(
-	value Header_Position, namespace invariant.Namespace,
+	value Header_Position, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(int(value), HEADER_SIZE, HEADER_POSITION_MAXIMUM).
 		Ensure()
 }
@@ -324,9 +324,9 @@ type Header_Extra_Position int
 
 // Header_Extra_Position_Invariants retains fixed prefix through largest extra.
 func Header_Extra_Position_Invariants(
-	value Header_Extra_Position, namespace invariant.Namespace,
+	value Header_Extra_Position, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(int(value), HEADER_SIZE, HEADER_EXTRA_POSITION_MAXIMUM).
 		Ensure()
 }
@@ -336,9 +336,9 @@ type Header_Name_Position int
 
 // Header_Name_Position_Invariants retains fixed prefix through largest name.
 func Header_Name_Position_Invariants(
-	value Header_Name_Position, namespace invariant.Namespace,
+	value Header_Name_Position, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(int(value), HEADER_SIZE, HEADER_NAME_POSITION_MAXIMUM).
 		Ensure()
 }
@@ -348,9 +348,9 @@ type Header_Comment_Position int
 
 // Header_Comment_Position_Invariants retains fixed prefix through largest comment.
 func Header_Comment_Position_Invariants(
-	value Header_Comment_Position, namespace invariant.Namespace,
+	value Header_Comment_Position, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(int(value), HEADER_SIZE, HEADER_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -360,9 +360,9 @@ type Header_Text_End_Position int
 
 // Header_Text_End_Position_Invariants excludes absent emitted text.
 func Header_Text_End_Position_Invariants(
-	value Header_Text_End_Position, namespace invariant.Namespace,
+	value Header_Text_End_Position, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(
 			int(value), HEADER_TEXT_WIRE_DESTINATION_SIZE_MINIMUM,
 			HEADER_SIZE_MAXIMUM,
@@ -375,9 +375,9 @@ type Header_Text_Size int
 
 // Header_Text_Size_Invariants protects caller metadata destination.
 func Header_Text_Size_Invariants(
-	value Header_Text_Size, namespace invariant.Namespace,
+	value Header_Text_Size, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(int(value), BYTE_COUNT_MINIMUM, HEADER_TEXT_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -387,9 +387,9 @@ type Header_String_Byte_Count int
 
 // Header_String_Byte_Count_Invariants preserves stdlib fixed reader bound.
 func Header_String_Byte_Count_Invariants(
-	value Header_String_Byte_Count, namespace invariant.Namespace,
+	value Header_String_Byte_Count, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(
 			int(value), BYTE_COUNT_MINIMUM, HEADER_STRING_BYTE_COUNT_MAXIMUM,
 		).
@@ -400,8 +400,8 @@ func Header_String_Byte_Count_Invariants(
 type Header_Flags uint8
 
 // Header_Flags_Invariants preserves complete wire byte domain.
-func Header_Flags_Invariants(value Header_Flags, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Header_Flags_Invariants(value Header_Flags, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint8(
 			uint8(value), OPERATING_SYSTEM_MINIMUM, OPERATING_SYSTEM_MAXIMUM,
 		).
@@ -412,8 +412,8 @@ func Header_Flags_Invariants(value Header_Flags, namespace invariant.Namespace) 
 type Extra_Flags uint8
 
 // Extra_Flags_Invariants states default, strongest, and fastest hints.
-func Extra_Flags_Invariants(value Extra_Flags, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Extra_Flags_Invariants(value Extra_Flags, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_3_Uint8(
 			uint8(value), uint8(EXTRA_FLAGS_DEFAULT), uint8(EXTRA_FLAGS_BEST),
 			uint8(EXTRA_FLAGS_FAST),
@@ -426,9 +426,9 @@ type Header_Destination []byte
 
 // Header_Destination_Invariants bounds complete encoded header.
 func Header_Destination_Invariants(
-	value Header_Destination, namespace invariant.Namespace,
+	value Header_Destination, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(len(value), HEADER_SIZE, HEADER_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -438,9 +438,9 @@ type Header_Text_Source []byte
 
 // Header_Text_Source_Invariants bounds one validated API field.
 func Header_Text_Source_Invariants(
-	value Header_Text_Source, namespace invariant.Namespace,
+	value Header_Text_Source, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(len(value), BYTE_COUNT_MINIMUM, HEADER_TEXT_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -450,9 +450,9 @@ type Header_Text_Non_Empty_Source []byte
 
 // Header_Text_Non_Empty_Source_Invariants rejects absent optional text.
 func Header_Text_Non_Empty_Source_Invariants(
-	value Header_Text_Non_Empty_Source, namespace invariant.Namespace,
+	value Header_Text_Non_Empty_Source, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(
 			len(value), HEADER_TEXT_SIZE_MINIMUM, HEADER_TEXT_SIZE_MAXIMUM,
 		).
@@ -464,9 +464,9 @@ type Header_Text_Destination []byte
 
 // Header_Text_Destination_Invariants bounds one decoded API field.
 func Header_Text_Destination_Invariants(
-	value Header_Text_Destination, namespace invariant.Namespace,
+	value Header_Text_Destination, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(len(value), BYTE_COUNT_MINIMUM, HEADER_TEXT_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -476,9 +476,9 @@ type Header_Text_Wire_Destination []byte
 
 // Header_Text_Wire_Destination_Invariants retains text plus terminator.
 func Header_Text_Wire_Destination_Invariants(
-	value Header_Text_Wire_Destination, namespace invariant.Namespace,
+	value Header_Text_Wire_Destination, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(
 			len(value), HEADER_TEXT_WIRE_DESTINATION_SIZE_MINIMUM,
 			HEADER_SIZE_MAXIMUM,
@@ -491,9 +491,9 @@ type Header_String_Source []byte
 
 // Header_String_Source_Invariants keeps stdlib wire bound.
 func Header_String_Source_Invariants(
-	value Header_String_Source, namespace invariant.Namespace,
+	value Header_String_Source, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(
 			len(value), BYTE_COUNT_MINIMUM, HEADER_STRING_BYTE_COUNT_MAXIMUM,
 		).
@@ -505,9 +505,9 @@ type Trailer_Destination []byte
 
 // Trailer_Destination_Invariants fixes complete trailer storage.
 func Trailer_Destination_Invariants(
-	value Trailer_Destination, namespace invariant.Namespace,
+	value Trailer_Destination, namespace aver.Namespace,
 ) {
-	invariant.Always(
+	aver.Always(
 		len(value) == TRAILER_SIZE,
 		"Trailer storage retains checksum and decoded size words.",
 	)
@@ -518,9 +518,9 @@ type Level_Unvalidated int8
 
 // Level_Unvalidated_Invariants preserves every representable caller value.
 func Level_Unvalidated_Invariants(
-	value Level_Unvalidated, namespace invariant.Namespace,
+	value Level_Unvalidated, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int8(
 			int8(value), flate.LEVEL_UNVALIDATED_MINIMUM,
 			flate.LEVEL_UNVALIDATED_MAXIMUM,
@@ -532,8 +532,8 @@ func Level_Unvalidated_Invariants(
 type Level int8
 
 // Level_Invariants bounds all accepted compression levels.
-func Level_Invariants(value Level, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Level_Invariants(value Level, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int8(int8(value), int8(HUFFMAN_ONLY), int8(BEST_COMPRESSION)).
 		Ensure()
 }
@@ -542,8 +542,8 @@ func Level_Invariants(value Level, namespace invariant.Namespace) {
 type Destination []byte
 
 // Destination_Invariants prevents writes outside package byte bound.
-func Destination_Invariants(value Destination, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Destination_Invariants(value Destination, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), BYTE_COUNT_MINIMUM, BYTE_COUNT_MAXIMUM).
 		Ensure()
 }
@@ -553,9 +553,9 @@ type Destination_Unvalidated []byte
 
 // Destination_Unvalidated_Invariants admits first rejected byte.
 func Destination_Unvalidated_Invariants(
-	value Destination_Unvalidated, namespace invariant.Namespace,
+	value Destination_Unvalidated, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(
 			len(value), BYTE_COUNT_MINIMUM, BYTE_COUNT_UNVALIDATED_MAXIMUM,
 		).
@@ -567,9 +567,9 @@ type Source_Unvalidated []byte
 
 // Source_Unvalidated_Invariants admits first rejected byte.
 func Source_Unvalidated_Invariants(
-	value Source_Unvalidated, namespace invariant.Namespace,
+	value Source_Unvalidated, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(
 			len(value), BYTE_COUNT_MINIMUM, BYTE_COUNT_UNVALIDATED_MAXIMUM,
 		).
@@ -580,8 +580,8 @@ func Source_Unvalidated_Invariants(
 type Compressed []byte
 
 // Compressed_Invariants prevents parsing outside package byte bound.
-func Compressed_Invariants(value Compressed, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Compressed_Invariants(value Compressed, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), BYTE_COUNT_MINIMUM, BYTE_COUNT_MAXIMUM).
 		Ensure()
 }
@@ -590,8 +590,8 @@ func Compressed_Invariants(value Compressed, namespace invariant.Namespace) {
 type Member []byte
 
 // Member_Invariants retains one bounded fixed header.
-func Member_Invariants(value Member, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Member_Invariants(value Member, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), HEADER_SIZE, BYTE_COUNT_MAXIMUM).
 		Ensure()
 }
@@ -601,9 +601,9 @@ type Trailer_Source []byte
 
 // Trailer_Source_Invariants retains complete trailer.
 func Trailer_Source_Invariants(
-	value Trailer_Source, namespace invariant.Namespace,
+	value Trailer_Source, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(len(value), TRAILER_SIZE, TRAILER_SOURCE_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -613,9 +613,9 @@ type Compressed_Unvalidated []byte
 
 // Compressed_Unvalidated_Invariants admits first rejected byte.
 func Compressed_Unvalidated_Invariants(
-	value Compressed_Unvalidated, namespace invariant.Namespace,
+	value Compressed_Unvalidated, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(
 			len(value), BYTE_COUNT_MINIMUM, BYTE_COUNT_UNVALIDATED_MAXIMUM,
 		).
@@ -627,9 +627,9 @@ type Extra_Unvalidated []byte
 
 // Extra_Unvalidated_Invariants keeps hostile metadata inside package byte bound.
 func Extra_Unvalidated_Invariants(
-	value Extra_Unvalidated, namespace invariant.Namespace,
+	value Extra_Unvalidated, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(
 			len(value), BYTE_COUNT_MINIMUM, BYTE_COUNT_UNVALIDATED_MAXIMUM,
 		).
@@ -641,9 +641,9 @@ type Name_Unvalidated []byte
 
 // Name_Unvalidated_Invariants keeps hostile metadata inside package byte bound.
 func Name_Unvalidated_Invariants(
-	value Name_Unvalidated, namespace invariant.Namespace,
+	value Name_Unvalidated, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(
 			len(value), BYTE_COUNT_MINIMUM, BYTE_COUNT_UNVALIDATED_MAXIMUM,
 		).
@@ -655,9 +655,9 @@ type Comment_Unvalidated []byte
 
 // Comment_Unvalidated_Invariants keeps hostile metadata inside package byte bound.
 func Comment_Unvalidated_Invariants(
-	value Comment_Unvalidated, namespace invariant.Namespace,
+	value Comment_Unvalidated, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(
 			len(value), BYTE_COUNT_MINIMUM, BYTE_COUNT_UNVALIDATED_MAXIMUM,
 		).
@@ -669,9 +669,9 @@ type Extra_Destination_Unvalidated []byte
 
 // Extra_Destination_Unvalidated_Invariants bounds hostile destination storage.
 func Extra_Destination_Unvalidated_Invariants(
-	value Extra_Destination_Unvalidated, namespace invariant.Namespace,
+	value Extra_Destination_Unvalidated, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(
 			len(value), BYTE_COUNT_MINIMUM, BYTE_COUNT_UNVALIDATED_MAXIMUM,
 		).
@@ -683,9 +683,9 @@ type Name_Destination_Unvalidated []byte
 
 // Name_Destination_Unvalidated_Invariants bounds hostile destination storage.
 func Name_Destination_Unvalidated_Invariants(
-	value Name_Destination_Unvalidated, namespace invariant.Namespace,
+	value Name_Destination_Unvalidated, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(
 			len(value), BYTE_COUNT_MINIMUM, BYTE_COUNT_UNVALIDATED_MAXIMUM,
 		).
@@ -697,9 +697,9 @@ type Comment_Destination_Unvalidated []byte
 
 // Comment_Destination_Unvalidated_Invariants bounds hostile destination storage.
 func Comment_Destination_Unvalidated_Invariants(
-	value Comment_Destination_Unvalidated, namespace invariant.Namespace,
+	value Comment_Destination_Unvalidated, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(
 			len(value), BYTE_COUNT_MINIMUM, BYTE_COUNT_UNVALIDATED_MAXIMUM,
 		).
@@ -711,9 +711,9 @@ type Extra_Destination []byte
 
 // Extra_Destination_Invariants enforces RFC extra bound.
 func Extra_Destination_Invariants(
-	value Extra_Destination, namespace invariant.Namespace,
+	value Extra_Destination, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(len(value), BYTE_COUNT_MINIMUM, EXTRA_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -723,9 +723,9 @@ type Name_Destination []byte
 
 // Name_Destination_Invariants enforces Latin-1 expansion bound.
 func Name_Destination_Invariants(
-	value Name_Destination, namespace invariant.Namespace,
+	value Name_Destination, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(len(value), BYTE_COUNT_MINIMUM, HEADER_TEXT_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -735,9 +735,9 @@ type Comment_Destination []byte
 
 // Comment_Destination_Invariants enforces Latin-1 expansion bound.
 func Comment_Destination_Invariants(
-	value Comment_Destination, namespace invariant.Namespace,
+	value Comment_Destination, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(len(value), BYTE_COUNT_MINIMUM, HEADER_TEXT_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -746,8 +746,8 @@ func Comment_Destination_Invariants(
 type Extra []byte
 
 // Extra_Invariants enforces RFC two-byte length.
-func Extra_Invariants(value Extra, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Extra_Invariants(value Extra, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), BYTE_COUNT_MINIMUM, EXTRA_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -756,8 +756,8 @@ func Extra_Invariants(value Extra, namespace invariant.Namespace) {
 type Name []byte
 
 // Name_Invariants reserves worst-case Latin-1 expansion.
-func Name_Invariants(value Name, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Name_Invariants(value Name, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), BYTE_COUNT_MINIMUM, HEADER_TEXT_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -766,8 +766,8 @@ func Name_Invariants(value Name, namespace invariant.Namespace) {
 type Comment []byte
 
 // Comment_Invariants reserves worst-case Latin-1 expansion.
-func Comment_Invariants(value Comment, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Comment_Invariants(value Comment, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), BYTE_COUNT_MINIMUM, HEADER_TEXT_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -777,9 +777,9 @@ type Modified_Seconds uint32
 
 // Modified_Seconds_Invariants preserves complete wire domain.
 func Modified_Seconds_Invariants(
-	value Modified_Seconds, namespace invariant.Namespace,
+	value Modified_Seconds, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Uint32(
 			uint32(value), MODIFIED_SECONDS_MINIMUM, MODIFIED_SECONDS_MAXIMUM,
 		).
@@ -791,9 +791,9 @@ type Operating_System uint8
 
 // Operating_System_Invariants preserves complete wire domain.
 func Operating_System_Invariants(
-	value Operating_System, namespace invariant.Namespace,
+	value Operating_System, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Uint8(
 			uint8(value), OPERATING_SYSTEM_MINIMUM, OPERATING_SYSTEM_MAXIMUM,
 		).
@@ -805,9 +805,9 @@ type Hash_Positions_Unvalidated []int32
 
 // Hash_Positions_Unvalidated_Invariants admits missing or exact workspace.
 func Hash_Positions_Unvalidated_Invariants(
-	value Hash_Positions_Unvalidated, namespace invariant.Namespace,
+	value Hash_Positions_Unvalidated, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(
 			len(value), BYTE_COUNT_MINIMUM,
 			HASH_POSITIONS_COUNT_UNVALIDATED_MAXIMUM,
@@ -820,9 +820,9 @@ type History_Positions_Unvalidated []int32
 
 // History_Positions_Unvalidated_Invariants admits missing or exact workspace.
 func History_Positions_Unvalidated_Invariants(
-	value History_Positions_Unvalidated, namespace invariant.Namespace,
+	value History_Positions_Unvalidated, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(
 			len(value), BYTE_COUNT_MINIMUM,
 			HISTORY_POSITIONS_COUNT_UNVALIDATED_MAXIMUM,
@@ -846,7 +846,7 @@ type Header_Unvalidated struct {
 
 // Header_Unvalidated_Invariants composes caller metadata domains.
 func Header_Unvalidated_Invariants(
-	value Header_Unvalidated, namespace invariant.Namespace,
+	value Header_Unvalidated, namespace aver.Namespace,
 ) {
 	Extra_Unvalidated_Invariants(value.Extra, namespace)
 	Name_Unvalidated_Invariants(value.Name, namespace)
@@ -867,7 +867,7 @@ type Header_Storage_Unvalidated struct {
 
 // Header_Storage_Unvalidated_Invariants composes caller metadata storage.
 func Header_Storage_Unvalidated_Invariants(
-	value Header_Storage_Unvalidated, namespace invariant.Namespace,
+	value Header_Storage_Unvalidated, namespace aver.Namespace,
 ) {
 	Extra_Destination_Unvalidated_Invariants(value.Extra, namespace)
 	Name_Destination_Unvalidated_Invariants(value.Name, namespace)
@@ -886,7 +886,7 @@ type Header_Storage struct {
 
 // Header_Storage_Invariants composes bounded metadata destinations.
 func Header_Storage_Invariants(
-	value Header_Storage, namespace invariant.Namespace,
+	value Header_Storage, namespace aver.Namespace,
 ) {
 	Extra_Destination_Invariants(value.Extra, namespace)
 	Name_Destination_Invariants(value.Name, namespace)
@@ -908,7 +908,7 @@ type Header struct {
 }
 
 // Header_Invariants composes validated first-member metadata.
-func Header_Invariants(value Header, namespace invariant.Namespace) {
+func Header_Invariants(value Header, namespace aver.Namespace) {
 	Extra_Invariants(value.Extra, namespace)
 	Name_Invariants(value.Name, namespace)
 	Comment_Invariants(value.Comment, namespace)
@@ -926,7 +926,7 @@ type Workspace_Unvalidated struct {
 
 // Workspace_Unvalidated_Invariants composes caller scratch dimensions.
 func Workspace_Unvalidated_Invariants(
-	value Workspace_Unvalidated, namespace invariant.Namespace,
+	value Workspace_Unvalidated, namespace aver.Namespace,
 ) {
 	Hash_Positions_Unvalidated_Invariants(value.Heads, namespace)
 	History_Positions_Unvalidated_Invariants(value.Previous, namespace)

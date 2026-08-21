@@ -4,17 +4,17 @@ import (
 	"syscall"
 	"testing"
 
-	"local/james-orcales/shared/invariant/default"
 	"local/james-orcales/shared/math/bits"
 	shared_os "local/james-orcales/shared/os"
 	"local/james-orcales/shared/os/default"
+	"local/james-orcales/shared/simulation/aver/default"
 	"local/james-orcales/shared/slices"
 	"local/james-orcales/shared/testify"
 )
 
 // TestMain registers the package invariant roots before the smoke test runs.
 func TestMain(m *testing.M) {
-	invariant.Run_Test_Main(m)
+	aver.Run_Test_Main(m)
 }
 
 // Test_Operating_System_Smoke verifies the host answers every ambient reader. The values a

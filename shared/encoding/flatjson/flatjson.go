@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"reflect"
 
-	"local/james-orcales/shared/invariant/default"
+	"local/james-orcales/shared/simulation/aver/default"
 	"local/james-orcales/shared/strconv"
 	"local/james-orcales/shared/strings"
 )
@@ -58,8 +58,8 @@ type Write func([]byte) (written int, err error)
 type Data []byte
 
 // Data_Invariants excludes the byte count no complete JSON value can have.
-func Data_Invariants(value Data, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Data_Invariants(value Data, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Holed_Int(
 			len(value), strings.TEXT_SIZE_MINIMUM, strings.TEXT_SIZE_MAXIMUM,
 			IMPOSSIBLE_DATA_SIZE, IMPOSSIBLE_DATA_SIZE,
@@ -72,8 +72,8 @@ func Data_Invariants(value Data, namespace invariant.Namespace) {
 type Field_Index int
 
 // Field_Index_Invariants matches bounded reflected struct width.
-func Field_Index_Invariants(value Field_Index, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Field_Index_Invariants(value Field_Index, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), strings.TEXT_SIZE_MINIMUM, strings.TEXT_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -85,8 +85,8 @@ const IMPOSSIBLE_PREFIX_SIZE = 1
 type Prefix string
 
 // Prefix_Invariants excludes the one-byte shape no nested path can produce.
-func Prefix_Invariants(value Prefix, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Prefix_Invariants(value Prefix, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Holed_Int(
 			len(value), strings.TEXT_SIZE_MINIMUM, strings.TEXT_SIZE_MAXIMUM,
 			IMPOSSIBLE_PREFIX_SIZE, IMPOSSIBLE_PREFIX_SIZE,
@@ -102,8 +102,8 @@ const KEY_SIZE_MINIMUM = 1
 type Key string
 
 // Key_Invariants rejects empty object member names from generated field paths.
-func Key_Invariants(value Key, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Key_Invariants(value Key, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), KEY_SIZE_MINIMUM, strings.TEXT_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -112,8 +112,8 @@ func Key_Invariants(value Key, namespace invariant.Namespace) {
 type Json_Text string
 
 // Json_Text_Invariants includes empty string values and largest hostile inputs.
-func Json_Text_Invariants(value Json_Text, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Json_Text_Invariants(value Json_Text, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), strings.TEXT_SIZE_MINIMUM, strings.TEXT_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -125,8 +125,8 @@ const NONEMPTY_TEXT_SIZE_MINIMUM = 1
 type Nonempty_Text string
 
 // Nonempty_Text_Invariants rejects writes that cannot advance output.
-func Nonempty_Text_Invariants(value Nonempty_Text, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Nonempty_Text_Invariants(value Nonempty_Text, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), NONEMPTY_TEXT_SIZE_MINIMUM, strings.TEXT_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -144,8 +144,8 @@ type Frame struct {
 }
 
 // Frame_Invariants composes one bounded traversal position.
-func Frame_Invariants(value Frame, namespace invariant.Namespace) {
-	invariant.Always(
+func Frame_Invariants(value Frame, namespace aver.Namespace) {
+	aver.Always(
 		value.Structure.IsValid(), "A traversal frame holds a valid structure.",
 	)
 	Field_Index_Invariants(value.Index, namespace)
@@ -157,8 +157,8 @@ func Frame_Invariants(value Frame, namespace invariant.Namespace) {
 type Frames []Frame
 
 // Frames_Invariants prevents reflection depth from becoming process exhaustion.
-func Frames_Invariants(value Frames, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Frames_Invariants(value Frames, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), FRAME_COUNT_MINIMUM, FRAME_COUNT_MAXIMUM).
 		Ensure()
 }
@@ -167,16 +167,16 @@ func Frames_Invariants(value Frames, namespace invariant.Namespace) {
 type Encoder *strings.Builder
 
 // Encoder_Invariants rejects missing storage before any stage mutates it.
-func Encoder_Invariants(value Encoder, _ invariant.Namespace) {
-	invariant.Always(value != nil, "An Encoder has storage.")
+func Encoder_Invariants(value Encoder, _ aver.Namespace) {
+	aver.Always(value != nil, "An Encoder has storage.")
 }
 
 // Marshaler_Kind selects direct JSON, quoted text, or ordinary scalar encoding.
 type Marshaler_Kind int
 
 // Marshaler_Kind_Invariants keeps method precedence explicit.
-func Marshaler_Kind_Invariants(value Marshaler_Kind, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Marshaler_Kind_Invariants(value Marshaler_Kind, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_3_Int(
 			int(value), int(MARSHALER_NONE), int(MARSHALER_JSON), int(MARSHALER_TEXT),
 		).
@@ -187,8 +187,8 @@ func Marshaler_Kind_Invariants(value Marshaler_Kind, namespace invariant.Namespa
 type Method_Kind int
 
 // Method_Kind_Invariants excludes ordinary scalar encoding from method invocation.
-func Method_Kind_Invariants(value Method_Kind, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Method_Kind_Invariants(value Method_Kind, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_Int(int(value), int(MARSHALER_JSON), int(MARSHALER_TEXT)).
 		Ensure()
 }
@@ -264,8 +264,8 @@ func marshal_object(builder Encoder, root reflect.Value) (err error) {
 		return err
 	}
 	content := strings.Builder_Bytes(builder)
-	invariant.Always(content[0] == '{', "A marshalled object opens with a brace.")
-	invariant.Always(
+	aver.Always(content[0] == '{', "A marshalled object opens with a brace.")
+	aver.Always(
 		content[len(content)-1] == '}', "A marshalled object closes with a brace.",
 	)
 	return nil
@@ -293,8 +293,8 @@ func marshal_array(builder Encoder, root reflect.Value) (err error) {
 		return err
 	}
 	content := strings.Builder_Bytes(builder)
-	invariant.Always(content[0] == '[', "A marshalled array opens with a bracket.")
-	invariant.Always(
+	aver.Always(content[0] == '[', "A marshalled array opens with a bracket.")
+	aver.Always(
 		content[len(content)-1] == ']', "A marshalled array closes with a bracket.",
 	)
 	return nil

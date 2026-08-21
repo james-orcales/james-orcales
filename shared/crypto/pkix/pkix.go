@@ -5,8 +5,8 @@ import (
 	"local/james-orcales/shared/bytes"
 	"local/james-orcales/shared/encoding/asn1"
 	"local/james-orcales/shared/encoding/binary"
-	"local/james-orcales/shared/invariant/default"
 	"local/james-orcales/shared/math/bits"
+	"local/james-orcales/shared/simulation/aver/default"
 )
 
 // ENCODED_SIZE_MINIMUM admits empty hostile DER input.
@@ -110,8 +110,8 @@ const DECISION_TRUE uint64 = uint64(binary.UINT_8_SIZE)
 type Algorithm uint8
 
 // Algorithm_Invariants covers the supported contiguous OID set.
-func Algorithm_Invariants(value Algorithm, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Algorithm_Invariants(value Algorithm, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint8(uint8(value), uint8(ALGORITHM_MINIMUM), uint8(ALGORITHM_MAXIMUM)).
 		Ensure()
 }
@@ -120,16 +120,16 @@ func Algorithm_Invariants(value Algorithm, namespace invariant.Namespace) {
 type Ready [READY_WORD_COUNT]byte
 
 // Ready_Invariants fixes parsed-state storage width.
-func Ready_Invariants(value Ready, _ invariant.Namespace) {
-	invariant.Always(len(value) == READY_WORD_COUNT, "PKIX parsed state has fixed width.")
+func Ready_Invariants(value Ready, _ aver.Namespace) {
+	aver.Always(len(value) == READY_WORD_COUNT, "PKIX parsed state has fixed width.")
 }
 
 // Borrowed is one bounded field that aliases encoded input.
 type Borrowed []byte
 
 // Borrowed_Invariants preserves the supported OID storage ceiling.
-func Borrowed_Invariants(value Borrowed, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Borrowed_Invariants(value Borrowed, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(
 			len(value), bytes.SLICE_SIZE_MINIMUM, OBJECT_IDENTIFIER_SIZE_MAXIMUM,
 		).
@@ -141,9 +141,9 @@ type Algorithm_Parameters []byte
 
 // Algorithm_Parameters_Invariants bounds borrowed parameter DER.
 func Algorithm_Parameters_Invariants(
-	value Algorithm_Parameters, namespace invariant.Namespace,
+	value Algorithm_Parameters, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(len(value), bytes.SLICE_SIZE_MINIMUM, ENCODED_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -152,8 +152,8 @@ func Algorithm_Parameters_Invariants(
 type Raw []byte
 
 // Raw_Invariants bounds complete borrowed DER.
-func Raw_Invariants(value Raw, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Raw_Invariants(value Raw, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), bytes.SLICE_SIZE_MINIMUM, ENCODED_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -162,8 +162,8 @@ func Raw_Invariants(value Raw, namespace invariant.Namespace) {
 type Common_Name []byte
 
 // Common_Name_Invariants bounds selected name text.
-func Common_Name_Invariants(value Common_Name, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Common_Name_Invariants(value Common_Name, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), bytes.SLICE_SIZE_MINIMUM, COMMON_NAME_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -172,8 +172,8 @@ func Common_Name_Invariants(value Common_Name, namespace invariant.Namespace) {
 type Encoded []byte
 
 // Encoded_Invariants bounds parsing before DER access.
-func Encoded_Invariants(value Encoded, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Encoded_Invariants(value Encoded, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), ENCODED_SIZE_MINIMUM, ENCODED_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -192,13 +192,13 @@ type Algorithm_Identifier struct {
 
 // Algorithm_Identifier_Invariants composes borrowed and parsed state.
 func Algorithm_Identifier_Invariants(
-	value Algorithm_Identifier, namespace invariant.Namespace,
+	value Algorithm_Identifier, namespace aver.Namespace,
 ) {
 	Algorithm_Invariants(value.Algorithm, namespace)
 	Algorithm_Parameters_Invariants(value.Parameters, namespace)
 	Raw_Invariants(value.Raw, namespace)
 	Ready_Invariants(value.Ready, namespace)
-	invariant.Always(
+	aver.Always(
 		value.Ready[READY_INDEX] <= READY_COMPLETE,
 		"A PKIX algorithm identifier has empty or complete state.",
 	)
@@ -209,10 +209,10 @@ type Algorithm_Identifier_Destination *Algorithm_Identifier
 
 // Algorithm_Identifier_Destination_Invariants proves caller storage exists.
 func Algorithm_Identifier_Destination_Invariants(
-	value Algorithm_Identifier_Destination, namespace invariant.Namespace,
+	value Algorithm_Identifier_Destination, namespace aver.Namespace,
 ) {
-	invariant.Always(value != nil, "A PKIX algorithm identifier destination exists.")
-	invariant.Tree(value, namespace).
+	aver.Always(value != nil, "A PKIX algorithm identifier destination exists.")
+	aver.Tree(value, namespace).
 		Range_Uint8(
 			uint8(value.Algorithm), uint8(ALGORITHM_MINIMUM),
 			uint8(ALGORITHM_MAXIMUM),
@@ -222,7 +222,7 @@ func Algorithm_Identifier_Destination_Invariants(
 		).
 		Range_Int(len(value.Raw), ENCODED_SIZE_MINIMUM, ENCODED_SIZE_MAXIMUM).
 		Ensure()
-	invariant.Always(
+	aver.Always(
 		len(value.Ready) == READY_WORD_COUNT,
 		"A PKIX algorithm destination has parsed-state storage.",
 	)
@@ -239,11 +239,11 @@ type Name struct {
 }
 
 // Name_Invariants composes borrowed and parsed state.
-func Name_Invariants(value Name, namespace invariant.Namespace) {
+func Name_Invariants(value Name, namespace aver.Namespace) {
 	Raw_Invariants(value.Raw, namespace)
 	Common_Name_Invariants(value.Common_Name, namespace)
 	Ready_Invariants(value.Ready, namespace)
-	invariant.Always(
+	aver.Always(
 		value.Ready[READY_INDEX] <= READY_COMPLETE,
 		"A PKIX name has empty or complete state.",
 	)
@@ -254,17 +254,17 @@ type Name_Destination *Name
 
 // Name_Destination_Invariants proves caller storage exists.
 func Name_Destination_Invariants(
-	value Name_Destination, namespace invariant.Namespace,
+	value Name_Destination, namespace aver.Namespace,
 ) {
-	invariant.Always(value != nil, "A PKIX name destination exists.")
-	invariant.Tree(value, namespace).
+	aver.Always(value != nil, "A PKIX name destination exists.")
+	aver.Tree(value, namespace).
 		Range_Int(len(value.Raw), ENCODED_SIZE_MINIMUM, ENCODED_SIZE_MAXIMUM).
 		Range_Int(
 			len(value.Common_Name), ENCODED_SIZE_MINIMUM,
 			COMMON_NAME_SIZE_MAXIMUM,
 		).
 		Ensure()
-	invariant.Always(
+	aver.Always(
 		len(value.Ready) == READY_WORD_COUNT,
 		"A PKIX name destination has parsed-state storage.",
 	)
@@ -274,8 +274,8 @@ func Name_Destination_Invariants(
 type Parse_Status uint8
 
 // Parse_Status_Invariants covers both parser outcomes.
-func Parse_Status_Invariants(value Parse_Status, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Parse_Status_Invariants(value Parse_Status, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_Uint8(
 			uint8(value), uint8(PARSE_STATUS_OK), uint8(PARSE_STATUS_INPUT_INVALID),
 		).

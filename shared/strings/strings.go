@@ -3,8 +3,8 @@
 package strings
 
 import (
-	"local/james-orcales/shared/invariant/default"
 	"local/james-orcales/shared/math/bits"
+	"local/james-orcales/shared/simulation/aver/default"
 	"local/james-orcales/shared/unicode/ucd"
 	"local/james-orcales/shared/unicode/utf8"
 )
@@ -55,8 +55,8 @@ const BYTE_MAXIMUM uint8 = bits.WORD_8_MAXIMUM
 type Text string
 
 // Text_Invariants rejects oversized text before scan work.
-func Text_Invariants(value Text, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Text_Invariants(value Text, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), TEXT_SIZE_MINIMUM, TEXT_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -65,8 +65,8 @@ func Text_Invariants(value Text, namespace invariant.Namespace) {
 type Index_Value int
 
 // Index_Value_Invariants rejects end boundaries from nonempty searches.
-func Index_Value_Invariants(value Index_Value, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Index_Value_Invariants(value Index_Value, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), INDEX_ABSENT, INDEX_MAXIMUM).
 		Ensure()
 }
@@ -75,8 +75,8 @@ func Index_Value_Invariants(value Index_Value, namespace invariant.Namespace) {
 type Boundary_Index int
 
 // Boundary_Index_Invariants includes absence and final end boundary.
-func Boundary_Index_Invariants(value Boundary_Index, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Boundary_Index_Invariants(value Boundary_Index, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), INDEX_ABSENT, BOUNDARY_INDEX_MAXIMUM).
 		Ensure()
 }
@@ -85,8 +85,8 @@ func Boundary_Index_Invariants(value Boundary_Index, namespace invariant.Namespa
 type Count_Value int
 
 // Count_Value_Invariants includes every empty boundary in largest Text.
-func Count_Value_Invariants(value Count_Value, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Count_Value_Invariants(value Count_Value, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), COUNT_VALUE_MINIMUM, COUNT_VALUE_MAXIMUM).
 		Ensure()
 }
@@ -95,8 +95,8 @@ func Count_Value_Invariants(value Count_Value, namespace invariant.Namespace) {
 type Order int
 
 // Order_Invariants hides implementation comparison magnitude.
-func Order_Invariants(value Order, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Order_Invariants(value Order, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_3_Int(int(value), ORDER_BEFORE, ORDER_EQUAL, ORDER_AFTER).
 		Ensure()
 }
@@ -105,8 +105,8 @@ func Order_Invariants(value Order, namespace invariant.Namespace) {
 type Boolean bool
 
 // Boolean_Invariants requires both query results.
-func Boolean_Invariants(value Boolean, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Boolean_Invariants(value Boolean, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Sometimes(bool(value), "A Boolean report is true.").
 		Ensure()
 }
@@ -115,8 +115,8 @@ func Boolean_Invariants(value Boolean, namespace invariant.Namespace) {
 type Character rune
 
 // Character_Invariants covers complete rune storage domain.
-func Character_Invariants(value Character, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Character_Invariants(value Character, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int32(int32(value), CHARACTER_MINIMUM, CHARACTER_MAXIMUM).
 		Ensure()
 }
@@ -125,8 +125,8 @@ func Character_Invariants(value Character, namespace invariant.Namespace) {
 type Byte byte
 
 // Byte_Invariants covers all byte values.
-func Byte_Invariants(value Byte, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Byte_Invariants(value Byte, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint8(uint8(value), BYTE_MINIMUM, BYTE_MAXIMUM).
 		Ensure()
 }
@@ -657,8 +657,8 @@ const SIZE_VALUE_MAXIMUM = TEXT_SIZE_MAXIMUM
 type Bytes []byte
 
 // Bytes_Invariants bounds destination and result storage.
-func Bytes_Invariants(value Bytes, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Bytes_Invariants(value Bytes, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), TEXT_SIZE_MINIMUM, TEXT_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -667,8 +667,8 @@ func Bytes_Invariants(value Bytes, namespace invariant.Namespace) {
 type Texts []Text
 
 // Texts_Invariants bounds every possible split result.
-func Texts_Invariants(value Texts, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Texts_Invariants(value Texts, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), TEXT_SIZE_MINIMUM, TEXT_COUNT_MAXIMUM).
 		Ensure()
 }
@@ -677,8 +677,8 @@ func Texts_Invariants(value Texts, namespace invariant.Namespace) {
 type Character_Count int
 
 // Character_Count_Invariants excludes impossible trailing empty view.
-func Character_Count_Invariants(value Character_Count, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Character_Count_Invariants(value Character_Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), TEXT_SIZE_MINIMUM, TEXT_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -687,8 +687,8 @@ func Character_Count_Invariants(value Character_Count, namespace invariant.Names
 type Fields []Text
 
 // Fields_Invariants applies maximum alternating field count.
-func Fields_Invariants(value Fields, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Fields_Invariants(value Fields, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), TEXT_SIZE_MINIMUM, FIELD_COUNT_MAXIMUM).
 		Ensure()
 }
@@ -697,8 +697,8 @@ func Fields_Invariants(value Fields, namespace invariant.Namespace) {
 type Lines []Text
 
 // Lines_Invariants applies maximum one-line-per-byte count.
-func Lines_Invariants(value Lines, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Lines_Invariants(value Lines, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), TEXT_SIZE_MINIMUM, LINE_COUNT_MAXIMUM).
 		Ensure()
 }
@@ -707,8 +707,8 @@ func Lines_Invariants(value Lines, namespace invariant.Namespace) {
 type Limit int
 
 // Limit_Invariants admits all-results sentinel beside bounded counts.
-func Limit_Invariants(value Limit, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Limit_Invariants(value Limit, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), LIMIT_MINIMUM, LIMIT_MAXIMUM).
 		Ensure()
 }
@@ -717,8 +717,8 @@ func Limit_Invariants(value Limit, namespace invariant.Namespace) {
 type Split_Limit int
 
 // Split_Limit_Invariants applies nonzero split-helper domain.
-func Split_Limit_Invariants(value Split_Limit, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Split_Limit_Invariants(value Split_Limit, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Holed_Int(
 			int(value), LIMIT_MINIMUM, LIMIT_MAXIMUM,
 			0, 0, 0, 0,
@@ -730,8 +730,8 @@ func Split_Limit_Invariants(value Split_Limit, namespace invariant.Namespace) {
 type Repeat_Count int
 
 // Repeat_Count_Invariants prevents unbounded work.
-func Repeat_Count_Invariants(value Repeat_Count, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Repeat_Count_Invariants(value Repeat_Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), REPEAT_COUNT_MINIMUM, REPEAT_COUNT_MAXIMUM).
 		Ensure()
 }
@@ -741,9 +741,9 @@ type Replacement_Count int
 
 // Replacement_Count_Invariants admits all-results sentinel.
 func Replacement_Count_Invariants(
-	value Replacement_Count, namespace invariant.Namespace,
+	value Replacement_Count, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int(
 			int(value), REPLACEMENT_COUNT_MINIMUM, REPLACEMENT_COUNT_MAXIMUM,
 		).
@@ -754,8 +754,8 @@ func Replacement_Count_Invariants(
 type Size_Value int
 
 // Size_Value_Invariants applies Text byte bounds.
-func Size_Value_Invariants(value Size_Value, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Size_Value_Invariants(value Size_Value, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), SIZE_VALUE_MINIMUM, SIZE_VALUE_MAXIMUM).
 		Ensure()
 }
@@ -1324,8 +1324,8 @@ const RULE_COUNT_MAXIMUM = TEXT_SIZE_MAXIMUM
 type Builder_Storage [TEXT_SIZE_MAXIMUM]byte
 
 // Builder_Storage_Invariants states fixed compile-time storage size.
-func Builder_Storage_Invariants(value Builder_Storage, _ invariant.Namespace) {
-	invariant.Always(
+func Builder_Storage_Invariants(value Builder_Storage, _ aver.Namespace) {
+	aver.Always(
 		len(value) == TEXT_SIZE_MAXIMUM,
 		"Builder storage has fixed Text capacity.",
 	)
@@ -1340,7 +1340,7 @@ type Builder struct {
 }
 
 // Builder_Invariants composes fixed storage and current content size.
-func Builder_Invariants(value Builder, namespace invariant.Namespace) {
+func Builder_Invariants(value Builder, namespace aver.Namespace) {
 	Builder_Storage_Invariants(value.Storage, namespace)
 	Size_Value_Invariants(value.Size, namespace)
 }
@@ -1350,9 +1350,9 @@ type Builder_Capacity_Value int
 
 // Builder_Capacity_Value_Invariants fixes one compile-time capacity.
 func Builder_Capacity_Value_Invariants(
-	value Builder_Capacity_Value, _ invariant.Namespace,
+	value Builder_Capacity_Value, _ aver.Namespace,
 ) {
-	invariant.Always(
+	aver.Always(
 		int(value) == TEXT_SIZE_MAXIMUM,
 		"Builder capacity equals fixed Text capacity.",
 	)
@@ -1446,9 +1446,9 @@ type Decoded_Character rune
 
 // Decoded_Character_Invariants applies Unicode code-point domain.
 func Decoded_Character_Invariants(
-	value Decoded_Character, namespace invariant.Namespace,
+	value Decoded_Character, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int32(
 			int32(value),
 			utf8.DECODED_CHARACTER_MINIMUM,
@@ -1468,11 +1468,11 @@ type Reader struct {
 }
 
 // Reader_Invariants composes borrowed source and cursor state.
-func Reader_Invariants(value Reader, namespace invariant.Namespace) {
+func Reader_Invariants(value Reader, namespace aver.Namespace) {
 	Text_Invariants(value.Source, namespace)
 	Size_Value_Invariants(value.Position, namespace)
 	Index_Value_Invariants(value.Previous, namespace)
-	invariant.Always(
+	aver.Always(
 		int(value.Position) <= len(value.Source),
 		"Reader position does not exceed source size.",
 	)
@@ -1571,8 +1571,8 @@ func Reader_Unread_Character(reader *Reader) {
 type Old_Text string
 
 // Old_Text_Invariants applies Text byte bounds.
-func Old_Text_Invariants(value Old_Text, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Old_Text_Invariants(value Old_Text, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), TEXT_SIZE_MINIMUM, TEXT_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -1581,8 +1581,8 @@ func Old_Text_Invariants(value Old_Text, namespace invariant.Namespace) {
 type New_Text string
 
 // New_Text_Invariants applies Text byte bounds.
-func New_Text_Invariants(value New_Text, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func New_Text_Invariants(value New_Text, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), TEXT_SIZE_MINIMUM, TEXT_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -1596,7 +1596,7 @@ type Rule struct {
 }
 
 // Rule_Invariants composes distinct old and new Text identities.
-func Rule_Invariants(value Rule, namespace invariant.Namespace) {
+func Rule_Invariants(value Rule, namespace aver.Namespace) {
 	Old_Text_Invariants(value.Old, namespace)
 	New_Text_Invariants(value.New, namespace)
 }
@@ -1605,8 +1605,8 @@ func Rule_Invariants(value Rule, namespace invariant.Namespace) {
 type Rules []Rule
 
 // Rules_Invariants prevents unbounded ordered search.
-func Rules_Invariants(value Rules, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Rules_Invariants(value Rules, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), RULE_COUNT_MINIMUM, RULE_COUNT_MAXIMUM).
 		Ensure()
 }
@@ -1618,7 +1618,7 @@ type Replacer struct {
 }
 
 // Replacer_Invariants composes borrowed bounded rules.
-func Replacer_Invariants(value Replacer, namespace invariant.Namespace) {
+func Replacer_Invariants(value Replacer, namespace aver.Namespace) {
 	Rules_Invariants(value.Rules, namespace)
 }
 

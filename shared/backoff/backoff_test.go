@@ -4,14 +4,14 @@ import (
 	"testing"
 
 	"local/james-orcales/shared/backoff"
-	"local/james-orcales/shared/invariant/default"
+	"local/james-orcales/shared/simulation/aver/default"
 	"local/james-orcales/shared/simulation/nbio"
 	"local/james-orcales/shared/simulation/time"
 )
 
 // TestMain makes public operations prove their invariant paths.
 func TestMain(m *testing.M) {
-	invariant.Run_Test_Main(m)
+	aver.Run_Test_Main(m)
 }
 
 // Retry_Result captures what a driven Retry delivered plus the virtual time it took.

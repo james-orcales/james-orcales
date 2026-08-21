@@ -13,24 +13,25 @@ external_references:
 
 The testable correctness properties of the VSR core, from applying the *applicable* parts of the
 `antithesis-research` methodology to a pure deterministic protocol core. This is not an
-Antithesis-platform artifact — no containers, SDK, or deployment topology. The `shared/invariant`
-framework is the assertion system; the VOPR simulator (`shared/vsr/simulation`) is the harness.
+Antithesis-platform artifact — no containers, SDK, or deployment topology. The
+`shared/simulation/aver` framework is the assertion system; the VOPR simulator
+(`shared/vsr/simulation`) is the harness.
 
 ## How to read this
 
-Assertion vocabulary maps the methodology's Antithesis SDK onto `shared/invariant`: `Always` →
-`invariant.Always` (safety; must be *reached*); `Sometimes(cond)` → an
-`invariant.Sometimes(...)` call (must be observed *both ways* — stricter than
+Assertion vocabulary maps the methodology's Antithesis SDK onto `shared/simulation/aver`: `Always` →
+`aver.Always` (safety; must be *reached*); `Sometimes(cond)` → an
+`aver.Sometimes(...)` call (must be observed *both ways* — stricter than
 Antithesis); `Reachable` → a meaningful `Sometimes` link (no one-shot form exists). The
 cross-cluster safety oracles
 (agreement, single-primary, exactly-once, linearizability, checkpoint-agreement) are direct
-comparison checks in the simulator (`t.Fatalf` on violation), not `invariant.*` calls; they run in
+comparison checks in the simulator (`t.Fatalf` on violation), not `aver.*` calls; they run in
 `simulator_assert_safety` after every delivery.
 
-Tiers say where a property lives: **Tier-1** is one replica's local state (an `invariant.*` in
+Tiers say where a property lives: **Tier-1** is one replica's local state (an `aver.*` in
 `vsr.go`); **Tier-2** is a cross-cluster property (a simulator oracle or coverage axis).
 
-Status is one of: `enforced-inline` (an `invariant.*` in vsr.go), `enforced-simulator` (a simulator
+Status is one of: `enforced-inline` (an `aver.*` in vsr.go), `enforced-simulator` (a simulator
 oracle / coverage axis), `GAP` (a real guarantee with no current runtime check), or `partial`
 (behaviourally enforced but not asserted as a named property).
 
@@ -69,7 +70,7 @@ that committed data is never lost or contradicted.
 *Safety · Tier-1 vsr.go:1451 · enforced-inline*
 
 **Property** — a replica's `Op` always equals `Log_Start + len(Log)`.
-**Invariant** — `invariant.Always(int(Op) == int(Log_Start)+len(Log))`; a structural identity that
+**Invariant** — `aver.Always(int(Op) == int(Log_Start)+len(Log))`; a structural identity that
 must hold on every step, so `Always` is the only fit.
 **Angle** — truncation on a behind-view drop, compaction, and wholesale adoption all rewrite
 `Log`/`Log_Start` together; a reorder interleaving them could desync the two.
@@ -81,7 +82,7 @@ Safety · Tier-1 vsr.go:1453 + Tier-2 simulation_test.go:1229 · enforced-inline
 enforced-simulator
 
 **Property** — a replica's commit number never exceeds its op number.
-**Invariant** — `invariant.Always(Commit <= Op)`; plus a cluster oracle (`commit %d exceeds op %d`).
+**Invariant** — `aver.Always(Commit <= Op)`; plus a cluster oracle (`commit %d exceeds op %d`).
 **Angle** — adopting a peer's state that is *behind* this replica's commit (Bug 9's commit-past-op
 face) would violate it.
 **Why** — a commit past op means committing an op the replica does not hold.
@@ -90,7 +91,7 @@ face) would violate it.
 *Safety · Tier-1 vsr.go:1454 · enforced-inline*
 
 **Property** — the last view a replica was normal in never exceeds its current view.
-**Invariant** — `invariant.Always(Last_Normal_View <= View)`.
+**Invariant** — `aver.Always(Last_Normal_View <= View)`.
 **Angle** — view-change selection ranks by `(Last_Normal_View, Op)`; a stale higher value corrupts
 selection.
 **Why** — correct log selection across a view change (paper §5.3).
@@ -100,7 +101,7 @@ selection.
 
 **Property** — `Log_Start` never sits above `Checkpoint_Op` (ops between would be in neither log nor
 checkpoint).
-**Invariant** — `invariant.Always(Log_Start == 0 || Log_Start <= Checkpoint_Op)`.
+**Invariant** — `aver.Always(Log_Start == 0 || Log_Start <= Checkpoint_Op)`.
 **Angle** — a deferred fetch whose suffix began above the primary's checkpoint left this gap
 (Bug 7).
 **Why** — execution otherwise walks into a garbage-collected op.
@@ -143,7 +144,7 @@ emerges.
 
 **Property** — an op commits only behind `Prepare_Ok` from a quorum of distinct replicas (f+1,
 counting the primary).
-**Invariant** — `invariant.Always(distinct_count >= replica_quorum(replica))`.
+**Invariant** — `aver.Always(distinct_count >= replica_quorum(replica))`.
 **Angle** — a matchIndex-style model over-counted state-transferred ops a backup never acked
 (Bug 11).
 **Why** — quorum intersection is what makes a committed op durable across a view change.
@@ -152,7 +153,7 @@ counting the primary).
 *Safety · Tier-1 (structural) · partial*
 
 **Property** — the primary of a view is always a voting active replica, never a standby.
-**Invariant** — would be `invariant.Always(primary_index < Active_Count)`. Structurally true:
+**Invariant** — would be `aver.Always(primary_index < Active_Count)`. Structurally true:
 `replica_primary_identifier` computes `View mod Active_Count`.
 **Angle** — a reconfiguration changing `Active_Count` concurrent with a view change.
 **Why** — a standby holds no application state and cannot serve (§6.1; SPECIFICATION §Primary Always
@@ -192,7 +193,7 @@ linearizability confirmed; real-time edge not separately checked)`
 
 **Property** — a request the primary accepts strictly advances that client's recorded
 request-number.
-**Invariant** — `invariant.Always(is_new_request)`.
+**Invariant** — `aver.Always(is_new_request)`.
 **Angle** — a duplicated/reordered client retry must not be appended as a fresh op.
 **Why** — the foundation of dedup and exactly-once (paper §4.5).
 
@@ -212,7 +213,7 @@ by coverage axes `sim.result.cached_replies` and `sim.client.unanswered`.
 *Safety · Tier-1 vsr.go:2866 · enforced-inline (regression: Bug 1; seed 1 permanent)*
 
 **Property** — a replica in `STATUS_RECOVERY` never enters or participates in a view change.
-**Invariant** — `invariant.Always(Status != STATUS_RECOVERY)` in `replica_start_view_change`.
+**Invariant** — `aver.Always(Status != STATUS_RECOVERY)` in `replica_start_view_change`.
 **Angle** — a crashed replica with a wiped log, dragged into a view change, wins the merge with its
 empty log (Bug 1).
 **Why** — an empty log winning a merge drops a committed entry (paper §4.3).
@@ -223,7 +224,7 @@ empty log (Bug 1).
 **Property** — recovery completes only behind `Recovery_Response` from a quorum including the
 primary
 of the highest reported view, with the authority selected over the active count.
-**Invariant** — `invariant.Always(response_count >= replica_quorum)`; authority index
+**Invariant** — `aver.Always(response_count >= replica_quorum)`; authority index
 `highest mod Active_Count`.
 **Angle** — with standbys, an inline `mod len(Configuration)` picked the wrong authority (Bug 14).
 **Why** — adopting the wrong member's log rejoins with a divergent log (paper §4.3).
@@ -242,7 +243,7 @@ a read.
 *Safety · Tier-1 (behavioural guard) · partial*
 
 **Property** — a `Recovery_Response` whose nonce differs from the in-flight nonce is ignored.
-**Invariant** — would be `invariant.Always(response.Nonce == replica.Nonce)` at the accept point;
+**Invariant** — would be `aver.Always(response.Nonce == replica.Nonce)` at the accept point;
 currently a behavioural guard.
 **Angle** — a duplicated/delayed response from an earlier recovery attempt arriving during a new
 one.
@@ -255,7 +256,7 @@ SPECIFICATION §Stale Rejection).
 *Safety · Tier-1 vsr.go:2613 · enforced-inline (regression: Bug 6; seed 160)*
 
 **Property** — the log the new primary installs reaches at least the selected reporter's op.
-**Invariant** — `invariant.Always(Op >= selected_op)`.
+**Invariant** — `aver.Always(Op >= selected_op)`.
 **Angle** — a late `Do_View_Change` re-running selection against a log a deferred fetch had
 shortened
 (Bug 6).
@@ -265,7 +266,7 @@ shortened
 *Safety · Tier-1 vsr.go:2868 · enforced-inline*
 
 **Property** — a view change always moves to a strictly higher view.
-**Invariant** — `invariant.Always(view > replica.View)` in `replica_start_view_change`.
+**Invariant** — `aver.Always(view > replica.View)` in `replica_start_view_change`.
 **Angle** — a replayed/duplicated Start_View_Change for an old view.
 **Why** — view numbers must be monotone for `View mod Active_Count` to name a stable primary.
 
@@ -273,7 +274,7 @@ shortened
 *Safety · Tier-1 vsr.go:1114 · enforced-inline*
 
 **Property** — a message below the replica's epoch is never processed as a normal-view message.
-**Invariant** — an `invariant.Assertions` chain witnesses epoch `<` and `==`; the gate admits only
+**Invariant** — an `aver.Assertions` chain witnesses epoch `<` and `==`; the gate admits only
 the equal branch and redirects the stale branch before message-kind handling.
 **Angle** — a reconfiguration overlapping a view change or recovery (coverage T21/T22).
 **Why** — processing a stale-epoch message normally re-admits a replaced member (paper §7.2).
@@ -284,7 +285,7 @@ and some equal-epoch messages.
 *Safety · Tier-1 vsr.go:2208 · enforced-inline*
 
 **Property** — a Reconfiguration log entry is never passed to `State_Machine.Execute`.
-**Invariant** — `invariant.Always(!log_entry_is_reconfiguration(entry))` in `replica_apply_commit`.
+**Invariant** — `aver.Always(!log_entry_is_reconfiguration(entry))` in `replica_apply_commit`.
 **Angle** — the commit walk crossing the epoch's last op.
 **Why** — a reconfiguration is control-plane, not application data (paper §7.1).
 
@@ -318,7 +319,7 @@ boundary.
 *Safety · Tier-1 vsr.go:1463 · enforced-inline (regression: Bug 8; seed 5449)*
 
 **Property** — a non-empty `Old_Configuration` exists only while status is Transition or Shutdown.
-**Invariant** — `invariant.Always(len(Old_Configuration) == 0 || handoff)`.
+**Invariant** — `aver.Always(len(Old_Configuration) == 0 || handoff)`.
 **Angle** — a transitioning replica pulled into a view change kept stale handoff state (Bug 8).
 **Why** — carrying handoff bookkeeping with no handoff underway is an undefined §7 state.
 
@@ -342,7 +343,7 @@ Shutdown?
 *Safety · Tier-1 vsr.go:1787 · enforced-inline*
 
 **Property** — a backup applying a Prepare adopts the entry's prediction unchanged.
-**Invariant** — `invariant.Always(appended_matches)` in `replica_receive_prepare`.
+**Invariant** — `aver.Always(appended_matches)` in `replica_receive_prepare`.
 **Angle** — any path where a backup might recompute rather than copy.
 **Why** — if backups recomputed a clock/random-derived value they would diverge (paper §4.4).
 
@@ -378,7 +379,7 @@ standby snapshotting empty state (Bugs 5, 12).
 *Safety · Tier-1 vsr.go:2314/2315 · enforced-inline (regression: Bug 5)*
 
 **Property** — a checkpoint's op equals `Executed` and is ≤ `Commit` when the snapshot is captured.
-**Invariant** — `invariant.Always(op <= Commit)` and `invariant.Always(op == Executed)` in
+**Invariant** — `aver.Always(op <= Commit)` and `aver.Always(op == Executed)` in
 `replica_take_checkpoint`.
 **Angle** — snapshotting after the execution loop captured a later op than the label (Bug 5).
 **Why** — a snapshot labelled op 4 holding op 6's state diverges across replicas.
@@ -400,7 +401,7 @@ agreement/linearizability oracles.
 *Safety · Tier-1 (proposed) · GAP*
 
 **Property** — a Prepare's `Entries` length is between 1 and `Batch_Max`.
-**Invariant** — would be `invariant.Always(len(Entries) >= 1 && len(Entries) <= Batch_Max)`, a
+**Invariant** — would be `aver.Always(len(Entries) >= 1 && len(Entries) <= Batch_Max)`, a
 reach-only Always (no boundary, so no unreachable endpoint).
 **Angle** — buffer flush at the cap vs. at round-commit.
 **Why** — an unbounded batch defeats the message-size bound (paper §6.2; SPECIFICATION §Batch Cap).
@@ -411,7 +412,7 @@ reach-only Always (no boundary, so no unreachable endpoint).
 
 **Property** — a batch never mixes a Reconfiguration entry with others; the Reconfiguration is the
 epoch's last op, appended alone.
-**Invariant** — would be `invariant.Always(len(Entries) == 1 || no Entries entry is a
+**Invariant** — would be `aver.Always(len(Entries) == 1 || no Entries entry is a
 Reconfiguration)`.
 **Angle** — a buffered batch flushing as a Reconfiguration arrives.
 **Why** — a reconfiguration inside a batch breaks the §7 "last op of the epoch" invariant.
@@ -446,8 +447,8 @@ checkpoint, replay suffix) before serving.
 *Safety · Tier-1 (proposed) · GAP*
 
 **Property** — a `Status` / `Message_Kind` value is always a defined enum member.
-**Invariant** — would be `invariant.Always(s <= STATUS_SHUTDOWN)` /
-`invariant.Always(k <= MESSAGE_KIND_CHECK_EPOCH)`, reach-only Always — deliberately not a
+**Invariant** — would be `aver.Always(s <= STATUS_SHUTDOWN)` /
+`aver.Always(k <= MESSAGE_KIND_CHECK_EPOCH)`, reach-only Always — deliberately not a
 `Distinct_Boundary`, whose full-type-range form would gap.
 **Angle** — a corrupted/uninitialised field surfacing during a malformed transition.
 **Why** — an out-of-range discriminant routes a message to the wrong handler.
@@ -456,7 +457,7 @@ checkpoint, replay suffix) before serving.
 *Safety · Tier-1 (proposed) · GAP*
 
 **Property** — a Do_View_Change's `Log_Suffix` never exceeds `VIEW_CHANGE_SUFFIX` entries.
-**Invariant** — would be `invariant.Always(len(Log_Suffix) <= VIEW_CHANGE_SUFFIX)`.
+**Invariant** — would be `aver.Always(len(Log_Suffix) <= VIEW_CHANGE_SUFFIX)`.
 **Angle** — a reporter with a long log emitting its suffix.
 **Why** — an unbounded suffix defeats §5.3's bounded-report optimization.
 **Status note** — `VIEW_CHANGE_SUFFIX` is used at vsr.go:2452, never asserted.
@@ -507,8 +508,9 @@ normal primary.
 
 - The simulator's reference model is the linearizability ground truth; "linearizable" here means
   result-equals-reference applied in commit order (real-time ordering is only partially checked).
-- `shared/invariant`'s coverage model is stricter than Antithesis (every `Always` reached, every
-  `Sometimes` both ways), so reach-only `Always` is preferred for membership/bound properties.
+- `shared/simulation/aver`'s coverage model is stricter than Antithesis (every `Always` reached,
+  every `Sometimes` both ways), so reach-only `Always` is preferred for membership/bound
+  properties.
 - Crash-only fault model: Byzantine/corruption faults are out of scope (the core is not BFT and has
   no checksums — that layer would live in the caller's transport/disk, as in TigerBeetle).
 

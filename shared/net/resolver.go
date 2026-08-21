@@ -7,7 +7,7 @@ import (
 
 	"local/james-orcales/shared/bytes"
 	"local/james-orcales/shared/crypto/prng"
-	"local/james-orcales/shared/invariant/default"
+	"local/james-orcales/shared/simulation/aver/default"
 	"local/james-orcales/shared/simulation/nbio"
 	"local/james-orcales/shared/simulation/time"
 )
@@ -52,8 +52,8 @@ var Error_Name_Invalid = errors.New("net: invalid host name")
 type Name_Unvalidated string
 
 // Name_Unvalidated_Invariants bounds validation work itself.
-func Name_Unvalidated_Invariants(value Name_Unvalidated, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Name_Unvalidated_Invariants(value Name_Unvalidated, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(
 			len(value), DNS_NAME_TEXT_BYTES_UNVALIDATED_MINIMUM,
 			DNS_NAME_TEXT_BYTES_UNVALIDATED_MAXIMUM,
@@ -65,8 +65,8 @@ func Name_Unvalidated_Invariants(value Name_Unvalidated, namespace invariant.Nam
 type Name string
 
 // Name_Invariants keeps validated text inside DNS host grammar.
-func Name_Invariants(name Name, namespace invariant.Namespace) {
-	invariant.Tree(name, namespace).
+func Name_Invariants(name Name, namespace aver.Namespace) {
+	aver.Tree(name, namespace).
 		Range_Int(
 			len(name), DNS_NAME_TEXT_BYTES_INVALID, DNS_NAME_TEXT_BYTES_MAXIMUM,
 		).
@@ -357,8 +357,8 @@ var Error_Transfer_Count = errors.New("net: invalid DNS transfer count")
 type Record_Type uint16
 
 // Record_Type_Invariants admits only supported address resource types.
-func Record_Type_Invariants(value Record_Type, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Record_Type_Invariants(value Record_Type, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_Uint16(
 			uint16(value), uint16(RECORD_TYPE_A), uint16(RECORD_TYPE_AAAA),
 		).
@@ -369,8 +369,8 @@ func Record_Type_Invariants(value Record_Type, namespace invariant.Namespace) {
 type Address_Storage []nbio.Address
 
 // Address_Storage_Invariants keeps one result slot through maximum possible record count.
-func Address_Storage_Invariants(value Address_Storage, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Address_Storage_Invariants(value Address_Storage, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), ADDRESS_STORAGE_COUNT_MINIMUM, DNS_ADDRESS_COUNT_MAXIMUM).
 		Ensure()
 }
@@ -387,9 +387,9 @@ type Resolver_Configuration struct {
 
 // Resolver_Configuration_Invariants admits explicit supported address family.
 func Resolver_Configuration_Invariants(
-	value Resolver_Configuration, namespace invariant.Namespace,
+	value Resolver_Configuration, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Enum_Int(
 			int(value.Server.Family), int(nbio.FAMILY_IPV4), int(nbio.FAMILY_IPV6),
 		).
@@ -411,12 +411,12 @@ type Resolver_Workspace struct {
 }
 
 // Resolver_Workspace_Invariants fixes both protocol arrays to formulas.
-func Resolver_Workspace_Invariants(value *Resolver_Workspace, _ invariant.Namespace) {
-	invariant.Always(len(value.Query) == DNS_TCP_QUERY_BYTES_MAXIMUM,
+func Resolver_Workspace_Invariants(value *Resolver_Workspace, _ aver.Namespace) {
+	aver.Always(len(value.Query) == DNS_TCP_QUERY_BYTES_MAXIMUM,
 		"Resolver query workspace has protocol capacity.")
-	invariant.Always(len(value.Response) == DNS_MESSAGE_BYTES_MAXIMUM,
+	aver.Always(len(value.Response) == DNS_MESSAGE_BYTES_MAXIMUM,
 		"Resolver response workspace has protocol capacity.")
-	invariant.Always(len(value.Alias_Name) == DNS_NAME_WIRE_BYTES_MAXIMUM,
+	aver.Always(len(value.Alias_Name) == DNS_NAME_WIRE_BYTES_MAXIMUM,
 		"Resolver alias workspace has expanded-name capacity.")
 }
 
@@ -425,9 +425,9 @@ type Resolver_Workspace_Pointer *Resolver_Workspace
 
 // Resolver_Workspace_Pointer_Invariants covers zero state and initialized workspace.
 func Resolver_Workspace_Pointer_Invariants(
-	value Resolver_Workspace_Pointer, namespace invariant.Namespace,
+	value Resolver_Workspace_Pointer, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Sometimes(value != nil, "Resolver workspace is bound.").
 		Ensure()
 }
@@ -436,8 +436,8 @@ func Resolver_Workspace_Pointer_Invariants(
 type Resolver_Stage uint8
 
 // Resolver_Stage_Invariants keeps state machine inside declared stages.
-func Resolver_Stage_Invariants(value Resolver_Stage, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Resolver_Stage_Invariants(value Resolver_Stage, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint8(
 			uint8(value), uint8(RESOLVER_STAGE_IDLE), uint8(RESOLVER_STAGE_CLOSE_TCP),
 		).
@@ -484,8 +484,8 @@ const RESOLVER_STAGE_CLOSE_TCP Resolver_Stage = RESOLVER_STAGE_RECEIVE_TCP_MESSA
 type Resolver_Entropy prng.Source
 
 // Resolver_Entropy_Invariants covers uninitialized and bound state.
-func Resolver_Entropy_Invariants(value Resolver_Entropy, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Resolver_Entropy_Invariants(value Resolver_Entropy, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Sometimes(value.State != nil, "Resolver entropy is bound.").
 		Ensure()
 }
@@ -494,12 +494,12 @@ func Resolver_Entropy_Invariants(value Resolver_Entropy, namespace invariant.Nam
 type Resolver_Clock time.Clock
 
 // Resolver_Clock_Invariants excludes partially bound clock vtable.
-func Resolver_Clock_Invariants(value Resolver_Clock, namespace invariant.Namespace) {
-	invariant.Always(
+func Resolver_Clock_Invariants(value Resolver_Clock, namespace aver.Namespace) {
+	aver.Always(
 		(value.Now_Monotonic == nil) == (value.Now_Realtime == nil),
 		"Resolver host binds both readers or neither reader.",
 	)
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Sometimes(value.Now_Monotonic != nil, "Resolver host is bound.").
 		Ensure()
 }
@@ -508,8 +508,8 @@ func Resolver_Clock_Invariants(value Resolver_Clock, namespace invariant.Namespa
 type Port uint16
 
 // Port_Invariants covers complete transport port domain.
-func Port_Invariants(value Port, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Port_Invariants(value Port, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint16(uint16(value), uint16(PORT_MINIMUM), uint16(PORT_MAXIMUM)).
 		Ensure()
 }
@@ -519,9 +519,9 @@ type Transaction_Identifier uint16
 
 // Transaction_Identifier_Invariants covers complete DNS identifier field.
 func Transaction_Identifier_Invariants(
-	value Transaction_Identifier, namespace invariant.Namespace,
+	value Transaction_Identifier, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Uint16(
 			uint16(value), uint16(TRANSACTION_IDENTIFIER_MINIMUM),
 			uint16(TRANSACTION_IDENTIFIER_MAXIMUM),
@@ -539,8 +539,8 @@ const TRANSACTION_IDENTIFIER_MAXIMUM Transaction_Identifier = (1 << DNS_MESSAGE_
 type Resolver_Flags uint8
 
 // Resolver_Flags_Invariants bounds every flag combination.
-func Resolver_Flags_Invariants(value Resolver_Flags, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Resolver_Flags_Invariants(value Resolver_Flags, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint8(uint8(value), uint8(RESOLVER_FLAGS_NONE), uint8(RESOLVER_FLAGS_ALL)).
 		Ensure()
 }
@@ -572,8 +572,8 @@ const RESOLVER_FLAGS_ALL Resolver_Flags = RESOLVER_FLAG_ACTIVE |
 type Resolver_Name Name
 
 // Resolver_Name_Invariants bounds retained name storage.
-func Resolver_Name_Invariants(value Resolver_Name, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Resolver_Name_Invariants(value Resolver_Name, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), DNS_NAME_TEXT_BYTES_INVALID, DNS_NAME_TEXT_BYTES_MAXIMUM).
 		Ensure()
 }
@@ -582,8 +582,8 @@ func Resolver_Name_Invariants(value Resolver_Name, namespace invariant.Namespace
 type Resolver_Results Address_Storage
 
 // Resolver_Results_Invariants bounds retained result capacity.
-func Resolver_Results_Invariants(value Resolver_Results, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Resolver_Results_Invariants(value Resolver_Results, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), ADDRESS_STORAGE_COUNT_MINIMUM, DNS_ADDRESS_COUNT_MAXIMUM).
 		Ensure()
 }
@@ -592,8 +592,8 @@ func Resolver_Results_Invariants(value Resolver_Results, namespace invariant.Nam
 type Resolver_Deadline time.Monotonic_Moment
 
 // Resolver_Deadline_Invariants bounds retained monotonic moment.
-func Resolver_Deadline_Invariants(value Resolver_Deadline, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Resolver_Deadline_Invariants(value Resolver_Deadline, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int64(
 			int64(value), int64(time.MONOTONIC_MOMENT_MINIMUM),
 			int64(time.MONOTONIC_MOMENT_MAXIMUM),
@@ -606,9 +606,9 @@ type Resolver_Record_Type Record_Type
 
 // Resolver_Record_Type_Invariants bounds retained protocol number.
 func Resolver_Record_Type_Invariants(
-	value Resolver_Record_Type, namespace invariant.Namespace,
+	value Resolver_Record_Type, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Enum_3_Uint16(
 			uint16(value), uint16(RECORD_TYPE_INVALID), uint16(RECORD_TYPE_A),
 			uint16(RECORD_TYPE_AAAA),
@@ -620,8 +620,8 @@ func Resolver_Record_Type_Invariants(
 type Resolver_Port Port
 
 // Resolver_Port_Invariants bounds retained result port.
-func Resolver_Port_Invariants(value Resolver_Port, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Resolver_Port_Invariants(value Resolver_Port, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint16(uint16(value), uint16(PORT_MINIMUM), uint16(PORT_MAXIMUM)).
 		Ensure()
 }
@@ -630,8 +630,8 @@ func Resolver_Port_Invariants(value Resolver_Port, namespace invariant.Namespace
 type Timeout time.Duration
 
 // Timeout_Invariants requires positive duration fitting monotonic domain.
-func Timeout_Invariants(value Timeout, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Timeout_Invariants(value Timeout, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int64(
 			int64(value), int64(time.NANOSECOND),
 			int64(time.MONOTONIC_MOMENT_MAXIMUM),
@@ -643,8 +643,8 @@ func Timeout_Invariants(value Timeout, namespace invariant.Namespace) {
 type Resolver_Timeout time.Duration
 
 // Resolver_Timeout_Invariants bounds one submitted primitive.
-func Resolver_Timeout_Invariants(value Resolver_Timeout, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Resolver_Timeout_Invariants(value Resolver_Timeout, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int64(
 			int64(value), int64(time.NANOSECOND),
 			int64(time.MONOTONIC_MOMENT_MAXIMUM),
@@ -656,8 +656,8 @@ func Resolver_Timeout_Invariants(value Resolver_Timeout, namespace invariant.Nam
 type Query_Byte_Count uint16
 
 // Query_Byte_Count_Invariants bounds retained query size by query workspace.
-func Query_Byte_Count_Invariants(value Query_Byte_Count, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Query_Byte_Count_Invariants(value Query_Byte_Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint16(
 			uint16(value), uint16(QUERY_BYTE_COUNT_MINIMUM),
 			uint16(QUERY_BYTE_COUNT_MAXIMUM),
@@ -676,9 +676,9 @@ type Transfer_Byte_Count uint16
 
 // Transfer_Byte_Count_Invariants bounds progress by largest TCP message.
 func Transfer_Byte_Count_Invariants(
-	value Transfer_Byte_Count, namespace invariant.Namespace,
+	value Transfer_Byte_Count, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Uint16(
 			uint16(value), uint16(TRANSFER_BYTE_COUNT_MINIMUM),
 			uint16(TRANSFER_BYTE_COUNT_MAXIMUM),
@@ -697,9 +697,9 @@ type Response_Byte_Count uint16
 
 // Response_Byte_Count_Invariants bounds retained response by caller workspace.
 func Response_Byte_Count_Invariants(
-	value Response_Byte_Count, namespace invariant.Namespace,
+	value Response_Byte_Count, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Uint16(
 			uint16(value), uint16(RESPONSE_BYTE_COUNT_MINIMUM),
 			uint16(RESPONSE_BYTE_COUNT_MAXIMUM),
@@ -717,8 +717,8 @@ const RESPONSE_BYTE_COUNT_MAXIMUM Response_Byte_Count = DNS_MESSAGE_BYTES_MAXIMU
 type Result_Count uint16
 
 // Result_Count_Invariants bounds retained result count by DNS message capacity.
-func Result_Count_Invariants(value Result_Count, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Result_Count_Invariants(value Result_Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint16(
 			uint16(value), uint16(RESULT_COUNT_MINIMUM), uint16(RESULT_COUNT_MAXIMUM),
 		).
@@ -778,8 +778,8 @@ type Resolver struct {
 }
 
 // Resolver_Invariants protects static completion recovery and injected ownership.
-func Resolver_Invariants(value Resolver, namespace invariant.Namespace) {
-	invariant.Always(
+func Resolver_Invariants(value Resolver, namespace aver.Namespace) {
+	aver.Always(
 		unsafe.Pointer(&value) == unsafe.Pointer(&value.Completion),
 		"Resolver completion stays first for static callback recovery.",
 	)
@@ -800,7 +800,7 @@ func Resolver_Invariants(value Resolver, namespace invariant.Namespace) {
 	Response_Byte_Count_Invariants(value.Response_Bytes, namespace)
 	Result_Count_Invariants(value.Result_Count, namespace)
 	Resolver_Flags_Invariants(value.Flags, namespace)
-	invariant.Always(
+	aver.Always(
 		(value.Stage == RESOLVER_STAGE_IDLE) ==
 			(value.Flags&RESOLVER_FLAG_ACTIVE == 0),
 		"Resolver idle stage matches inactive ownership.",
@@ -819,25 +819,25 @@ func Resolver_Init(
 	prng.Source_Invariants(entropy, "Resolver_Init.entropy")
 	Resolver_Workspace_Pointer_Invariants(workspace, "Resolver_Init.workspace")
 	Resolver_Configuration_Invariants(configuration, "Resolver_Init.configuration")
-	invariant.Always(
+	aver.Always(
 		resolver.Flags == RESOLVER_FLAGS_NONE,
 		"Resolver_Init owns inactive Resolver.",
 	)
-	invariant.Always(workspace != nil, "Resolver_Init has caller-owned workspace.")
+	aver.Always(workspace != nil, "Resolver_Init has caller-owned workspace.")
 	Resolver_Workspace_Invariants(
 		(*Resolver_Workspace)(workspace), "Resolver_Init.workspace_value",
 	)
-	invariant.Always(configuration.Server.Port > 0, "Resolver server port is positive.")
-	invariant.Always(loop.Close_Procedure != nil, "Resolver has close procedure.")
-	invariant.Always(loop.Network.Socket_TCP_Procedure != nil,
+	aver.Always(configuration.Server.Port > 0, "Resolver server port is positive.")
+	aver.Always(loop.Close_Procedure != nil, "Resolver has close procedure.")
+	aver.Always(loop.Network.Socket_TCP_Procedure != nil,
 		"Resolver has TCP socket procedure.")
-	invariant.Always(loop.Network.Socket_UDP_Procedure != nil,
+	aver.Always(loop.Network.Socket_UDP_Procedure != nil,
 		"Resolver has UDP socket procedure.")
-	invariant.Always(loop.Network.Connect_Procedure != nil,
+	aver.Always(loop.Network.Connect_Procedure != nil,
 		"Resolver has connect procedure.")
-	invariant.Always(loop.Network.Receive_Procedure != nil,
+	aver.Always(loop.Network.Receive_Procedure != nil,
 		"Resolver has receive procedure.")
-	invariant.Always(loop.Network.Send_Procedure != nil,
+	aver.Always(loop.Network.Send_Procedure != nil,
 		"Resolver has send procedure.")
 	*resolver = Resolver{
 		IO: loop, Clock: Resolver_Clock(host), Entropy: Resolver_Entropy(entropy),
@@ -858,16 +858,16 @@ func Resolve(
 	Address_Storage_Invariants(results, "Resolve.results")
 	Timeout_Invariants(timeout, "Resolve.timeout")
 	time.Clock_Invariants(time.Clock(resolver.Clock), "Resolve.host")
-	invariant.Always(resolver.Entropy.State != nil, "Resolve has bound entropy.")
-	invariant.Always(resolver.Workspace != nil, "Resolve has bound workspace.")
-	invariant.Always(completion != nil, "Resolve has completion storage.")
-	invariant.Always(completion == &resolver.Completion,
+	aver.Always(resolver.Entropy.State != nil, "Resolve has bound entropy.")
+	aver.Always(resolver.Workspace != nil, "Resolve has bound workspace.")
+	aver.Always(completion != nil, "Resolve has completion storage.")
+	aver.Always(completion == &resolver.Completion,
 		"Resolve submits Resolver-owned completion.")
-	invariant.Always(callback != nil, "Resolve has callback.")
-	invariant.Always(
+	aver.Always(callback != nil, "Resolve has callback.")
+	aver.Always(
 		resolver.Flags&RESOLVER_FLAG_ACTIVE == 0, "Resolve owns idle Resolver.",
 	)
-	invariant.Always(
+	aver.Always(
 		len(results) >= ADDRESS_STORAGE_COUNT_USABLE_MINIMUM,
 		"Resolve has address result storage.",
 	)
@@ -878,7 +878,7 @@ func Resolve(
 		return
 	}
 	now := time.Clock_Now_Monotonic(time.Clock(resolver.Clock))
-	invariant.Always(
+	aver.Always(
 		time.Monotonic_Moment(timeout) <= time.MONOTONIC_MOMENT_MAXIMUM-now,
 		"Resolve deadline fits monotonic domain.",
 	)
@@ -1159,11 +1159,11 @@ func resolver_close_or_finish(completion *nbio.Completion) {
 
 func resolver_operation_complete(completion *nbio.Completion) {
 	resolver := (*Resolver)(unsafe.Pointer(completion))
-	invariant.Always(
+	aver.Always(
 		resolver.Flags&RESOLVER_FLAG_ACTIVE != 0,
 		"Resolver callback belongs to active operation.",
 	)
-	invariant.Always(
+	aver.Always(
 		resolver.Flags&RESOLVER_FLAG_WAIT_ACTIVE != 0,
 		"Resolver callback retires submitted operation.",
 	)
@@ -1425,8 +1425,8 @@ func resolver_finish(completion *nbio.Completion) {
 type Response_Offset uint16
 
 // Response_Offset_Invariants bounds position by largest DNS body.
-func Response_Offset_Invariants(value Response_Offset, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Response_Offset_Invariants(value Response_Offset, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint16(
 			uint16(value), uint16(RESPONSE_OFFSET_MINIMUM),
 			uint16(RESPONSE_OFFSET_MAXIMUM),
@@ -1445,9 +1445,9 @@ type Response_Answer_Offset uint16
 
 // Response_Answer_Offset_Invariants starts after smallest valid question.
 func Response_Answer_Offset_Invariants(
-	value Response_Answer_Offset, namespace invariant.Namespace,
+	value Response_Answer_Offset, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Uint16(
 			uint16(value), uint16(RESPONSE_ANSWER_OFFSET_MINIMUM),
 			uint16(RESPONSE_ANSWER_OFFSET_MAXIMUM),
@@ -1466,9 +1466,9 @@ type Response_Label_Offset uint16
 
 // Response_Label_Offset_Invariants leaves one byte for label-size field itself.
 func Response_Label_Offset_Invariants(
-	value Response_Label_Offset, namespace invariant.Namespace,
+	value Response_Label_Offset, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Uint16(
 			uint16(value), uint16(RESPONSE_LABEL_OFFSET_MINIMUM),
 			uint16(RESPONSE_LABEL_OFFSET_MAXIMUM),
@@ -1487,9 +1487,9 @@ type Response_Encoded_Next uint16
 
 // Response_Encoded_Next_Invariants bounds position by largest DNS body.
 func Response_Encoded_Next_Invariants(
-	value Response_Encoded_Next, namespace invariant.Namespace,
+	value Response_Encoded_Next, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Uint16(
 			uint16(value), uint16(RESPONSE_ENCODED_NEXT_MINIMUM),
 			uint16(RESPONSE_ENCODED_NEXT_MAXIMUM),
@@ -1508,9 +1508,9 @@ type Response_Decoded_Byte_Count uint8
 
 // Response_Decoded_Byte_Count_Invariants bounds expanded name by protocol field.
 func Response_Decoded_Byte_Count_Invariants(
-	value Response_Decoded_Byte_Count, namespace invariant.Namespace,
+	value Response_Decoded_Byte_Count, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Holed_Uint8(
 			uint8(value), uint8(RESPONSE_DECODED_BYTE_COUNT_MINIMUM),
 			uint8(RESPONSE_DECODED_BYTE_COUNT_MAXIMUM),
@@ -1534,9 +1534,9 @@ type Response_Decoded_Prefix_Byte_Count uint8
 
 // Response_Decoded_Prefix_Byte_Count_Invariants excludes one-byte partial label encoding.
 func Response_Decoded_Prefix_Byte_Count_Invariants(
-	value Response_Decoded_Prefix_Byte_Count, namespace invariant.Namespace,
+	value Response_Decoded_Prefix_Byte_Count, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Holed_Uint8(
 			uint8(value), uint8(RESPONSE_DECODED_PREFIX_BYTE_COUNT_MINIMUM),
 			uint8(RESPONSE_DECODED_PREFIX_BYTE_COUNT_MAXIMUM),
@@ -1558,9 +1558,9 @@ type Response_Name_Byte_Count uint8
 
 // Response_Name_Byte_Count_Invariants excludes empty error output and impossible two-byte name.
 func Response_Name_Byte_Count_Invariants(
-	value Response_Name_Byte_Count, namespace invariant.Namespace,
+	value Response_Name_Byte_Count, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Holed_Uint8(
 			uint8(value), uint8(RESPONSE_NAME_BYTE_COUNT_MINIMUM),
 			uint8(RESPONSE_NAME_BYTE_COUNT_MAXIMUM),
@@ -1581,9 +1581,9 @@ type Response_Canonical_Byte_Count uint8
 
 // Response_Canonical_Byte_Count_Invariants bounds target by expanded-name ceiling.
 func Response_Canonical_Byte_Count_Invariants(
-	value Response_Canonical_Byte_Count, namespace invariant.Namespace,
+	value Response_Canonical_Byte_Count, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Holed_Uint8(
 			uint8(value), uint8(RESPONSE_CANONICAL_BYTE_COUNT_MINIMUM),
 			uint8(RESPONSE_CANONICAL_BYTES_MAXIMUM),
@@ -1606,9 +1606,9 @@ type Response_Answer_Count uint16
 
 // Response_Answer_Count_Invariants covers complete header field.
 func Response_Answer_Count_Invariants(
-	value Response_Answer_Count, namespace invariant.Namespace,
+	value Response_Answer_Count, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Uint16(
 			uint16(value), uint16(RESPONSE_ANSWER_COUNT_MINIMUM),
 			uint16(RESPONSE_ANSWER_COUNT_MAXIMUM),
@@ -1627,9 +1627,9 @@ type Response_Answer_Start uint16
 
 // Response_Answer_Start_Invariants bounds position by largest DNS body.
 func Response_Answer_Start_Invariants(
-	value Response_Answer_Start, namespace invariant.Namespace,
+	value Response_Answer_Start, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Uint16(
 			uint16(value), uint16(RESPONSE_ANSWER_START_MINIMUM),
 			uint16(RESPONSE_ANSWER_START_MAXIMUM),
@@ -1648,9 +1648,9 @@ type Response_Resource_Offset uint16
 
 // Response_Resource_Offset_Invariants bounds position by largest DNS body.
 func Response_Resource_Offset_Invariants(
-	value Response_Resource_Offset, namespace invariant.Namespace,
+	value Response_Resource_Offset, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Uint16(
 			uint16(value), uint16(RESPONSE_RESOURCE_OFFSET_MINIMUM),
 			uint16(RESPONSE_RESOURCE_OFFSET_MAXIMUM),
@@ -1671,9 +1671,9 @@ type Response_Address_Offset uint16
 
 // Response_Address_Offset_Invariants leaves room for smallest supported address.
 func Response_Address_Offset_Invariants(
-	value Response_Address_Offset, namespace invariant.Namespace,
+	value Response_Address_Offset, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Uint16(
 			uint16(value), uint16(RESPONSE_ADDRESS_OFFSET_MINIMUM),
 			uint16(RESPONSE_ADDRESS_OFFSET_MAXIMUM),
@@ -1694,9 +1694,9 @@ type Response_Resource_End uint16
 
 // Response_Resource_End_Invariants includes smallest compressed root CNAME through message end.
 func Response_Resource_End_Invariants(
-	value Response_Resource_End, namespace invariant.Namespace,
+	value Response_Resource_End, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Uint16(
 			uint16(value), uint16(RESPONSE_RESOURCE_END_MINIMUM),
 			uint16(RESPONSE_RESOURCE_END_MAXIMUM),
@@ -1716,9 +1716,9 @@ type Response_Alias_Byte_Count uint8
 
 // Response_Alias_Byte_Count_Invariants bounds target by expanded-name ceiling.
 func Response_Alias_Byte_Count_Invariants(
-	value Response_Alias_Byte_Count, namespace invariant.Namespace,
+	value Response_Alias_Byte_Count, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Holed_Uint8(
 			uint8(value), uint8(RESPONSE_ALIAS_BYTE_COUNT_MINIMUM),
 			uint8(RESPONSE_ALIAS_BYTE_COUNT_MAXIMUM),
@@ -1739,9 +1739,9 @@ type Response_Alias_Name_Byte_Count uint8
 
 // Response_Alias_Name_Byte_Count_Invariants excludes absent and impossible name sizes.
 func Response_Alias_Name_Byte_Count_Invariants(
-	value Response_Alias_Name_Byte_Count, namespace invariant.Namespace,
+	value Response_Alias_Name_Byte_Count, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Holed_Uint8(
 			uint8(value), uint8(RESPONSE_ALIAS_NAME_BYTE_COUNT_MINIMUM),
 			uint8(RESPONSE_ALIAS_NAME_BYTE_COUNT_MAXIMUM),

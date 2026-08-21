@@ -9,7 +9,7 @@ import (
 	"unsafe"
 
 	"local/james-orcales/shared/encoding/binary"
-	"local/james-orcales/shared/invariant/default"
+	"local/james-orcales/shared/simulation/aver/default"
 	"local/james-orcales/shared/simulation/nbio"
 	"local/james-orcales/shared/simulation/time"
 )
@@ -767,9 +767,9 @@ func platform_get_entry_pair(
 	}
 	first = platform_reserve_entry(&state.Platform)
 	second = platform_reserve_entry(&state.Platform)
-	invariant.Always(first != nil,
+	aver.Always(first != nil,
 		"A preflighted bounded operation chain reserves its primary SQE.")
-	invariant.Always(second != nil,
+	aver.Always(second != nil,
 		"A preflighted bounded operation chain reserves its deadline SQE.")
 	return first, second, nil
 }
@@ -980,14 +980,14 @@ func platform_event_trigger(
 	for write_err == syscall.EINTR {
 		count, write_err = syscall.Write(int(event), buffer[:])
 	}
-	invariant.Always(write_err == nil, "Triggering an eventfd Event succeeds.")
-	invariant.Always(count == len(buffer), "Triggering an eventfd writes one uint64.")
+	aver.Always(write_err == nil, "Triggering an eventfd Event succeeds.")
+	aver.Always(count == len(buffer), "Triggering an eventfd writes one uint64.")
 }
 
 // Close Linux eventfd after its io_uring read listener drained.
 func platform_event_close(state *Operating_System, event nbio.Event) {
 	close_err := syscall.Close(int(event))
-	invariant.Always(close_err == nil, "Closing an eventfd Event succeeds.")
+	aver.Always(close_err == nil, "Closing an eventfd Event succeeds.")
 }
 
 // Platform prepare buffer fill shared read, write, recv, and send SQE fields.
@@ -1104,7 +1104,7 @@ func platform_enter_retry(state *Operating_System) (err error) {
 
 // Platform account submitted move SQEs from queued/published state into kernel ownership.
 func platform_account_submitted(state *Operating_System, submitted int) {
-	invariant.Always(submitted <= state.Platform.IO_Published,
+	aver.Always(submitted <= state.Platform.IO_Published,
 		"io_uring never reports more submissions than were published.")
 	state.Platform.IO_Queued -= submitted
 	state.Platform.IO_Published -= submitted
@@ -1318,7 +1318,7 @@ func platform_retry_pop(state *Operating_System) {
 func platform_retry_add(
 	state *Operating_System, operation *Operating_System_Operation,
 ) {
-	invariant.Always(len(state.Platform.Retry_Backlog) < cap(state.Platform.Retry_Backlog),
+	aver.Always(len(state.Platform.Retry_Backlog) < cap(state.Platform.Retry_Backlog),
 		"The caller-owned Linux retry backlog has capacity before retry.")
 	state.Platform.Retry_Backlog = append(state.Platform.Retry_Backlog, operation)
 }

@@ -4,7 +4,7 @@ package pem
 import (
 	"local/james-orcales/shared/bytes"
 	"local/james-orcales/shared/encoding/base64"
-	"local/james-orcales/shared/invariant/default"
+	"local/james-orcales/shared/simulation/aver/default"
 )
 
 // BEGIN_PREFIX opens one line-bound block.
@@ -144,8 +144,8 @@ const STATUS_BLOCK_TOO_LARGE = STATUS_BLOCK_INVALID + 1
 type Type []byte
 
 // Type_Invariants leaves room for both boundary appearances.
-func Type_Invariants(value Type, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Type_Invariants(value Type, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), bytes.SLICE_SIZE_MINIMUM, TYPE_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -154,8 +154,8 @@ func Type_Invariants(value Type, namespace invariant.Namespace) {
 type Header_Key []byte
 
 // Header_Key_Invariants bounds an independently supplied key before aggregate sizing.
-func Header_Key_Invariants(value Header_Key, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Header_Key_Invariants(value Header_Key, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), bytes.SLICE_SIZE_MINIMUM, ENCODED_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -164,8 +164,8 @@ func Header_Key_Invariants(value Header_Key, namespace invariant.Namespace) {
 type Header_Value []byte
 
 // Header_Value_Invariants bounds an independently supplied value before aggregate sizing.
-func Header_Value_Invariants(value Header_Value, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Header_Value_Invariants(value Header_Value, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), bytes.SLICE_SIZE_MINIMUM, ENCODED_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -179,7 +179,7 @@ type Header struct {
 }
 
 // Header_Invariants composes independently bounded metadata fields.
-func Header_Invariants(value Header, namespace invariant.Namespace) {
+func Header_Invariants(value Header, namespace aver.Namespace) {
 	Header_Key_Invariants(value.Key, namespace)
 	Header_Value_Invariants(value.Value, namespace)
 }
@@ -188,8 +188,8 @@ func Header_Invariants(value Header, namespace invariant.Namespace) {
 type Headers []Header
 
 // Headers_Invariants derives slot count from the smallest encoded header line.
-func Headers_Invariants(value Headers, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Headers_Invariants(value Headers, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), bytes.SLICE_SIZE_MINIMUM, HEADER_COUNT_MAXIMUM).
 		Ensure()
 }
@@ -198,8 +198,8 @@ func Headers_Invariants(value Headers, namespace invariant.Namespace) {
 type Data []byte
 
 // Data_Invariants follows the largest unwrapped body admitted by bounded input.
-func Data_Invariants(value Data, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Data_Invariants(value Data, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), bytes.SLICE_SIZE_MINIMUM, DECODED_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -215,7 +215,7 @@ type Block struct {
 }
 
 // Block_Invariants composes every caller-owned collection boundary.
-func Block_Invariants(value Block, namespace invariant.Namespace) {
+func Block_Invariants(value Block, namespace aver.Namespace) {
 	Type_Invariants(value.Type, namespace)
 	Headers_Invariants(value.Headers, namespace)
 	Data_Invariants(value.Data, namespace)
@@ -225,8 +225,8 @@ func Block_Invariants(value Block, namespace invariant.Namespace) {
 type Encoded []byte
 
 // Encoded_Invariants follows the repository byte-slice boundary.
-func Encoded_Invariants(value Encoded, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Encoded_Invariants(value Encoded, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), bytes.SLICE_SIZE_MINIMUM, ENCODED_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -235,8 +235,8 @@ func Encoded_Invariants(value Encoded, namespace invariant.Namespace) {
 type Decoded []byte
 
 // Decoded_Invariants follows the largest body possible in bounded encoded input.
-func Decoded_Invariants(value Decoded, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Decoded_Invariants(value Decoded, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), bytes.SLICE_SIZE_MINIMUM, DECODED_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -245,10 +245,10 @@ func Decoded_Invariants(value Decoded, namespace invariant.Namespace) {
 type Encoded_Count int
 
 // Encoded_Count_Invariants excludes results shorter than complete empty framing.
-func Encoded_Count_Invariants(value Encoded_Count, namespace invariant.Namespace) {
+func Encoded_Count_Invariants(value Encoded_Count, namespace aver.Namespace) {
 	valid := value == 0 || int(value) >= BLOCK_SIZE_MINIMUM
-	invariant.Always(valid, "A nonempty encoded count contains complete block framing.")
-	invariant.Tree(value, namespace).
+	aver.Always(valid, "A nonempty encoded count contains complete block framing.")
+	aver.Tree(value, namespace).
 		Range_Holed_Int(
 			int(value), bytes.SLICE_SIZE_MINIMUM, ENCODED_SIZE_MAXIMUM,
 			COUNT_HOLE_FIRST, COUNT_HOLE_SECOND, COUNT_HOLE_SECOND, COUNT_HOLE_SECOND,
@@ -260,10 +260,10 @@ func Encoded_Count_Invariants(value Encoded_Count, namespace invariant.Namespace
 type Consumed_Count int
 
 // Consumed_Count_Invariants excludes successful counts shorter than empty framing.
-func Consumed_Count_Invariants(value Consumed_Count, namespace invariant.Namespace) {
+func Consumed_Count_Invariants(value Consumed_Count, namespace aver.Namespace) {
 	valid := value == 0 || int(value) >= BLOCK_SIZE_MINIMUM
-	invariant.Always(valid, "A nonzero consumed count contains complete block framing.")
-	invariant.Tree(value, namespace).
+	aver.Always(valid, "A nonzero consumed count contains complete block framing.")
+	aver.Tree(value, namespace).
 		Range_Holed_Int(
 			int(value), bytes.SLICE_SIZE_MINIMUM, ENCODED_SIZE_MAXIMUM,
 			COUNT_HOLE_FIRST, COUNT_HOLE_SECOND, COUNT_HOLE_SECOND, COUNT_HOLE_SECOND,
@@ -275,8 +275,8 @@ func Consumed_Count_Invariants(value Consumed_Count, namespace invariant.Namespa
 type Block_Valid bool
 
 // Block_Valid_Invariants reaches accepted and rejected caller blocks.
-func Block_Valid_Invariants(value Block_Valid, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Block_Valid_Invariants(value Block_Valid, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Sometimes(bool(value), "Caller metadata forms canonical PEM.").
 		Ensure()
 }
@@ -285,8 +285,8 @@ func Block_Valid_Invariants(value Block_Valid, namespace invariant.Namespace) {
 type Boolean bool
 
 // Boolean_Invariants reaches positive and negative parser decisions.
-func Boolean_Invariants(value Boolean, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Boolean_Invariants(value Boolean, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Sometimes(bool(value), "A PEM parser decision is positive.").
 		Ensure()
 }
@@ -295,8 +295,8 @@ func Boolean_Invariants(value Boolean, namespace invariant.Namespace) {
 type Size_Status uint8
 
 // Size_Status_Invariants lists every size outcome.
-func Size_Status_Invariants(value Size_Status, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Size_Status_Invariants(value Size_Status, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_3_Uint8(
 			uint8(value), uint8(STATUS_OK), uint8(STATUS_BLOCK_INVALID),
 			uint8(STATUS_BLOCK_TOO_LARGE),
@@ -308,8 +308,8 @@ func Size_Status_Invariants(value Size_Status, namespace invariant.Namespace) {
 type Encode_Status uint8
 
 // Encode_Status_Invariants excludes decode-only statuses from the shared status range.
-func Encode_Status_Invariants(value Encode_Status, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Encode_Status_Invariants(value Encode_Status, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Holed_Uint8(
 			uint8(value), uint8(STATUS_OK), uint8(STATUS_BLOCK_TOO_LARGE),
 			uint8(STATUS_NOT_FOUND), uint8(STATUS_INPUT_INVALID),
@@ -322,8 +322,8 @@ func Encode_Status_Invariants(value Encode_Status, namespace invariant.Namespace
 type Decode_Status uint8
 
 // Decode_Status_Invariants covers the contiguous decoder status domain.
-func Decode_Status_Invariants(value Decode_Status, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Decode_Status_Invariants(value Decode_Status, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint8(
 			uint8(value), uint8(STATUS_OK), uint8(STATUS_STORAGE_INVALID),
 		).
@@ -554,7 +554,7 @@ func encode_unchecked[
 	position += copy(destination[position:], BOUNDARY_SUFFIX)
 	destination[position] = LINE_FEED
 	position++
-	invariant.Always(position == int(required), "PEM encoding writes its exact reported size.")
+	aver.Always(position == int(required), "PEM encoding writes its exact reported size.")
 }
 
 func encode_body[
@@ -572,7 +572,7 @@ func encode_body[
 		encoded_count, size_status := base64.Encoded_Size(
 			encoding, base64.Source_Count(source_size),
 		)
-		invariant.Always(
+		aver.Always(
 			size_status == base64.STATUS_OK,
 			"Standard base64 sizing succeeds.",
 		)
@@ -582,11 +582,11 @@ func encode_body[
 			base64.Source(data[source_position:source_position+source_size]),
 			encoding,
 		)
-		invariant.Always(
+		aver.Always(
 			encode_status == base64.STATUS_OK,
 			"Bounded base64 line encoding succeeds.",
 		)
-		invariant.Always(
+		aver.Always(
 			count == encoded_count,
 			"Base64 line encoding writes its exact size.",
 		)
@@ -693,7 +693,7 @@ func fill_headers[
 	for index := bytes.SLICE_SIZE_MINIMUM; index < int(header_count); index++ {
 		line_end, next := line_bounds(source, position)
 		colon, found := line_colon(source, position, int(line_end))
-		invariant.Always(found, "A counted PEM header retains its separator.")
+		aver.Always(found, "A counted PEM header retains its separator.")
 		key := bytes.Trim_Space(bytes.Slice(source[position:int(colon)]))
 		value := bytes.Trim_Space(bytes.Slice(source[int(colon)+1 : int(line_end)]))
 		headers[index] = Header{
@@ -801,18 +801,18 @@ func decode_body[
 			base64.Decoded(destination[destination_position:]),
 			base64.Encoded(quantum[:]), encoding,
 		)
-		invariant.Always(
+		aver.Always(
 			status == base64.STATUS_OK,
 			"Prevalidated PEM body quantum decodes.",
 		)
 		destination_position += int(count)
 		quantum_count = bytes.SLICE_SIZE_MINIMUM
 	}
-	invariant.Always(
+	aver.Always(
 		quantum_count == bytes.SLICE_SIZE_MINIMUM,
 		"Prevalidated PEM body ends on complete quantum.",
 	)
-	invariant.Always(
+	aver.Always(
 		destination_position == int(decoded_size),
 		"PEM body decoding writes exact validated size.",
 	)

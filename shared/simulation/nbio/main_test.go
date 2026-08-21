@@ -3,8 +3,8 @@ package nbio_test
 import (
 	"testing"
 
-	"local/james-orcales/shared/invariant/default"
 	"local/james-orcales/shared/math/bits"
+	"local/james-orcales/shared/simulation/aver/default"
 	"local/james-orcales/shared/simulation/nbio"
 	"local/james-orcales/shared/simulation/time"
 	"local/james-orcales/shared/testify"
@@ -12,7 +12,7 @@ import (
 
 // TestMain register completion-machine assertions. Thus unused legal edge fail suite.
 func TestMain(m *testing.M) {
-	invariant.Run_Test_Main(m)
+	aver.Run_Test_Main(m)
 }
 
 // Lock the composition because copied decimal defaults hide the limits that produce them.

@@ -8,7 +8,7 @@ import (
 	"local/james-orcales/shared/go/ast"
 	"local/james-orcales/shared/go/printer"
 	"local/james-orcales/shared/go/token"
-	"local/james-orcales/shared/invariant/default"
+	"local/james-orcales/shared/simulation/aver/default"
 )
 
 // IMPORT_HEAD is the text one import declaration opens with.
@@ -75,8 +75,8 @@ const HEAD_SLOT_COUNT = 1
 type Place int32
 
 // Place_Invariants states every byte one form holds.
-func Place_Invariants(value Place, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Place_Invariants(value Place, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int32(int32(value), PLACE_MINIMUM, PLACE_MAXIMUM).
 		Ensure()
 }
@@ -94,8 +94,8 @@ type Formatter struct {
 }
 
 // Formatter_Invariants states one formatter holds a place for every byte the sort names.
-func Formatter_Invariants(subject *Formatter, namespace invariant.Namespace) {
-	invariant.Always(
+func Formatter_Invariants(subject *Formatter, namespace aver.Namespace) {
+	aver.Always(
 		len(subject.Places) == PLACE_SLOT_COUNT,
 		"A formatter holds one place for every byte the sort names.",
 	)

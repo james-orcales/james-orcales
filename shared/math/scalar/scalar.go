@@ -7,9 +7,9 @@
 package scalar
 
 import (
-	"local/james-orcales/shared/invariant/default"
 	"local/james-orcales/shared/math/bits"
 	"local/james-orcales/shared/math/fixedpoint"
+	"local/james-orcales/shared/simulation/aver/default"
 )
 
 // SCALE is the count of fixed-point units in one whole, repeated from fixedpoint so the
@@ -167,8 +167,8 @@ const HYPERBOLIC_COSINE_MINIMUM int64 = 1048572
 type Negatable_Integer int64
 
 // Negatable_Integer_Invariants excludes the storage floor, which negates to itself.
-func Negatable_Integer_Invariants(value Negatable_Integer, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Negatable_Integer_Invariants(value Negatable_Integer, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int64(int64(value), NEGATABLE_MINIMUM, bits.INTEGER_64_MAXIMUM).
 		Ensure()
 }
@@ -177,8 +177,8 @@ func Negatable_Integer_Invariants(value Negatable_Integer, namespace invariant.N
 type Magnitude_Integer int64
 
 // Magnitude_Integer_Invariants bounds a magnitude to the nonnegative integers.
-func Magnitude_Integer_Invariants(value Magnitude_Integer, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Magnitude_Integer_Invariants(value Magnitude_Integer, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int64(int64(value), MAGNITUDE_MINIMUM, bits.INTEGER_64_MAXIMUM).
 		Ensure()
 }
@@ -187,8 +187,8 @@ func Magnitude_Integer_Invariants(value Magnitude_Integer, namespace invariant.N
 type First_Integer int64
 
 // First_Integer_Invariants states the complete signed 64-bit domain.
-func First_Integer_Invariants(value First_Integer, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func First_Integer_Invariants(value First_Integer, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int64(int64(value), bits.INTEGER_64_MINIMUM, bits.INTEGER_64_MAXIMUM).
 		Ensure()
 }
@@ -197,8 +197,8 @@ func First_Integer_Invariants(value First_Integer, namespace invariant.Namespace
 type Second_Integer int64
 
 // Second_Integer_Invariants states the complete signed 64-bit domain.
-func Second_Integer_Invariants(value Second_Integer, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Second_Integer_Invariants(value Second_Integer, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int64(int64(value), bits.INTEGER_64_MINIMUM, bits.INTEGER_64_MAXIMUM).
 		Ensure()
 }
@@ -207,8 +207,8 @@ func Second_Integer_Invariants(value Second_Integer, namespace invariant.Namespa
 type Ordered_Integer int64
 
 // Ordered_Integer_Invariants states the complete signed 64-bit domain.
-func Ordered_Integer_Invariants(value Ordered_Integer, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Ordered_Integer_Invariants(value Ordered_Integer, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int64(int64(value), bits.INTEGER_64_MINIMUM, bits.INTEGER_64_MAXIMUM).
 		Ensure()
 }
@@ -217,8 +217,8 @@ func Ordered_Integer_Invariants(value Ordered_Integer, namespace invariant.Names
 type Value fixedpoint.Number
 
 // Value_Invariants bounds a value to the range whose rounding stays in storage.
-func Value_Invariants(value Value, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Value_Invariants(value Value, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int64(int64(value), fixedpoint.INTEGER_NUMBER_MINIMUM,
 			fixedpoint.INTEGER_NUMBER_MAXIMUM).
 		Ensure()
@@ -228,12 +228,12 @@ func Value_Invariants(value Value, namespace invariant.Namespace) {
 type Whole_Number fixedpoint.Number
 
 // Whole_Number_Invariants states that a whole Number carries no fraction.
-func Whole_Number_Invariants(value Whole_Number, namespace invariant.Namespace) {
-	invariant.Always(
+func Whole_Number_Invariants(value Whole_Number, namespace aver.Namespace) {
+	aver.Always(
 		int64(value)%SCALE == 0,
 		"A Whole_Number has no fractional units.",
 	)
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Holed_Int64(
 			int64(value), fixedpoint.INTEGER_NUMBER_MINIMUM,
 			fixedpoint.INTEGER_NUMBER_MAXIMUM,
@@ -247,8 +247,8 @@ func Whole_Number_Invariants(value Whole_Number, namespace invariant.Namespace) 
 type Dividend fixedpoint.Number
 
 // Dividend_Invariants states the complete fixed-point storage domain.
-func Dividend_Invariants(value Dividend, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Dividend_Invariants(value Dividend, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int64(int64(value), bits.INTEGER_64_MINIMUM, bits.INTEGER_64_MAXIMUM).
 		Ensure()
 }
@@ -258,8 +258,8 @@ type Divisor fixedpoint.Number
 
 // Divisor_Invariants states the complete fixed-point storage domain. A zero divisor gives
 // a zero remainder rather than a panic, which matches fixedpoint division.
-func Divisor_Invariants(value Divisor, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Divisor_Invariants(value Divisor, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int64(int64(value), bits.INTEGER_64_MINIMUM, bits.INTEGER_64_MAXIMUM).
 		Ensure()
 }
@@ -270,8 +270,8 @@ type Remainder fixedpoint.Number
 // Remainder_Invariants bounds a remainder. A remainder stays below its divisor in
 // magnitude, and no divisor exceeds the most negative Number, thus the remainder stops one
 // above it.
-func Remainder_Invariants(value Remainder, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Remainder_Invariants(value Remainder, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int64(int64(value), NEGATABLE_MINIMUM, bits.INTEGER_64_MAXIMUM).
 		Ensure()
 }
@@ -280,8 +280,8 @@ func Remainder_Invariants(value Remainder, namespace invariant.Namespace) {
 type Radicand fixedpoint.Number
 
 // Radicand_Invariants excludes the negative values, which have no real root.
-func Radicand_Invariants(value Radicand, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Radicand_Invariants(value Radicand, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int64(int64(value), RADICAND_MINIMUM, bits.INTEGER_64_MAXIMUM).
 		Ensure()
 }
@@ -292,8 +292,8 @@ type Root fixedpoint.Number
 // Root_Invariants bounds a root to the square roots the Number range holds. The root of
 // the smallest positive radicand is already far above one unit, thus the grid leaves the
 // first units empty.
-func Root_Invariants(value Root, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Root_Invariants(value Root, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Holed_Int64(
 			int64(value), fixedpoint.NUMBER_ROOT_MINIMUM,
 			fixedpoint.NUMBER_ROOT_MAXIMUM,
@@ -307,8 +307,8 @@ func Root_Invariants(value Root, namespace invariant.Namespace) {
 type Cube_Radicand fixedpoint.Number
 
 // Cube_Radicand_Invariants states the complete fixed-point storage domain.
-func Cube_Radicand_Invariants(value Cube_Radicand, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Cube_Radicand_Invariants(value Cube_Radicand, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int64(int64(value), bits.INTEGER_64_MINIMUM, bits.INTEGER_64_MAXIMUM).
 		Ensure()
 }
@@ -319,8 +319,8 @@ type Cube_Root_Value fixedpoint.Number
 // Cube_Root_Value_Invariants bounds a cube root to the Number range. The root of the
 // smallest positive radicand is already far above one unit, thus the grid leaves the units
 // nearest zero empty.
-func Cube_Root_Value_Invariants(value Cube_Root_Value, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Cube_Root_Value_Invariants(value Cube_Root_Value, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Holed_Int64(
 			int64(value), CUBE_ROOT_MINIMUM, CUBE_ROOT_MAXIMUM,
 			FRACTION_UNIT_NEGATIVE_ONE, FRACTION_UNIT_ONE,
@@ -341,8 +341,8 @@ const LEG_MINIMUM int64 = -LEG_MAXIMUM
 type Leg_Opposite fixedpoint.Number
 
 // Leg_Opposite_Invariants bounds a leg so its hypotenuse stays in the storage range.
-func Leg_Opposite_Invariants(value Leg_Opposite, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Leg_Opposite_Invariants(value Leg_Opposite, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int64(int64(value), LEG_MINIMUM, LEG_MAXIMUM).
 		Ensure()
 }
@@ -351,8 +351,8 @@ func Leg_Opposite_Invariants(value Leg_Opposite, namespace invariant.Namespace) 
 type Leg_Adjacent fixedpoint.Number
 
 // Leg_Adjacent_Invariants bounds a leg so its hypotenuse stays in the storage range.
-func Leg_Adjacent_Invariants(value Leg_Adjacent, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Leg_Adjacent_Invariants(value Leg_Adjacent, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int64(int64(value), LEG_MINIMUM, LEG_MAXIMUM).
 		Ensure()
 }
@@ -369,8 +369,8 @@ const CUBE_ESTIMATE_MAXIMUM int64 = 17179869184
 type Cube_Magnitude fixedpoint.Number
 
 // Cube_Magnitude_Invariants excludes zero, which the caller returns before it estimates.
-func Cube_Magnitude_Invariants(value Cube_Magnitude, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Cube_Magnitude_Invariants(value Cube_Magnitude, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int64(int64(value), POSITIVE_MINIMUM, bits.INTEGER_64_MAXIMUM).
 		Ensure()
 }
@@ -380,8 +380,8 @@ type Cube_Estimate fixedpoint.Number
 
 // Cube_Estimate_Invariants bounds an estimate to the powers of two one third of the
 // radicand exponent reaches.
-func Cube_Estimate_Invariants(value Cube_Estimate, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Cube_Estimate_Invariants(value Cube_Estimate, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int64(int64(value), CUBE_ESTIMATE_MINIMUM, CUBE_ESTIMATE_MAXIMUM).
 		Ensure()
 }
@@ -393,8 +393,8 @@ const UNIT_ANGLE_MAXIMUM int64 = int64(PI_QUARTER)
 type Unit_Magnitude fixedpoint.Number
 
 // Unit_Magnitude_Invariants bounds a magnitude to the closed unit interval.
-func Unit_Magnitude_Invariants(value Unit_Magnitude, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Unit_Magnitude_Invariants(value Unit_Magnitude, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int64(int64(value), RADICAND_MINIMUM, UNIT_MAXIMUM).
 		Ensure()
 }
@@ -404,8 +404,8 @@ type Unit_Angle fixedpoint.Number
 
 // Unit_Angle_Invariants bounds an angle to the eighth turn the unit interval spans. The
 // approximation steps from one unit to three, thus two is excluded.
-func Unit_Angle_Invariants(value Unit_Angle, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Unit_Angle_Invariants(value Unit_Angle, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Holed_Int64(
 			int64(value), RADICAND_MINIMUM, UNIT_ANGLE_MAXIMUM,
 			FRACTION_UNIT_TWO, FRACTION_UNIT_TWO,
@@ -419,8 +419,8 @@ func Unit_Angle_Invariants(value Unit_Angle, namespace invariant.Namespace) {
 type Quotient_Angle fixedpoint.Number
 
 // Quotient_Angle_Invariants bounds an angle to a quarter turn on each side of zero.
-func Quotient_Angle_Invariants(value Quotient_Angle, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Quotient_Angle_Invariants(value Quotient_Angle, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Holed_Int64(
 			int64(value), PRINCIPAL_ANGLE_MINIMUM, PRINCIPAL_ANGLE_MAXIMUM,
 			FRACTION_UNIT_NEGATIVE_ONE, FRACTION_UNIT_ONE,
@@ -437,8 +437,8 @@ const ADJACENT_ZERO int64 = 0
 type Nonzero_Adjacent fixedpoint.Number
 
 // Nonzero_Adjacent_Invariants excludes zero, which the caller answers on its own.
-func Nonzero_Adjacent_Invariants(value Nonzero_Adjacent, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Nonzero_Adjacent_Invariants(value Nonzero_Adjacent, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Holed_Int64(
 			int64(value), bits.INTEGER_64_MINIMUM, bits.INTEGER_64_MAXIMUM,
 			ADJACENT_ZERO, ADJACENT_ZERO, ADJACENT_ZERO, ADJACENT_ZERO,
@@ -450,8 +450,8 @@ func Nonzero_Adjacent_Invariants(value Nonzero_Adjacent, namespace invariant.Nam
 type Opposite fixedpoint.Number
 
 // Opposite_Invariants states the complete fixed-point storage domain.
-func Opposite_Invariants(value Opposite, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Opposite_Invariants(value Opposite, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int64(int64(value), bits.INTEGER_64_MINIMUM, bits.INTEGER_64_MAXIMUM).
 		Ensure()
 }
@@ -460,8 +460,8 @@ func Opposite_Invariants(value Opposite, namespace invariant.Namespace) {
 type Adjacent fixedpoint.Number
 
 // Adjacent_Invariants states the complete fixed-point storage domain.
-func Adjacent_Invariants(value Adjacent, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Adjacent_Invariants(value Adjacent, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int64(int64(value), bits.INTEGER_64_MINIMUM, bits.INTEGER_64_MAXIMUM).
 		Ensure()
 }
@@ -473,8 +473,8 @@ const DISTANCE_MAXIMUM int64 = 9223369546587102923
 type Distance fixedpoint.Number
 
 // Distance_Invariants bounds a distance to the hypotenuses the admitted legs reach.
-func Distance_Invariants(value Distance, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Distance_Invariants(value Distance, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int64(int64(value), RADICAND_MINIMUM, DISTANCE_MAXIMUM).
 		Ensure()
 }
@@ -483,8 +483,8 @@ func Distance_Invariants(value Distance, namespace invariant.Namespace) {
 type Exponent_2 fixedpoint.Number
 
 // Exponent_2_Invariants bounds an exponent to the range the Number storage holds.
-func Exponent_2_Invariants(value Exponent_2, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Exponent_2_Invariants(value Exponent_2, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int64(int64(value), EXPONENT_2_MINIMUM, EXPONENT_2_MAXIMUM).
 		Ensure()
 }
@@ -493,8 +493,8 @@ func Exponent_2_Invariants(value Exponent_2, namespace invariant.Namespace) {
 type Exponent fixedpoint.Number
 
 // Exponent_Invariants bounds an exponent to the range the Number storage holds.
-func Exponent_Invariants(value Exponent, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Exponent_Invariants(value Exponent, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int64(int64(value), EXPONENT_MINIMUM, EXPONENT_MAXIMUM).
 		Ensure()
 }
@@ -505,8 +505,8 @@ type Power_Value fixedpoint.Number
 // Power_Value_Invariants bounds a power to the nonnegative Numbers an exponential reaches.
 // A power leaves the units nearest zero empty, because the smallest power above zero is
 // already the smallest whole shift.
-func Power_Value_Invariants(value Power_Value, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Power_Value_Invariants(value Power_Value, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Holed_Int64(
 			int64(value), POWER_MINIMUM, POWER_MAXIMUM,
 			FRACTION_UNIT_ONE, FRACTION_UNIT_TWO,
@@ -524,9 +524,9 @@ type Natural_Power_Value fixedpoint.Number
 
 // Natural_Power_Value_Invariants bounds the natural exponential to the powers it reaches.
 func Natural_Power_Value_Invariants(
-	value Natural_Power_Value, namespace invariant.Namespace,
+	value Natural_Power_Value, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Holed_Int64(
 			int64(value), POWER_MINIMUM, NATURAL_POWER_MAXIMUM,
 			FRACTION_UNIT_ONE, FRACTION_UNIT_TWO,
@@ -539,8 +539,8 @@ func Natural_Power_Value_Invariants(
 type Argument fixedpoint.Number
 
 // Argument_Invariants excludes zero and the negative values, which have no logarithm.
-func Argument_Invariants(value Argument, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Argument_Invariants(value Argument, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int64(int64(value), POSITIVE_MINIMUM, bits.INTEGER_64_MAXIMUM).
 		Ensure()
 }
@@ -550,9 +550,9 @@ type Logarithm_2_Value fixedpoint.Number
 
 // Logarithm_2_Value_Invariants bounds a base-two logarithm to the Number range.
 func Logarithm_2_Value_Invariants(
-	value Logarithm_2_Value, namespace invariant.Namespace,
+	value Logarithm_2_Value, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Holed_Int64(
 			int64(value), LOGARITHM_2_MINIMUM, LOGARITHM_2_MAXIMUM,
 			FRACTION_UNIT_NEGATIVE_ONE, FRACTION_UNIT_ONE,
@@ -565,8 +565,8 @@ func Logarithm_2_Value_Invariants(
 type Logarithm_Value fixedpoint.Number
 
 // Logarithm_Value_Invariants bounds a natural logarithm to the Number range.
-func Logarithm_Value_Invariants(value Logarithm_Value, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Logarithm_Value_Invariants(value Logarithm_Value, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Holed_Int64(
 			int64(value), LOGARITHM_MINIMUM, LOGARITHM_MAXIMUM,
 			FRACTION_UNIT_NEGATIVE_ONE, FRACTION_UNIT_ONE,
@@ -580,9 +580,9 @@ type Logarithm_10_Value fixedpoint.Number
 
 // Logarithm_10_Value_Invariants bounds a base-ten logarithm to the Number range.
 func Logarithm_10_Value_Invariants(
-	value Logarithm_10_Value, namespace invariant.Namespace,
+	value Logarithm_10_Value, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Holed_Int64(
 			int64(value), LOGARITHM_10_MINIMUM, LOGARITHM_10_MAXIMUM,
 			FRACTION_UNIT_NEGATIVE_ONE, FRACTION_UNIT_ONE,
@@ -595,8 +595,8 @@ func Logarithm_10_Value_Invariants(
 type Base fixedpoint.Number
 
 // Base_Invariants excludes zero and the negative values, which have no logarithm.
-func Base_Invariants(value Base, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Base_Invariants(value Base, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int64(int64(value), POSITIVE_MINIMUM, bits.INTEGER_64_MAXIMUM).
 		Ensure()
 }
@@ -606,8 +606,8 @@ type Power_Exponent fixedpoint.Number
 
 // Power_Exponent_Invariants states the complete fixed-point storage domain. The product of
 // the exponent and the logarithm carries its own bound, thus this one stays wide.
-func Power_Exponent_Invariants(value Power_Exponent, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Power_Exponent_Invariants(value Power_Exponent, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int64(int64(value), bits.INTEGER_64_MINIMUM, bits.INTEGER_64_MAXIMUM).
 		Ensure()
 }
@@ -616,8 +616,8 @@ func Power_Exponent_Invariants(value Power_Exponent, namespace invariant.Namespa
 type Angle fixedpoint.Number
 
 // Angle_Invariants bounds an angle to the range whose turn conversion stays in storage.
-func Angle_Invariants(value Angle, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Angle_Invariants(value Angle, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int64(int64(value), fixedpoint.INTEGER_NUMBER_MINIMUM,
 			fixedpoint.INTEGER_NUMBER_MAXIMUM).
 		Ensure()
@@ -627,8 +627,8 @@ func Angle_Invariants(value Angle, namespace invariant.Namespace) {
 type Unit_Value fixedpoint.Number
 
 // Unit_Value_Invariants bounds a value to the closed unit interval.
-func Unit_Value_Invariants(value Unit_Value, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Unit_Value_Invariants(value Unit_Value, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Holed_Int64(
 			int64(value), UNIT_MINIMUM, UNIT_MAXIMUM,
 			FRACTION_UNIT_NEGATIVE_ONE, FRACTION_UNIT_ONE,
@@ -642,8 +642,8 @@ type Unit_Argument fixedpoint.Number
 
 // Unit_Argument_Invariants bounds an argument to the closed unit interval. Every value in
 // that interval is a legal argument, thus this domain has no hole.
-func Unit_Argument_Invariants(value Unit_Argument, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Unit_Argument_Invariants(value Unit_Argument, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int64(int64(value), UNIT_MINIMUM, UNIT_MAXIMUM).
 		Ensure()
 }
@@ -652,8 +652,8 @@ func Unit_Argument_Invariants(value Unit_Argument, namespace invariant.Namespace
 type Slope fixedpoint.Number
 
 // Slope_Invariants states the complete fixed-point storage domain.
-func Slope_Invariants(value Slope, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Slope_Invariants(value Slope, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int64(int64(value), bits.INTEGER_64_MINIMUM, bits.INTEGER_64_MAXIMUM).
 		Ensure()
 }
@@ -662,8 +662,8 @@ func Slope_Invariants(value Slope, namespace invariant.Namespace) {
 type Angle_Value fixedpoint.Number
 
 // Angle_Value_Invariants bounds an angle to one half turn on each side of zero.
-func Angle_Value_Invariants(value Angle_Value, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Angle_Value_Invariants(value Angle_Value, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Holed_Int64(
 			int64(value), ANGLE_MINIMUM, ANGLE_MAXIMUM,
 			FRACTION_UNIT_NEGATIVE_ONE, FRACTION_UNIT_ONE,
@@ -684,8 +684,8 @@ type Principal_Angle fixedpoint.Number
 
 // Principal_Angle_Invariants bounds an angle to a quarter turn on each side of zero. The
 // approximation steps over two units near zero, thus that one value is excluded.
-func Principal_Angle_Invariants(value Principal_Angle, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Principal_Angle_Invariants(value Principal_Angle, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Holed_Int64(
 			int64(value), PRINCIPAL_ANGLE_MINIMUM, PRINCIPAL_ANGLE_MAXIMUM,
 			FRACTION_UNIT_TWO, FRACTION_UNIT_TWO,
@@ -706,8 +706,8 @@ const ARCCOSINE_ANGLE_MAXIMUM int64 = 2 * int64(PI_HALF)
 type Arccosine_Angle fixedpoint.Number
 
 // Arccosine_Angle_Invariants bounds an angle to the half turn above zero.
-func Arccosine_Angle_Invariants(value Arccosine_Angle, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Arccosine_Angle_Invariants(value Arccosine_Angle, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Holed_Int64(
 			int64(value), ARCCOSINE_ANGLE_MINIMUM, ARCCOSINE_ANGLE_MAXIMUM,
 			FRACTION_UNIT_ONE, FRACTION_UNIT_TWO,
@@ -730,8 +730,8 @@ type Tangent_Value fixedpoint.Number
 // Tangent_Value_Invariants bounds a tangent to the quotient the division can produce. The
 // smallest sine above zero is three units, thus a tangent of one or two units would need a
 // cosine above one and cannot occur.
-func Tangent_Value_Invariants(value Tangent_Value, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Tangent_Value_Invariants(value Tangent_Value, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Holed_Int64(
 			int64(value), TANGENT_MINIMUM, TANGENT_MAXIMUM,
 			FRACTION_UNIT_NEGATIVE_ONE, FRACTION_UNIT_ONE,
@@ -744,8 +744,8 @@ func Tangent_Value_Invariants(value Tangent_Value, namespace invariant.Namespace
 type Hyperbolic_Angle fixedpoint.Number
 
 // Hyperbolic_Angle_Invariants bounds an angle to the range the Number storage holds.
-func Hyperbolic_Angle_Invariants(value Hyperbolic_Angle, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Hyperbolic_Angle_Invariants(value Hyperbolic_Angle, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int64(int64(value), HYPERBOLIC_ANGLE_MINIMUM, HYPERBOLIC_ANGLE_MAXIMUM).
 		Ensure()
 }
@@ -754,8 +754,8 @@ func Hyperbolic_Angle_Invariants(value Hyperbolic_Angle, namespace invariant.Nam
 type Hyperbolic_Value fixedpoint.Number
 
 // Hyperbolic_Value_Invariants bounds a hyperbolic sine to the values it reaches.
-func Hyperbolic_Value_Invariants(value Hyperbolic_Value, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Hyperbolic_Value_Invariants(value Hyperbolic_Value, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Holed_Int64(
 			int64(value), HYPERBOLIC_MINIMUM, HYPERBOLIC_MAXIMUM,
 			FRACTION_UNIT_NEGATIVE_ONE, FRACTION_UNIT_ONE,
@@ -770,9 +770,9 @@ type Hyperbolic_Cosine_Value fixedpoint.Number
 // Hyperbolic_Cosine_Value_Invariants bounds a hyperbolic cosine, whose domain starts at
 // one rather than at the negative end a hyperbolic sine reaches.
 func Hyperbolic_Cosine_Value_Invariants(
-	value Hyperbolic_Cosine_Value, namespace invariant.Namespace,
+	value Hyperbolic_Cosine_Value, namespace aver.Namespace,
 ) {
-	invariant.Tree(value, namespace).
+	aver.Tree(value, namespace).
 		Range_Int64(int64(value), HYPERBOLIC_COSINE_MINIMUM, HYPERBOLIC_MAXIMUM).
 		Ensure()
 }
@@ -824,11 +824,11 @@ func Floor(value Value) (whole Whole_Number) {
 		Whole_Number_Invariants(whole, "floor.whole")
 		// The result brackets the value from below by less than one whole. A shift that
 		// leaves the storage range breaks this even when the result still looks whole.
-		invariant.Always(
+		aver.Always(
 			int64(whole) <= int64(value),
 			"A floor never exceeds its own value.",
 		)
-		invariant.Always(
+		aver.Always(
 			int64(value)-int64(whole) < SCALE,
 			"A floor is within one whole of its own value.",
 		)
@@ -847,11 +847,11 @@ func Floor(value Value) (whole Whole_Number) {
 func Ceiling(value Value) (whole Whole_Number) {
 	defer func() {
 		Whole_Number_Invariants(whole, "ceiling.whole")
-		invariant.Always(
+		aver.Always(
 			int64(whole) >= int64(value),
 			"A ceiling is never below its own value.",
 		)
-		invariant.Always(
+		aver.Always(
 			int64(whole)-int64(value) < SCALE,
 			"A ceiling is within one whole of its own value.",
 		)
@@ -878,7 +878,7 @@ func Round(value Value) (whole Whole_Number) {
 		if distance < 0 {
 			distance = -distance
 		}
-		invariant.Always(
+		aver.Always(
 			distance <= HALF,
 			"A rounded value is within one half of its own value.",
 		)
@@ -915,7 +915,7 @@ func Square_Root(value Radicand) (root Root) {
 		// range because the root is the floor, thus this needs no wider arithmetic.
 		square := fixedpoint.Multiply(
 			fixedpoint.Multiplicand(root), fixedpoint.Multiplier(root))
-		invariant.Always(
+		aver.Always(
 			int64(square) <= int64(value),
 			"The square of a root never exceeds its radicand.",
 		)
@@ -931,7 +931,7 @@ func Cube_Root(value Cube_Radicand) (root Cube_Root_Value) {
 		Cube_Root_Value_Invariants(root, "cube_root.root")
 		// A cube keeps the sign of its root, thus the two always agree. An estimate that
 		// overflows lands on a value of the wrong sign while still looking like a root.
-		invariant.Always(
+		aver.Always(
 			(int64(root) < 0) == (int64(value) < 0),
 			"A cube root carries the sign of its radicand.",
 		)
@@ -1020,11 +1020,11 @@ func Hypotenuse(opposite Leg_Opposite, adjacent Leg_Adjacent) (distance Distance
 		if adjacent_reach < 0 {
 			adjacent_reach = -adjacent_reach
 		}
-		invariant.Always(
+		aver.Always(
 			int64(distance) >= opposite_reach,
 			"A hypotenuse reaches at least as far as the opposite leg.",
 		)
-		invariant.Always(
+		aver.Always(
 			int64(distance) >= adjacent_reach,
 			"A hypotenuse reaches at least as far as the adjacent leg.",
 		)

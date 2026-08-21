@@ -4,9 +4,9 @@
 package constant
 
 import (
-	"local/james-orcales/shared/invariant/default"
 	"local/james-orcales/shared/math/integer"
 	"local/james-orcales/shared/math/rational"
+	"local/james-orcales/shared/simulation/aver/default"
 )
 
 // KIND_UNKNOWN names a value the grammar could not fold.
@@ -135,8 +135,8 @@ const WORD_SIZE_FALSE Word_Count = 5
 type Kind uint8
 
 // Kind_Invariants states every kind a value can wear.
-func Kind_Invariants(value Kind, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Kind_Invariants(value Kind, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint8(uint8(value), KIND_MINIMUM, KIND_MAXIMUM).
 		Ensure()
 }
@@ -145,8 +145,8 @@ func Kind_Invariants(value Kind, namespace invariant.Namespace) {
 type Unary uint8
 
 // Unary_Invariants states every operation over one value.
-func Unary_Invariants(value Unary, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Unary_Invariants(value Unary, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_4_Uint8(uint8(value), uint8(UNARY_PLUS), uint8(UNARY_MINUS),
 			uint8(UNARY_COMPLEMENT), uint8(UNARY_NOT)).
 		Ensure()
@@ -156,8 +156,8 @@ func Unary_Invariants(value Unary, namespace invariant.Namespace) {
 type Binary uint8
 
 // Binary_Invariants states every operation over two values.
-func Binary_Invariants(value Binary, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Binary_Invariants(value Binary, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint8(uint8(value), BINARY_MINIMUM, BINARY_MAXIMUM).
 		Ensure()
 }
@@ -166,8 +166,8 @@ func Binary_Invariants(value Binary, namespace invariant.Namespace) {
 type Shift_Operation uint8
 
 // Shift_Operation_Invariants states the two directions a shift moves.
-func Shift_Operation_Invariants(value Shift_Operation, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Shift_Operation_Invariants(value Shift_Operation, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_Uint8(uint8(value), uint8(SHIFT_UP), uint8(SHIFT_DOWN)).
 		Ensure()
 }
@@ -176,8 +176,8 @@ func Shift_Operation_Invariants(value Shift_Operation, namespace invariant.Names
 type Boolean bool
 
 // Boolean_Invariants states both value reports as obligations.
-func Boolean_Invariants(value Boolean, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Boolean_Invariants(value Boolean, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Sometimes(bool(value), "The constant report is true.").
 		Ensure()
 }
@@ -186,8 +186,8 @@ func Boolean_Invariants(value Boolean, namespace invariant.Namespace) {
 type Text string
 
 // Text_Invariants caps a string value at the source a scanner admits.
-func Text_Invariants(value Text, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Text_Invariants(value Text, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), TEXT_SIZE_MINIMUM, TEXT_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -196,8 +196,8 @@ func Text_Invariants(value Text, namespace invariant.Namespace) {
 type Form []byte
 
 // Form_Invariants states the storage the longest written form needs.
-func Form_Invariants(value Form, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Form_Invariants(value Form, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), FORM_SIZE_MINIMUM, FORM_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -206,8 +206,8 @@ func Form_Invariants(value Form, namespace invariant.Namespace) {
 type Form_Count int
 
 // Form_Count_Invariants states the byte count of the longest written form.
-func Form_Count_Invariants(value Form_Count, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Form_Count_Invariants(value Form_Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(int(value), FORM_SIZE_MINIMUM, FORM_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -228,8 +228,8 @@ const NUMBER_QUOTIENT = Number_Binary(BINARY_QUOTIENT)
 type Whole_Binary uint8
 
 // Whole_Binary_Invariants states every operation two whole numbers alone admit.
-func Whole_Binary_Invariants(value Whole_Binary, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Whole_Binary_Invariants(value Whole_Binary, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Uint8(uint8(value), uint8(BINARY_REMAINDER), uint8(BINARY_AND_NOT)).
 		Ensure()
 }
@@ -238,8 +238,8 @@ func Whole_Binary_Invariants(value Whole_Binary, namespace invariant.Namespace) 
 type Number_Binary uint8
 
 // Number_Binary_Invariants states every arithmetic operation two numbers admit.
-func Number_Binary_Invariants(value Number_Binary, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Number_Binary_Invariants(value Number_Binary, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_4_Uint8(uint8(value), uint8(BINARY_ADD), uint8(BINARY_SUBTRACT),
 			uint8(BINARY_MULTIPLY), uint8(BINARY_QUOTIENT)).
 		Ensure()
@@ -249,8 +249,8 @@ func Number_Binary_Invariants(value Number_Binary, namespace invariant.Namespace
 type Sum_Binary uint8
 
 // Sum_Binary_Invariants states both operations that fold a pair part by part.
-func Sum_Binary_Invariants(value Sum_Binary, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Sum_Binary_Invariants(value Sum_Binary, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_Uint8(uint8(value), uint8(BINARY_ADD), uint8(BINARY_SUBTRACT)).
 		Ensure()
 }
@@ -259,8 +259,8 @@ func Sum_Binary_Invariants(value Sum_Binary, namespace invariant.Namespace) {
 type Word_Count int
 
 // Word_Count_Invariants states every size the word of a truth spans.
-func Word_Count_Invariants(value Word_Count, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Word_Count_Invariants(value Word_Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Enum_3_Int(int(value), int(WORD_SIZE_NONE), int(WORD_SIZE_TRUE),
 			int(WORD_SIZE_FALSE)).
 		Ensure()
@@ -270,8 +270,8 @@ func Word_Count_Invariants(value Word_Count, namespace invariant.Namespace) {
 type Real rational.Rational
 
 // Real_Invariants states the storage a real part holds.
-func Real_Invariants(value Real, namespace invariant.Namespace) {
-	invariant.Always(
+func Real_Invariants(value Real, namespace aver.Namespace) {
+	aver.Always(
 		len(value.Numerator.Limbs) == integer.LIMB_COUNT,
 		"A real part holds one limb for every piece of its width.",
 	)
@@ -281,8 +281,8 @@ func Real_Invariants(value Real, namespace invariant.Namespace) {
 type Imaginary rational.Rational
 
 // Imaginary_Invariants states the storage an imaginary part holds.
-func Imaginary_Invariants(value Imaginary, namespace invariant.Namespace) {
-	invariant.Always(
+func Imaginary_Invariants(value Imaginary, namespace aver.Namespace) {
+	aver.Always(
 		len(value.Numerator.Limbs) == integer.LIMB_COUNT,
 		"An imaginary part holds one limb for every piece of its width.",
 	)
@@ -307,7 +307,7 @@ type Value struct {
 
 // Value_Invariants composes every store one value holds. A slot states its own domain where a
 // body reads it, thus this bundle composes the two stores that hold a number and no slot.
-func Value_Invariants(value Value, namespace invariant.Namespace) {
+func Value_Invariants(value Value, namespace aver.Namespace) {
 	Real_Invariants(value.Real, namespace)
 	Imaginary_Invariants(value.Imaginary, namespace)
 }
@@ -382,8 +382,8 @@ func Make_Int_64(value Int_64) (result Value) {
 type Int_64 int64
 
 // Int_64_Invariants states the complete machine integer domain.
-func Int_64_Invariants(value Int_64, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Int_64_Invariants(value Int_64, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int64(int64(value), integer.INT_64_MINIMUM, integer.INT_64_MAXIMUM).
 		Ensure()
 }

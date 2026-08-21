@@ -7,7 +7,7 @@ import (
 	"unsafe"
 
 	"local/james-orcales/shared/go/token"
-	"local/james-orcales/shared/invariant/default"
+	"local/james-orcales/shared/simulation/aver/default"
 	"local/james-orcales/shared/simulation/nbio"
 	"local/james-orcales/shared/simulation/time"
 )
@@ -106,8 +106,8 @@ const TEST_WORD = "test"
 type Boolean bool
 
 // Boolean_Invariants states both reports as obligations.
-func Boolean_Invariants(value Boolean, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Boolean_Invariants(value Boolean, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Sometimes(bool(value), "The build report is true.").
 		Ensure()
 }
@@ -116,8 +116,8 @@ func Boolean_Invariants(value Boolean, namespace invariant.Namespace) {
 type Count int32
 
 // Count_Invariants states every count one read holds.
-func Count_Invariants(value Count, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Count_Invariants(value Count, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int32(int32(value), COUNT_MINIMUM, COUNT_MAXIMUM).
 		Ensure()
 }
@@ -126,8 +126,8 @@ func Count_Invariants(value Count, namespace invariant.Namespace) {
 type Place int32
 
 // Place_Invariants states every byte one name holds.
-func Place_Invariants(value Place, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Place_Invariants(value Place, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int32(int32(value), PLACE_MINIMUM, PLACE_MAXIMUM).
 		Ensure()
 }
@@ -144,8 +144,8 @@ type Target struct {
 }
 
 // Target_Invariants states one target holds a slot for every tag it names.
-func Target_Invariants(subject *Target, namespace invariant.Namespace) {
-	invariant.Always(
+func Target_Invariants(subject *Target, namespace aver.Namespace) {
+	aver.Always(
 		len(subject.Tags) == TAG_COUNT_MAXIMUM,
 		"A target holds one slot for every tag it names.",
 	)
@@ -169,8 +169,8 @@ type Build struct {
 }
 
 // Build_Invariants states one state holds a slot for every count a read keeps.
-func Build_Invariants(subject *Build, namespace invariant.Namespace) {
-	invariant.Always(
+func Build_Invariants(subject *Build, namespace aver.Namespace) {
+	aver.Always(
 		len(subject.Counts) == COUNT_SLOT_COUNT,
 		"A build state holds one slot for every count a read keeps.",
 	)
@@ -841,8 +841,8 @@ const DIRECTORY_FLAG_SLOT_COUNT = 2
 type Path string
 
 // Path_Invariants states every path one read of a directory admits.
-func Path_Invariants(value Path, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Path_Invariants(value Path, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), PATH_SIZE_MINIMUM, PATH_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -855,8 +855,8 @@ type Loop nbio.IO
 // Loop_Invariants states what holds of one loop across the whole life of a runner. The backend
 // stands outside it: a runner the caller has not opened yet holds none, and the open states the
 // one it submits through.
-func Loop_Invariants(value Loop, namespace invariant.Namespace) {
-	invariant.Always(
+func Loop_Invariants(value Loop, namespace aver.Namespace) {
+	aver.Always(
 		value.Network.State == value.Storage.State,
 		"A directory read carries one backend across both halves.",
 	)
@@ -866,8 +866,8 @@ func Loop_Invariants(value Loop, namespace invariant.Namespace) {
 type Entry_Storage []nbio.Directory_Entry
 
 // Entry_Storage_Invariants states every run of slots one pass writes into.
-func Entry_Storage_Invariants(value Entry_Storage, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Entry_Storage_Invariants(value Entry_Storage, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), STORAGE_SIZE_MINIMUM, ENTRY_COUNT_MAXIMUM).
 		Ensure()
 }
@@ -877,8 +877,8 @@ type Record_Storage []byte
 
 // Record_Storage_Invariants states every run of bytes one pass writes into. The widest one is the
 // block budget the backend states, which refuses a pass wider than one.
-func Record_Storage_Invariants(value Record_Storage, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Record_Storage_Invariants(value Record_Storage, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(
 			len(value), STORAGE_SIZE_MINIMUM, nbio.DIRECTORY_BUFFER_SIZE_MAXIMUM,
 		).
@@ -889,8 +889,8 @@ func Record_Storage_Invariants(value Record_Storage, namespace invariant.Namespa
 type Name_Bytes []byte
 
 // Name_Bytes_Invariants states every run of bytes the names of one read view.
-func Name_Bytes_Invariants(value Name_Bytes, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Name_Bytes_Invariants(value Name_Bytes, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), STORAGE_SIZE_MINIMUM, STORAGE_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -899,8 +899,8 @@ func Name_Bytes_Invariants(value Name_Bytes, namespace invariant.Namespace) {
 type Header_Storage []byte
 
 // Header_Storage_Invariants states every run of bytes one header read writes into.
-func Header_Storage_Invariants(value Header_Storage, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Header_Storage_Invariants(value Header_Storage, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), STORAGE_SIZE_MINIMUM, STORAGE_SIZE_MAXIMUM).
 		Ensure()
 }
@@ -910,8 +910,8 @@ func Header_Storage_Invariants(value Header_Storage, namespace invariant.Namespa
 type Name_Storage []token.Source
 
 // Name_Storage_Invariants states every run of names one read hands back.
-func Name_Storage_Invariants(value Name_Storage, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
+func Name_Storage_Invariants(value Name_Storage, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
 		Range_Int(len(value), STORAGE_SIZE_MINIMUM, ENTRY_COUNT_MAXIMUM).
 		Ensure()
 }
@@ -935,7 +935,7 @@ type Directory_Memory struct {
 }
 
 // Directory_Memory_Invariants states every run of storage one read writes into.
-func Directory_Memory_Invariants(value Directory_Memory, namespace invariant.Namespace) {
+func Directory_Memory_Invariants(value Directory_Memory, namespace aver.Namespace) {
 	Entry_Storage_Invariants(value.Entries, namespace)
 	Record_Storage_Invariants(value.Records, namespace)
 	Name_Storage_Invariants(value.Names, namespace)
@@ -981,8 +981,8 @@ type Directory_Runner struct {
 }
 
 // Directory_Runner_Invariants states the counts one read of a directory holds.
-func Directory_Runner_Invariants(runner *Directory_Runner, namespace invariant.Namespace) {
-	invariant.Always(runner != nil, "A directory runner has caller-owned state.")
+func Directory_Runner_Invariants(runner *Directory_Runner, namespace aver.Namespace) {
+	aver.Always(runner != nil, "A directory runner has caller-owned state.")
 	Entry_Storage_Invariants(runner.Entries, namespace)
 	Record_Storage_Invariants(runner.Records, namespace)
 	Name_Storage_Invariants(runner.Names, namespace)
@@ -1078,7 +1078,7 @@ func Directory_Runner_Status(runner *Directory_Runner) (err error) {
 func Directory_Runner_Names(runner *Directory_Runner) (names Name_Storage) {
 	defer func() { Name_Storage_Invariants(names, "directory_runner_names.names") }()
 	Directory_Runner_Invariants(runner, "directory_runner_names.runner")
-	invariant.Always(
+	aver.Always(
 		bool(runner.Flags[DIRECTORY_FLAG_STOPPED]),
 		"A directory read is read after the runner stops.",
 	)
