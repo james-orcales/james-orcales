@@ -638,6 +638,13 @@ type Configuration struct {
 	// "!"-prefixed entry re-bans recursion in a package or file a broader entry
 	// exempted; last match wins.
 	Recursion_Exempt []string `json:"opt_out_recursion_ban"`
+	// Interface_Exempt names packages exempt from the interface ban — a collection
+	// or assertion primitive that must accept a caller-owned type it cannot name,
+	// and a port whose shape a third-party seam fixes. Names a package only, like
+	// Instrumentation_Packages — an entry naming one exact file is rejected. Opt-in;
+	// empty exempts nothing. A "!"-prefixed entry re-bans a package a broader entry
+	// exempted; last match wins.
+	Interface_Exempt []string `json:"opt_out_interface_ban"`
 }
 
 // Git_Commit is one commit's identity for the git-history tier, aliased from the
@@ -754,6 +761,7 @@ func Main(input *Main_Input) (code int) {
 		Ignore:                    configuration.Ignore,
 		Invariant_Exempt_Packages: configuration.Invariant_Exempt_Packages,
 		Recursion_Exempt:          configuration.Recursion_Exempt,
+		Interface_Exempt:          configuration.Interface_Exempt,
 	})
 	if err != nil {
 		fmt.Fprintln(input.Stderr, err)
@@ -842,6 +850,7 @@ func Parse_Configuration(data []byte) (configuration *Configuration, err error) 
 		"ignore",
 		"opt_out_assertion_mandate_packages",
 		"opt_out_recursion_ban",
+		"opt_out_interface_ban",
 	}
 	known := map[string]bool{}
 	for _, key := range required_keys {
@@ -919,6 +928,7 @@ func validate_configuration_globs(configuration *Configuration) (err error) {
 			Globs: configuration.Invariant_Exempt_Packages,
 		},
 		{Name: "opt_out_recursion_ban", Globs: configuration.Recursion_Exempt},
+		{Name: "opt_out_interface_ban", Globs: configuration.Interface_Exempt},
 	} {
 		if err = validate_glob_patterns(list.Name, list.Globs); err != nil {
 			return err
@@ -1588,6 +1598,9 @@ type Check_File_Input struct {
 	// Instrumentation is the lint.json instrumentation_packages list, exempting
 	// the package-var and generics bans.
 	Instrumentation []string
+	// Interface_Exempt is the lint.json opt_out_interface_ban list, exempting
+	// the interface and any bans.
+	Interface_Exempt []string
 	// Word_Replacements is the lint.json vocabulary table; nil disables the check.
 	Word_Replacements map[string][]string
 	// Assertion_Exemptions keeps configured exceptions separate so instrumentation
@@ -1639,7 +1652,7 @@ func Check_File(input *Check_File_Input) (diags []Diagnostic) {
 		check_no_empty_function_body,
 		check_closure_bodies,
 		make_check_no_generics(input.Instrumentation), resolution.Make(input.Declarations),
-		check_no_interfaces,
+		make_check_no_interfaces(input.Interface_Exempt),
 		make_check_names_vocabulary(input.Word_Replacements),
 		check_test_documentation_comment,
 		check_snap_backtick,
@@ -2335,6 +2348,9 @@ type Check_File_System_Input struct {
 	// Recursion_Exempt is the lint.json opt_out_recursion_ban list: directories
 	// exempt from the recursion ban (a recursive-descent parser). Threaded per-file.
 	Recursion_Exempt []string
+	// Interface_Exempt is the lint.json opt_out_interface_ban list: directories
+	// exempt from the interface ban. Threaded per-file.
+	Interface_Exempt []string
 }
 
 // Check_File_System runs the stream tier, parses all Go files, and
@@ -2405,6 +2421,7 @@ func Check_File_System(input *Check_File_System_Input) (diags []Diagnostic, err 
 		Scan_Prefixes:             scan_prefixes,
 		Invariant_Exempt_Packages: input.Invariant_Exempt_Packages,
 		Recursion_Exempt:          input.Recursion_Exempt,
+		Interface_Exempt:          input.Interface_Exempt,
 	}), check_configuration_directory_slash(input)...), nil
 }
 
@@ -2469,6 +2486,7 @@ func check_configuration_directory_slash(input *Check_File_System_Input) (diags 
 			Globs: input.Invariant_Exempt_Packages,
 		},
 		{Name: "opt_out_recursion_ban", Globs: input.Recursion_Exempt},
+		{Name: "opt_out_interface_ban", Globs: input.Interface_Exempt},
 	}
 	for _, list := range lists {
 		// Only ignore and opt_out_recursion_ban may exempt one exact file; the other
@@ -2567,6 +2585,9 @@ type Check_File_System_Doctrine_Input struct {
 	// Recursion_Exempt is the lint.json opt_out_recursion_ban list: directories
 	// exempt from the recursion ban (a recursive-descent parser). Threaded per-file.
 	Recursion_Exempt []string
+	// Interface_Exempt is the lint.json opt_out_interface_ban list: directories
+	// exempt from the interface ban. Threaded per-file.
+	Interface_Exempt []string
 }
 
 // Runs the AST and cross-file doctrine tiers over the parsed set and unions their
@@ -2592,6 +2613,7 @@ func check_file_system_doctrine(
 			Parsed_Files:         parsed_files,
 			CPU_Count:            input.CPU_Count,
 			Instrumentation:      input.Instrumentation_Packages,
+			Interface_Exempt:     input.Interface_Exempt,
 			Word_Replacements:    input.Word_Replacements,
 			Assertion_Exemptions: assertion_exemptions,
 			Declarations:         input.Declarations,
@@ -4037,6 +4059,8 @@ type Check_File_System_Run_Checks_Input struct {
 	CPU_Count int
 	// Instrumentation lists packages exempt from generic and package-var bans.
 	Instrumentation []string
+	// Interface_Exempt lists packages exempt from the interface and any bans.
+	Interface_Exempt []string
 	// Word_Replacements is the configured terminology substitution table.
 	Word_Replacements map[string][]string
 	// Assertion_Exemptions preserves independent assertion and instrumentation globs.
@@ -4079,6 +4103,7 @@ func check_file_system_run_one(
 	per_file_diags[index] = Check_File(&Check_File_Input{
 		File_Set: file.File_Set, File: file.File, Source: file.Source,
 		Instrumentation:      input.Instrumentation,
+		Interface_Exempt:     input.Interface_Exempt,
 		Word_Replacements:    input.Word_Replacements,
 		Assertion_Exemptions: input.Assertion_Exemptions,
 		Declarations:         input.Declarations,
@@ -6409,9 +6434,34 @@ func check_no_generics_node(
 }
 
 // Package-owned method sets create receiver methods rejected by method rule.
-// Ban contract at source. Keep method-free interfaces for dynamic values.
-func check_no_interfaces(file_set *token.FileSet, file *ast.File, _ []byte) (diags []Diagnostic) {
+// Ban contract at source. The method-free forms — `interface{}` and its `any`
+// alias — carry no contract at all: they defer every type decision to a runtime
+// assertion the compiler cannot check, so they are banned with the rest.
+func make_check_no_interfaces(exempt []string) (checker Check_Function) {
+	return func(
+		file_set *token.FileSet, file *ast.File, _ []byte,
+	) (diags []Diagnostic) {
+		return check_no_interfaces(file_set, file, exempt)
+	}
+}
 
+func check_no_interfaces(
+	file_set *token.FileSet, file *ast.File, exempt []string,
+) (diags []Diagnostic) {
+
+	// A test writes against stdlib and third-party seams it does not own —
+	// testing.TB, a fake io.Writer, a table of heterogeneous inputs — none of
+	// which the production ban can reach. Exempt the file, not the rule.
+	tok_file := file_set.File(file.Pos())
+	if tok_file == nil {
+		return nil
+	}
+	if strings.Has_Suffix(tok_file.Name(), "_test.go") {
+		return nil
+	}
+	if source.Path_Matches_Glob(path.Dir(tok_file.Name()), exempt) {
+		return nil
+	}
 	ast.Inspect(file, func(n ast.Node) (recurse bool) {
 		return check_no_interfaces_node(file_set, n, &diags)
 	})
@@ -6421,23 +6471,27 @@ func check_no_interfaces(file_set *token.FileSet, file *ast.File, _ []byte) (dia
 func check_no_interfaces_node(
 	file_set *token.FileSet, node ast.Node, diags *[]Diagnostic,
 ) (recurse bool) {
+	// `any` is a predeclared alias, not an *ast.InterfaceType, so the parser
+	// never spells it as one. Catch the identifier itself. A user-declared
+	// `any` is caught too: the name is the ban, whatever it denotes.
+	identifier, is_identifier := node.(*ast.Ident)
+	if is_identifier {
+		if identifier.Name == "any" {
+			*diags = append(*diags, Diagnostic{
+				Position: file_set.Position(identifier.Pos()),
+				Message:  "Do not use any. Use a concrete type.",
+			})
+		}
+		return true
+	}
 	interface_type, ok := node.(*ast.InterfaceType)
 	if !ok {
 		return true
 	}
-	if interface_type.Methods == nil {
-		return true
-	}
-	for _, field := range interface_type.Methods.List {
-		if len(field.Names) == 0 {
-			continue
-		}
-		*diags = append(*diags, Diagnostic{
-			Position: file_set.Position(interface_type.Pos()),
-			Message:  "Do not declare an interface with methods. Use concrete types.",
-		})
-		return true
-	}
+	*diags = append(*diags, Diagnostic{
+		Position: file_set.Position(interface_type.Pos()),
+		Message:  "Do not declare an interface. Use concrete types.",
+	})
 	return true
 }
 

@@ -230,7 +230,8 @@ use type parameters so one adapter can observe arbitrary types without productio
 
 ### Interface Declarations
 
-A package declares no method-set interface. Method-free interfaces remain allowed.
+A package declares no interface. The method-free forms `interface{}` and `any` are banned too. A
+`_test.go` file is exempt, as is a package listed in `opt_out_interface_ban`.
 
 ### Variable Shadows
 

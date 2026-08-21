@@ -649,8 +649,6 @@ type Foo struct {
 	S string
 	// E is a fixture.
 	E error
-	// A is a fixture.
-	A any
 	// B is a fixture.
 	B bool
 	// R is a fixture.
@@ -4257,8 +4255,8 @@ func main() (result int) {
 	})
 }
 
-// Test_No_Interfaces_Allowed preserves method-free dynamic values.
-func Test_No_Interfaces_Allowed(t *testing.T) {
+// Test_No_Interfaces_Empty verifies the any alias is flagged.
+func Test_No_Interfaces_Empty(t *testing.T) {
 	t.Parallel()
 	run_diag_table(t, []struct {
 		Name      string
@@ -4267,7 +4265,7 @@ func Test_No_Interfaces_Allowed(t *testing.T) {
 	}{
 
 		{
-			Name: "any parameter allowed",
+			Name: "any parameter flagged",
 			Files: map[string]string{
 				"test.go": `package main
 
@@ -4288,13 +4286,13 @@ func F(x any) (result int) {
 }
 `,
 			},
-			Want_Diag: "",
+			Want_Diag: "Do not use any",
 		},
 	})
 }
 
 // Additional cases, split to keep each function within the length limit.
-func Test_No_Interfaces_Allowed_Part2(t *testing.T) {
+func Test_No_Interfaces_Empty_Part2(t *testing.T) {
 	t.Parallel()
 	run_diag_table(t, []struct {
 		Name      string
@@ -4303,7 +4301,7 @@ func Test_No_Interfaces_Allowed_Part2(t *testing.T) {
 	}{
 
 		{
-			Name: "empty interface allowed",
+			Name: "empty interface flagged",
 			Files: map[string]string{
 				"test.go": `package main
 
@@ -4321,6 +4319,36 @@ func F(x interface{}) (result int) {
 	defer func() {
 	}()
 	return 0
+}
+`,
+			},
+			Want_Diag: "Do not declare an interface",
+		},
+
+		{
+			Name: "interface and any in test file allowed",
+			Files: map[string]string{
+				"test.go": `package main
+
+` + FIXTURE_INVARIANT_IMPORT + `
+// FIXTURE_HI is a fixture.
+const FIXTURE_HI = 100
+
+func main() (result int) {
+	defer func() {
+	}()
+	return 0
+}
+`,
+				"fixture_test.go": `package main
+
+import "testing"
+
+// Test_Fixture is a fixture.
+func Test_Fixture(t *testing.T) {
+	var value any = 0
+	var empty interface{} = 0
+	var method interface{ M() }
 }
 `,
 			},
@@ -4460,6 +4488,39 @@ func Identity[Value any](value Value) (result Value) { return value }
 	}
 }
 
+// Test_No_Interfaces_Exempt_Package verifies opt_out_interface_ban permits both
+// the empty interface and its any alias in a listed package.
+func Test_No_Interfaces_Exempt_Package(t *testing.T) {
+	t.Parallel()
+	files := fstest.MapFS{
+		"dynamic/box.go": &fstest.MapFile{Data: []byte(`package dynamic
+
+// Box holds a caller-owned value.
+type Box struct {
+	// Value is the held value.
+	Value any
+}
+
+// Unwrap returns the held value.
+func Unwrap(box Box) (result interface{}) { return box.Value }
+`)},
+	}
+	diags, err := lint.Check_File_System(&lint.Check_File_System_Input{
+		Fsys:              files,
+		Interface_Exempt:  []string{"dynamic/**"},
+		Word_Replacements: test_word_replacements(),
+	})
+	if err != nil {
+		t.Fatalf("Check_File_System: %v", err)
+	}
+	for _, diagnostic := range diags {
+		if strings.Contains(diagnostic.Message, "Do not use any") ||
+			strings.Contains(diagnostic.Message, "Do not declare an interface") {
+			t.Fatal("opt_out_interface_ban packages must permit any and interface{}")
+		}
+	}
+}
+
 // Test_No_Method_Stdlib_String_Flagged verifies interface satisfaction grants no escape.
 func Test_No_Method_Stdlib_String_Flagged(t *testing.T) {
 	t.Parallel()
@@ -4593,7 +4654,7 @@ func Test_No_Method_Stdlib_Scan_Flagged(t *testing.T) {
 	}{
 
 		{
-			Name: "stdlib Scan with any flagged",
+			Name: "stdlib Scan flagged",
 			Files: map[string]string{
 				"test.go": `package main
 
@@ -4612,7 +4673,7 @@ type T struct {
 	X int
 }
 
-func (t T) Scan(x any) (err error) {
+func (t T) Scan(x int) (err error) {
 	return nil
 }
 `,

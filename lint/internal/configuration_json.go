@@ -80,6 +80,8 @@ func configuration_json_value(
 			json_string_list(source, offset)
 	case "opt_out_recursion_ban":
 		configuration.Recursion_Exempt, next, err = json_string_list(source, offset)
+	case "opt_out_interface_ban":
+		configuration.Interface_Exempt, next, err = json_string_list(source, offset)
 	default:
 		return 0, fmt.Errorf("lint.json: unknown key %q", key)
 	}

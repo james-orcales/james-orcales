@@ -24,6 +24,22 @@
           "gameboy_emulator/test_roms/**",
           "shared_lua/**"
   ],
+  "opt_out_interface_ban": [
+          "lint/internal/",
+          "shared/backoff/",
+          "shared/crypto/prng/",
+          "shared/encoding/binary/",
+          "shared/encoding/flatjson/",
+          "shared/jlog/",
+          "shared/lru/",
+          "shared/sim/aver/**",
+          "shared/sim/nbio/",
+          "shared/sim/time/",
+          "shared/slices/",
+          "shared/snap/**",
+          "shared/sort/",
+          "shared/testify/"
+  ],
   "opt_out_recursion_ban": [
           "shared/text/glob/**",
           "shared/go/**"
