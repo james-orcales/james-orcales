@@ -1,10 +1,9 @@
 package strconv_test
 
 import (
-	"math"
-	"strings"
 	"testing"
 
+	"local/james-orcales/shared/math/bits"
 	"local/james-orcales/shared/math/fixedpoint"
 	"local/james-orcales/shared/strconv"
 	"local/james-orcales/shared/testify"
@@ -57,8 +56,10 @@ func Test_Integer_To_Text(t *testing.T) {
 	}
 	testify.Equal(t, "z", format_unsigned_integer(35, 36))
 	testify.Equal(t, "18446744073709551615",
-		format_unsigned_integer(math.MaxUint64, 10))
-	testify.Equal(t, 64, len(format_unsigned_integer(math.MaxUint64, 2)),
+		format_unsigned_integer(strconv.Unsigned_Integer(bits.WORD_64_MAXIMUM), 10))
+	testify.Equal(t, 64, len(format_unsigned_integer(
+		strconv.Unsigned_Integer(bits.WORD_64_MAXIMUM), 2,
+	)),
 		"the unsigned maximum in base two")
 	testify.Equal(t, "0", format_integer(0, 10))
 	testify.Equal(t, "-1", format_integer(-1, 10))
@@ -66,8 +67,10 @@ func Test_Integer_To_Text(t *testing.T) {
 	testify.Equal(t, "10", format_integer(2, 2))
 	testify.Equal(t, "-ff", format_integer(-255, 16))
 	testify.Equal(t, "9223372036854775807",
-		format_integer(math.MaxInt64, 10))
-	testify.Equal(t, 65, len(format_integer(math.MinInt64, 2)),
+		format_integer(strconv.Signed_Integer(bits.INTEGER_64_MAXIMUM), 10))
+	testify.Equal(t, 65, len(format_integer(
+		strconv.Signed_Integer(bits.INTEGER_64_MINIMUM), 2,
+	)),
 		"the signed minimum in base two")
 	decimal_text_cases(t)
 }
@@ -88,10 +91,10 @@ func Test_Fixed_Point(t *testing.T) {
 	}
 	smallest, smallest_error := strconv.Parse_Fixed_Point("-8796093022208")
 	testify.No_Error(t, smallest_error, "the fixed-point minimum")
-	testify.Equal(t, fixedpoint.Number(math.MinInt64), smallest)
+	testify.Equal(t, fixedpoint.Number(bits.INTEGER_64_MINIMUM), smallest)
 	largest, largest_error := strconv.Parse_Fixed_Point("8796093022207.999999")
 	testify.No_Error(t, largest_error, "the fixed-point maximum")
-	testify.Equal(t, fixedpoint.Number(math.MaxInt64), largest)
+	testify.Equal(t, fixedpoint.Number(bits.INTEGER_64_MAXIMUM), largest)
 	for _, text := range []strconv.Text{"", "abc", "1.2.3", "1e5", "-", ".", "1.a", "+"} {
 		_, reject := strconv.Parse_Fixed_Point(text)
 		testify.Error_Is(t, reject, strconv.Error_Syntax, "Parse_Fixed_Point(%q)", text)
@@ -116,7 +119,7 @@ func Test_Domain_Errors(t *testing.T) {
 	testify.Panics(t, func() { format_integer(1, 1) }, "a Base of 1")
 	testify.Panics(t, func() { strconv.Parse_Integer("1", 1, 0) }, "an Implied_Base of 1")
 	testify.Panics(t, func() { strconv.Parse_Integer("1", 10, 65) }, "a Bit_Size of 65")
-	oversize := strconv.Text(strings.Repeat("1", strconv.TEXT_SIZE_MAXIMUM+1))
+	oversize := strconv.Text(repeat("1", strconv.TEXT_SIZE_MAXIMUM+1))
 	testify.Panics(t, func() { quote(oversize) }, "a Text above the size limit")
 	var large [strconv.BUFFER_SIZE_MAXIMUM + 1]byte
 	testify.Panics(t, func() { strconv.Quote_Into(large[:], "") },
@@ -180,13 +183,17 @@ func Test_Printability(t *testing.T) {
 		testify.True(t, bool(strconv.Is_Print(value)), "Is_Print(%d)", value)
 	}
 	for _, value := range []strconv.Character{
-		0, 1, 2, '\n', 0x7f, 0x00ad, -1, math.MinInt32, math.MaxInt32,
+		0, 1, 2, '\n', 0x7f, 0x00ad, -1,
+		strconv.Character(bits.INTEGER_32_MINIMUM),
+		strconv.Character(bits.INTEGER_32_MAXIMUM),
 	} {
 		testify.False(t, bool(strconv.Is_Print(value)), "Is_Print(%d)", value)
 	}
 	testify.True(t, bool(strconv.Is_Graphic(' ')), "Is_Graphic of a no-break space")
 	for _, value := range []strconv.Character{
-		0, 1, 2, '\n', -1, math.MinInt32, math.MaxInt32,
+		0, 1, 2, '\n', -1,
+		strconv.Character(bits.INTEGER_32_MINIMUM),
+		strconv.Character(bits.INTEGER_32_MAXIMUM),
 	} {
 		testify.False(t, bool(strconv.Is_Graphic(value)), "Is_Graphic(%d)", value)
 	}
@@ -234,20 +241,30 @@ func Test_Size_Limits(t *testing.T) {
 func destination_size_cases(t *testing.T, storage strconv.Buffer) {
 	invalid := text_of(strconv.TEXT_SIZE_MAXIMUM, '\xff')
 	invalid_literal := strconv.Text(
-		"\"" + strings.Repeat("\xff", strconv.BODY_TEXT_SIZE_MAXIMUM) + "\"",
+		"\"" + repeat("\xff", strconv.BODY_TEXT_SIZE_MAXIMUM) + "\"",
 	)
 	for _, size := range []int{0, 1, 2} {
 		destination := storage[:size]
 		testify.Panics(t, func() { strconv.Format_Boolean_Into(destination, false) })
 		testify.Panics(t, func() {
-			strconv.Format_Unsigned_Integer_Into(destination, math.MaxUint64, 2)
+			strconv.Format_Unsigned_Integer_Into(
+				destination, strconv.Unsigned_Integer(bits.WORD_64_MAXIMUM), 2,
+			)
 		})
 		testify.Panics(t, func() {
-			strconv.Format_Integer_Into(destination, math.MinInt64, 2)
+			strconv.Format_Integer_Into(
+				destination, strconv.Signed_Integer(bits.INTEGER_64_MINIMUM), 2,
+			)
 		})
-		testify.Panics(t, func() { strconv.Format_Decimal_Into(destination, math.MinInt) })
 		testify.Panics(t, func() {
-			strconv.Format_Fixed_Point_Into(destination, math.MinInt64, 6)
+			strconv.Format_Decimal_Into(
+				destination, strconv.Machine_Integer(bits.INTEGER_MINIMUM),
+			)
+		})
+		testify.Panics(t, func() {
+			strconv.Format_Fixed_Point_Into(
+				destination, fixedpoint.Number(bits.INTEGER_64_MINIMUM), 6,
+			)
 		})
 		testify.Panics(t, func() { strconv.Quote_Into(destination, invalid) })
 		testify.Panics(t, func() { strconv.Quote_To_ASCII_Into(destination, invalid) })
@@ -262,10 +279,16 @@ func destination_size_cases(t *testing.T, storage strconv.Buffer) {
 		testify.Panics(t, func() { strconv.Unquote_Into(destination, invalid_literal) })
 	}
 	strconv.Format_Boolean_Into(storage, false)
-	strconv.Format_Unsigned_Integer_Into(storage, math.MaxUint64, 2)
-	strconv.Format_Integer_Into(storage, math.MinInt64, 2)
-	strconv.Format_Decimal_Into(storage, math.MinInt)
-	strconv.Format_Fixed_Point_Into(storage, math.MinInt64, 6)
+	strconv.Format_Unsigned_Integer_Into(
+		storage, strconv.Unsigned_Integer(bits.WORD_64_MAXIMUM), 2,
+	)
+	strconv.Format_Integer_Into(
+		storage, strconv.Signed_Integer(bits.INTEGER_64_MINIMUM), 2,
+	)
+	strconv.Format_Decimal_Into(storage, strconv.Machine_Integer(bits.INTEGER_MINIMUM))
+	strconv.Format_Fixed_Point_Into(
+		storage, fixedpoint.Number(bits.INTEGER_64_MINIMUM), 6,
+	)
 	strconv.Quote_Into(storage, invalid)
 	strconv.Quote_To_ASCII_Into(storage, invalid)
 	strconv.Quote_To_Graphic_Into(storage, invalid)
@@ -298,7 +321,7 @@ func unsigned_cases(t *testing.T) {
 	testify.Equal(t, strconv.Unsigned_Integer(3), pair, "two bits hold the value three")
 	widest, parse_error := strconv.Parse_Unsigned_Integer("18446744073709551615", 10, 64)
 	testify.No_Error(t, parse_error, "the unsigned maximum")
-	testify.Equal(t, strconv.Unsigned_Integer(math.MaxUint64), widest)
+	testify.Equal(t, strconv.Unsigned_Integer(bits.WORD_64_MAXIMUM), widest)
 	for _, text := range []strconv.Text{"", "_1", "1__0", "1_", "0x", "g", "-1", "0b2"} {
 		_, reject := strconv.Parse_Unsigned_Integer(text, 0, 0)
 		testify.Error(t, reject, "Parse_Unsigned_Integer(%q)", text)
@@ -323,9 +346,9 @@ func signed_cases(t *testing.T) {
 	pair, _ := strconv.Parse_Integer("12", 10, 0)
 	testify.Equal(t, strconv.Signed_Integer(12), pair, "the decimal reader reads 12")
 	smallest, _ := strconv.Parse_Integer("-9223372036854775808", 10, 64)
-	testify.Equal(t, strconv.Signed_Integer(math.MinInt64), smallest)
+	testify.Equal(t, strconv.Signed_Integer(bits.INTEGER_64_MINIMUM), smallest)
 	largest, _ := strconv.Parse_Integer("9223372036854775807", 10, 64)
-	testify.Equal(t, strconv.Signed_Integer(math.MaxInt64), largest)
+	testify.Equal(t, strconv.Signed_Integer(bits.INTEGER_64_MAXIMUM), largest)
 	base_36, _ := strconv.Parse_Integer("z", 36, 0)
 	testify.Equal(t, strconv.Signed_Integer(35), base_36, "the digit z in base 36")
 	binary, _ := strconv.Parse_Integer("11", 2, 0)
@@ -380,10 +403,10 @@ func decimal_cases(t *testing.T) {
 	}
 	smallest, smallest_error := strconv.Parse_Decimal("-9223372036854775808")
 	testify.No_Error(t, smallest_error, "the machine minimum")
-	testify.Equal(t, strconv.Machine_Integer(math.MinInt), smallest)
+	testify.Equal(t, strconv.Machine_Integer(bits.INTEGER_MINIMUM), smallest)
 	largest, largest_error := strconv.Parse_Decimal("9223372036854775807")
 	testify.No_Error(t, largest_error, "the machine maximum")
-	testify.Equal(t, strconv.Machine_Integer(math.MaxInt), largest)
+	testify.Equal(t, strconv.Machine_Integer(bits.INTEGER_MAXIMUM), largest)
 	_, reject := strconv.Parse_Decimal("")
 	testify.Error_Is(t, reject, strconv.Error_Syntax, "Parse_Decimal of empty text")
 }
@@ -396,9 +419,10 @@ func decimal_text_cases(t *testing.T) {
 		testify.Equal(t, want, format_decimal(value), "Format_Decimal(%d)", value)
 	}
 	testify.Equal(t, "9223372036854775807",
-		format_decimal(math.MaxInt))
+		format_decimal(strconv.Machine_Integer(bits.INTEGER_MAXIMUM)))
 	testify.Equal(t, strconv.DECIMAL_TEXT_SIZE_MAXIMUM,
-		len(format_decimal(math.MinInt)), "the machine minimum in base ten")
+		len(format_decimal(strconv.Machine_Integer(bits.INTEGER_MINIMUM))),
+		"the machine minimum in base ten")
 }
 
 // Exercises the three character forms over the whole Character domain.
@@ -416,7 +440,8 @@ func quote_rune_cases(t *testing.T) {
 	testify.Equal(t, `'\n'`, quote_rune_to_graphic('\n'))
 	testify.Equal(t, "' '", quote_rune_to_graphic(' '))
 	for _, value := range []strconv.Character{
-		0, 1, 2, -1, math.MinInt32, math.MaxInt32, 0x10ffff,
+		0, 1, 2, -1, strconv.Character(bits.INTEGER_32_MINIMUM),
+		strconv.Character(bits.INTEGER_32_MAXIMUM), 0x10ffff,
 	} {
 		testify.True(t, len(quote_rune(value)) >=
 			strconv.CHARACTER_TEXT_SIZE_MINIMUM, "Quote_Rune(%d)", value)
@@ -544,7 +569,7 @@ func full_size_reads(t *testing.T, full strconv.Text) {
 	testify.Error_Is(t, signed_error, strconv.Error_Range, "a full text of digits")
 	_, decimal_error := strconv.Parse_Decimal(full)
 	testify.Error_Is(t, decimal_error, strconv.Error_Range, "a full text of digits")
-	separated := strconv.Text("1_" + strings.Repeat("1", strconv.TEXT_SIZE_MAXIMUM-2))
+	separated := strconv.Text("1_" + repeat("1", strconv.TEXT_SIZE_MAXIMUM-2))
 	_, separated_error := strconv.Parse_Unsigned_Integer(separated, 0, 0)
 	testify.Error_Is(t, separated_error, strconv.Error_Range, "a full separated text")
 	_, unquote_error := unquote(full)
@@ -559,7 +584,7 @@ func full_size_reads(t *testing.T, full strconv.Text) {
 
 // Drives every literal reader with a literal of the maximum size.
 func full_size_literals(t *testing.T) {
-	body := strings.Repeat("a", strconv.TEXT_SIZE_MAXIMUM-2)
+	body := repeat("a", strconv.TEXT_SIZE_MAXIMUM-2)
 	raw := strconv.Text("`" + body + "`")
 	value, raw_error := unquote(raw)
 	testify.No_Error(t, raw_error, "a full raw literal")
@@ -578,7 +603,7 @@ func full_size_literals(t *testing.T) {
 		"a full interpreted literal")
 	// A body that holds a character above the ASCII range takes the decoder, thus only
 	// such a body drives the decoder to its limits.
-	accented := strconv.Text(`"` + strings.Repeat("é", (strconv.TEXT_SIZE_MAXIMUM-2)/2) +
+	accented := strconv.Text(`"` + repeat("é", (strconv.TEXT_SIZE_MAXIMUM-2)/2) +
 		`"`)
 	accented_value, accented_error := unquote(accented)
 	testify.No_Error(t, accented_error, "a full accented literal")
@@ -592,30 +617,30 @@ func full_size_literals(t *testing.T) {
 	// A literal that holds an escape takes the reader that walks each character, thus
 	// only such a literal drives that reader to its limits.
 	escaped_literal := strconv.Text(
-		`"\n` + strings.Repeat("a", strconv.TEXT_SIZE_MAXIMUM-4) + `"`,
+		`"\n` + repeat("a", strconv.TEXT_SIZE_MAXIMUM-4) + `"`,
 	)
 	escaped_prefix, escaped_prefix_error := strconv.Quoted_Prefix(escaped_literal)
 	testify.No_Error(t, escaped_prefix_error, "a full escaped literal prefix")
 	testify.Equal(t, strconv.TEXT_SIZE_MAXIMUM, len(escaped_prefix),
 		"a full escaped literal prefix")
 	unterminated := strconv.Text(
-		`"` + strings.Repeat("a", strconv.TEXT_SIZE_MAXIMUM-1),
+		`"` + repeat("a", strconv.TEXT_SIZE_MAXIMUM-1),
 	)
 	_, unterminated_error := strconv.Quoted_Prefix(unterminated)
 	testify.Error_Is(t, unterminated_error, strconv.Error_Syntax,
 		"a full unterminated literal")
-	escape := strconv.Text("\\n" + strings.Repeat("a", strconv.TEXT_SIZE_MAXIMUM-2))
+	escape := strconv.Text("\\n" + repeat("a", strconv.TEXT_SIZE_MAXIMUM-2))
 	_, _, _, escape_error := strconv.Unquote_Character(escape, 0)
 	testify.No_Error(t, escape_error, "a full escape body")
 	hexadecimal := strconv.Text(
-		"\\x41" + strings.Repeat("a", strconv.TEXT_SIZE_MAXIMUM-4),
+		"\\x41" + repeat("a", strconv.TEXT_SIZE_MAXIMUM-4),
 	)
 	_, _, _, hexadecimal_error := strconv.Unquote_Character(hexadecimal, 0)
 	testify.No_Error(t, hexadecimal_error, "a full hexadecimal body")
-	octal := strconv.Text("\\101" + strings.Repeat("a", strconv.TEXT_SIZE_MAXIMUM-4))
+	octal := strconv.Text("\\101" + repeat("a", strconv.TEXT_SIZE_MAXIMUM-4))
 	_, _, _, octal_error := strconv.Unquote_Character(octal, 0)
 	testify.No_Error(t, octal_error, "a full octal body")
-	filler := strings.Repeat("a", strconv.TEXT_SIZE_MAXIMUM-2)
+	filler := repeat("a", strconv.TEXT_SIZE_MAXIMUM-2)
 	remainder := strconv.Text(`""` + filler)
 	_, remainder_error := strconv.Quoted_Prefix(remainder)
 	testify.No_Error(t, remainder_error, "a full remainder")
@@ -642,7 +667,7 @@ func fixed_point_limit_cases(t *testing.T) {
 	tenth, tenth_error := strconv.Parse_Fixed_Point("0.1")
 	testify.No_Error(t, tenth_error, "one fraction digit")
 	testify.Equal(t, tenth, nine_digits, "nine fraction digits give one tenth")
-	full := strconv.Text("." + strings.Repeat("1", strconv.TEXT_SIZE_MAXIMUM-1))
+	full := strconv.Text("." + repeat("1", strconv.TEXT_SIZE_MAXIMUM-1))
 	_, full_error := strconv.Parse_Fixed_Point(full)
 	testify.No_Error(t, full_error, "a full fraction")
 }
@@ -659,7 +684,7 @@ func fixed_point_text_cases(t *testing.T) {
 	testify.Equal(t, fixedpoint.Text("0"), format_fixed_point(0, 0))
 	testify.Equal(t, fixedpoint.Text("-1"),
 		format_fixed_point(-fixedpoint.SCALE, 0))
-	widest := format_fixed_point(math.MinInt64, 6)
+	widest := format_fixed_point(fixedpoint.Number(bits.INTEGER_64_MINIMUM), 6)
 	testify.Equal(t, strconv.FIXED_POINT_TEXT_SIZE_MAXIMUM, len(widest),
 		"the fixed-point minimum at six digits")
 	round_trip, round_trip_error := strconv.Parse_Fixed_Point(
@@ -667,7 +692,9 @@ func fixed_point_text_cases(t *testing.T) {
 	)
 	testify.No_Error(t, round_trip_error, "the round trip")
 	testify.Equal(t, fixedpoint.Number(whole), round_trip, "the round trip")
-	for _, value := range []fixedpoint.Number{math.MaxInt64, 1, 2, -1} {
+	for _, value := range []fixedpoint.Number{
+		fixedpoint.Number(bits.INTEGER_64_MAXIMUM), 1, 2, -1,
+	} {
 		for _, digits := range []fixedpoint.Digit_Count{0, 1, 2, 6} {
 			want := format_fixed_point_direct(value, digits)
 			testify.Equal(t, want, format_fixed_point(value, digits),
@@ -678,7 +705,15 @@ func fixed_point_text_cases(t *testing.T) {
 
 // Returns text of the given size, every byte the same.
 func text_of(size int, filler byte) (text strconv.Text) {
-	return strconv.Text(strings.Repeat(string([]byte{filler}), size))
+	return strconv.Text(repeat(string([]byte{filler}), size))
+}
+
+func repeat(text string, count int) (result string) {
+	storage := make([]byte, 0, len(text)*count)
+	for index := 0; index < count; index++ {
+		storage = append(storage, text...)
+	}
+	return string(storage)
 }
 
 type allocation_check struct {
@@ -756,22 +791,24 @@ func format_allocation_checks(fixture *allocation_fixture) (checks []allocation_
 		}},
 		{Name: "Format_Unsigned_Integer_Into", Call: func() {
 			fixture.Observable = int(strconv.Format_Unsigned_Integer_Into(
-				fixture.Storage[:], math.MaxUint64, 2,
+				fixture.Storage[:],
+				strconv.Unsigned_Integer(bits.WORD_64_MAXIMUM), 2,
 			))
 		}},
 		{Name: "Format_Integer_Into", Call: func() {
 			fixture.Observable = int(strconv.Format_Integer_Into(
-				fixture.Storage[:], math.MinInt64, 2,
+				fixture.Storage[:],
+				strconv.Signed_Integer(bits.INTEGER_64_MINIMUM), 2,
 			))
 		}},
 		{Name: "Format_Decimal_Into", Call: func() {
 			fixture.Observable = int(strconv.Format_Decimal_Into(
-				fixture.Storage[:], math.MinInt,
+				fixture.Storage[:], strconv.Machine_Integer(bits.INTEGER_MINIMUM),
 			))
 		}},
 		{Name: "Format_Fixed_Point_Into", Call: func() {
 			fixture.Observable = int(strconv.Format_Fixed_Point_Into(
-				fixture.Storage[:], math.MinInt64, 6,
+				fixture.Storage[:], fixedpoint.Number(bits.INTEGER_64_MINIMUM), 6,
 			))
 		}},
 	}

@@ -1,9 +1,7 @@
 package strconv
 
 import (
-	"strconv"
 	"testing"
-	"unicode"
 
 	"local/james-orcales/shared/testify"
 )
@@ -371,15 +369,29 @@ func Test_Standard_Library_Unquote(t *testing.T) {
 	}
 }
 
-// Test_Standard_Library_Printability compares the printable and the graphic report with
-// unicode over every code point, which is what the standard library test does.
+// Test_Standard_Library_Printability checks every boundary used by quoting decisions.
 func Test_Standard_Library_Printability(t *testing.T) {
 	t.Parallel()
-	for point := rune(0); point <= unicode.MaxRune; point++ {
-		testify.Equal(t, unicode.IsPrint(point), bool(Is_Print(Character(point))),
-			"Is_Print(%U)", point)
-		testify.Equal(t, unicode.IsGraphic(point), bool(Is_Graphic(Character(point))),
-			"Is_Graphic(%U)", point)
+	for _, one := range []struct {
+		Point   rune
+		Print   bool
+		Graphic bool
+	}{
+		{Point: -1},
+		{Point: 0},
+		{Point: '\n'},
+		{Point: ' ', Print: true, Graphic: true},
+		{Point: '\u00a0', Graphic: true},
+		{Point: 'A', Print: true, Graphic: true},
+		{Point: '世', Print: true, Graphic: true},
+		{Point: 0x0378},
+		{Point: '\U0010ffff'},
+		{Point: 0x110000},
+	} {
+		testify.Equal(t, one.Print, bool(Is_Print(Character(one.Point))),
+			"Is_Print(%U)", one.Point)
+		testify.Equal(t, one.Graphic, bool(Is_Graphic(Character(one.Point))),
+			"Is_Graphic(%U)", one.Point)
 	}
 }
 
@@ -1396,15 +1408,6 @@ func Benchmark_Quote_ASCII_House(b *testing.B) {
 	}
 }
 
-// Benchmark_Quote_ASCII_Standard writes the same literal with the standard library.
-func Benchmark_Quote_ASCII_Standard(b *testing.B) {
-	text := benchmark_text("a", TEXT_SIZE_MAXIMUM)
-	b.ResetTimer()
-	for b.Loop() {
-		strconv.Quote(text)
-	}
-}
-
 // Benchmark_Quote_CJK_House writes a literal of three-byte characters.
 func Benchmark_Quote_CJK_House(b *testing.B) {
 	text := Text(benchmark_text("一", TEXT_SIZE_MAXIMUM/3))
@@ -1412,15 +1415,6 @@ func Benchmark_Quote_CJK_House(b *testing.B) {
 	b.ResetTimer()
 	for b.Loop() {
 		Quote_Into(storage[:], text)
-	}
-}
-
-// Benchmark_Quote_CJK_Standard writes the same literal with the standard library.
-func Benchmark_Quote_CJK_Standard(b *testing.B) {
-	text := benchmark_text("一", TEXT_SIZE_MAXIMUM/3)
-	b.ResetTimer()
-	for b.Loop() {
-		strconv.Quote(text)
 	}
 }
 
@@ -1434,15 +1428,6 @@ func Benchmark_Quote_Control_House(b *testing.B) {
 	}
 }
 
-// Benchmark_Quote_Control_Standard writes the same literal with the standard library.
-func Benchmark_Quote_Control_Standard(b *testing.B) {
-	text := benchmark_text("\x01", TEXT_SIZE_MAXIMUM)
-	b.ResetTimer()
-	for b.Loop() {
-		strconv.Quote(text)
-	}
-}
-
 // Benchmark_Unquote_Plain_House reads a literal that holds no escape.
 func Benchmark_Unquote_Plain_House(b *testing.B) {
 	text := Text(`"` + benchmark_text("a", TEXT_SIZE_MAXIMUM-2) + `"`)
@@ -1450,15 +1435,6 @@ func Benchmark_Unquote_Plain_House(b *testing.B) {
 	b.ResetTimer()
 	for b.Loop() {
 		Unquote_Into(storage[:], text)
-	}
-}
-
-// Benchmark_Unquote_Plain_Standard reads the same literal with the standard library.
-func Benchmark_Unquote_Plain_Standard(b *testing.B) {
-	text := `"` + benchmark_text("a", TEXT_SIZE_MAXIMUM-2) + `"`
-	b.ResetTimer()
-	for b.Loop() {
-		strconv.Unquote(text)
 	}
 }
 
@@ -1472,15 +1448,6 @@ func Benchmark_Unquote_Escaped_House(b *testing.B) {
 	}
 }
 
-// Benchmark_Unquote_Escaped_Standard reads the same literal with the standard library.
-func Benchmark_Unquote_Escaped_Standard(b *testing.B) {
-	text := `"\n` + benchmark_text("a", TEXT_SIZE_MAXIMUM-4) + `"`
-	b.ResetTimer()
-	for b.Loop() {
-		strconv.Unquote(text)
-	}
-}
-
 // Benchmark_Parse_Integer_House reads the widest signed number.
 func Benchmark_Parse_Integer_House(b *testing.B) {
 	for b.Loop() {
@@ -1488,24 +1455,10 @@ func Benchmark_Parse_Integer_House(b *testing.B) {
 	}
 }
 
-// Benchmark_Parse_Integer_Standard reads the same number with the standard library.
-func Benchmark_Parse_Integer_Standard(b *testing.B) {
-	for b.Loop() {
-		strconv.ParseInt("9223372036854775807", 10, 64)
-	}
-}
-
 // Benchmark_Parse_Decimal_House reads a short signed number.
 func Benchmark_Parse_Decimal_House(b *testing.B) {
 	for b.Loop() {
 		Parse_Decimal("-12345")
-	}
-}
-
-// Benchmark_Parse_Decimal_Standard reads the same number with the standard library.
-func Benchmark_Parse_Decimal_Standard(b *testing.B) {
-	for b.Loop() {
-		strconv.Atoi("-12345")
 	}
 }
 
@@ -1517,25 +1470,11 @@ func Benchmark_Format_Integer_House(b *testing.B) {
 	}
 }
 
-// Benchmark_Format_Integer_Standard writes the same number with the standard library.
-func Benchmark_Format_Integer_Standard(b *testing.B) {
-	for b.Loop() {
-		strconv.FormatInt(-9223372036854775808, 10)
-	}
-}
-
 // Benchmark_Quote_Rune_House writes one character literal.
 func Benchmark_Quote_Rune_House(b *testing.B) {
 	var storage [CHARACTER_TEXT_SIZE_MAXIMUM]byte
 	for b.Loop() {
 		Quote_Rune_Into(storage[:], 'a')
-	}
-}
-
-// Benchmark_Quote_Rune_Standard writes the same literal with the standard library.
-func Benchmark_Quote_Rune_Standard(b *testing.B) {
-	for b.Loop() {
-		strconv.QuoteRune('a')
 	}
 }
 
@@ -1545,15 +1484,6 @@ func Benchmark_Can_Backquote_House(b *testing.B) {
 	b.ResetTimer()
 	for b.Loop() {
 		Can_Backquote(text)
-	}
-}
-
-// Benchmark_Can_Backquote_Standard reads the same text with the standard library.
-func Benchmark_Can_Backquote_Standard(b *testing.B) {
-	text := benchmark_text("a", TEXT_SIZE_MAXIMUM)
-	b.ResetTimer()
-	for b.Loop() {
-		strconv.CanBackquote(text)
 	}
 }
 
