@@ -91,9 +91,9 @@ states nothing about the field's domain and never counts.
 
 ### Defined Pointers
 
-Defined pointer helper body is exactly `if value == nil { return }` then
-`Base_Invariants(*value, namespace)`. Nothing else. Struct, non-struct, foreign pointee: same body.
-Pointee without helper or unnamed pointee is a diagnostic. No exemption exists, none is authorized.
+Defined pointer helper body is exactly `if value == nil { return }` then `Base_Invariants(*value,
+namespace)`. Struct, non-struct, foreign pointee, type over a defined pointer: same body. Pointee
+without helper or unnamed pointee is a diagnostic. No exemption exists, none is authorized.
 
 ### Embedded Fields
 

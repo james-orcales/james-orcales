@@ -508,6 +508,7 @@ func Test_Invariants_Defined_Pointers(t *testing.T) {
 	assert_defined_pointer_body(t)
 	assert_defined_pointer_pointee(t)
 	assert_defined_pointer_foreign(t)
+	assert_defined_pointer_chain(t)
 }
 
 // Test_Invariants_Embedded_Fields verifies an anonymous field still owes its helper, under the name
@@ -1772,5 +1773,60 @@ func assert_defined_pointer_foreign(t *testing.T) {
 	if diagnosed(check_sources([]source.Parsed_File{external, exact}),
 		"Token_Pointer_Invariants") {
 		t.Fatal("exact foreign pointer body must be accepted")
+	}
+}
+
+// A defined type over a defined pointer is a defined pointer, same package or foreign. Its body
+// owes the nil exit and the helper of the type at the chain's end, reached through the file's
+// import name.
+func assert_defined_pointer_chain(t *testing.T) {
+	t.Helper()
+	external := parse(t, &parse_input{
+		Path: "other/token.go",
+		Source_Text: "package other\n\n" +
+			"import aver \"fixture/shared/sim/aver/default\"\n\n" +
+			"const Token_Min = 0\n\nconst Token_Max = 8\n\n" +
+			"// Token is a fixture.\ntype Token string\n\n" +
+			"// Token_Invariants is a fixture.\n" +
+			"func Token_Invariants(v Token, namespace aver.Namespace) {\n" +
+			"\taver.Tree(v, namespace)." +
+			"Range_Int(len(v), Token_Min, Token_Max).Ensure()\n}\n\n" +
+			"// Token_Handle is a fixture.\ntype Token_Handle *Token\n\n" +
+			"// Token_Handle_Invariants is a fixture.\n" +
+			"func Token_Handle_Invariants(\n" +
+			"\tv Token_Handle, namespace aver.Namespace,\n) {\n" +
+			"\tif v == nil {\n\t\treturn\n\t}\n" +
+			"\tToken_Invariants(*v, namespace)\n}\n"})
+	head := "package fixture\n\n" +
+		"import (\n\taver \"fixture/shared/sim/aver/default\"\n" +
+		"\texternal \"fixture/other\"\n)\n\n" +
+		"// Token_State is a fixture.\ntype Token_State external.Token_Handle\n\n" +
+		"// Token_State_Invariants is a fixture.\n" +
+		"func Token_State_Invariants(v Token_State, namespace aver.Namespace) {\n"
+	want := "Function Token_State_Invariants body is not exactly " +
+		"`if v == nil { return }` then `external.Token_Invariants(*v, namespace)`."
+	aver_guard := parse(t, &parse_input{Path: "pkg/state.go",
+		Source_Text: head + "\taver.Always(v != nil, \"present\")\n}\n"})
+	if !diagnosed(check_sources([]source.Parsed_File{external, aver_guard}), want) {
+		t.Fatal("defined type over a foreign defined pointer owes the pointer body")
+	}
+	exact := parse(t, &parse_input{Path: "pkg/state.go",
+		Source_Text: head + DEFINED_POINTER_GUARD +
+			"\texternal.Token_Invariants(*v, namespace)\n}\n"})
+	if diagnosed(check_sources([]source.Parsed_File{external, exact}),
+		"Token_State_Invariants") {
+		t.Fatal("exact body over a foreign defined pointer must be accepted")
+	}
+	local := DEFINED_POINTER_HEAD + DEFINED_POINTER_GUARD +
+		"\tFrame_Invariants(*v, namespace)\n}\n\n" +
+		"// Handle_State is a fixture.\ntype Handle_State Handle\n\n" +
+		"// Handle_State_Invariants is a fixture.\n" +
+		"func Handle_State_Invariants(v Handle_State, _ aver.Namespace) {\n" +
+		"\taver.Always(v != nil, \"present\")\n}\n"
+	if !diagnosed(check_source(parse(t, &parse_input{
+		Path: "pkg/rule.go", Source_Text: local})),
+		"Function Handle_State_Invariants body is not exactly `if v == nil { return }` "+
+			"then `Frame_Invariants(*v, namespace)`.") {
+		t.Fatal("defined type over a same-package defined pointer owes the pointer body")
 	}
 }

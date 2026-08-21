@@ -1103,6 +1103,7 @@ func check_struct_invariants(
 ) (diags []Diagnostic) {
 	defined := struct_helper_index(parsed_files, components)
 	declarations := index_declarations(parsed_files, components)
+	pointers := index_defined_pointers(parsed_files, components)
 	for _, pf := range parsed_files {
 		if strings.Has_Suffix(pf.Path, "_test.go") {
 			continue
@@ -1112,7 +1113,8 @@ func check_struct_invariants(
 		}
 		diags = append(diags,
 			struct_file_diagnostics(pf, defined, declarations, components)...)
-		diags = append(diags, defined_pointer_file_diagnostics(pf, defined, components)...)
+		diags = append(diags,
+			defined_pointer_file_diagnostics(pf, defined, pointers, components)...)
 	}
 	return diags
 }
@@ -1127,8 +1129,13 @@ func check_struct_invariants(
 // has repaired this rule repeatedly after agents carved out a case. Last carve-out skipped struct
 // pointees and pushed them into the per-field inherited check, which then demanded each field
 // twice. Do NOT add a skip here. Do NOT add a skip upstream. Fix the code under lint instead.
+//
+// A defined type over a defined pointer is a defined pointer too, same package or foreign. Its
+// declaration spells a name and no star, thus the rule follows the name to the star at the chain's
+// end. Last carve-out read only the star and let `type State other.Handle` state a bare nil check.
 func defined_pointer_file_diagnostics(
-	file Parsed_File, defined map[string]bool, components *Component_Index,
+	file Parsed_File, defined map[string]bool, pointers *Defined_Pointer_Index,
+	components *Component_Index,
 ) (diags []Diagnostic) {
 	for index, declaration := range file.File.Decls {
 		general, is_general := declaration.(*ast.GenDecl)
@@ -1145,7 +1152,8 @@ func defined_pointer_file_diagnostics(
 		if type_specification.Assign.IsValid() {
 			continue
 		}
-		pointer, is_pointer := type_specification.Type.(*ast.StarExpr)
+		pointer, is_pointer := defined_pointer_resolve(
+			type_specification, file, pointers, components)
 		if !is_pointer {
 			continue
 		}
@@ -1163,7 +1171,6 @@ func defined_pointer_file_diagnostics(
 			continue
 		}
 		scope := &Invariant_Scope{
-			Type_Parameters: struct_type_parameter_set(type_specification),
 			Defined:         defined,
 			Current_Package: helper_package_path(file, components),
 			Imports:         helper_import_paths(file.File),
@@ -1181,18 +1188,141 @@ func defined_pointer_file_diagnostics(
 	return diags
 }
 
+// Defined_Pointer is the star at the end of one defined type's chain, resolved in the file that
+// spells it.
+type Defined_Pointer struct {
+	// Helper is the pointee's package-qualified helper identity, empty for an unnamed pointee.
+	Helper string
+	// Pointee is the pointee's spelled base name, for the missing-helper remedy.
+	Pointee string
+}
+
+// Defined_Pointer_Index resolves every defined type of the module that ends in a star.
+type Defined_Pointer_Index struct {
+	// Pointers maps a package-qualified type name spelled over a star to its pointee.
+	Pointers map[string]Defined_Pointer
+	// Chains maps a package-qualified type name spelled over another name to that name.
+	Chains map[string]string
+}
+
+// One walk over every declaration. A chain link is resolved in its own file, because the
+// qualifier of a foreign name is that file's import name.
+func index_defined_pointers(
+	parsed_files []Parsed_File, components *Component_Index,
+) (index *Defined_Pointer_Index) {
+	index = &Defined_Pointer_Index{
+		Pointers: map[string]Defined_Pointer{},
+		Chains:   map[string]string{},
+	}
+	for _, file := range parsed_files {
+		if strings.Has_Suffix(file.Path, "_test.go") {
+			continue
+		}
+		scope := &Invariant_Scope{
+			Current_Package: helper_package_path(file, components),
+			Imports:         helper_import_paths(file.File),
+		}
+		for _, declaration := range file.File.Decls {
+			general, is_general := declaration.(*ast.GenDecl)
+			if !is_general {
+				continue
+			}
+			if general.Tok != token.TYPE {
+				continue
+			}
+			for _, specification := range general.Specs {
+				index_defined_pointer_specification(specification, scope, index)
+			}
+		}
+	}
+	return index
+}
+
+// An alias adds a name and no identity, thus it is never indexed.
+func index_defined_pointer_specification(
+	specification ast.Spec, scope *Invariant_Scope, index *Defined_Pointer_Index,
+) {
+	type_specification, is_type := specification.(*ast.TypeSpec)
+	if !is_type {
+		return
+	}
+	if type_specification.Assign.IsValid() {
+		return
+	}
+	identity := scope.Current_Package + "\x00" + type_specification.Name.Name
+	pointer, is_pointer := type_specification.Type.(*ast.StarExpr)
+	if is_pointer {
+		scope.Type_Parameters = struct_type_parameter_set(type_specification)
+		index.Pointers[identity] = Defined_Pointer{
+			Helper:  struct_named_invariant(pointer.X, scope),
+			Pointee: type_base_name(pointer.X),
+		}
+		return
+	}
+	next := defined_pointer_type_identity(type_specification.Type, scope)
+	if next == "" {
+		return
+	}
+	index.Chains[identity] = next
+}
+
+// Package-qualified identity of a spelled type name, or empty for a predeclared or unnamed one.
+func defined_pointer_type_identity(expression ast.Expr, scope *Invariant_Scope) (identity string) {
+	selector, is_selector := expression.(*ast.SelectorExpr)
+	if is_selector {
+		package_path := struct_selector_package(selector, scope.Imports)
+		if package_path == "" {
+			return ""
+		}
+		return package_path + "\x00" + selector.Sel.Name
+	}
+	identifier, is_identifier := expression.(*ast.Ident)
+	if !is_identifier {
+		return ""
+	}
+	if struct_is_builtin(identifier.Name) {
+		return ""
+	}
+	return scope.Current_Package + "\x00" + identifier.Name
+}
+
+// Follows one declaration to the star at its chain's end. Every chain ends within the link count,
+// because a cycle does not compile. The bound keeps the walk finite on input the compiler never
+// saw.
+func defined_pointer_resolve(
+	type_specification *ast.TypeSpec, file Parsed_File, index *Defined_Pointer_Index,
+	components *Component_Index,
+) (pointer Defined_Pointer, is_pointer bool) {
+	if type_specification.Assign.IsValid() {
+		return Defined_Pointer{}, false
+	}
+	current := helper_package_path(file, components) + "\x00" + type_specification.Name.Name
+	for step := 0; step <= len(index.Chains); step++ {
+		pointer, is_pointer = index.Pointers[current]
+		if is_pointer {
+			return pointer, true
+		}
+		next, chained := index.Chains[current]
+		if !chained {
+			return Defined_Pointer{}, false
+		}
+		current = next
+	}
+	return Defined_Pointer{}, false
+}
+
 // One helper, one gap. Pointee first: a body cannot be judged against a helper that has no name
 // or does not exist, and each of those is its own defect.
 func defined_pointer_gap(
-	helper *ast.FuncDecl, pointer *ast.StarExpr, parameter string, scope *Invariant_Scope,
+	helper *ast.FuncDecl, pointer Defined_Pointer, parameter string, scope *Invariant_Scope,
 ) (gap string) {
-	expected := struct_named_invariant(pointer.X, scope)
+	expected := pointer.Helper
 	if expected == "" {
 		return "points at an unnamed type. Name the pointee type, then call its " +
 			"_Invariants on *" + parameter + "."
 	}
 	if !scope.Defined[expected] {
-		return "points at " + type_base_name(pointer.X) + " without " +
+		return "points at " + pointer.Pointee + " without " +
 			helper_identity_name(expected) + ". Declare " +
 			helper_identity_name(expected) + "."
 	}
@@ -1201,23 +1331,24 @@ func defined_pointer_gap(
 		return ""
 	}
 	return "body is not exactly `if " + parameter + " == nil { return }` then `" +
-		defined_pointer_callee_text(pointer.X, expected) +
+		defined_pointer_callee_text(expected, scope) +
 		"(*" + parameter + ", " + namespace + ")`."
 }
 
 // Remedy text is what the reader types. A foreign pointee's helper is reached through the
 // file's own import name, thus the message carries that qualifier.
-func defined_pointer_callee_text(pointee ast.Expr, expected string) (text string) {
+func defined_pointer_callee_text(expected string, scope *Invariant_Scope) (text string) {
 	text = helper_identity_name(expected)
-	selector, is_selector := pointee.(*ast.SelectorExpr)
-	if !is_selector {
+	package_path := strings.Trim_Suffix(expected, "\x00"+text)
+	if package_path == scope.Current_Package {
 		return text
 	}
-	qualifier, is_identifier := selector.X.(*ast.Ident)
-	if !is_identifier {
-		return text
+	for local, import_path := range scope.Imports {
+		if import_path == package_path {
+			return local + "." + text
+		}
 	}
-	return qualifier.Name + "." + text
+	return text
 }
 
 // Body's own Namespace parameter is the only namespace a nested bundle call may forward. A blank
