@@ -740,14 +740,18 @@ func encode_body(
 	Internal_Position_Invariants(destination_position, "encode_body.destination_position")
 	Encode_Data_Invariants(data, "encode_body.data")
 	next := destination_position
-	encoding := base64.Standard_Encoding()
+	encoding, encoding_status := base64.New_Encoding(base64.STANDARD_ALPHABET)
+	aver.Always(
+		encoding_status == base64.STATUS_OK,
+		"The base64 configuration a PEM body is written with is valid.",
+	)
 	for source_position := bytes.SLICE_SIZE_MINIMUM; source_position < len(data); {
 		source_size := len(data) - source_position
 		if source_size > BASE64_LINE_SOURCE_SIZE {
 			source_size = BASE64_LINE_SOURCE_SIZE
 		}
 		encoded_count, size_status := base64.Encoded_Size(
-			encoding, base64.Source_Count(source_size),
+			encoding, base64.STANDARD_PADDING, base64.Source_Count(source_size),
 		)
 		aver.Always(
 			size_status == base64.STATUS_OK,
@@ -757,7 +761,7 @@ func encode_body(
 		count, encode_status := base64.Encode_Into(
 			base64.Encoded(destination[next:line_end]),
 			base64.Source(data[source_position:source_position+source_size]),
-			encoding,
+			encoding, base64.STANDARD_PADDING,
 		)
 		aver.Always(
 			encode_status == base64.STATUS_OK,
@@ -971,7 +975,11 @@ func body_encoding_valid(
 	Block_Source_Invariants(source, "body_encoding_valid.source")
 	Internal_Position_Invariants(body_start, "body_encoding_valid.body_start")
 	Internal_Position_Invariants(body_end, "body_encoding_valid.body_end")
-	encoding := base64.Standard_Encoding()
+	encoding, encoding_status := base64.New_Encoding(base64.STANDARD_ALPHABET)
+	aver.Always(
+		encoding_status == base64.STATUS_OK,
+		"The base64 configuration a PEM body is validated with is valid.",
+	)
 	var quantum [base64.ENCODED_GROUP_SIZE]byte
 	var decoded [base64.DECODED_GROUP_SIZE]byte
 	quantum_count := bytes.SLICE_SIZE_MINIMUM
@@ -991,6 +999,7 @@ func body_encoding_valid(
 		}
 		_, status := base64.Decode_Into(
 			base64.Decoded(decoded[:]), base64.Encoded(quantum[:]), encoding,
+			base64.STANDARD_PADDING,
 		)
 		if status != base64.STATUS_OK {
 			return false
@@ -1015,7 +1024,11 @@ func decode_body(
 	Internal_Position_Invariants(body_start, "decode_body.body_start")
 	Internal_Position_Invariants(body_end, "decode_body.body_end")
 	Decoded_Count_Invariants(decoded_size, "decode_body.decoded_size")
-	encoding := base64.Standard_Encoding()
+	encoding, encoding_status := base64.New_Encoding(base64.STANDARD_ALPHABET)
+	aver.Always(
+		encoding_status == base64.STATUS_OK,
+		"The base64 configuration a PEM body is read with is valid.",
+	)
 	var quantum [base64.ENCODED_GROUP_SIZE]byte
 	quantum_count := bytes.SLICE_SIZE_MINIMUM
 	destination_position := bytes.SLICE_SIZE_MINIMUM
@@ -1031,7 +1044,7 @@ func decode_body(
 		}
 		count, status := base64.Decode_Into(
 			base64.Decoded(destination[destination_position:]),
-			base64.Encoded(quantum[:]), encoding,
+			base64.Encoded(quantum[:]), encoding, base64.STANDARD_PADDING,
 		)
 		aver.Always(
 			status == base64.STATUS_OK,

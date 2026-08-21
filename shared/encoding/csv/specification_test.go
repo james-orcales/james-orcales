@@ -11,7 +11,7 @@ import (
 
 // Test_Configuration preserves standard and custom dialect validation.
 func Test_Configuration(t *testing.T) {
-	standard := csv.Standard_Configuration()
+	standard := standard_configuration(t)
 	testify.Equal(t, csv.Delimiter_Character(','), csv.Configuration_Delimiter(standard))
 	testify.Equal(t, csv.Comment_Character(0), csv.Configuration_Comment(standard))
 
@@ -48,7 +48,7 @@ func Test_Encode(t *testing.T) {
 		{Value: csv.Field_Value(`\.`)},
 		{},
 	}
-	configuration := csv.Standard_Configuration()
+	configuration := standard_configuration(t)
 	required, size_status := csv.Encoded_Size(fields[:], configuration)
 	testify.Equal_Values(t, csv.STATUS_OK, size_status)
 	count, status := csv.Encode_Into(destination[:int(required)], fields[:], configuration)
@@ -103,6 +103,16 @@ func Test_Allocation(t *testing.T) {
 const TEST_SENTINEL byte = 0xa5
 
 const ENCODED_STANDARD = "a,\"b,c\",\"a\"\"b\",\"line\nnext\",\" leading\",\"\\.\",\n"
+
+func standard_configuration(t *testing.T) (configuration csv.Configuration) {
+	t.Helper()
+	configuration, status := csv.New_Configuration(csv.Configuration_Input{
+		Delimiter:         csv.STANDARD_DELIMITER,
+		Fields_Per_Record: csv.FIELDS_PER_RECORD_INFERRED,
+	})
+	testify.Equal_Values(t, csv.STATUS_OK, status)
+	return configuration
+}
 
 func custom_configuration(t *testing.T) (configuration csv.Configuration) {
 	t.Helper()
@@ -162,7 +172,7 @@ func test_configuration_domains(t *testing.T) {
 		testify.Equal_Values(t, one.Status, status)
 	}
 
-	standard := csv.Standard_Configuration()
+	standard := standard_configuration(t)
 	testify.Equal(t, csv.Comment_Character(0), csv.Configuration_Comment(standard))
 	for _, character := range [...]int32{1, 2, utf8.DECODED_CHARACTER_MAXIMUM} {
 		configuration, status := csv.New_Configuration(csv.Configuration_Input{
@@ -187,10 +197,74 @@ func test_configuration_domains(t *testing.T) {
 	var invalid_decoder csv.Decoder
 	decoder_status := csv.Decoder_Init(&invalid_decoder, csv.Configuration{})
 	testify.Equal_Values(t, csv.STATUS_CONFIGURATION_INVALID, decoder_status)
+	testify.Panics(t, func() { csv.Configuration_Delimiter(csv.Configuration{}) })
+	testify.Panics(t, func() { csv.Configuration_Comment(csv.Configuration{}) })
+	test_stored_domains(t)
+}
+
+// Every stored scalar has boundary branches in each namespace a configuration or
+// decoder passes through, so one sweep drives every boundary through every entry.
+func test_stored_domains(t *testing.T) {
+	t.Helper()
+	inputs := [...]csv.Configuration_Input{
+		{Delimiter: 1, Fields_Per_Record: csv.FIELDS_PER_RECORD_UNCHECKED},
+		{
+			Delimiter: 2, Comment: csv.Comment(utf8.DECODED_CHARACTER_MAXIMUM),
+			Fields_Per_Record: 1, Lazy_Quotes: true,
+		},
+		{
+			Delimiter: csv.Delimiter(utf8.DECODED_CHARACTER_MAXIMUM), Comment: 1,
+			Fields_Per_Record: 2, Trim_Leading_Space: true,
+		},
+		{
+			Delimiter: ',', Comment: 2, Fields_Per_Record: csv.FIELD_COUNT_MAXIMUM,
+			Lazy_Quotes: true, Trim_Leading_Space: true, Use_CRLF: true,
+		},
+	}
+	var configurations [len(inputs) + 1]csv.Configuration
+	for index, input := range inputs {
+		configuration, status := csv.New_Configuration(input)
+		testify.Equal_Values(t, csv.STATUS_OK, status)
+		configurations[index] = configuration
+		csv.Configuration_Delimiter(configuration)
+		csv.Configuration_Comment(configuration)
+	}
+	for _, configuration := range configurations {
+		test_stored_domain_entries(t, configuration)
+	}
+}
+
+func test_stored_domain_entries(t *testing.T, configuration csv.Configuration) {
+	t.Helper()
+	var encoded [csv.ENCODED_SIZE_MAXIMUM]byte
+	var decoded [csv.DECODED_SIZE_MAXIMUM]byte
+	var fields [csv.FIELD_COUNT_MAXIMUM]csv.Field
+	two_fields := [...]csv.Field{{Value: csv.Field_Value("a")}, {Value: csv.Field_Value("b")}}
+	csv.Encoded_Size(two_fields[:], configuration)
+	csv.Encode_Into(encoded[:], two_fields[:], configuration)
+	var decoder csv.Decoder
+	csv.Decoder_Init(&decoder, configuration)
+	csv.Decoder_Init(&decoder, configuration)
+	csv.Decode_Record_Into(decoded[:], fields[:], csv.Encoded("a\n"), &decoder)
+	csv.Decoder_Init(&decoder, csv.Configuration{})
+	csv.Decode_Record_Into(decoded[:], fields[:], csv.Encoded("a"), &decoder)
+	csv.Decode_Record_Into(decoded[:0], fields[:], csv.Encoded("a"), &decoder)
+	csv.Decode_Record_Into(decoded[:], fields[:0], csv.Encoded("a"), &decoder)
+	// A source made only of line endings drives a fresh cursor to its maximum, and
+	// the decoder then carries that maximum into every later entry.
+	csv.Decoder_Init(&decoder, configuration)
+	var line_endings [csv.ENCODED_SIZE_MAXIMUM]byte
+	for index := range line_endings {
+		line_endings[index] = '\n'
+	}
+	csv.Decode_Record_Into(decoded[:], fields[:], line_endings[:], &decoder)
+	csv.Decode_Record_Into(decoded[:], fields[:], nil, &decoder)
+	csv.Decoder_Init(&decoder, csv.Configuration{})
+	csv.Decoder_Init(&decoder, configuration)
 }
 
 func test_decode_standard(t *testing.T) {
-	configuration := csv.Standard_Configuration()
+	configuration := standard_configuration(t)
 	decoder := test_decoder(t, configuration)
 	var decoded [csv.DECODED_SIZE_MAXIMUM]byte
 	var fields [csv.FIELD_COUNT_MAXIMUM]csv.Field
@@ -244,7 +318,7 @@ func test_decode_custom(t *testing.T) {
 }
 
 func test_decode_field_count(t *testing.T) {
-	configuration := csv.Standard_Configuration()
+	configuration := standard_configuration(t)
 	decoder := test_decoder(t, configuration)
 	var decoded [csv.DECODED_SIZE_MAXIMUM]byte
 	var fields [csv.FIELD_COUNT_MAXIMUM]csv.Field
@@ -260,10 +334,16 @@ func test_decode_field_count(t *testing.T) {
 	testify.Equal_Values(t, csv.STATUS_FIELD_COUNT_INVALID, status)
 	testify.Equal(t, csv.Line(2), position.Line)
 	testify.Equal(t, csv.Column(1), position.Column)
+	// The rejected record was consumed, so the decoder's line cursor must move past it.
+	third := csv.Encoded("f,g,h\n")
+	count, _, _, status = csv.Decode_Record_Into(decoded[:], fields[:], third, &decoder)
+	testify.Equal(t, csv.Field_Count(3), count)
+	testify.Equal_Values(t, csv.STATUS_OK, status)
+	testify.Equal(t, csv.Line(3), fields[0].Line)
 }
 
 func test_decode_invalid(t *testing.T) {
-	configuration := csv.Standard_Configuration()
+	configuration := standard_configuration(t)
 	decoder := test_decoder(t, configuration)
 	var decoded [csv.DECODED_SIZE_MAXIMUM]byte
 	var fields [csv.FIELD_COUNT_MAXIMUM]csv.Field
@@ -291,7 +371,7 @@ func test_maximum_encoded(t *testing.T) {
 		value[index] = 'a'
 	}
 	fields := [...]csv.Field{{Value: value[:]}}
-	configuration := csv.Standard_Configuration()
+	configuration := standard_configuration(t)
 	required, size_status := csv.Encoded_Size(fields[:], configuration)
 	testify.Equal(t, csv.Encoded_Count(len(destination)), required)
 	testify.Equal_Values(t, csv.STATUS_OK, size_status)
@@ -307,7 +387,7 @@ func test_maximum_decoded(t *testing.T) {
 	for index := range source {
 		source[index] = 'a'
 	}
-	decoder := test_decoder(t, csv.Standard_Configuration())
+	decoder := test_decoder(t, standard_configuration(t))
 	count, consumed, _, status := csv.Decode_Record_Into(
 		decoded[:], fields[:], source[:], &decoder,
 	)
@@ -323,12 +403,12 @@ func test_maximum_fields(t *testing.T) {
 	for index := range source {
 		source[index] = ','
 	}
-	decoder := test_decoder(t, csv.Standard_Configuration())
+	decoder := test_decoder(t, standard_configuration(t))
 	count, consumed, _, status := csv.Decode_Record_Into(nil, fields[:], source[:], &decoder)
 	testify.Equal_Values(t, csv.STATUS_OK, status)
 	testify.Equal(t, csv.Field_Count(len(fields)), count)
 	testify.Equal(t, csv.Consumed_Count(len(source)), consumed)
-	_, size_status := csv.Encoded_Size(fields[:], csv.Standard_Configuration())
+	_, size_status := csv.Encoded_Size(fields[:], standard_configuration(t))
 	testify.Equal_Values(t, csv.STATUS_RECORD_TOO_LARGE, size_status)
 }
 
@@ -336,14 +416,14 @@ func test_overlap(t *testing.T) {
 	var storage [csv.ENCODED_SIZE_MAXIMUM]byte
 	copy(storage[:], "a,b\n")
 	var fields [csv.FIELD_COUNT_MAXIMUM]csv.Field
-	decoder := test_decoder(t, csv.Standard_Configuration())
+	decoder := test_decoder(t, standard_configuration(t))
 	_, _, _, decode_status := csv.Decode_Record_Into(
 		storage[:], fields[:], storage[:len("a,b\n")], &decoder,
 	)
 	testify.Equal_Values(t, csv.STATUS_STORAGE_INVALID, decode_status)
 	encode_fields := [...]csv.Field{{Value: storage[:1]}}
 	_, encode_status := csv.Encode_Into(
-		storage[:], encode_fields[:], csv.Standard_Configuration(),
+		storage[:], encode_fields[:], standard_configuration(t),
 	)
 	testify.Equal_Values(t, csv.STATUS_STORAGE_INVALID, encode_status)
 }
@@ -356,17 +436,17 @@ func test_bound_refusals(t *testing.T) {
 	var decoded_oversized [csv.DECODED_SIZE_MAXIMUM + 1]byte
 	var fields_oversized [csv.FIELD_COUNT_MAXIMUM + 1]csv.Field
 	var value_oversized [csv.FIELD_VALUE_SIZE_MAXIMUM + 1]byte
-	decoder := test_decoder(t, csv.Standard_Configuration())
+	decoder := test_decoder(t, standard_configuration(t))
 	testify.Panics(t, func() {
-		csv.Encode_Into(encoded_oversized[:], nil, csv.Standard_Configuration())
+		csv.Encode_Into(encoded_oversized[:], nil, standard_configuration(t))
 	})
 	testify.Panics(t, func() {
-		csv.Encode_Into(encoded[:], fields_oversized[:], csv.Standard_Configuration())
+		csv.Encode_Into(encoded[:], fields_oversized[:], standard_configuration(t))
 	})
 	testify.Panics(t, func() {
 		csv.Encode_Into(
 			encoded[:], []csv.Field{{Value: value_oversized[:]}},
-			csv.Standard_Configuration(),
+			standard_configuration(t),
 		)
 	})
 	testify.Panics(t, func() {
@@ -388,7 +468,7 @@ func test_public_domains(t *testing.T) {
 
 func test_encode_domains(t *testing.T) {
 	t.Helper()
-	configuration := csv.Standard_Configuration()
+	configuration := standard_configuration(t)
 	var encoded [csv.ENCODED_SIZE_MAXIMUM]byte
 	count, size_status := csv.Encoded_Size(nil, configuration)
 	testify.Equal(t, csv.Encoded_Count(1), count)
@@ -423,11 +503,11 @@ func test_encode_domains(t *testing.T) {
 	testify.Equal(t, csv.Encoded_Count(csv.ENCODED_SIZE_MAXIMUM), count)
 	testify.Equal_Values(t, csv.STATUS_OK, encode_status)
 	invalid_delimiter := configuration
-	invalid_delimiter.Delimiter = csv.Delimiter('\n')
+	invalid_delimiter.Delimiter = csv.Delimiter_Stored('\n')
 	_, size_status = csv.Encoded_Size(nil, invalid_delimiter)
 	testify.Equal_Values(t, csv.STATUS_CONFIGURATION_INVALID, size_status)
 	invalid_comment := custom_configuration(t)
-	invalid_comment.Comment = csv.Comment('\n')
+	invalid_comment.Comment = csv.Comment_Character('\n')
 	_, size_status = csv.Encoded_Size(nil, invalid_comment)
 	testify.Equal_Values(t, csv.STATUS_CONFIGURATION_INVALID, size_status)
 }
@@ -440,7 +520,7 @@ func test_decode_domains(t *testing.T) {
 
 func test_decode_slice_domains(t *testing.T) {
 	t.Helper()
-	configuration := csv.Standard_Configuration()
+	configuration := standard_configuration(t)
 	var decoded [csv.DECODED_SIZE_MAXIMUM]byte
 	var fields [csv.FIELD_COUNT_MAXIMUM]csv.Field
 	decoder := test_decoder(t, configuration)
@@ -503,7 +583,7 @@ func test_decode_slice_domains(t *testing.T) {
 
 func test_decode_position_domains(t *testing.T) {
 	t.Helper()
-	configuration := csv.Standard_Configuration()
+	configuration := standard_configuration(t)
 	var decoded [csv.DECODED_SIZE_MAXIMUM]byte
 	var fields [csv.FIELD_COUNT_MAXIMUM]csv.Field
 	decoder := test_decoder(t, configuration)
@@ -567,7 +647,14 @@ func test_configuration_allocation(t *testing.T) {
 		configuration, status = csv.New_Configuration(invalid)
 	})
 	testify.Equal_Values(t, csv.STATUS_CONFIGURATION_INVALID, status)
-	testify.Zero_Allocation(t, func() { configuration = csv.Standard_Configuration() })
+	standard := csv.Configuration_Input{
+		Delimiter:         csv.STANDARD_DELIMITER,
+		Fields_Per_Record: csv.FIELDS_PER_RECORD_INFERRED,
+	}
+	testify.Zero_Allocation(t, func() {
+		configuration, status = csv.New_Configuration(standard)
+	})
+	testify.Equal_Values(t, csv.STATUS_OK, status)
 	testify.True(t, csv.Configuration_Delimiter(configuration) == ',')
 	var decoder csv.Decoder
 	var decoder_status csv.Decoder_Status
@@ -590,7 +677,7 @@ func test_encode_allocation(t *testing.T) {
 	}
 	large_fields := [...]csv.Field{{Value: large[:]}}
 	overlap_fields := [...]csv.Field{{Value: destination[:1]}}
-	configuration := csv.Standard_Configuration()
+	configuration := standard_configuration(t)
 	invalid := csv.Configuration{}
 	var count csv.Encoded_Count
 	var status csv.Encode_Status
@@ -623,7 +710,7 @@ func test_decode_allocation(t *testing.T) {
 	valid := csv.Encoded("a,b\n")
 	invalid := csv.Encoded("a,ba\"d\n")
 	empty := csv.Encoded("\n")
-	configuration := csv.Standard_Configuration()
+	configuration := standard_configuration(t)
 	var count csv.Field_Count
 	var consumed csv.Consumed_Count
 	var position csv.Parse_Position
@@ -680,4 +767,31 @@ func test_decode_allocation(t *testing.T) {
 	testify.True(t, count <= csv.FIELD_COUNT_MAXIMUM)
 	testify.True(t, consumed <= csv.ENCODED_SIZE_MAXIMUM)
 	testify.True(t, position.Line <= csv.LINE_MAXIMUM)
+	test_decode_many_lines_allocation(t)
 }
+
+// Line numbers past 255 leave the runtime small-integer cache, so any boxing of
+// decoder line state shows up only here.
+func test_decode_many_lines_allocation(t *testing.T) {
+	t.Helper()
+	var decoded [csv.DECODED_SIZE_MAXIMUM]byte
+	var fields [csv.FIELD_COUNT_MAXIMUM]csv.Field
+	var many_lines [TEST_LINE_COUNT_LARGE + len("a\n")]byte
+	for index := range many_lines {
+		many_lines[index] = '\n'
+	}
+	many_lines[TEST_LINE_COUNT_LARGE] = 'a'
+	decoder := test_decoder(t, standard_configuration(t))
+	var status csv.Decode_Status
+	testify.Zero_Allocation(t, func() {
+		_, _, _, status = csv.Decode_Record_Into(
+			decoded[:], fields[:], many_lines[:], &decoder,
+		)
+	})
+	testify.Equal_Values(t, csv.STATUS_OK, status)
+	// The callback runs more than once on the same decoder, so only the lower bound holds.
+	testify.True(t, fields[0].Line > csv.Line(TEST_LINE_COUNT_LARGE))
+}
+
+// TEST_LINE_COUNT_LARGE exceeds the 256-entry small-integer cache the runtime boxes for free.
+const TEST_LINE_COUNT_LARGE = 300

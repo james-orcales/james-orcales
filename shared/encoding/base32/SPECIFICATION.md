@@ -1,9 +1,9 @@
 
 # Configuration
 
-New_Encoding validates one 32-byte alphabet and padding atomically. Standard_Encoding and
-Hexadecimal_Encoding return immutable-by-copy RFC 4648 configurations. With_Padding validates a
-replacement without changing its input. Invalid configuration returns scalar Status.
+New_Encoding validates one 32-byte alphabet; STANDARD_ALPHABET and HEXADECIMAL_ALPHABET select
+the RFC 4648 ones. Padding is an argument of each operation, refused there when it is not one
+wire byte outside the alphabet or NO_PADDING. Invalid input returns scalar Status.
 
 # Encode
 

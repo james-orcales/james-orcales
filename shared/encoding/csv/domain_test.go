@@ -35,13 +35,15 @@ func Test_Internal_Boundaries(_ *testing.T) {
 			field_statuses[index],
 		)
 	}
-	new_decode_result(0, 0, 0, 0, STATUS_OK)
-	new_decode_result(1, 1, 1, 1, STATUS_OUTPUT_TOO_SMALL)
-	new_decode_result(2, 2, 2, 2, STATUS_END)
+	new_decode_result(0, 0, 0, 0, STATUS_OK, LINE_FIRST, FIELDS_PER_RECORD_UNCHECKED)
+	new_decode_result(1, 1, 1, 1, STATUS_OUTPUT_TOO_SMALL, 1, FIELDS_PER_RECORD_INFERRED)
+	new_decode_result(2, 2, 2, 2, STATUS_END, 2, 1)
 	new_decode_result(
 		FIELD_COUNT_MAXIMUM, ENCODED_SIZE_MAXIMUM, LINE_MAXIMUM,
-		COLUMN_MAXIMUM, STATUS_FIELDS_TOO_SMALL,
+		COLUMN_MAXIMUM, STATUS_FIELDS_TOO_SMALL, NEXT_LINE_MAXIMUM, FIELD_COUNT_MAXIMUM,
 	)
+	new_decode_result(0, 0, 0, 0, STATUS_OK, LINE_FIRST, 2)
+	test_internal_state_boundaries(parsers[:])
 	var source_storage [ENCODED_SIZE_MAXIMUM]byte
 	var decoded_storage [DECODED_SIZE_MAXIMUM]byte
 	source := Nonempty_Encoded(source_storage[:])
@@ -70,6 +72,41 @@ func Test_Internal_Boundaries(_ *testing.T) {
 		{Line: 2, Column: 1},
 	} {
 		decode_unquoted(decoded, invalid[1:], delimiter, false, parser)
+	}
+}
+
+// The record parser only ever receives a fresh parser and an initialized state, so
+// their boundaries are reached here through the internal entry.
+func test_internal_state_boundaries(parsers []Parser) {
+	var decoded_storage [DECODED_SIZE_MAXIMUM]byte
+	var source_storage [ENCODED_SIZE_MAXIMUM]byte
+	var fields [FIELD_COUNT_MAXIMUM]Field
+	decoded := Decoded(decoded_storage[:])
+	source := Nonempty_Encoded(source_storage[:])
+	states := [...]Decoder_State{
+		{Delimiter: 1, Comment: 0, Fields_Per_Record: FIELDS_PER_RECORD_UNCHECKED,
+			Next_Line: LINE_FIRST},
+		{Delimiter: 2, Comment: 1, Policy: POLICY_LAZY_QUOTES, Fields_Per_Record: 1,
+			Next_Line: 2},
+		{Delimiter: 3, Comment: 2, Policy: POLICY_TRIM_LEADING_SPACE, Fields_Per_Record: 2,
+			Next_Line: NEXT_LINE_MAXIMUM},
+		{
+			Delimiter:         Delimiter_Character(utf8.DECODED_CHARACTER_MAXIMUM),
+			Comment:           Comment_Character(utf8.DECODED_CHARACTER_MAXIMUM),
+			Policy:            POLICY_MAXIMUM,
+			Fields_Per_Record: FIELD_COUNT_MAXIMUM,
+			Next_Line:         LINE_FIRST,
+		},
+	}
+	decode_fields_unchecked(decoded, fields[:], source, states[0], Parser{Record_Done: true})
+	for index, state := range states {
+		decode_fields_unchecked(decoded, fields[:], source, state, parsers[index])
+		decode_record_unchecked(decoded, fields[:], nil, state)
+		// A record that starts past LINE_MAXIMUM has no representable position, so
+		// the maximum cursor is only ever followed by end of input.
+		if state.Next_Line < NEXT_LINE_MAXIMUM {
+			decode_record_unchecked(decoded, fields[:], Encoded(source), state)
+		}
 	}
 }
 

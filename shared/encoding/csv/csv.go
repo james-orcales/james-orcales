@@ -261,75 +261,83 @@ func Configuration_Input_Invariants(
 	Use_CRLF_Invariants(value.Use_CRLF, namespace)
 }
 
-// Delimiter_Storage hides raw policy domain from fixed configuration output.
-type Delimiter_Storage interface{}
+// Configured marks storage that passed construction; the zero value is unvalidated.
+type Configured uint8
 
-// Comment_Storage hides raw policy domain from fixed configuration output.
-type Comment_Storage interface{}
+// Configured_Invariants lists the unvalidated zero value and the configured marker.
+func Configured_Invariants(value Configured, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Enum_Uint8(uint8(value), uint8(UNCONFIGURED), uint8(CONFIGURED)).
+		Ensure()
+}
 
-// Fields_Per_Record_Storage hides raw width domain from fixed configuration output.
-type Fields_Per_Record_Storage interface{}
+// UNCONFIGURED is the zero-value marker of a zero Configuration or Decoder.
+const UNCONFIGURED Configured = 0
 
-// Lazy_Quotes_Storage hides raw policy domain from fixed configuration output.
-type Lazy_Quotes_Storage interface{}
+// CONFIGURED marks storage that passed construction.
+const CONFIGURED = UNCONFIGURED + 1
 
-// Trim_Leading_Space_Storage hides raw policy domain from fixed configuration output.
-type Trim_Leading_Space_Storage interface{}
+// Delimiter_Stored holds the delimiter as a scalar that admits the unconfigured zero;
+// an interface field would box any non-Latin-1 code point on assignment.
+type Delimiter_Stored int32
 
-// Use_CRLF_Storage hides raw policy domain from fixed configuration output.
-type Use_CRLF_Storage interface{}
+// Delimiter_Stored_Invariants keeps stored policy inside the Unicode scalar domain.
+func Delimiter_Stored_Invariants(value Delimiter_Stored, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Int32(
+			int32(value), int32(bytes.SLICE_SIZE_MINIMUM),
+			utf8.DECODED_CHARACTER_MAXIMUM,
+		).
+		Ensure()
+}
 
-// Next_Line_Storage hides raw line domain from fixed decoder output.
-type Next_Line_Storage interface{}
+// Policy_Stored packs the boolean dialect switches into one byte, so one Range covers
+// what three defined Boolean fields would each demand a Sometimes for.
+type Policy_Stored uint8
+
+// Policy_Stored_Invariants admits only defined policy bits.
+func Policy_Stored_Invariants(value Policy_Stored, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Uint8(uint8(value), uint8(POLICY_NONE), uint8(POLICY_MAXIMUM)).
+		Ensure()
+}
+
+// POLICY_NONE selects strict quotes, kept space, and line feeds.
+const POLICY_NONE Policy_Stored = 0
+
+// POLICY_LAZY_QUOTES admits otherwise malformed quotes.
+const POLICY_LAZY_QUOTES Policy_Stored = 1
+
+// POLICY_TRIM_LEADING_SPACE removes Unicode space before fields.
+const POLICY_TRIM_LEADING_SPACE = POLICY_LAZY_QUOTES << 1
+
+// POLICY_USE_CRLF selects carriage-return line feeds while encoding.
+const POLICY_USE_CRLF = POLICY_TRIM_LEADING_SPACE << 1
+
+// POLICY_MAXIMUM includes every defined policy bit.
+const POLICY_MAXIMUM = POLICY_LAZY_QUOTES | POLICY_TRIM_LEADING_SPACE | POLICY_USE_CRLF
 
 // Configuration stores validated policy entirely by value.
 type Configuration struct {
 	// Delimiter retains one code point for local wire encoding.
-	Delimiter Delimiter_Storage
+	Delimiter Delimiter_Stored
 	// Comment is zero when comments are disabled.
-	Comment Comment_Storage
+	Comment Comment_Character
 	// Fields_Per_Record selects width validation.
-	Fields_Per_Record Fields_Per_Record_Storage
-	// Lazy_Quotes admits otherwise malformed quotes.
-	Lazy_Quotes Lazy_Quotes_Storage
-	// Trim_Leading_Space removes Unicode space before fields.
-	Trim_Leading_Space Trim_Leading_Space_Storage
-	// Use_CRLF selects carriage-return line feeds while encoding.
-	Use_CRLF Use_CRLF_Storage
+	Fields_Per_Record Fields_Per_Record
+	// Policy carries the lazy quote, trim, and CRLF switches.
+	Policy Policy_Stored
+	// Validated separates a zero value from a constructed one.
+	Validated Configured
 }
 
-// Configuration_Invariants admits zero failure output and typed configured storage.
-func Configuration_Invariants(value Configuration, _ aver.Namespace) {
-	_, delimiter_valid := value.Delimiter.(Delimiter)
-	_, comment_valid := value.Comment.(Comment)
-	_, fields_valid := value.Fields_Per_Record.(Fields_Per_Record)
-	_, lazy_valid := value.Lazy_Quotes.(Lazy_Quotes)
-	_, trim_valid := value.Trim_Leading_Space.(Trim_Leading_Space)
-	_, crlf_valid := value.Use_CRLF.(Use_CRLF)
-	aver.Always(
-		delimiter_valid == (value.Delimiter != nil),
-		"Configuration delimiter storage has expected type.",
-	)
-	aver.Always(
-		comment_valid == (value.Comment != nil),
-		"Configuration comment storage has expected type.",
-	)
-	aver.Always(
-		fields_valid == (value.Fields_Per_Record != nil),
-		"Configuration field count storage has expected type.",
-	)
-	aver.Always(
-		lazy_valid == (value.Lazy_Quotes != nil),
-		"Configuration lazy quote storage has expected type.",
-	)
-	aver.Always(
-		trim_valid == (value.Trim_Leading_Space != nil),
-		"Configuration trim storage has expected type.",
-	)
-	aver.Always(
-		crlf_valid == (value.Use_CRLF != nil),
-		"Configuration line ending storage has expected type.",
-	)
+// Configuration_Invariants admits zero failure output and marked configured storage.
+func Configuration_Invariants(value Configuration, namespace aver.Namespace) {
+	Delimiter_Stored_Invariants(value.Delimiter, namespace)
+	Comment_Character_Invariants(value.Comment, namespace)
+	Fields_Per_Record_Invariants(value.Fields_Per_Record, namespace)
+	Policy_Stored_Invariants(value.Policy, namespace)
+	Configured_Invariants(value.Validated, namespace)
 }
 
 // Configuration_Valid reports complete storage validation without an error interface.
@@ -449,6 +457,17 @@ type Next_Line int
 func Next_Line_Invariants(value Next_Line, namespace aver.Namespace) {
 	aver.Tree(value, namespace).
 		Range_Int(int(value), bytes.SLICE_SIZE_MINIMUM, NEXT_LINE_MAXIMUM).
+		Ensure()
+}
+
+// Active_Line is the next physical line of an initialized decoder, never the zero
+// that precedes Decoder_Init.
+type Active_Line int
+
+// Active_Line_Invariants keeps initialized cross-record line state bounded.
+func Active_Line_Invariants(value Active_Line, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Int(int(value), LINE_FIRST, NEXT_LINE_MAXIMUM).
 		Ensure()
 }
 
@@ -588,51 +607,29 @@ func Parse_Position_Invariants(value Parse_Position, namespace aver.Namespace) {
 // Decoder retains only caller-owned cross-record policy state.
 type Decoder struct {
 	// Delimiter remains immutable after construction.
-	Delimiter Delimiter_Storage
+	Delimiter Delimiter_Stored
 	// Comment remains immutable after construction.
-	Comment Comment_Storage
-	// Lazy_Quotes remains immutable after construction.
-	Lazy_Quotes Lazy_Quotes_Storage
-	// Trim_Leading_Space remains immutable after construction.
-	Trim_Leading_Space Trim_Leading_Space_Storage
-	// Fields_Per_Record stores unchecked, inferred, or learned width.
-	Fields_Per_Record Fields_Per_Record_Storage
-	// Next_Line is the first line in the next caller source suffix.
-	Next_Line Next_Line_Storage
+	Comment Comment_Character
+	// Policy remains immutable after construction.
+	Policy Policy_Stored
+	// Fields_Per_Record stores unchecked, inferred, or learned width; a learned width
+	// past the runtime small-integer cache would allocate under interface storage.
+	Fields_Per_Record Fields_Per_Record
+	// Next_Line is the first line in the next caller source suffix, zero before
+	// initialization; a scalar so a large line number never boxes.
+	Next_Line Next_Line
+	// Validated separates a zero decoder from an initialized one.
+	Validated Configured
 }
 
-// Decoder_Invariants admits zero state and typed initialized storage.
-func Decoder_Invariants(value Decoder, _ aver.Namespace) {
-	_, delimiter_valid := value.Delimiter.(Delimiter)
-	_, comment_valid := value.Comment.(Comment)
-	_, lazy_valid := value.Lazy_Quotes.(Lazy_Quotes)
-	_, trim_valid := value.Trim_Leading_Space.(Trim_Leading_Space)
-	_, fields_valid := value.Fields_Per_Record.(Fields_Per_Record)
-	_, line_valid := value.Next_Line.(Next_Line)
-	aver.Always(
-		delimiter_valid == (value.Delimiter != nil),
-		"Decoder delimiter storage has expected type.",
-	)
-	aver.Always(
-		comment_valid == (value.Comment != nil),
-		"Decoder comment storage has expected type.",
-	)
-	aver.Always(
-		lazy_valid == (value.Lazy_Quotes != nil),
-		"Decoder lazy quote storage has expected type.",
-	)
-	aver.Always(
-		trim_valid == (value.Trim_Leading_Space != nil),
-		"Decoder trim storage has expected type.",
-	)
-	aver.Always(
-		fields_valid == (value.Fields_Per_Record != nil),
-		"Decoder field count storage has expected type.",
-	)
-	aver.Always(
-		line_valid == (value.Next_Line != nil),
-		"Decoder line storage has expected type.",
-	)
+// Decoder_Invariants admits zero state and marked initialized storage.
+func Decoder_Invariants(value Decoder, namespace aver.Namespace) {
+	Delimiter_Stored_Invariants(value.Delimiter, namespace)
+	Comment_Character_Invariants(value.Comment, namespace)
+	Policy_Stored_Invariants(value.Policy, namespace)
+	Fields_Per_Record_Invariants(value.Fields_Per_Record, namespace)
+	Next_Line_Invariants(value.Next_Line, namespace)
+	Configured_Invariants(value.Validated, namespace)
 }
 
 // Decoder_Handle keeps caller-owned decoder identity across records.
@@ -789,6 +786,10 @@ type Decode_Result struct {
 	Error_Column Column
 	// Status keeps parser outcomes independent from public conversion.
 	Status Record_Status
+	// Next_Line is the cursor the caller writes back into its decoder.
+	Next_Line Active_Line
+	// Fields_Per_Record is the learned or unchanged width the caller writes back.
+	Fields_Per_Record Fields_Per_Record
 }
 
 // Decode_Result_Invariants keeps parser results nonnegative before public conversion.
@@ -798,11 +799,14 @@ func Decode_Result_Invariants(value Decode_Result, namespace aver.Namespace) {
 	Line_Invariants(value.Error_Line, namespace)
 	Column_Invariants(value.Error_Column, namespace)
 	Record_Status_Invariants(value.Status, namespace)
+	Active_Line_Invariants(value.Next_Line, namespace)
+	Fields_Per_Record_Invariants(value.Fields_Per_Record, namespace)
 }
 
 func new_decode_result(
 	field_count Field_Count, consumed Consumed_Count,
 	error_line Line, error_column Column, status Record_Status,
+	next_line Active_Line, fields_per_record Fields_Per_Record,
 ) (result Decode_Result) {
 	defer func() { Decode_Result_Invariants(result, "new_decode_result.result") }()
 	Field_Count_Invariants(field_count, "new_decode_result.field_count")
@@ -810,12 +814,41 @@ func new_decode_result(
 	Line_Invariants(error_line, "new_decode_result.error_line")
 	Column_Invariants(error_column, "new_decode_result.error_column")
 	Record_Status_Invariants(status, "new_decode_result.status")
+	Active_Line_Invariants(next_line, "new_decode_result.next_line")
+	Fields_Per_Record_Invariants(fields_per_record, "new_decode_result.fields_per_record")
 	result.Field_Count = field_count
 	result.Consumed = consumed
 	result.Error_Line = error_line
 	result.Error_Column = error_column
 	result.Status = status
+	result.Next_Line = next_line
+	result.Fields_Per_Record = fields_per_record
 	return result
+}
+
+// Decoder_State is the initialized policy and cursor the record parser reads; the
+// parser never sees a zero decoder, so its bundle excludes the zero branches a
+// Decoder bundle would leave unreached here.
+type Decoder_State struct {
+	// Delimiter separates adjacent fields.
+	Delimiter Delimiter_Character
+	// Comment is zero when comments are disabled.
+	Comment Comment_Character
+	// Policy carries the lazy quote and trim switches.
+	Policy Policy_Stored
+	// Fields_Per_Record is the unchecked, inferred, or learned width.
+	Fields_Per_Record Fields_Per_Record
+	// Next_Line is the first line in the caller source.
+	Next_Line Active_Line
+}
+
+// Decoder_State_Invariants composes initialized decoder scalars.
+func Decoder_State_Invariants(value Decoder_State, namespace aver.Namespace) {
+	Delimiter_Character_Invariants(value.Delimiter, namespace)
+	Comment_Character_Invariants(value.Comment, namespace)
+	Policy_Stored_Invariants(value.Policy, namespace)
+	Fields_Per_Record_Invariants(value.Fields_Per_Record, namespace)
+	Active_Line_Invariants(value.Next_Line, namespace)
 }
 
 // Field_Decode_Result keeps parser refusal state in bounded value storage.
@@ -878,25 +911,20 @@ func New_Configuration(
 			return Configuration{}, STATUS_CONFIGURATION_INVALID
 		}
 	}
-	configuration.Delimiter = input.Delimiter
-	configuration.Comment = input.Comment
+	configuration.Delimiter = Delimiter_Stored(input.Delimiter)
+	configuration.Comment = Comment_Character(input.Comment)
 	configuration.Fields_Per_Record = input.Fields_Per_Record
-	configuration.Lazy_Quotes = input.Lazy_Quotes
-	configuration.Trim_Leading_Space = input.Trim_Leading_Space
-	configuration.Use_CRLF = input.Use_CRLF
+	if input.Lazy_Quotes {
+		configuration.Policy |= POLICY_LAZY_QUOTES
+	}
+	if input.Trim_Leading_Space {
+		configuration.Policy |= POLICY_TRIM_LEADING_SPACE
+	}
+	if input.Use_CRLF {
+		configuration.Policy |= POLICY_USE_CRLF
+	}
+	configuration.Validated = CONFIGURED
 	return configuration, STATUS_OK
-}
-
-// Standard_Configuration returns independent immutable-by-value RFC policy.
-func Standard_Configuration() (configuration Configuration) {
-	defer func() {
-		Configuration_Invariants(configuration, "Standard_Configuration.configuration")
-	}()
-	configuration, status := New_Configuration(Configuration_Input{
-		Delimiter: STANDARD_DELIMITER, Fields_Per_Record: FIELDS_PER_RECORD_INFERRED,
-	})
-	aver.Always(status == STATUS_OK, "Standard CSV configuration is valid.")
-	return configuration
 }
 
 // Configuration_Delimiter returns the validated delimiter character.
@@ -911,8 +939,7 @@ func Configuration_Delimiter(
 		bool(configuration_valid(configuration)),
 		"Delimiter configuration is valid.",
 	)
-	value, _ := configuration.Delimiter.(Delimiter)
-	return Delimiter_Character(value)
+	return Delimiter_Character(configuration.Delimiter)
 }
 
 // Configuration_Comment returns zero when comments are disabled.
@@ -925,8 +952,7 @@ func Configuration_Comment(configuration Configuration) (comment Comment_Charact
 		bool(configuration_valid(configuration)),
 		"Comment configuration is valid.",
 	)
-	value, _ := configuration.Comment.(Comment)
-	return Comment_Character(value)
+	return Comment_Character(configuration.Comment)
 }
 
 // Decoder_Init leaves invalid policy unable to mutate caller state.
@@ -944,10 +970,10 @@ func Decoder_Init(
 	}
 	decoder.Delimiter = configuration.Delimiter
 	decoder.Comment = configuration.Comment
-	decoder.Lazy_Quotes = configuration.Lazy_Quotes
-	decoder.Trim_Leading_Space = configuration.Trim_Leading_Space
+	decoder.Policy = configuration.Policy
 	decoder.Fields_Per_Record = configuration.Fields_Per_Record
 	decoder.Next_Line = Next_Line(LINE_FIRST)
+	decoder.Validated = CONFIGURED
 	return STATUS_OK
 }
 
@@ -964,8 +990,8 @@ func Encoded_Size(
 	if !bool(configuration_valid(configuration)) {
 		return 0, STATUS_CONFIGURATION_INVALID
 	}
-	delimiter, _ := configuration.Delimiter.(Delimiter)
-	use_crlf, _ := configuration.Use_CRLF.(Use_CRLF)
+	delimiter := Delimiter(configuration.Delimiter)
+	use_crlf := Use_CRLF(configuration.Policy&POLICY_USE_CRLF == POLICY_USE_CRLF)
 	var delimiter_storage [utf8.CHARACTER_SIZE_MAXIMUM]byte
 	delimiter_size := utf8.Encode_Character(
 		utf8.Bytes(delimiter_storage[:]), utf8.Character(delimiter),
@@ -1013,7 +1039,9 @@ func Encode_Into(
 		return 0, STATUS_OUTPUT_TOO_SMALL
 	}
 	encode_unchecked(
-		Nonempty_Encoded(destination), Record_Fields(fields), configuration,
+		Nonempty_Encoded(destination), Record_Fields(fields),
+		Delimiter_Character(configuration.Delimiter),
+		Use_CRLF(configuration.Policy&POLICY_USE_CRLF == POLICY_USE_CRLF),
 		Record_Encoded_Count(required),
 	)
 	return required, STATUS_OK
@@ -1043,7 +1071,15 @@ func Decode_Record_Into(
 	if bytes.Overlap(bytes.Slice(destination), bytes.Slice(source)) {
 		return 0, 0, Parse_Position{}, STATUS_STORAGE_INVALID
 	}
-	result := decode_record_unchecked(destination, fields, source, decoder)
+	result := decode_record_unchecked(destination, fields, source, Decoder_State{
+		Delimiter:         Delimiter_Character(decoder.Delimiter),
+		Comment:           decoder.Comment,
+		Policy:            decoder.Policy,
+		Fields_Per_Record: decoder.Fields_Per_Record,
+		Next_Line:         Active_Line(decoder.Next_Line),
+	})
+	decoder.Next_Line = Next_Line(result.Next_Line)
+	decoder.Fields_Per_Record = result.Fields_Per_Record
 	return Field_Count(result.Field_Count),
 		Consumed_Count(result.Consumed),
 		Parse_Position{
@@ -1058,34 +1094,25 @@ func decoder_valid(decoder Decoder_Handle) (valid Decoder_Valid) {
 	Decoder_Handle_Invariants(decoder, "decoder_valid.decoder")
 	Decoder_Invariants(*decoder, "decoder_valid.decoder_value")
 	configuration := Configuration{
-		Delimiter:          decoder.Delimiter,
-		Comment:            decoder.Comment,
-		Fields_Per_Record:  decoder.Fields_Per_Record,
-		Lazy_Quotes:        decoder.Lazy_Quotes,
-		Trim_Leading_Space: decoder.Trim_Leading_Space,
-		Use_CRLF:           Use_CRLF(false),
+		Delimiter:         decoder.Delimiter,
+		Comment:           decoder.Comment,
+		Fields_Per_Record: decoder.Fields_Per_Record,
+		Policy:            decoder.Policy,
+		Validated:         decoder.Validated,
 	}
 	if !bool(configuration_valid(configuration)) {
 		return false
 	}
-	fields_per_record, fields_valid := decoder.Fields_Per_Record.(Fields_Per_Record)
-	if !fields_valid {
+	if decoder.Fields_Per_Record < FIELDS_PER_RECORD_UNCHECKED {
 		return false
 	}
-	if fields_per_record < FIELDS_PER_RECORD_UNCHECKED {
+	if decoder.Fields_Per_Record > FIELD_COUNT_MAXIMUM {
 		return false
 	}
-	if fields_per_record > FIELD_COUNT_MAXIMUM {
+	if decoder.Next_Line < LINE_FIRST {
 		return false
 	}
-	next_line, line_valid := decoder.Next_Line.(Next_Line)
-	if !line_valid {
-		return false
-	}
-	if next_line < LINE_FIRST {
-		return false
-	}
-	return Decoder_Valid(next_line <= NEXT_LINE_MAXIMUM)
+	return Decoder_Valid(decoder.Next_Line <= NEXT_LINE_MAXIMUM)
 }
 
 func character_allowed(character utf8.Character) (allowed Boolean) {
@@ -1117,31 +1144,12 @@ func configuration_valid(configuration Configuration) (valid Configuration_Valid
 		Configuration_Valid_Invariants(valid, "configuration_valid.valid")
 	}()
 	Configuration_Invariants(configuration, "configuration_valid.configuration")
-	delimiter_value, delimiter_valid := configuration.Delimiter.(Delimiter)
-	comment_value, comment_valid := configuration.Comment.(Comment)
-	fields_per_record, fields_valid := configuration.Fields_Per_Record.(Fields_Per_Record)
-	_, lazy_valid := configuration.Lazy_Quotes.(Lazy_Quotes)
-	_, trim_valid := configuration.Trim_Leading_Space.(Trim_Leading_Space)
-	_, crlf_valid := configuration.Use_CRLF.(Use_CRLF)
-	if !delimiter_valid {
+	if configuration.Validated != CONFIGURED {
 		return false
 	}
-	if !comment_valid {
-		return false
-	}
-	if !fields_valid {
-		return false
-	}
-	if !lazy_valid {
-		return false
-	}
-	if !trim_valid {
-		return false
-	}
-	if !crlf_valid {
-		return false
-	}
-	delimiter := utf8.Character(delimiter_value)
+	fields_per_record := configuration.Fields_Per_Record
+	comment_value := configuration.Comment
+	delimiter := utf8.Character(configuration.Delimiter)
 	if !bool(character_allowed(delimiter)) {
 		return false
 	}
@@ -1151,7 +1159,7 @@ func configuration_valid(configuration Configuration) (valid Configuration_Valid
 	if fields_per_record > FIELD_COUNT_MAXIMUM {
 		return false
 	}
-	if comment_value == COMMENT_DISABLED {
+	if comment_value == Comment_Character(COMMENT_DISABLED) {
 		return true
 	}
 	comment := utf8.Character(comment_value)
@@ -1264,15 +1272,14 @@ func field_needs_quotes(value Field_Value, delimiter Delimiter_Character) (neede
 }
 
 func encode_unchecked(
-	destination Nonempty_Encoded, fields Record_Fields,
-	configuration Configuration, required Record_Encoded_Count,
+	destination Nonempty_Encoded, fields Record_Fields, delimiter_value Delimiter_Character,
+	use_crlf Use_CRLF, required Record_Encoded_Count,
 ) {
 	Nonempty_Encoded_Invariants(destination, "encode_unchecked.destination")
 	Record_Fields_Invariants(fields, "encode_unchecked.fields")
-	Configuration_Invariants(configuration, "encode_unchecked.configuration")
+	Delimiter_Character_Invariants(delimiter_value, "encode_unchecked.delimiter_value")
+	Use_CRLF_Invariants(use_crlf, "encode_unchecked.use_crlf")
 	Record_Encoded_Count_Invariants(required, "encode_unchecked.required")
-	delimiter_value, _ := configuration.Delimiter.(Delimiter)
-	use_crlf, _ := configuration.Use_CRLF.(Use_CRLF)
 	position := bytes.SLICE_SIZE_MINIMUM
 	var delimiter_storage [utf8.CHARACTER_SIZE_MAXIMUM]byte
 	delimiter_size := utf8.Encode_Character(
@@ -1287,7 +1294,7 @@ func encode_unchecked(
 			destination,
 			Source_Position(position),
 			Record_Field_Value(field.Value),
-			Delimiter_Character(delimiter_value),
+			delimiter_value,
 			use_crlf,
 		))
 	}
@@ -1346,75 +1353,104 @@ func encode_field(
 }
 
 func decode_record_unchecked(
-	destination Decoded, fields Fields, source Encoded, decoder Decoder_Handle,
+	destination Decoded, fields Fields, source Encoded, state Decoder_State,
 ) (result Decode_Result) {
 	defer func() { Decode_Result_Invariants(result, "decode_record_unchecked.result") }()
 	Decoded_Invariants(destination, "decode_record_unchecked.destination")
 	Fields_Invariants(fields, "decode_record_unchecked.fields")
 	Encoded_Invariants(source, "decode_record_unchecked.source")
-	Decoder_Handle_Invariants(decoder, "decode_record_unchecked.decoder")
-	Decoder_Invariants(*decoder, "decode_record_unchecked.decoder_value")
-	next_line, _ := decoder.Next_Line.(Next_Line)
-	comment, _ := decoder.Comment.(Comment)
-	trim, _ := decoder.Trim_Leading_Space.(Trim_Leading_Space)
-	delimiter, _ := decoder.Delimiter.(Delimiter)
-	lazy, _ := decoder.Lazy_Quotes.(Lazy_Quotes)
-	fields_per_record, _ := decoder.Fields_Per_Record.(Fields_Per_Record)
-	source_position, line := skip_ignored(source, 0, next_line, Comment_Character(comment))
+	Decoder_State_Invariants(state, "decode_record_unchecked.state")
+	source_position, line := skip_ignored(
+		source, 0, Next_Line(state.Next_Line), state.Comment,
+	)
 	if int(source_position) == len(source) {
-		decoder.Next_Line = line
-		return new_decode_result(0, Consumed_Count(source_position), 0, 0, STATUS_END)
+		return new_decode_result(
+			0, Consumed_Count(source_position), 0, 0, STATUS_END,
+			Active_Line(line), state.Fields_Per_Record,
+		)
 	}
 	parser := Parser{
 		Source_Position: source_position, Line: Line(line), Column: COLUMN_FIRST,
 	}
-	field_count := bytes.SLICES_COUNT_MINIMUM
-	for !parser.Record_Done {
-		if field_count >= len(fields) {
+	field_count, field_result := decode_fields_unchecked(
+		destination, fields, Nonempty_Encoded(source), state, parser,
+	)
+	parser = field_result.Parser
+	if field_result.Status != STATUS_OK {
+		return new_decode_result(
+			field_count, 0, Line(field_result.Error_Line),
+			Column(field_result.Error_Column), Record_Status(field_result.Status),
+			state.Next_Line, state.Fields_Per_Record,
+		)
+	}
+	if !parser.Record_Done {
+		return new_decode_result(
+			field_count, 0, 0, 0, STATUS_FIELDS_TOO_SMALL,
+			state.Next_Line, state.Fields_Per_Record,
+		)
+	}
+	next_line := Active_Line(parser.Line)
+	consumed := Consumed_Count(parser.Source_Position)
+	fields_per_record := state.Fields_Per_Record
+	if fields_per_record == FIELDS_PER_RECORD_INFERRED {
+		fields_per_record = Fields_Per_Record(field_count)
+	} else if fields_per_record > FIELDS_PER_RECORD_INFERRED {
+		if int(fields_per_record) != int(field_count) {
 			return new_decode_result(
-				Field_Count(field_count), 0, 0, 0, STATUS_FIELDS_TOO_SMALL,
+				field_count, consumed, Line(line), COLUMN_FIRST,
+				STATUS_FIELD_COUNT_INVALID, next_line,
+				state.Fields_Per_Record,
 			)
 		}
-		parser = trim_prefix_space(Nonempty_Encoded(source), parser, trim)
+	}
+	return new_decode_result(
+		field_count, consumed, 0, 0, STATUS_OK, next_line, fields_per_record,
+	)
+}
+
+// Decodes fields until the record ends or a field refuses; the refusal travels in the
+// field result so the caller reports it without a second status channel.
+func decode_fields_unchecked(
+	destination Decoded, fields Fields, source Nonempty_Encoded, state Decoder_State,
+	parser Parser,
+) (field_count Field_Count, result Field_Decode_Result) {
+	defer func() {
+		Field_Count_Invariants(field_count, "decode_fields_unchecked.field_count")
+		Field_Decode_Result_Invariants(result, "decode_fields_unchecked.result")
+	}()
+	Decoded_Invariants(destination, "decode_fields_unchecked.destination")
+	Fields_Invariants(fields, "decode_fields_unchecked.fields")
+	Nonempty_Encoded_Invariants(source, "decode_fields_unchecked.source")
+	Decoder_State_Invariants(state, "decode_fields_unchecked.state")
+	Parser_Invariants(parser, "decode_fields_unchecked.parser")
+	trim := Trim_Leading_Space(
+		state.Policy&POLICY_TRIM_LEADING_SPACE == POLICY_TRIM_LEADING_SPACE,
+	)
+	lazy := Lazy_Quotes(state.Policy&POLICY_LAZY_QUOTES == POLICY_LAZY_QUOTES)
+	result.Parser = parser
+	result.Status = STATUS_OK
+	for !result.Parser.Record_Done {
+		// Slots ran out before the record ended: the caller reads Record_Done false
+		// beside STATUS_OK, because Field_Status has no slot outcome of its own.
+		if int(field_count) >= len(fields) {
+			return field_count, result
+		}
+		parser = trim_prefix_space(source, result.Parser, trim)
 		field_start := parser.Decoded_Count
 		field_line := parser.Line
 		field_column := parser.Column
-		field_result := decode_field(
-			destination, Nonempty_Encoded(source),
-			Delimiter_Character(delimiter), lazy, parser,
-		)
-		parser = field_result.Parser
-		if field_result.Status != STATUS_OK {
-			status := Record_Status(field_result.Status)
-			return new_decode_result(
-				Field_Count(field_count), 0, Line(field_result.Error_Line),
-				Column(field_result.Error_Column), status,
-			)
+		result = decode_field(destination, source, state.Delimiter, lazy, parser)
+		if result.Status != STATUS_OK {
+			return field_count, result
 		}
-		field_end := parser.Decoded_Count
 		fields[field_count] = Field{
-			Value:  Field_Value(destination[field_start:field_end]),
+			Value:  Field_Value(destination[field_start:result.Parser.Decoded_Count]),
 			Line:   Line(field_line),
 			Column: Column(field_column),
 		}
 		field_count++
 	}
-	decoder.Next_Line = Next_Line(parser.Line)
-	consumed := parser.Source_Position
-	if fields_per_record == FIELDS_PER_RECORD_INFERRED {
-		decoder.Fields_Per_Record = Fields_Per_Record(field_count)
-	} else if fields_per_record > FIELDS_PER_RECORD_INFERRED {
-		if int(fields_per_record) != field_count {
-			return new_decode_result(
-				Field_Count(field_count),
-				Consumed_Count(consumed), Line(line), COLUMN_FIRST,
-				STATUS_FIELD_COUNT_INVALID,
-			)
-		}
-	}
-	return new_decode_result(
-		Field_Count(field_count), Consumed_Count(consumed), 0, 0, STATUS_OK,
-	)
+	return field_count, result
 }
 
 func decode_field(

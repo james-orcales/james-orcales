@@ -20,6 +20,18 @@ func Test_Allocation(t *testing.T) {
 	if testing.AllocsPerRun(100, call) != 0 {
 		t.Fatal("fixed-width API allocated heap storage")
 	}
+	// Pointer source boxes without heap; reflect path must add none of its own.
+	source := structured_value{First: 0x0102, Second: 0x03040506}
+	var destination structured_value
+	var structured_storage [binary.UINT_16_SIZE + binary.UINT_32_SIZE]byte
+	structured_call := func() {
+		binary.Size(&source)
+		binary.Encode(structured_storage[:], &source, binary.BIG_ENDIAN)
+		binary.Decode(structured_storage[:], &destination, binary.BIG_ENDIAN)
+	}
+	if testing.AllocsPerRun(100, structured_call) != 0 {
+		t.Fatal("structured API allocated heap storage")
+	}
 }
 
 // Test_Bounds keeps byte and varint domains tied to repository limit.

@@ -1,9 +1,9 @@
 
 # Configuration
 
-New_Encoding validates one 64-byte alphabet and padding atomically. Standard, URL, and raw
-factories return configuration by value. With_Padding and Strict_Encoding validate a copy. Invalid
-configuration returns scalar status.
+New_Encoding validates one 64-byte alphabet; STANDARD_ALPHABET and URL_ALPHABET select the RFC
+4648 ones. Padding is an argument of each operation, refused there when it is not one wire byte
+outside the alphabet or NO_PADDING. Invalid input returns scalar status.
 
 # Encode
 
@@ -17,7 +17,7 @@ and returns decoded prefix plus scalar status. NO_PADDING admits only tails cont
 
 # Strict Decode
 
-Strict_Encoding requires unused terminal bits to be zero. Newlines remain ignored. Noncanonical
+Decode_Strict_Into requires unused terminal bits to be zero. Newlines remain ignored. Noncanonical
 terminal bits return STATUS_INPUT_INVALID without publishing that quantum.
 
 # Bounds

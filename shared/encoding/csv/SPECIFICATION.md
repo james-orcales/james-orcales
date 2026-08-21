@@ -2,7 +2,7 @@
 # Configuration
 
 New_Configuration validates delimiter, comment, width, quote, trim, and line-ending policy.
-Standard_Configuration selects comma, inferred width, strict quotes, no comment, and line feeds.
+A zero Configuration or Decoder is unconfigured and every operation reports it as status.
 Decoder_Init binds validated policy to caller-owned cross-record state.
 
 # Encode

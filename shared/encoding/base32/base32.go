@@ -89,15 +89,6 @@ const STANDARD_PADDING Padding = '='
 // PADDING_BYTE_MAXIMUM is the largest padding value representable on the wire.
 const PADDING_BYTE_MAXIMUM Padding = Padding(bits.WORD_8_MAXIMUM)
 
-// PADDING_CODE_DISABLED reserves zero for absence.
-const PADDING_CODE_DISABLED uint16 = 0
-
-// PADDING_CODE_OFFSET shifts every wire byte above absence.
-const PADDING_CODE_OFFSET uint16 = PADDING_CODE_DISABLED + 1
-
-// PADDING_CODE_MAXIMUM reserves zero above every wire byte.
-const PADDING_CODE_MAXIMUM uint16 = uint16(bits.WORD_8_MAXIMUM) + PADDING_CODE_OFFSET
-
 // CARRIAGE_RETURN remains ignored only while decoding.
 const CARRIAGE_RETURN byte = '\r'
 
@@ -119,11 +110,12 @@ const STATUS_STORAGE_INVALID = STATUS_OUTPUT_TOO_SMALL + 1
 // STATUS_ENCODING_INVALID means a zero or failed configuration reached an operation.
 const STATUS_ENCODING_INVALID = STATUS_STORAGE_INVALID + 1
 
-// STATUS_ALPHABET_INVALID means alphabet bytes are duplicated or include a newline.
-const STATUS_ALPHABET_INVALID = STATUS_ENCODING_INVALID + 1
+// STATUS_PADDING_INVALID means padding is not one distinct wire byte or NO_PADDING. It sits
+// beside the operation outcomes so an operation status stays one contiguous domain.
+const STATUS_PADDING_INVALID = STATUS_ENCODING_INVALID + 1
 
-// STATUS_PADDING_INVALID means padding is not one distinct wire byte or NO_PADDING.
-const STATUS_PADDING_INVALID = STATUS_ALPHABET_INVALID + 1
+// STATUS_ALPHABET_INVALID means alphabet bytes are duplicated or include a newline.
+const STATUS_ALPHABET_INVALID = STATUS_PADDING_INVALID + 1
 
 // QUANTUM_INDEX_MAXIMUM is final explicit base32 symbol slot.
 const QUANTUM_INDEX_MAXIMUM = ENCODED_GROUP_SIZE - 1
@@ -149,6 +141,22 @@ func Padding_Invariants(value Padding, namespace aver.Namespace) {
 	aver.Tree(value, namespace).
 		Range_Int16(
 			int16(value), bits.INTEGER_16_MINIMUM, bits.INTEGER_16_MAXIMUM,
+		).
+		Ensure()
+}
+
+// Padding_Validated is padding an operation accepted: NO_PADDING, or one wire byte that is
+// neither line terminator nor a symbol of the alphabet.
+type Padding_Validated int16
+
+// Padding_Validated_Invariants bounds accepted padding, holed at the line terminators decoding
+// ignores, which padding_valid refuses.
+func Padding_Validated_Invariants(value Padding_Validated, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Holed_Int16(
+			int16(value), int16(NO_PADDING), int16(PADDING_BYTE_MAXIMUM),
+			int16(LINE_FEED), int16(CARRIAGE_RETURN), int16(CARRIAGE_RETURN),
+			int16(CARRIAGE_RETURN),
 		).
 		Ensure()
 }
@@ -197,9 +205,6 @@ func Encoding_Alphabet_Invariants(value Encoding_Alphabet, namespace aver.Namesp
 	Encoding_Alphabet_Storage_Invariants(*value, namespace)
 }
 
-// Encoding_Padding holds absent or offset wire padding without raw boundary syntax.
-type Encoding_Padding interface{}
-
 // Decoded_Symbol holds one alphabet index or INVALID_SYMBOL.
 type Decoded_Symbol uint8
 
@@ -214,22 +219,11 @@ func Decoded_Symbol_Invariants(value Decoded_Symbol, namespace aver.Namespace) {
 type Encoding struct {
 	// Alphabet retains immutable wire symbols by address.
 	Alphabet Encoding_Alphabet
-	// Padding reserves zero for NO_PADDING and offsets one wire byte.
-	Padding Encoding_Padding
 }
 
 // Encoding_Invariants composes immutable configuration storage.
 func Encoding_Invariants(value Encoding, namespace aver.Namespace) {
-	padding, padding_valid := value.Padding.(uint16)
 	Encoding_Alphabet_Invariants(value.Alphabet, namespace)
-	aver.Always(
-		padding_valid == (value.Padding != nil),
-		"Encoding padding storage has expected type.",
-	)
-	aver.Always(
-		padding <= PADDING_CODE_MAXIMUM,
-		"Padding code reserves zero above every wire byte.",
-	)
 }
 
 // Source is decoded input whose padded encoding fits the package boundary.
@@ -434,22 +428,8 @@ func Configuration_Status_Invariants(
 	value Configuration_Status, namespace aver.Namespace,
 ) {
 	aver.Tree(value, namespace).
-		Enum_3_Uint8(
+		Enum_Uint8(
 			uint8(value), uint8(STATUS_OK), uint8(STATUS_ALPHABET_INVALID),
-			uint8(STATUS_PADDING_INVALID),
-		).
-		Ensure()
-}
-
-// Padding_Status reports immutable padding replacement.
-type Padding_Status uint8
-
-// Padding_Status_Invariants lists replacement outcomes.
-func Padding_Status_Invariants(value Padding_Status, namespace aver.Namespace) {
-	aver.Tree(value, namespace).
-		Enum_3_Uint8(
-			uint8(value), uint8(STATUS_OK), uint8(STATUS_ENCODING_INVALID),
-			uint8(STATUS_PADDING_INVALID),
 		).
 		Ensure()
 }
@@ -460,8 +440,9 @@ type Size_Status uint8
 // Size_Status_Invariants lists size outcomes.
 func Size_Status_Invariants(value Size_Status, namespace aver.Namespace) {
 	aver.Tree(value, namespace).
-		Enum_Uint8(
+		Enum_3_Uint8(
 			uint8(value), uint8(STATUS_OK), uint8(STATUS_ENCODING_INVALID),
+			uint8(STATUS_PADDING_INVALID),
 		).
 		Ensure()
 }
@@ -469,12 +450,14 @@ func Size_Status_Invariants(value Size_Status, namespace aver.Namespace) {
 // Encode_Status reports caller storage and configuration failures.
 type Encode_Status uint8
 
-// Encode_Status_Invariants lists encoder outcomes.
+// Encode_Status_Invariants lists encoder outcomes: every operation outcome but the wire-input
+// failure, which only a decoder reports.
 func Encode_Status_Invariants(value Encode_Status, namespace aver.Namespace) {
 	aver.Tree(value, namespace).
-		Enum_4_Uint8(
-			uint8(value), uint8(STATUS_OK), uint8(STATUS_OUTPUT_TOO_SMALL),
-			uint8(STATUS_STORAGE_INVALID), uint8(STATUS_ENCODING_INVALID),
+		Range_Holed_Uint8(
+			uint8(value), uint8(STATUS_OK), uint8(STATUS_PADDING_INVALID),
+			uint8(STATUS_INPUT_INVALID), uint8(STATUS_INPUT_INVALID),
+			uint8(STATUS_INPUT_INVALID),
 		).
 		Ensure()
 }
@@ -482,11 +465,11 @@ func Encode_Status_Invariants(value Encode_Status, namespace aver.Namespace) {
 // Decode_Status adds malicious wire-input failure to encoder outcomes.
 type Decode_Status uint8
 
-// Decode_Status_Invariants covers its contiguous five-value outcome domain.
+// Decode_Status_Invariants covers its contiguous six-value outcome domain.
 func Decode_Status_Invariants(value Decode_Status, namespace aver.Namespace) {
 	aver.Tree(value, namespace).
 		Range_Uint8(
-			uint8(value), uint8(STATUS_OK), uint8(STATUS_ENCODING_INVALID),
+			uint8(value), uint8(STATUS_OK), uint8(STATUS_PADDING_INVALID),
 		).
 		Ensure()
 }
@@ -506,30 +489,17 @@ func Decode_Data_Status_Invariants(
 		Ensure()
 }
 
-// New_Encoding validates the complete configuration before publishing lookup state.
-func New_Encoding(
-	alphabet Alphabet, padding Padding,
-) (encoding Encoding, status Configuration_Status) {
+// New_Encoding validates the alphabet before publishing lookup state. Padding is an operation
+// policy, not configuration: a builder holding one padding forever could never show a coverage
+// axis for the rest of that domain.
+func New_Encoding(alphabet Alphabet) (encoding Encoding, status Configuration_Status) {
 	defer func() {
 		Encoding_Invariants(encoding, "New_Encoding.encoding")
 		Configuration_Status_Invariants(status, "New_Encoding.status")
 	}()
 	Alphabet_Invariants(alphabet, "New_Encoding.alphabet")
-	Padding_Invariants(padding, "New_Encoding.padding")
 	if len(alphabet) != ALPHABET_SIZE {
 		return Encoding{}, STATUS_ALPHABET_INVALID
-	}
-	if padding < NO_PADDING {
-		return Encoding{}, STATUS_PADDING_INVALID
-	}
-	if padding > PADDING_BYTE_MAXIMUM {
-		return Encoding{}, STATUS_PADDING_INVALID
-	}
-	if padding == Padding(CARRIAGE_RETURN) {
-		return Encoding{}, STATUS_PADDING_INVALID
-	}
-	if padding == Padding(LINE_FEED) {
-		return Encoding{}, STATUS_PADDING_INVALID
 	}
 	for index := range len(alphabet) {
 		symbol := alphabet[index]
@@ -545,123 +515,65 @@ func New_Encoding(
 			}
 		}
 	}
-	if padding != NO_PADDING {
-		for index := range len(alphabet) {
-			if alphabet[index] == byte(padding) {
-				return Encoding{}, STATUS_PADDING_INVALID
-			}
-		}
-	}
 	encoding.Alphabet = Encoding_Alphabet(unsafe.Pointer(unsafe.StringData(string(alphabet))))
-	encoding.Padding = uint16(PADDING_CODE_DISABLED)
-	if padding != NO_PADDING {
-		encoding.Padding = uint16(padding) + PADDING_CODE_OFFSET
-	}
 	return encoding, STATUS_OK
 }
 
-// Standard_Encoding rebuilds by value so no caller can mutate shared package state.
-func Standard_Encoding() (encoding Encoding) {
-	defer func() { Encoding_Invariants(encoding, "Standard_Encoding.encoding") }()
-	alphabet := Alphabet("ABCDEFGHIJKLMNOPQRSTUVWXYZ234567")
-	encoding, status := New_Encoding(alphabet, STANDARD_PADDING)
-	aver.Always(status == STATUS_OK, "Standard base32 alphabet is valid.")
-	return encoding
-}
+// STANDARD_ALPHABET is the RFC 4648 base32 alphabet; a caller passes it with STANDARD_PADDING to
+// New_Encoding. A function returning this one fixed configuration would assert a padding range
+// it can only ever hold one value of.
+const STANDARD_ALPHABET Alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567"
 
-// Hexadecimal_Encoding rebuilds by value so no caller can mutate shared package state.
-func Hexadecimal_Encoding() (encoding Encoding) {
-	defer func() { Encoding_Invariants(encoding, "Hexadecimal_Encoding.encoding") }()
-	alphabet := Alphabet("0123456789ABCDEFGHIJKLMNOPQRSTUV")
-	encoding, status := New_Encoding(alphabet, STANDARD_PADDING)
-	aver.Always(status == STATUS_OK, "Hex base32 alphabet is valid.")
-	return encoding
-}
+// HEXADECIMAL_ALPHABET is the RFC 4648 extended-hex base32 alphabet.
+const HEXADECIMAL_ALPHABET Alphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUV"
 
-// With_Padding validates a copy so failed replacement cannot damage the input configuration.
-func With_Padding(
-	encoding Encoding, padding Padding,
-) (configured Encoding, status Padding_Status) {
-	defer func() {
-		Encoding_Invariants(configured, "With_Padding.configured")
-		Padding_Status_Invariants(status, "With_Padding.status")
-	}()
-	Encoding_Invariants(encoding, "With_Padding.encoding")
-	Padding_Invariants(padding, "With_Padding.padding")
-	if !bool(encoding_valid(encoding)) {
-		return Encoding{}, STATUS_ENCODING_INVALID
-	}
-	if padding < NO_PADDING {
-		return Encoding{}, STATUS_PADDING_INVALID
-	}
-	if padding > PADDING_BYTE_MAXIMUM {
-		return Encoding{}, STATUS_PADDING_INVALID
-	}
-	if padding == Padding(CARRIAGE_RETURN) {
-		return Encoding{}, STATUS_PADDING_INVALID
-	}
-	if padding == Padding(LINE_FEED) {
-		return Encoding{}, STATUS_PADDING_INVALID
-	}
-	alphabet := Alphabet(unsafe.String(
-		(*byte)(unsafe.Pointer(encoding.Alphabet)), ALPHABET_SIZE))
-	if padding != NO_PADDING {
-		for index := range len(alphabet) {
-			if alphabet[index] == byte(padding) {
-				return Encoding{}, STATUS_PADDING_INVALID
-			}
-		}
-	}
-	configured = encoding
-	configured.Padding = uint16(PADDING_CODE_DISABLED)
-	if padding != NO_PADDING {
-		configured.Padding = uint16(padding) + PADDING_CODE_OFFSET
-	}
-	if !bool(encoding_valid(configured)) {
-		return Encoding{}, STATUS_PADDING_INVALID
-	}
-	return configured, STATUS_OK
-}
-
-// Encoded_Size reports exact output because padding belongs to immutable configuration.
+// Encoded_Size reports exact output for the padding the same call encodes with.
 func Encoded_Size(
-	encoding Encoding, source_count Source_Count,
+	encoding Encoding, padding Padding, source_count Source_Count,
 ) (count Encoded_Count, status Size_Status) {
 	defer func() {
 		Encoded_Count_Invariants(count, "Encoded_Size.count")
 		Size_Status_Invariants(status, "Encoded_Size.status")
 	}()
 	Encoding_Invariants(encoding, "Encoded_Size.encoding")
+	Padding_Invariants(padding, "Encoded_Size.padding")
 	Source_Count_Invariants(source_count, "Encoded_Size.source_count")
 	if !bool(encoding_valid(encoding)) {
 		return 0, STATUS_ENCODING_INVALID
 	}
-	padding_enabled := Padding_Enabled(encoding.Padding != PADDING_CODE_DISABLED)
+	if !bool(padding_valid(encoding, padding)) {
+		return 0, STATUS_PADDING_INVALID
+	}
+	padding_enabled := Padding_Enabled(padding != NO_PADDING)
 	return encoded_size_unchecked(source_count, padding_enabled), STATUS_OK
 }
 
 // Decoded_Size_Maximum remains safe when newline and padding later reduce actual output.
 func Decoded_Size_Maximum(
-	encoding Encoding, encoded_count Encoded_Input_Count,
+	encoding Encoding, padding Padding, encoded_count Encoded_Input_Count,
 ) (count Decoded_Count, status Size_Status) {
 	defer func() {
 		Decoded_Count_Invariants(count, "Decoded_Size_Maximum.count")
 		Size_Status_Invariants(status, "Decoded_Size_Maximum.status")
 	}()
 	Encoding_Invariants(encoding, "Decoded_Size_Maximum.encoding")
+	Padding_Invariants(padding, "Decoded_Size_Maximum.padding")
 	Encoded_Input_Count_Invariants(
 		encoded_count, "Decoded_Size_Maximum.encoded_count",
 	)
 	if !bool(encoding_valid(encoding)) {
 		return 0, STATUS_ENCODING_INVALID
 	}
-	padding_enabled := Padding_Enabled(encoding.Padding != PADDING_CODE_DISABLED)
+	if !bool(padding_valid(encoding, padding)) {
+		return 0, STATUS_PADDING_INVALID
+	}
+	padding_enabled := Padding_Enabled(padding != NO_PADDING)
 	return decoded_size_unchecked(encoded_count, padding_enabled), STATUS_OK
 }
 
 // Encode_Into checks every refusal before the first caller byte changes.
 func Encode_Into(
-	destination Encoded, source Source, encoding Encoding,
+	destination Encoded, source Source, encoding Encoding, padding Padding,
 ) (count Encoded_Count, status Encode_Status) {
 	defer func() {
 		Encoded_Count_Invariants(count, "Encode_Into.count")
@@ -670,23 +582,29 @@ func Encode_Into(
 	Encoded_Invariants(destination, "Encode_Into.destination")
 	Source_Invariants(source, "Encode_Into.source")
 	Encoding_Invariants(encoding, "Encode_Into.encoding")
+	Padding_Invariants(padding, "Encode_Into.padding")
 	if !bool(encoding_valid(encoding)) {
 		return 0, STATUS_ENCODING_INVALID
+	}
+	if !bool(padding_valid(encoding, padding)) {
+		return 0, STATUS_PADDING_INVALID
 	}
 	if bool(bytes.Overlap(bytes.Slice(destination), bytes.Slice(source))) {
 		return 0, STATUS_STORAGE_INVALID
 	}
-	padding_enabled := Padding_Enabled(encoding.Padding != PADDING_CODE_DISABLED)
+	padding_enabled := Padding_Enabled(padding != NO_PADDING)
 	required := encoded_size_unchecked(Source_Count(len(source)), padding_enabled)
 	if len(destination) < int(required) {
 		return 0, STATUS_OUTPUT_TOO_SMALL
 	}
-	return encode_unchecked(destination, source, encoding, required), STATUS_OK
+	return encode_unchecked(
+		destination, source, encoding, Padding_Validated(padding), required,
+	), STATUS_OK
 }
 
 // Decode_Into rejects malformed wire bytes without allocating newline scratch storage.
 func Decode_Into(
-	destination Decoded, source Encoded, encoding Encoding,
+	destination Decoded, source Encoded, encoding Encoding, padding Padding,
 ) (count Decoded_Count, status Decode_Status) {
 	defer func() {
 		Decoded_Count_Invariants(count, "Decode_Into.count")
@@ -695,13 +613,19 @@ func Decode_Into(
 	Decoded_Invariants(destination, "Decode_Into.destination")
 	Encoded_Invariants(source, "Decode_Into.source")
 	Encoding_Invariants(encoding, "Decode_Into.encoding")
+	Padding_Invariants(padding, "Decode_Into.padding")
 	if !bool(encoding_valid(encoding)) {
 		return 0, STATUS_ENCODING_INVALID
+	}
+	if !bool(padding_valid(encoding, padding)) {
+		return 0, STATUS_PADDING_INVALID
 	}
 	if bool(bytes.Overlap(bytes.Slice(destination), bytes.Slice(source))) {
 		return 0, STATUS_STORAGE_INVALID
 	}
-	decoded_count, data_status := decode_unchecked(destination, source, encoding)
+	decoded_count, data_status := decode_unchecked(
+		destination, source, encoding, Padding_Validated(padding),
+	)
 	return decoded_count, Decode_Status(data_status)
 }
 
@@ -713,17 +637,6 @@ func encoding_valid(encoding Encoding) (valid Encoding_Valid) {
 	}
 	alphabet := Alphabet(unsafe.String(
 		(*byte)(unsafe.Pointer(encoding.Alphabet)), ALPHABET_SIZE))
-	padding_code, _ := encoding.Padding.(uint16)
-	padding := NO_PADDING
-	if padding_code != PADDING_CODE_DISABLED {
-		padding = Padding(padding_code - PADDING_CODE_OFFSET)
-	}
-	if padding == Padding(CARRIAGE_RETURN) {
-		return false
-	}
-	if padding == Padding(LINE_FEED) {
-		return false
-	}
 	for index := range len(alphabet) {
 		symbol := alphabet[index]
 		if symbol == CARRIAGE_RETURN {
@@ -732,15 +645,41 @@ func encoding_valid(encoding Encoding) (valid Encoding_Valid) {
 		if symbol == LINE_FEED {
 			return false
 		}
-		if padding != NO_PADDING {
-			if symbol == byte(padding) {
-				return false
-			}
-		}
 		for previous_index := 0; previous_index < index; previous_index++ {
 			if alphabet[previous_index] == symbol {
 				return false
 			}
+		}
+	}
+	return true
+}
+
+// Reports whether padding may be used with this encoding: absent, or one wire byte that is
+// neither line terminator and not a symbol of the alphabet.
+func padding_valid(encoding Encoding, padding Padding) (valid Encoding_Valid) {
+	defer func() { Encoding_Valid_Invariants(valid, "padding_valid.valid") }()
+	Encoding_Invariants(encoding, "padding_valid.encoding")
+	Padding_Invariants(padding, "padding_valid.padding")
+	if padding == NO_PADDING {
+		return true
+	}
+	if padding < NO_PADDING {
+		return false
+	}
+	if padding > PADDING_BYTE_MAXIMUM {
+		return false
+	}
+	if padding == Padding(CARRIAGE_RETURN) {
+		return false
+	}
+	if padding == Padding(LINE_FEED) {
+		return false
+	}
+	alphabet := Alphabet(unsafe.String(
+		(*byte)(unsafe.Pointer(encoding.Alphabet)), ALPHABET_SIZE))
+	for index := range len(alphabet) {
+		if alphabet[index] == byte(padding) {
+			return false
 		}
 	}
 	return true
@@ -781,12 +720,14 @@ func decoded_size_unchecked(
 }
 
 func encode_unchecked(
-	destination Encoded, source Source, encoding Encoding, required Encoded_Count,
+	destination Encoded, source Source, encoding Encoding, padding Padding_Validated,
+	required Encoded_Count,
 ) (count Encoded_Count) {
 	defer func() { Encoded_Count_Invariants(count, "encode_unchecked.count") }()
 	Encoded_Invariants(destination, "encode_unchecked.destination")
 	Source_Invariants(source, "encode_unchecked.source")
 	Encoding_Invariants(encoding, "encode_unchecked.encoding")
+	Padding_Validated_Invariants(padding, "encode_unchecked.padding")
 	Encoded_Count_Invariants(required, "encode_unchecked.required")
 	alphabet := Alphabet(unsafe.String(
 		(*byte)(unsafe.Pointer(encoding.Alphabet)), ALPHABET_SIZE))
@@ -810,11 +751,6 @@ func encode_unchecked(
 		symbol &= uint64(ALPHABET_FINAL_INDEX)
 		destination[position] = alphabet[symbol]
 		position++
-	}
-	padding := NO_PADDING
-	padding_code, _ := encoding.Padding.(uint16)
-	if padding_code != PADDING_CODE_DISABLED {
-		padding = Padding(padding_code - PADDING_CODE_OFFSET)
 	}
 	for position < int(required) {
 		destination[position] = byte(padding)
@@ -953,7 +889,7 @@ func decode_bulk_unchecked(
 }
 
 func decode_unchecked(
-	destination Decoded, source Encoded, encoding Encoding,
+	destination Decoded, source Encoded, encoding Encoding, padding Padding_Validated,
 ) (count Decoded_Count, status Decode_Data_Status) {
 	defer func() {
 		Decoded_Count_Invariants(count, "decode_unchecked.count")
@@ -962,17 +898,13 @@ func decode_unchecked(
 	Decoded_Invariants(destination, "decode_unchecked.destination")
 	Encoded_Invariants(source, "decode_unchecked.source")
 	Encoding_Invariants(encoding, "decode_unchecked.encoding")
+	Padding_Validated_Invariants(padding, "decode_unchecked.padding")
 	group_count := decode_bulk_unchecked(destination, source, encoding)
 	source_position := int(group_count) * ENCODED_GROUP_SIZE
 	count = Decoded_Count(group_count) * DECODED_GROUP_SIZE
 	quantum, ended := Quantum(0), false
 	quantum_count := 0
 	padding_count := Padding_Count(0)
-	padding := NO_PADDING
-	padding_code, _ := encoding.Padding.(uint16)
-	if padding_code != PADDING_CODE_DISABLED {
-		padding = Padding(padding_code - PADDING_CODE_OFFSET)
-	}
 	for _, source_byte := range source[source_position:] {
 		if source_byte == CARRIAGE_RETURN {
 			continue
@@ -983,7 +915,7 @@ func decode_unchecked(
 		if ended {
 			return count, STATUS_INPUT_INVALID
 		}
-		is_padding := padding != NO_PADDING
+		is_padding := padding != Padding_Validated(NO_PADDING)
 		if is_padding {
 			is_padding = source_byte == byte(padding)
 		}
@@ -1021,7 +953,7 @@ func decode_unchecked(
 	}
 	return decode_tail(
 		destination, quantum, Tail_Quantum_Count(quantum_count), padding_count,
-		encoding, Decoded_Prefix_Count(count),
+		encoding, padding, Decoded_Prefix_Count(count),
 	)
 }
 
@@ -1031,6 +963,7 @@ func decode_tail(
 	quantum_count Tail_Quantum_Count,
 	padding_count Padding_Count,
 	encoding Encoding,
+	padding Padding_Validated,
 	prefix_count Decoded_Prefix_Count,
 ) (count Decoded_Count, status Decode_Data_Status) {
 	defer func() {
@@ -1042,6 +975,7 @@ func decode_tail(
 	Tail_Quantum_Count_Invariants(quantum_count, "decode_tail.quantum_count")
 	Padding_Count_Invariants(padding_count, "decode_tail.padding_count")
 	Encoding_Invariants(encoding, "decode_tail.encoding")
+	Padding_Validated_Invariants(padding, "decode_tail.padding")
 	Decoded_Prefix_Count_Invariants(prefix_count, "decode_tail.prefix_count")
 	count = Decoded_Count(prefix_count)
 	if padding_count != 0 {
@@ -1055,8 +989,7 @@ func decode_tail(
 		if quantum_count == 0 {
 			return count, STATUS_OK
 		}
-		padding_code, _ := encoding.Padding.(uint16)
-		if padding_code != PADDING_CODE_DISABLED {
+		if padding != Padding_Validated(NO_PADDING) {
 			return count, STATUS_INPUT_INVALID
 		}
 	}
