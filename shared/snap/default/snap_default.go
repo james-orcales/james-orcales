@@ -1,6 +1,6 @@
 // Package snap is the composition-tier sibling of the snap library. It wires
-// the snap library to the real OS (filesystem, stderr, runtime.Callers) and
-// re-exports the surface so callers can write:
+// the snap library to the real OS (the filesystem and stderr through the os gateway,
+// runtime.Callers) and re-exports the surface so callers can write:
 //
 //	import snap "local/james-orcales/shared/snap/default"
 //
@@ -9,10 +9,10 @@ package snap
 
 import (
 	"runtime"
-	"syscall"
 	"testing"
 	"unsafe"
 
+	"local/james-orcales/shared/os/default"
 	"local/james-orcales/shared/snap"
 )
 
@@ -64,59 +64,29 @@ func operating_caller(skip int) (frame_information snap.Frame_Information, err e
 	return snap.Frame_Information{File: frame.File, Line: frame.Line}, nil
 }
 
+// The library hands the path without its leading slash; the OS gateway wants it absolute.
 func operating_read_file(
 	_ unsafe.Pointer, path string,
 ) (data snap.Data, err error) {
-	file, open_error := syscall.Open("/"+path, syscall.O_RDONLY, 0)
-	if open_error != nil {
-		return nil, open_error
-	}
-	defer syscall.Close(file)
-	var facts syscall.Stat_t
-	if stat_error := syscall.Fstat(file, &facts); stat_error != nil {
-		return nil, stat_error
-	}
-	data = make(snap.Data, int(facts.Size))
-	read_count := 0
-	for read_count < len(data) {
-		count, read_error := syscall.Read(file, data[read_count:])
-		if read_error != nil {
-			return nil, read_error
-		}
-		if count == 0 {
-			break
-		}
-		read_count += count
-	}
-	return data[:read_count], nil
+	content, read_err := os.File_Read(os.File_Path("/" + path))
+	return snap.Data(content), read_err
 }
 
 func operating_write_file(
 	_ unsafe.Pointer, path string, data snap.Data, permission snap.Permission,
 ) (err error) {
-	file, open_error := syscall.Open(
-		path, syscall.O_WRONLY|syscall.O_CREAT|syscall.O_TRUNC, uint32(permission),
+	return os.File_Write(
+		os.File_Path(path), os.File_Content(data), os.File_Permission(permission),
 	)
-	if open_error != nil {
-		return open_error
-	}
-	defer syscall.Close(file)
-	written := 0
-	for written < len(data) {
-		count, write_error := syscall.Write(file, data[written:])
-		if write_error != nil {
-			return write_error
-		}
-		written += count
-	}
-	return nil
 }
 
 func standard_error_write(
 	_ unsafe.Pointer, data snap.Data,
 ) (written snap.Data_Size, err error) {
-	count, write_error := syscall.Write(2, data)
-	return snap.Data_Size(count), write_error
+	if write_err := os.Standard_Error_Write(os.File_Content(data)); write_err != nil {
+		return 0, write_err
+	}
+	return snap.Data_Size(len(data)), nil
 }
 
 // Init creates a snapshot bound to Default with the call-site location

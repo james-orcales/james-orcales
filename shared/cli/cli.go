@@ -4071,7 +4071,7 @@ func closest_label(
 	Label_Invariants(candidate, "closest_label.candidate")
 	Suggestion_State_Handle_Invariants(state, "closest_label.state")
 	distance, status := levenshtein.Distance(levenshtein.Distance_Input{
-		Workspace: workspace,
+		Workspace: levenshtein.Workspace_Pointer(workspace),
 		From:      levenshtein.From_Text_Unvalidated(target),
 		To:        levenshtein.To_Text_Unvalidated(candidate),
 	})
@@ -4110,7 +4110,11 @@ func closest_option_label(
 	Resolved_Arguments_Invariants(arguments, "closest_option_label.arguments")
 	Resolved_Flags_Invariants(flags, "closest_option_label.flags")
 	Option_Label_Invariants(target, "closest_option_label.target")
-	var workspace levenshtein.Workspace
+	var from, to [levenshtein.RUNE_COUNT_MAXIMUM]rune
+	var previous, current [levenshtein.ROW_COUNT]int
+	workspace := levenshtein.Workspace{
+		From: from[:], To: to[:], Previous: previous[:], Current: current[:],
+	}
 	state := Suggestion_State{}
 	for index := range arguments {
 		option := arguments[index]
@@ -4261,7 +4265,11 @@ func program_select_command(
 				Option_Index(candidate_index), "", false, true)
 		}
 	}
-	var workspace levenshtein.Workspace
+	var from, to [levenshtein.RUNE_COUNT_MAXIMUM]rune
+	var previous, current [levenshtein.ROW_COUNT]int
+	workspace := levenshtein.Workspace{
+		From: from[:], To: to[:], Previous: previous[:], Current: current[:],
+	}
 	suggestion := Suggestion_State{}
 	for command_index := range commands {
 		if !command_shown(
@@ -4708,7 +4716,11 @@ func option_check_enum(
 		if slices.Contains(enum, string(value)) {
 			return nil
 		}
-		var workspace levenshtein.Workspace
+		var from, to [levenshtein.RUNE_COUNT_MAXIMUM]rune
+		var previous, current [levenshtein.ROW_COUNT]int
+		workspace := levenshtein.Workspace{
+			From: from[:], To: to[:], Previous: previous[:], Current: current[:],
+		}
 		match, ok, _ := levenshtein.Closest(levenshtein.Closest_Input{
 			Workspace:  &workspace,
 			Target:     levenshtein.Target_Text_Unvalidated(value),
@@ -7960,7 +7972,11 @@ func environment_enum_failure_write(
 	known := true
 	switch kind {
 	case external_string_enum_failure:
-		var workspace levenshtein.Workspace
+		var from, to [levenshtein.RUNE_COUNT_MAXIMUM]rune
+		var previous, current [levenshtein.ROW_COUNT]int
+		workspace := levenshtein.Workspace{
+			From: from[:], To: to[:], Previous: previous[:], Current: current[:],
+		}
 		match, close, _ := levenshtein.Closest(levenshtein.Closest_Input{
 			Workspace: &workspace,
 			Target:    levenshtein.Target_Text_Unvalidated(value),

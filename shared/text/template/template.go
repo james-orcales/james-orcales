@@ -4431,38 +4431,34 @@ type Float_Text_Workspace big.Float_Text_Workspace
 func Float_Text_Workspace_Invariants(
 	value Float_Text_Workspace, _ aver.Namespace,
 ) {
-	aver.Always(
-		len(value.Integers) == big.FLOAT_TEXT_INTEGER_COUNT,
-		"Float text scratch owns both integer conversions.",
-	)
-	aver.Always(
-		len(value.Values) == big.FLOAT_TEXT_VALUE_COUNT,
-		"Float text scratch retains source and rounded values.",
-	)
-	aver.Always(
-		len(value.Text) == big.FLOAT_TEXT_INTEGER_WORKSPACE_COUNT,
-		"Float text scratch owns both integer text conversions.",
-	)
-	aver.Always(
-		len(value.Control) == big.FLOAT_TEXT_CONTROL_COUNT,
-		"Float text scratch owns its bounded scalar state.",
-	)
-	aver.Always(
-		len(value.Decimals) == big.FLOAT_DECIMAL_COUNT,
-		"Float text scratch owns exact value and rounding bounds.",
-	)
-	aver.Always(
-		len(value.Magnitude.Words) == big.FLOAT_TEXT_MAGNITUDE_WORD_COUNT_MAXIMUM,
-		"Float text midpoint retains its guard bit.",
-	)
-	aver.Always(
-		len(value.Magnitude.Control) == big.FLOAT_TEXT_MAGNITUDE_CONTROL_COUNT,
-		"Float text midpoint retains its active word count.",
-	)
-	aver.Always(
-		len(value.Output) == big.FLOAT_TEXT_SIZE_MAXIMUM,
-		"Float text output remains transactional.",
-	)
+	aver.Always(len(value.Integers.Significand.Words) == big.WORD_COUNT_MAXIMUM,
+		"Float text significand retains complete integer storage.")
+	aver.Always(len(value.Integers.Exponent.Words) == big.WORD_COUNT_MAXIMUM,
+		"Float text exponent retains complete integer storage.")
+	aver.Always(len(value.Values.Source.Mantissa.Words) == big.WORD_COUNT_MAXIMUM,
+		"Float text source retains complete mantissa storage.")
+	aver.Always(len(value.Values.Rounded.Mantissa.Words) == big.WORD_COUNT_MAXIMUM,
+		"Float text rounded value retains complete mantissa storage.")
+	aver.Always(len(value.Text.Significand.Words) == big.WORD_COUNT_MAXIMUM,
+		"Float text significand conversion retains complete words.")
+	aver.Always(len(value.Text.Exponent.Words) == big.WORD_COUNT_MAXIMUM,
+		"Float text exponent conversion retains complete words.")
+	aver.Always(value.Control != nil,
+		"Float text scratch owns its bounded scalar state.")
+	aver.Always(len(value.Decimals.Value.Digits) == big.FLOAT_DECIMAL_DIGIT_COUNT_MAXIMUM,
+		"Float text exact value retains complete decimal storage.")
+	aver.Always(len(value.Decimals.Lower.Digits) == big.FLOAT_DECIMAL_DIGIT_COUNT_MAXIMUM,
+		"Float text lower midpoint retains complete decimal storage.")
+	aver.Always(len(value.Decimals.Upper.Digits) == big.FLOAT_DECIMAL_DIGIT_COUNT_MAXIMUM,
+		"Float text upper midpoint retains complete decimal storage.")
+	aver.Always(len(value.Magnitude.Words) == big.FLOAT_TEXT_MAGNITUDE_WORD_COUNT_MAXIMUM,
+		"Float text midpoint retains its guard bit.")
+	aver.Always(value.Magnitude.Count >= big.WORD_COUNT_MINIMUM,
+		"Float text midpoint count is nonnegative.")
+	aver.Always(value.Magnitude.Count <= big.FLOAT_TEXT_MAGNITUDE_WORD_COUNT_MAXIMUM,
+		"Float text midpoint count fits its words.")
+	aver.Always(len(value.Output) == big.FLOAT_TEXT_SIZE_MAXIMUM,
+		"Float text output remains transactional.")
 }
 
 // Workspace owns every execution mutation and scratch byte.
@@ -7471,7 +7467,7 @@ func float_bits_parse(
 	defer func() { Parsed_Float_Validated_Invariants(encoding, "float_bits_parse.encoding") }()
 	workspace := (Workspace_Pointer)(workspace_state)
 	data := data_value.Value.(Number_Text_Validated_Value)
-	float_value := &workspace.Float_Parse.Values[big.FLOAT_RAT_RESULT_INDEX]
+	float_value := (*big.Float)(&workspace.Float_Parse.Values.Result)
 	float_parse := (*big.Float_Parse_Workspace)(&workspace.Float_Parse)
 	// Reset semantics must not discard caller-owned bounded mantissa storage.
 	words := float_value.Mantissa.Words
@@ -9896,7 +9892,7 @@ func output_float_bits(
 		count, status = output_text(workspace, count, "NaN")
 		return count, status
 	}
-	float_value := &workspace.Float_Parse.Values[big.FLOAT_RAT_RESULT_INDEX]
+	float_value := (*big.Float)(&workspace.Float_Parse.Values.Result)
 	float_text := (*big.Float_Text_Workspace)(&workspace.Float_Text)
 	// Reset semantics must not discard caller-owned bounded mantissa storage.
 	words := float_value.Mantissa.Words

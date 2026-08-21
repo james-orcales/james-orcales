@@ -269,23 +269,23 @@ func Word_Count_Invariants(value Word_Count, namespace aver.Namespace) {
 // Real is the part of a number that stands on the number line.
 type Real rational.Rational
 
-// Real_Invariants states the one sign bit a real part carries.
+// Real_Invariants requires positive denominator so stored sign stays in numerator.
 func Real_Invariants(value Real, namespace aver.Namespace) {
-	aver.Always(
-		value.Numerator.Limbs[integer.LIMB_INDEX_MAXIMUM]>>integer.SIGN_BIT_INDEX <= 1,
-		"A real part carries its sign in the one top bit of its final limb.",
-	)
+	aver.Always(value.Denominator.Limb_7>>integer.SIGN_BIT_INDEX == 0,
+		"A real part denominator has no sign bit.")
+	aver.Always(integer.Limbs(value.Denominator) != (integer.Limbs{}),
+		"A real part denominator is nonzero.")
 }
 
 // Imaginary is the part of a number that stands off the number line.
 type Imaginary rational.Rational
 
-// Imaginary_Invariants states the one sign bit an imaginary part carries.
+// Imaginary_Invariants requires positive denominator so stored sign stays in numerator.
 func Imaginary_Invariants(value Imaginary, namespace aver.Namespace) {
-	aver.Always(
-		value.Numerator.Limbs[integer.LIMB_INDEX_MAXIMUM]>>integer.SIGN_BIT_INDEX <= 1,
-		"An imaginary part carries its sign in the one top bit of its final limb.",
-	)
+	aver.Always(value.Denominator.Limb_7>>integer.SIGN_BIT_INDEX == 0,
+		"An imaginary part denominator has no sign bit.")
+	aver.Always(integer.Limbs(value.Denominator) != (integer.Limbs{}),
+		"An imaginary part denominator is nonzero.")
 }
 
 // Real_Storage makes numeric union payload a composed field rather than inherited scalar state.
@@ -405,12 +405,10 @@ func view_of(value Value) (text Text) {
 // unknown, thus one unfolded operand never becomes a wrong answer.
 func Make_Unknown() (result Value) {
 	defer func() { Value_Invariants(result, "make_unknown.result") }()
-	return Value{
-		Kinds:     Kind_Slot{Value: KIND_UNKNOWN},
-		Texts:     Text_Slot{Value: ""},
-		Real:      Real_Storage{Value: Real(rational.Zero())},
-		Imaginary: Imaginary_Storage{Value: Imaginary(rational.Zero())},
-	}
+	rational.Zero((*rational.Rational)(&result.Real.Value))
+	rational.Zero((*rational.Rational)(&result.Imaginary.Value))
+	result.Kinds.Value = KIND_UNKNOWN
+	return result
 }
 
 // Make_Boolean builds a truth.
@@ -420,7 +418,7 @@ func Make_Boolean(truth Boolean) (result Value) {
 	result = Make_Unknown()
 	result.Kinds.Value = KIND_BOOLEAN
 	if bool(truth) {
-		result.Real.Value = Real(rational.One())
+		rational.One((*rational.Rational)(&result.Real.Value))
 	}
 	return result
 }
@@ -448,17 +446,12 @@ func Make_Int_64(value Int_64) (result Value) {
 	Int_64_Invariants(value, "make_int_64.value")
 	result = Make_Unknown()
 	result.Kinds.Value = KIND_INT
-	result.Real.Value = Real(rational.From_Integer(whole_of_int_64(value)))
+	var whole integer.Integer
+	integer.From_Int_64(&whole, integer.Int_64(value))
+	rational.From_Integer(
+		(*rational.Rational)(&result.Real.Value), rational.Numerator(whole.Limbs),
+	)
 	return result
-}
-
-// Lifts a machine integer into a numerator, carrying its sign into every limb above it. The
-// result is a numerator rather than an integer, because a numerator root states no limb domain
-// and a lifted value pins every upper limb to the fill.
-func whole_of_int_64(value Int_64) (whole rational.Numerator) {
-	defer func() { rational.Numerator_Invariants(whole, "whole_of_int_64.whole") }()
-	Int_64_Invariants(value, "whole_of_int_64.value")
-	return rational.Numerator(integer.From_Int_64(integer.Int_64(value)))
 }
 
 // Int_64 is a machine integer a whole number lifts from or lowers to.
@@ -477,8 +470,15 @@ func Make_Ratio(numerator Int_64, denominator Int_64) (result Value) {
 	defer func() { Value_Invariants(result, "make_ratio.result") }()
 	Int_64_Invariants(numerator, "make_ratio.numerator")
 	Int_64_Invariants(denominator, "make_ratio.denominator")
-	ratio, ok := rational.From_Ratio(
-		whole_of_int_64(numerator), rational.Denominator(whole_of_int_64(denominator)))
+	var above, below integer.Integer
+	integer.From_Int_64(&above, integer.Int_64(numerator))
+	integer.From_Int_64(&below, integer.Int_64(denominator))
+	var ratio Real
+	ok := rational.From_Ratio(
+		(*rational.Rational)(&ratio),
+		rational.Numerator(above.Limbs),
+		rational.Denominator(below.Limbs),
+	)
 	if !bool(ok) {
 		return Make_Unknown()
 	}
@@ -486,15 +486,15 @@ func Make_Ratio(numerator Int_64, denominator Int_64) (result Value) {
 }
 
 // Builds a value from a ratio and names the kind the ratio wears.
-func from_rational(value rational.Rational) (result Value) {
+func from_rational(value Real) (result Value) {
 	defer func() { Value_Invariants(result, "from_rational.result") }()
-	rational.Rational_Invariants(value, "from_rational.value")
+	Real_Invariants(value, "from_rational.value")
 	result = Make_Unknown()
 	result.Kinds.Value = KIND_FLOAT
-	if bool(rational.Is_Whole(value)) {
+	if bool(rational.Is_Whole(rational.Rational(value))) {
 		result.Kinds.Value = KIND_INT
 	}
-	result.Real.Value = Real(value)
+	result.Real.Value = value
 	return result
 }
 
@@ -515,15 +515,19 @@ func Make_From_Literal(text Text) (result Value) {
 	if len(digits) > integer.TEXT_SIZE_MAXIMUM {
 		return Make_Unknown()
 	}
-	whole, ok := integer.From_Text(integer.Text(digits))
+	var whole integer.Integer
+	ok := integer.From_Text(&whole, integer.Text(digits))
 	if !bool(ok) {
 		return Make_Unknown()
 	}
-	folded := rational.From_Integer(rational.Numerator(whole))
+	var folded Real
+	rational.From_Integer((*rational.Rational)(&folded), rational.Numerator(whole.Limbs))
 	if !bool(imaginary) {
 		return from_rational(folded)
 	}
-	return make_complex(rational.Zero(), folded)
+	var zero Real
+	rational.Zero((*rational.Rational)(&zero))
+	return make_complex(zero, folded)
 }
 
 // Make_Complex builds a pair of numbers from a real value and an imaginary value. A part that
@@ -539,21 +543,21 @@ func Make_Complex(real_part Value, imaginary_part Value) (result Value) {
 		return Make_Unknown()
 	}
 	return make_complex(
-		rational.Rational(real_part.Real.Value),
-		rational.Rational(imaginary_part.Real.Value))
+		real_part.Real.Value,
+		imaginary_part.Real.Value)
 }
 
 // Builds a pair of numbers from two ratios. The kind stays a pair even where the imaginary part
 // is zero, because the kind states what the source wrote and never what it happened to fold to.
 func make_complex(
-	real_part rational.Rational, imaginary_part rational.Rational,
+	real_part Real, imaginary_part Real,
 ) (result Value) {
 	defer func() { Value_Invariants(result, "make_complex.result") }()
-	rational.Rational_Invariants(real_part, "make_complex.real_part")
-	rational.Rational_Invariants(imaginary_part, "make_complex.imaginary_part")
+	Real_Invariants(real_part, "make_complex.real_part")
+	Real_Invariants(imaginary_part, "make_complex.imaginary_part")
 	result = Make_Unknown()
 	result.Kinds.Value = KIND_COMPLEX
-	result.Real.Value = Real(real_part)
+	result.Real.Value = real_part
 	result.Imaginary.Value = Imaginary(imaginary_part)
 	return result
 }
@@ -637,11 +641,12 @@ func Int_64_Value(value Value) (result Int_64_Result) {
 	if Kind_Of(value) != KIND_INT {
 		return Int_64_Result{Value: 0, OK: false}
 	}
-	whole, whole_ok := rational.Whole(rational.Rational(value.Real.Value))
+	var whole rational.Numerator
+	whole_ok := rational.Whole(&whole, rational.Rational(value.Real.Value))
 	if !bool(whole_ok) {
 		return Int_64_Result{Value: 0, OK: false}
 	}
-	lowered, fits := integer.To_Int_64(integer.Integer(whole))
+	lowered, fits := integer.To_Int_64(integer.Integer{Limbs: integer.Limbs(whole)})
 	return Int_64_Result{Value: Int_64(lowered), OK: Read(fits)}
 }
 
@@ -666,24 +671,31 @@ func Unary_Operation(operation Unary, value Value) (result Value) {
 		if Kind_Of(value) != KIND_INT {
 			return Make_Unknown()
 		}
-		whole, ok := rational.Whole(rational.Rational(value.Real.Value))
+		var whole rational.Numerator
+		ok := rational.Whole(&whole, rational.Rational(value.Real.Value))
 		if !bool(ok) {
 			return Make_Unknown()
 		}
-		return from_rational(rational.From_Integer(
-			rational.Numerator(integer.Not(integer.Integer(whole)))))
+		var complemented integer.Integer
+		integer.Not(&complemented, integer.Integer{Limbs: integer.Limbs(whole)})
+		return whole_value(rational.Numerator(complemented.Limbs))
 	}
 	if !bool(is_number(Kind_Of(value))) {
 		return Make_Unknown()
 	}
-	flipped, ok := rational.Negate(rational.Rational(value.Real.Value))
+	var flipped Real
+	ok := rational.Negate((*rational.Rational)(&flipped), rational.Rational(value.Real.Value))
 	if !bool(ok) {
 		return Make_Unknown()
 	}
 	if Kind_Of(value) != KIND_COMPLEX {
 		return from_rational(flipped)
 	}
-	turned, turned_ok := rational.Negate(rational.Rational(value.Imaginary.Value))
+	var turned Real
+	turned_ok := rational.Negate(
+		(*rational.Rational)(&turned),
+		rational.Rational(value.Imaginary.Value),
+	)
 	if !bool(turned_ok) {
 		return Make_Unknown()
 	}
@@ -759,39 +771,51 @@ func whole_operation(left Value, operation Whole_Binary, right Value) (result Va
 	if Kind_Of(right) != KIND_INT {
 		return Make_Unknown()
 	}
-	above, above_ok := rational.Whole(rational.Rational(left.Real.Value))
-	below, below_ok := rational.Whole(rational.Rational(right.Real.Value))
+	var above rational.Numerator
+	above_ok := rational.Whole(&above, rational.Rational(left.Real.Value))
+	var below rational.Numerator
+	below_ok := rational.Whole(&below, rational.Rational(right.Real.Value))
 	if !bool(above_ok) {
 		return Make_Unknown()
 	}
 	if !bool(below_ok) {
 		return Make_Unknown()
 	}
-	first := integer.Integer(above)
-	second := integer.Integer(below)
+	first := integer.Integer{Limbs: integer.Limbs(above)}
+	second := integer.Integer{Limbs: integer.Limbs(below)}
 	switch operation {
 	case Whole_Binary(BINARY_AND):
-		return whole_value(rational.Numerator(integer.And(first, second)))
+		var folded integer.Integer
+		integer.And(&folded, first, second)
+		return whole_value(rational.Numerator(folded.Limbs))
 	case Whole_Binary(BINARY_OR):
-		return whole_value(rational.Numerator(integer.Or(first, second)))
+		var folded integer.Integer
+		integer.Or(&folded, first, second)
+		return whole_value(rational.Numerator(folded.Limbs))
 	case Whole_Binary(BINARY_EXCLUSIVE_OR):
-		return whole_value(rational.Numerator(integer.Exclusive_Or(first, second)))
+		var folded integer.Integer
+		integer.Exclusive_Or(&folded, first, second)
+		return whole_value(rational.Numerator(folded.Limbs))
 	case Whole_Binary(BINARY_AND_NOT):
-		return whole_value(rational.Numerator(integer.And_Not(first, second)))
+		var folded integer.Integer
+		integer.And_Not(&folded, first, second)
+		return whole_value(rational.Numerator(folded.Limbs))
 	}
-	_, rest, divided := integer.Divide(first, second)
+	var quotient, rest integer.Integer
+	divided := integer.Divide(&quotient, &rest, first, second)
 	if !bool(divided) {
 		return Make_Unknown()
 	}
-	return whole_value(rational.Numerator(rest))
+	return whole_value(rational.Numerator(rest.Limbs))
 }
 
-// Builds a whole number value from a numerator. A numerator rather than an integer, because an
-// integer root states every limb domain and a folded whole number reaches few of its edges.
+// Whole arithmetic already owns limbs; ratio conversion must preserve every high word.
 func whole_value(value rational.Numerator) (result Value) {
 	defer func() { Value_Invariants(result, "whole_value.result") }()
 	rational.Numerator_Invariants(value, "whole_value.value")
-	return from_rational(rational.From_Integer(value))
+	var folded Real
+	rational.From_Integer((*rational.Rational)(&folded), value)
+	return from_rational(folded)
 }
 
 // Applies one arithmetic operation to two numbers. A quotient of two whole numbers stays whole,
@@ -813,8 +837,8 @@ func number_operation(left Value, operation Number_Binary, right Value) (result 
 	if Kind_Of(right) == KIND_COMPLEX {
 		return complex_operation(left, operation, right)
 	}
-	first := rational.Rational(left.Real.Value)
-	second := rational.Rational(right.Real.Value)
+	first := left.Real.Value
+	second := right.Real.Value
 	whole := Kind_Of(left) == KIND_INT
 	if Kind_Of(right) != KIND_INT {
 		whole = false
@@ -829,7 +853,8 @@ func number_operation(left Value, operation Number_Binary, right Value) (result 
 	if !whole {
 		return from_rational(folded.Value)
 	}
-	truncated, truncated_ok := rational.Whole(folded.Value)
+	var truncated rational.Numerator
+	truncated_ok := rational.Whole(&truncated, rational.Rational(folded.Value))
 	if !bool(truncated_ok) {
 		return Make_Unknown()
 	}
@@ -839,37 +864,57 @@ func number_operation(left Value, operation Number_Binary, right Value) (result 
 // Ratio_Result keeps exact value and bounded arithmetic outcome together.
 type Ratio_Result struct {
 	// Value remains zero when arithmetic exceeds fixed storage.
-	Value rational.Rational
+	Value Real
 	// OK distinguishes valid zero from bounded refusal.
 	OK Read
 }
 
 // Ratio_Result_Invariants composes one exact arithmetic outcome.
 func Ratio_Result_Invariants(value Ratio_Result, namespace aver.Namespace) {
-	rational.Rational_Invariants(value.Value, namespace)
+	Real_Invariants(value.Value, namespace)
 	Read_Invariants(value.OK, namespace)
 }
 
 // Applies one arithmetic operation to two ratios.
 func apply_ratio(
-	left rational.Rational, operation Number_Binary, right rational.Rational,
+	left Real, operation Number_Binary, right Real,
 ) (result Ratio_Result) {
 	defer func() { Ratio_Result_Invariants(result, "apply_ratio.result") }()
-	rational.Rational_Invariants(left, "apply_ratio.left")
+	Real_Invariants(left, "apply_ratio.left")
 	Number_Binary_Invariants(operation, "apply_ratio.operation")
-	rational.Rational_Invariants(right, "apply_ratio.right")
+	Real_Invariants(right, "apply_ratio.right")
 	switch operation {
 	case Number_Binary(BINARY_ADD):
-		folded, held := rational.Add(left, right)
+		var folded Real
+		held := rational.Add(
+			(*rational.Rational)(&folded),
+			rational.Rational(left),
+			rational.Rational(right),
+		)
 		return Ratio_Result{Value: folded, OK: Read(held)}
 	case Number_Binary(BINARY_SUBTRACT):
-		folded, held := rational.Subtract(left, right)
+		var folded Real
+		held := rational.Subtract(
+			(*rational.Rational)(&folded),
+			rational.Rational(left),
+			rational.Rational(right),
+		)
 		return Ratio_Result{Value: folded, OK: Read(held)}
 	case Number_Binary(BINARY_MULTIPLY):
-		folded, held := rational.Multiply(left, right)
+		var folded Real
+		held := rational.Multiply(
+			(*rational.Rational)(&folded),
+			rational.Rational(left),
+			rational.Rational(right),
+		)
 		return Ratio_Result{Value: folded, OK: Read(held)}
 	}
-	folded, held := rational.Divide(left, right)
+	var folded Real
+	held := rational.Divide(
+		(*rational.Rational)(&folded),
+		rational.Rational(left),
+		rational.Rational(right),
+	)
 	return Ratio_Result{Value: folded, OK: Read(held)}
 }
 
@@ -895,13 +940,13 @@ func add_complex(left Value, operation Sum_Binary, right Value) (result Value) {
 	Value_Invariants(left, "add_complex.left")
 	Sum_Binary_Invariants(operation, "add_complex.operation")
 	Value_Invariants(right, "add_complex.right")
-	real_part := apply_ratio(rational.Rational(left.Real.Value),
-		Number_Binary(operation), rational.Rational(right.Real.Value))
+	real_part := apply_ratio(left.Real.Value,
+		Number_Binary(operation), right.Real.Value)
 	if !bool(real_part.OK) {
 		return Make_Unknown()
 	}
-	imaginary_part := apply_ratio(rational.Rational(left.Imaginary.Value),
-		Number_Binary(operation), rational.Rational(right.Imaginary.Value))
+	imaginary_part := apply_ratio(Real(left.Imaginary.Value),
+		Number_Binary(operation), Real(right.Imaginary.Value))
 	if !bool(imaginary_part.OK) {
 		return Make_Unknown()
 	}
@@ -915,17 +960,17 @@ func multiply_complex(left Value, right Value) (result Value) {
 	Value_Invariants(left, "multiply_complex.left")
 	Value_Invariants(right, "multiply_complex.right")
 	across := apply_ratio(
-		rational.Rational(left.Real.Value), NUMBER_MULTIPLY,
-		rational.Rational(right.Real.Value))
+		left.Real.Value, NUMBER_MULTIPLY,
+		right.Real.Value)
 	turned := apply_ratio(
-		rational.Rational(left.Imaginary.Value), NUMBER_MULTIPLY,
-		rational.Rational(right.Imaginary.Value))
+		Real(left.Imaginary.Value), NUMBER_MULTIPLY,
+		Real(right.Imaginary.Value))
 	upward := apply_ratio(
-		rational.Rational(left.Imaginary.Value), NUMBER_MULTIPLY,
-		rational.Rational(right.Real.Value))
+		Real(left.Imaginary.Value), NUMBER_MULTIPLY,
+		right.Real.Value)
 	downward := apply_ratio(
-		rational.Rational(left.Real.Value), NUMBER_MULTIPLY,
-		rational.Rational(right.Imaginary.Value))
+		left.Real.Value, NUMBER_MULTIPLY,
+		Real(right.Imaginary.Value))
 	held := across.OK && turned.OK && upward.OK && downward.OK
 	if !bool(held) {
 		return Make_Unknown()
@@ -956,9 +1001,9 @@ func divide_complex(left Value, right Value) (result Value) {
 		return Make_Unknown()
 	}
 	real_part := apply_ratio(
-		rational.Rational(product.Real.Value), NUMBER_QUOTIENT, scale.Value)
+		product.Real.Value, NUMBER_QUOTIENT, scale.Value)
 	imaginary_part := apply_ratio(
-		rational.Rational(product.Imaginary.Value), NUMBER_QUOTIENT, scale.Value)
+		Real(product.Imaginary.Value), NUMBER_QUOTIENT, scale.Value)
 	if !bool(real_part.OK) {
 		return Make_Unknown()
 	}
@@ -973,21 +1018,24 @@ func square_sum(value Value) (result Ratio_Result) {
 	defer func() { Ratio_Result_Invariants(result, "square_sum.result") }()
 	Value_Invariants(value, "square_sum.value")
 	real_square := apply_ratio(
-		rational.Rational(value.Real.Value), NUMBER_MULTIPLY,
-		rational.Rational(value.Real.Value))
+		value.Real.Value, NUMBER_MULTIPLY,
+		value.Real.Value)
 	imaginary_square := apply_ratio(
-		rational.Rational(value.Imaginary.Value), NUMBER_MULTIPLY,
-		rational.Rational(value.Imaginary.Value))
+		Real(value.Imaginary.Value), NUMBER_MULTIPLY,
+		Real(value.Imaginary.Value))
 	held := real_square.OK && imaginary_square.OK
 	if !bool(held) {
-		return Ratio_Result{Value: rational.Zero(), OK: false}
+		rational.Zero((*rational.Rational)(&result.Value))
+		return result
 	}
 	summed := apply_ratio(real_square.Value, NUMBER_ADD, imaginary_square.Value)
 	if !bool(summed.OK) {
-		return Ratio_Result{Value: rational.Zero(), OK: false}
+		rational.Zero((*rational.Rational)(&result.Value))
+		return result
 	}
-	if bool(rational.Is_Zero(summed.Value)) {
-		return Ratio_Result{Value: rational.Zero(), OK: false}
+	if bool(rational.Is_Zero(rational.Rational(summed.Value))) {
+		rational.Zero((*rational.Rational)(&result.Value))
+		return result
 	}
 	return summed
 }
@@ -996,11 +1044,14 @@ func square_sum(value Value) (result Ratio_Result) {
 func conjugate(value Value) (result Value) {
 	defer func() { Value_Invariants(result, "conjugate.result") }()
 	Value_Invariants(value, "conjugate.value")
-	turned, ok := rational.Negate(rational.Rational(value.Imaginary.Value))
+	var turned Real
+	ok := rational.Negate(
+		(*rational.Rational)(&turned), rational.Rational(value.Imaginary.Value),
+	)
 	if !bool(ok) {
 		return Make_Unknown()
 	}
-	return make_complex(rational.Rational(value.Real.Value), turned)
+	return make_complex(value.Real.Value, turned)
 }
 
 // Comparison_Result keeps ordering and comparability at one output boundary.
@@ -1056,7 +1107,9 @@ func compare_number(left Value, right Value) (result Comparison_Result) {
 	Value_Invariants(left, "compare_number.left")
 	Value_Invariants(right, "compare_number.right")
 	folded, held := rational.Compare(
-		rational.Rational(left.Real.Value), rational.Rational(right.Real.Value))
+		rational.Rational(left.Real.Value),
+		rational.Rational(right.Real.Value),
+	)
 	if !bool(held) {
 		return Comparison_Result{Order: integer.ORDER_SAME, OK: false}
 	}
@@ -1064,7 +1117,9 @@ func compare_number(left Value, right Value) (result Comparison_Result) {
 		return Comparison_Result{Order: folded, OK: true}
 	}
 	turned, turned_held := rational.Compare(
-		rational.Rational(left.Imaginary.Value), rational.Rational(right.Imaginary.Value))
+		rational.Rational(left.Imaginary.Value),
+		rational.Rational(right.Imaginary.Value),
+	)
 	return Comparison_Result{Order: turned, OK: Read(turned_held)}
 }
 
@@ -1103,19 +1158,22 @@ func Shift(
 	if Kind_Of(value) != KIND_INT {
 		return Make_Unknown()
 	}
-	whole, ok := rational.Whole(rational.Rational(value.Real.Value))
+	var whole rational.Numerator
+	ok := rational.Whole(&whole, rational.Rational(value.Real.Value))
 	if !bool(ok) {
 		return Make_Unknown()
 	}
 	if operation == SHIFT_DOWN {
-		return whole_value(rational.Numerator(
-			integer.Shift_Right(integer.Integer(whole), count)))
+		var moved integer.Integer
+		integer.Shift_Right(&moved, integer.Integer{Limbs: integer.Limbs(whole)}, count)
+		return whole_value(rational.Numerator(moved.Limbs))
 	}
-	moved, held := integer.Shift_Left(integer.Integer(whole), count)
+	var moved integer.Integer
+	held := integer.Shift_Left(&moved, integer.Integer{Limbs: integer.Limbs(whole)}, count)
 	if !bool(held) {
 		return Make_Unknown()
 	}
-	return whole_value(rational.Numerator(moved))
+	return whole_value(rational.Numerator(moved.Limbs))
 }
 
 // Into_Text writes a value into caller storage and returns the byte count. An unknown writes
@@ -1147,8 +1205,7 @@ func Into_Text(destination Form, value Value) (count Form_Count) {
 		}
 		return Form_Count(copy(destination, real_storage[:above]))
 	}
-	below := rational.Into_Text(
-		imaginary_storage[:], rational.Rational(value.Imaginary.Value))
+	below := rational.Into_Text(imaginary_storage[:], rational.Rational(value.Imaginary.Value))
 	if below == 0 {
 		return FORM_SIZE_MINIMUM
 	}

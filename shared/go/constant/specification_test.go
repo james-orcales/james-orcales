@@ -590,3 +590,74 @@ func allocation_fold_checks(t *testing.T) {
 	}
 	testify.True(t, bool(fixture.Ok), "the allocation fixture holds an order")
 }
+
+// Decimal fixtures independently pin each high-limb shift and its inverse.
+func Test_Shifts_High_Limbs(t *testing.T) {
+	for _, one := range []struct {
+		Number constant.Int_64
+		Shift  integer.Shift_Count
+		Text   string
+	}{
+		{Number: 1, Shift: 64,
+			Text: "18446744073709551616"},
+		{Number: 2, Shift: 64,
+			Text: "36893488147419103232"},
+		{Number: 1, Shift: 128,
+			Text: "340282366920938463463374607431768211456"},
+		{Number: 2, Shift: 128,
+			Text: "680564733841876926926749214863536422912"},
+		{Number: 1, Shift: 192,
+			Text: "6277101735386680763835789423207666416102355444464034512896"},
+		{Number: 2, Shift: 192,
+			Text: "12554203470773361527671578846415332832204710888928069025792"},
+		{Number: 1, Shift: 256,
+			Text: "115792089237316195423570985008687907853269984665640564039457" +
+				"584007913129639" +
+				"936"},
+		{Number: 2, Shift: 256,
+			Text: "231584178474632390847141970017375815706539969331281128078915" +
+				"168015826259279" +
+				"872"},
+		{Number: 1, Shift: 320,
+			Text: "213598703592091008239502170616955211460270452235665276994704" +
+				"160782221972578" +
+				"0640550022962086936576"},
+		{Number: 2, Shift: 320,
+			Text: "427197407184182016479004341233910422920540904471330553989408" +
+				"321564443945156" +
+				"1281100045924173873152"},
+		{Number: 1, Shift: 384,
+			Text: "394020061963944792122790401001436138050797392704654466679482" +
+				"934042457217714" +
+				"97210611414266254884915640806627990306816"},
+		{Number: 2, Shift: 384,
+			Text: "788040123927889584245580802002872276101594785409308933358965" +
+				"868084914435429" +
+				"94421222828532509769831281613255980613632"},
+		{Number: 1, Shift: 448,
+			Text: "726838724295606890549323807888004534353641360687318060281490" +
+				"199180639288113" +
+				"397923326191050713763565560762521606266177933534601628614656"},
+		{Number: 2, Shift: 448,
+			Text: "145367744859121378109864761577600906870728272137463612056298" +
+				"039836127857622" +
+				"6795846652382101427527131121525043212532355867069203257229312"},
+	} {
+		for _, sign := range []constant.Int_64{1, -1} {
+			number := one.Number * sign
+			expected := one.Text
+			if sign < 0 {
+				expected = "-" + expected
+			}
+			shifted := constant.Shift(
+				constant.Make_Int_64(number), constant.SHIFT_UP, one.Shift,
+			)
+			testify.Equal(t, expected, text_of(shifted))
+			restored := constant.Int_64_Value(
+				constant.Shift(shifted, constant.SHIFT_DOWN, one.Shift),
+			)
+			testify.Equal(t, number, restored.Value)
+			testify.True(t, bool(restored.OK))
+		}
+	}
+}

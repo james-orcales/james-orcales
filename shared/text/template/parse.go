@@ -5070,23 +5070,23 @@ func syntax_workspace_valid(
 	if len(number.Parse.Words) != big.WORD_COUNT_MAXIMUM {
 		return false
 	}
-	if len(number.Integers[big.RAT_PARSE_FRACTION_NUMERATOR_INDEX].Words) !=
+	if len(number.Integers.Numerator.Words) !=
 		big.WORD_COUNT_MAXIMUM {
 		return false
 	}
-	if len(number.Integers[big.RAT_PARSE_FRACTION_DENOMINATOR_INDEX].Words) !=
+	if len(number.Integers.Denominator.Words) !=
 		big.WORD_COUNT_MAXIMUM {
 		return false
 	}
-	if len(number.Values[big.FLOAT_RAT_NUMERATOR_INDEX].Mantissa.Words) !=
+	if len(number.Values.Numerator.Mantissa.Words) !=
 		big.WORD_COUNT_MAXIMUM {
 		return false
 	}
-	if len(number.Values[big.FLOAT_RAT_DENOMINATOR_INDEX].Mantissa.Words) !=
+	if len(number.Values.Denominator.Mantissa.Words) !=
 		big.WORD_COUNT_MAXIMUM {
 		return false
 	}
-	if len(number.Values[big.FLOAT_RAT_RESULT_INDEX].Mantissa.Words) !=
+	if len(number.Values.Result.Mantissa.Words) !=
 		big.WORD_COUNT_MAXIMUM {
 		return false
 	}
@@ -8801,7 +8801,7 @@ func number_float_valid(
 	}
 	local_workspace := (*Number_Workspace)(workspace)
 	number_workspace := (*big.Float_Parse_Workspace)(local_workspace)
-	value := &number_workspace.Values[big.FLOAT_RAT_RESULT_INDEX]
+	value := (*big.Float)(&number_workspace.Values.Result)
 	value.Precision = big.Float_Precision(big.FLOAT_64_VALUE_MANTISSA_BIT_COUNT)
 	value.Mode = big.Rounding_Mode(big.ROUND_TO_NEAREST_EVEN)
 	_, status := big.Float_Parse(

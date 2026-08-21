@@ -222,7 +222,7 @@ func Test_Database_Scan_Reads_Value(t *testing.T) {
 		t.Fatalf("from bytes %v, want %v", from_bytes, original)
 	}
 	value := uuid.UUID_Value(original, text_storage)
-	text, text_status := driver.Value_As_Text(driver.Value(value))
+	text := driver.Value_As_Text(driver.Value(value), &text_status)
 	if text_status != status_ok {
 		t.Fatalf("value text: %v", text_status)
 	}
@@ -1037,7 +1037,8 @@ func Test_Collection_And_Value_Boundaries_Reach_Production(t *testing.T) {
 	}
 	text_storage := make(uuid.Text_Bytes, uuid.UUID_TEXT_BYTE_COUNT)
 	null_value := uuid.Null_UUID_Value(uuid.Null_UUID{UUID: nil_uuid()}, text_storage)
-	null_kind, null_status := driver.Value_Kind_Of(driver.Value(null_value))
+	var null_status driver.Validation_Status
+	null_kind := driver.Value_Kind_Of(driver.Value(null_value), &null_status)
 	if null_status != driver.Validation_Status(driver.STATUS_OK) {
 		t.Fatalf("invalid nullable value kind: %v", null_status)
 	}
@@ -1047,7 +1048,8 @@ func Test_Collection_And_Value_Boundaries_Reach_Production(t *testing.T) {
 	valid_value := uuid.Null_UUID_Value(
 		uuid.Null_UUID{UUID: uuid_max, Valid: true}, text_storage,
 	)
-	valid_kind, valid_status := driver.Value_Kind_Of(driver.Value(valid_value))
+	var valid_status driver.Validation_Status
+	valid_kind := driver.Value_Kind_Of(driver.Value(valid_value), &valid_status)
 	if valid_status != driver.Validation_Status(driver.STATUS_OK) {
 		t.Fatalf("valid nullable value kind: %v", valid_status)
 	}

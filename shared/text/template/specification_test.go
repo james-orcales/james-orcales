@@ -521,6 +521,7 @@ func test_workspace_finite_float(
 		Form:      big.FLOAT_FORM_FINITE,
 		Exponent:  big.Float_Exponent(exponent),
 	}
+	test_float_initialize(&value)
 	value.Mantissa.Count = big.Word_Count(count)
 	value.Mantissa.Words[count-big.WORD_COUNT_INCREMENT] = TEST_COUNT_ONE
 	test_workspace_float(t, value)
@@ -530,7 +531,11 @@ func test_workspace_float(t *testing.T, value big.Float) {
 	t.Helper()
 	program := compile_from(t, "")
 	var execution execution_storage
-	execution.Float_Parse.Values[big.FLOAT_RAT_RESULT_INDEX] = value
+	test_float_parse_workspace_initialize(&execution.Float_Parse)
+	if value.Mantissa.Words == nil {
+		test_float_initialize(&value)
+	}
+	execution.Float_Parse.Values.Result = big.Float_Rat_Result(value)
 	_, _, status := template.Execute_Into(template.Execute_Input{
 		Program: program, Value: template.Value_Nil(),
 		Workspace: workspace_from(&execution),
@@ -2342,6 +2347,11 @@ func syntax_from(workspace *template.Syntax_Workspace) (input template.Syntax_In
 }
 
 func syntax_workspace_prepare(workspace *template.Syntax_Workspace) {
+	if workspace.Number.Source == nil {
+		test_float_parse_workspace_initialize(
+			(*big.Float_Parse_Workspace)(&workspace.Number),
+		)
+	}
 	if workspace.Nodes == nil {
 		workspace.Nodes = make(template.Nodes, template.NODE_COUNT_MAXIMUM)
 	}
@@ -2391,6 +2401,12 @@ type execution_storage struct {
 }
 
 func execution_storage_prepare(storage *execution_storage) {
+	if storage.Float_Parse.Source == nil {
+		test_float_parse_workspace_initialize(&storage.Float_Parse)
+	}
+	if storage.Float_Text.Output == nil {
+		test_float_text_workspace_initialize(&storage.Float_Text)
+	}
 	storage.Output = make([]byte, template.OUTPUT_SIZE_MAXIMUM)
 	storage.Literals = make([]byte, template.QUOTED_DECODED_SIZE_MAXIMUM)
 	storage.Literal_Counts = make([]template.Literal_Count, template.NODE_COUNT_MAXIMUM)
@@ -4222,4 +4238,50 @@ func known_flow_function(name template.Parse_Function_Name) (known template.Func
 		}
 	}
 	return true
+}
+
+func test_float_initialize(value *big.Float) {
+	value.Mantissa.Words = make(big.Words, big.WORD_COUNT_MAXIMUM)
+}
+
+func test_float_parse_workspace_initialize(workspace *big.Float_Parse_Workspace) {
+	workspace.Source = make(big.Float_Parse_Source, big.FLOAT_PARSE_TEXT_SIZE_MAXIMUM)
+	workspace.Control = make(big.Float_Parse_Control, big.FLOAT_PARSE_CONTROL_COUNT)
+	workspace.Parse.Words = make(big.Int_Parse_Words, big.WORD_COUNT_MAXIMUM)
+	workspace.Integers.Numerator.Words = make(big.Words, big.WORD_COUNT_MAXIMUM)
+	workspace.Integers.Denominator.Words = make(big.Words, big.WORD_COUNT_MAXIMUM)
+	test_float_initialize((*big.Float)(&workspace.Values.Numerator))
+	test_float_initialize((*big.Float)(&workspace.Values.Denominator))
+	test_float_initialize((*big.Float)(&workspace.Values.Result))
+	workspace.Division.Remainder = make(
+		big.Float_Division_Remainder, big.FLOAT_DIVISION_WORD_COUNT_MAXIMUM,
+	)
+	workspace.Division.Divisor = make(
+		big.Float_Division_Divisor, big.FLOAT_DIVISION_WORD_COUNT_MAXIMUM,
+	)
+}
+
+func test_float_text_workspace_initialize(workspace *big.Float_Text_Workspace) {
+	workspace.Integers.Significand.Words = make(big.Words, big.WORD_COUNT_MAXIMUM)
+	workspace.Integers.Exponent.Words = make(big.Words, big.WORD_COUNT_MAXIMUM)
+	test_float_initialize((*big.Float)(&workspace.Values.Source))
+	test_float_initialize((*big.Float)(&workspace.Values.Rounded))
+	workspace.Decimals.Value.Digits = make(
+		big.Float_Text_Decimal_Digits, big.FLOAT_DECIMAL_DIGIT_COUNT_MAXIMUM,
+	)
+	workspace.Decimals.Lower.Digits = make(
+		big.Float_Text_Decimal_Digits, big.FLOAT_DECIMAL_DIGIT_COUNT_MAXIMUM,
+	)
+	workspace.Decimals.Upper.Digits = make(
+		big.Float_Text_Decimal_Digits, big.FLOAT_DECIMAL_DIGIT_COUNT_MAXIMUM,
+	)
+	workspace.Text.Significand.Words = make(big.Int_Text_Words, big.WORD_COUNT_MAXIMUM)
+	workspace.Text.Significand.Digits = make(big.Int_Text_Digits, big.INT_TEXT_SIZE_MAXIMUM)
+	workspace.Text.Exponent.Words = make(big.Int_Text_Words, big.WORD_COUNT_MAXIMUM)
+	workspace.Text.Exponent.Digits = make(big.Int_Text_Digits, big.INT_TEXT_SIZE_MAXIMUM)
+	workspace.Control = &big.Float_Text_Control{}
+	workspace.Magnitude.Words = make(
+		big.Float_Text_Magnitude_Words, big.FLOAT_TEXT_MAGNITUDE_WORD_COUNT_MAXIMUM,
+	)
+	workspace.Output = make(big.Float_Text_Output, big.FLOAT_TEXT_SIZE_MAXIMUM)
 }

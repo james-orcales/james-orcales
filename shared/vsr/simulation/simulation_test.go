@@ -558,7 +558,8 @@ func simulator_replica_clock(state *simulator) (host time.Clock, tick func()) {
 			time.Moment(time.MILLISECOND)
 		// Drift A ns/tick shifts the effective rate to Resolution-A; |A| far below
 		// Resolution keeps the clock monotonic while still drifting up to ~2%.
-		rate := time.Duration(prng.Xoshiro_Below(&state.Clock_Generator, 40001) - 20000)
+		drift := prng.Xoshiro_Below(&state.Clock_Generator, 40001) - 20000
+		rate := time.Skew_Magnitude(drift)
 		virtual.Skew = time.Skew(time.SKEW_KIND_LINEAR, rate, 0)
 	}
 	host = time.Virtual_Clock_To_Clock(&virtual)
@@ -596,7 +597,7 @@ func simulator_state_machine(state *simulator, index int) (machine vsr.State_Mac
 			simulator_observe_execution(state, index, command)
 			if state.Trace.Configuration != nil {
 				defer func() {
-					jlog.Logger_Info(state.Trace, "execute",
+					jlog.Logger_Info(&state.Trace, "execute",
 						jlog.Integer("id", index),
 						jlog.String("cmd", string(command)),
 						jlog.Uint64("acc", state.Accumulator[index]))
@@ -633,7 +634,7 @@ func simulator_state_machine(state *simulator, index int) (machine vsr.State_Mac
 		Restore: func(snapshot []byte) {
 			state.Accumulator[index] = bytes_to_uint64(snapshot)
 			if state.Trace.Configuration != nil {
-				jlog.Logger_Info(state.Trace, "restore",
+				jlog.Logger_Info(&state.Trace, "restore",
 					jlog.Integer("id", index),
 					jlog.Uint64("acc", state.Accumulator[index]))
 			}
@@ -730,7 +731,7 @@ func simulator_inject_isolation(state *simulator, now time.Moment) {
 	}
 	window := time.Moment(SIM_ISOLATE_WINDOW) * time.Moment(time.MILLISECOND)
 	state.Isolated_Until[victim] = now + window
-	jlog.Logger_Info(state.Trace, "fault",
+	jlog.Logger_Info(&state.Trace, "fault",
 		jlog.Int64("t", now),
 		jlog.String("kind", "isolate"),
 		jlog.Integer("replica", victim),
@@ -782,7 +783,7 @@ func simulator_inject_crash(state *simulator, now time.Moment) {
 	if !warm {
 		state.Accumulator[victim] = 0
 	}
-	jlog.Logger_Info(state.Trace, "fault",
+	jlog.Logger_Info(&state.Trace, "fault",
 		jlog.Int64("t", now),
 		jlog.String("kind", "crash"),
 		jlog.Integer("replica", victim),
@@ -815,7 +816,7 @@ func simulator_inject_reconfiguration(state *simulator, tick_index int, now time
 	state.Admin.Request_Number++
 	state.Reconfigure_After = tick_index + SIM_RECONFIGURE_EVERY
 	primary := simulator_believed_primary(state)
-	jlog.Logger_Info(state.Trace, "fault",
+	jlog.Logger_Info(&state.Trace, "fault",
 		jlog.Int64("t", now),
 		jlog.String("kind", "reconfigure"),
 		jlog.Uint64("request", state.Admin.Request_Number),
@@ -1217,7 +1218,7 @@ func simulator_deliver(state *simulator, now time.Moment) {
 		message := flight.Message
 		if reason := simulator_drop_reason(state, message, now); reason != "" {
 			if state.Trace.Configuration != nil {
-				log_message(state.Trace, reason, now, message)
+				log_message(&state.Trace, reason, now, message)
 			}
 			continue // Partition, or shut-down/dormant target; senders' timers retry.
 		}
@@ -1230,8 +1231,8 @@ func simulator_deliver(state *simulator, now time.Moment) {
 		target := &state.Replicas[message.To]
 		target_transition := target.Status == vsr.STATUS_TRANSITION
 		if state.Trace.Configuration != nil {
-			log_message(state.Trace, "deliver", now, message)
-			log_replica(state.Trace, "before", target)
+			log_message(&state.Trace, "deliver", now, message)
+			log_replica(&state.Trace, "before", target)
 		}
 		// A replica processes a received message on its own clock, like a tick, not a
 		// global one it cannot read. Arming the timer here off the true clock while ticks
@@ -1243,14 +1244,14 @@ func simulator_deliver(state *simulator, now time.Moment) {
 			Now:     simulator_replica_now(state, int(message.To)),
 		})
 		if state.Trace.Configuration != nil {
-			log_replica(state.Trace, "after", target)
+			log_replica(&state.Trace, "after", target)
 			for index := range output.Messages {
-				log_message(state.Trace, "send", now, output.Messages[index])
+				log_message(&state.Trace, "send", now, output.Messages[index])
 			}
 			commit_base := int(target.Commit) - len(output.Committed) + 1
 			for index := range output.Committed {
 				entry := output.Committed[index]
-				jlog.Logger_Info(state.Trace, "commit", jlog.Int64("t", now),
+				jlog.Logger_Info(&state.Trace, "commit", jlog.Int64("t", now),
 					jlog.Uint8("id", message.To),
 					jlog.Integer("op", commit_base+index),
 					jlog.Uint64("birth_view", entry.View),
@@ -2056,7 +2057,7 @@ func simulator_check_agreement_pair(input *simulator_check_agreement_pair_input)
 		ai := op - vsr.Commit(a.Log_Start) - 1
 		bi := op - vsr.Commit(b.Log_Start) - 1
 		if string(a.Log[ai].Command) != string(b.Log[bi].Command) {
-			jlog.Logger_Info(input.State.Trace, "VIOLATION agreement",
+			jlog.Logger_Info(&input.State.Trace, "VIOLATION agreement",
 				jlog.Uint64("op", op),
 				jlog.Uint8("a", a.Identifier),
 				jlog.String("a_cmd", string(a.Log[ai].Command)),
@@ -2082,7 +2083,7 @@ func simulator_check_agreement_pair(input *simulator_check_agreement_pair_input)
 // the logger and the value and writes the fields straight to jlog's pooled buffer — no String()
 // blob allocated per call. Whichever log slice the kind carries shows under entries (Prepare), log
 // (Start_View/New_State), or suffix (Do_View_Change).
-func log_message(logger jlog.Logger, event string, now time.Moment, message vsr.Message) {
+func log_message(logger *jlog.Logger, event string, now time.Moment, message vsr.Message) {
 	jlog.Logger_Info(logger, event,
 		jlog.Int64("t", now),
 		jlog.String("kind", message_kind_name(message.Kind)),
@@ -2111,7 +2112,7 @@ func trace_checkpoint_acc(snapshot []byte) (accumulator uint64) {
 
 // Log_replica logs a replica's whole consensus state and live log as one structured line under the
 // given event ("before"/"after"). Same shape as log_message: fields straight to the buffer.
-func log_replica(logger jlog.Logger, event string, replica *vsr.Replica) {
+func log_replica(logger *jlog.Logger, event string, replica *vsr.Replica) {
 	jlog.Logger_Info(logger, event,
 		jlog.Uint8("id", replica.Identifier),
 		jlog.String("status", status_name(replica.Status)),

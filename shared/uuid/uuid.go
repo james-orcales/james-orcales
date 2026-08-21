@@ -1582,7 +1582,8 @@ func UUID_Scan(uuid UUID_Pointer, source driver.Value) (status driver.Validation
 	driver.Value_Invariants(source, "uuid_scan.source")
 	status_ok := driver.Validation_Status(driver.STATUS_OK)
 	status_invalid := driver.Validation_Status(driver.STATUS_INPUT_INVALID)
-	kind, kind_status := driver.Value_Kind_Of(source)
+	var kind_status driver.Validation_Status
+	kind := driver.Value_Kind_Of(source, &kind_status)
 	if kind_status != status_ok {
 		return status_invalid
 	}
@@ -1591,7 +1592,8 @@ func UUID_Scan(uuid UUID_Pointer, source driver.Value) (status driver.Validation
 		Nil(*uuid)
 		return status_ok
 	case driver.VALUE_TEXT:
-		text, text_status := driver.Value_As_Text(source)
+		var text_status driver.Validation_Status
+		text := driver.Value_As_Text(source, &text_status)
 		if text_status != status_ok {
 			return status_invalid
 		}
@@ -1605,7 +1607,8 @@ func UUID_Scan(uuid UUID_Pointer, source driver.Value) (status driver.Validation
 		}
 		return status_ok
 	case driver.VALUE_BYTES:
-		data, data_status := driver.Value_As_Bytes(source)
+		var data_status driver.Validation_Status
+		data := driver.Value_As_Bytes(source, &data_status)
 		if data_status != status_ok {
 			return status_invalid
 		}
@@ -1653,7 +1656,8 @@ func Null_UUID_Scan(
 	}()
 	Null_UUID_Pointer_Invariants(null_uuid, "null_uuid_scan.null_uuid.input")
 	driver.Value_Invariants(source, "null_uuid_scan.source")
-	kind, kind_status := driver.Value_Kind_Of(source)
+	var kind_status driver.Validation_Status
+	kind := driver.Value_Kind_Of(source, &kind_status)
 	if kind_status != driver.Validation_Status(driver.STATUS_OK) {
 		Nil(null_uuid.UUID)
 		null_uuid.Valid = false

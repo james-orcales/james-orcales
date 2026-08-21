@@ -214,14 +214,22 @@ func cli_internal_suggestion_boundaries() {
 		Label(cli_internal_text(1)), Label(cli_internal_text(2)),
 		Label(cli_internal_text(strings.TEXT_SIZE_MAXIMUM)),
 	} {
-		var workspace levenshtein.Workspace
+		var from, to [levenshtein.RUNE_COUNT_MAXIMUM]rune
+		var previous, current [levenshtein.ROW_COUNT]int
+		workspace := levenshtein.Workspace{
+			From: from[:], To: to[:], Previous: previous[:], Current: current[:],
+		}
 		state := Suggestion_State{Match: match}
 		closest_label(&workspace, "xxx", "xxy", &state)
 	}
 	for _, best := range [...]levenshtein.Distance_Value{
 		2, levenshtein.Distance_Value(strings.TEXT_SIZE_MAXIMUM),
 	} {
-		var workspace levenshtein.Workspace
+		var from, to [levenshtein.RUNE_COUNT_MAXIMUM]rune
+		var previous, current [levenshtein.ROW_COUNT]int
+		workspace := levenshtein.Workspace{
+			From: from[:], To: to[:], Previous: previous[:], Current: current[:],
+		}
 		state := Suggestion_State{Best: best}
 		closest_label(&workspace, "xxx", "xxy", &state)
 	}
