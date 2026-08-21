@@ -7,29 +7,46 @@
 package simulation_test
 
 import (
-	"io"
-	"math"
-	"strconv"
-	"strings"
+	"fmt"
 	"testing"
 
-	maddox "local/james-orcales/maddox/internal"
-	invariant "local/james-orcales/shared/invariant/default"
-	sysio "local/james-orcales/shared/io"
-	"local/james-orcales/shared/time"
+	"local/james-orcales/maddox/internal"
+	"local/james-orcales/shared/math/bits"
+	"local/james-orcales/shared/sim/nbio"
+	"local/james-orcales/shared/sim/time"
 )
 
-// TestMain wires the coverage recorder over the internal tree ("../**"): every
-// Always reached must hold and every Sometimes both fire, or the run fails.
-func TestMain(m *testing.M) {
-	invariant.Run_Test_Main(m, "../**")
+// The requirements tests mirror REQUIREMENTS.md: one leaf per heading, in heading
+// order, each driving internal.Main through the shared scenario driver. They assert no
+// invariant trips; the coverage recorder judges the boundaries the fuzz target reaches.
+
+// Test_Witness_Pipeline drives a full benchmark run — sampling, statistics, comparison,
+// and rendering — through Main from the base scenario.
+func Test_Witness_Pipeline(t *testing.T) {
+	drive(t, decode_scenario(build(base_scenario())))
+}
+
+// Test_Witness_Failure drives a command that exits non-zero, exercising the abort and
+// captured-stderr paths a successful run never reaches.
+func Test_Witness_Failure(t *testing.T) {
+	drive(t, decode_scenario(with(func(s *scenario) {
+		s.Exit = 1
+		s.Fail_Every = 1
+		s.Stderr_Bytes = 4
+	})))
 }
 
 // SIM_DELTAS_MAX is the per-sample deviation pattern length — a driver construct, not a
 // maddox bound, so it is the one ceiling defined here rather than imported from the library.
 // Every other structural ceiling is maddox's own exported const, so the driver cannot drift
 // from the bounds it is meant to exercise.
-const SIM_DELTAS_MAX = 16
+const SIM_DELTAS_MAX = 32
+
+// SIM_TEXTS_MAX bounds the explicit positional texts a scenario passes verbatim.
+const SIM_TEXTS_MAX = 4
+
+// SIM_ENVIRONMENT_MAX is the inherited environment's ceiling.
+const SIM_ENVIRONMENT_MAX = maddox.ENVIRONMENT_COUNT_MAX
 
 // Fuzz_Main is the sole witness. It decodes the fuzz bytes into a benchmark
 // scenario and drives internal.Main; the seed corpus is a battery of honest
@@ -39,7 +56,7 @@ func Fuzz_Main(f *testing.F) {
 		f.Add(seed)
 	}
 	f.Fuzz(func(t *testing.T, data []byte) {
-		drive(decode_scenario(data))
+		drive(t, decode_scenario(data))
 	})
 }
 
@@ -60,12 +77,15 @@ type scenario struct {
 	Runs int
 	// Warmup is Warmup_Count, the full int range.
 	Warmup int
-	// Duration is the parsed time budget, in seconds.
+	// Duration is the parsed time budget, in seconds, the full signed range.
 	Duration int64
 	// Base is the center every metric's samples deviate around.
 	Base int64
 	// Deltas is the repeating deviation pattern added to Base.
 	Deltas []int64
+	// Deltas_Command is the 1-based command the deviation pattern applies to; 0 applies it to
+	// every command.
+	Deltas_Command int
 	// Center_Count pins the first N runs to Base exactly — the tight median cluster whose zero
 	// interquartile range turns every remaining spread sample into a Tukey outlier.
 	Center_Count int
@@ -83,6 +103,10 @@ type scenario struct {
 	Divergence int64
 	// Stderr_Bytes is the captured stderr a failing run carries.
 	Stderr_Bytes int
+	// Environment_Count is how many entries the inherited environment holds.
+	Environment_Count int
+	// Texts, when present, are the positional command texts passed verbatim.
+	Texts []string
 	// Allow_Fail keeps benchmarking a command that exits non-zero.
 	Allow_Fail bool
 	// Format selects the report rendering.
@@ -100,93 +124,212 @@ type scenario struct {
 	Path_Wide bool
 	// Arguments_Max fills the operating-system argument list to its declared ceiling.
 	Arguments_Max bool
+	// Assignment prefixes each command with an environment assignment.
+	Assignment bool
+	// Progress_Never states the progress mode as never rather than leaving it automatic.
+	Progress_Never bool
+	// Spawn_Fail makes every spawn fail to start.
+	Spawn_Fail bool
 	// Machine is the injected host snapshot.
 	Machine maddox.Machine_Specs
 }
 
-// Broken_writer is a report sink whose every write fails, so write_report and
-// write_table reach the failure exit their io.Discard runs never do.
-type broken_writer struct{}
+// DRIVE_PASS_COUNT bounds delivery passes past two full commands at the sample ceiling and their
+// warmups.
+const DRIVE_PASS_COUNT = 1 << 20
 
-func (broken_writer) Write(p []byte) (n int, err error) {
-	return 0, io.ErrClosedPipe
+// DRIVE_OUTPUT_BYTES holds any report the scenarios render.
+const DRIVE_OUTPUT_BYTES = 1 << 22
+
+// SIMULATION_YEAR is the monotonic clock's end, which no simulated run passes.
+const SIMULATION_YEAR = int64(time.MONOTONIC_MOMENT_MAXIMUM)
+
+// The simulated loop holds every spawn and write until the driver delivers it, the most recent
+// first, so a progress line stays in flight across runs. The clock is the sum of the delivered
+// runs' walls, so the budget stopwatch advances without a real clock.
+type simulation struct {
+	Scenario      scenario
+	Run           int
+	Command_Index int
+	Previous      string
+	Now           time.Monotonic_Moment
+	Submissions   []submission
 }
 
-// Report_sink is the scenario's report writer: a failing one when Broken_Output is set,
-// else the discard sink.
-func report_sink(s scenario) (sink io.Writer) {
+// Submission is one submission the loop has yet to retire: a spawn, or a write to Stream.
+type submission struct {
+	Spawn      bool
+	Completion *nbio.Completion
+	Request    nbio.Process_Request
+	Process    nbio.Process_Callback
+	Stream     nbio.Stream
+	Mode       nbio.Stream_Mode
+	Buffer     []byte
+	Offset     int64
+	Whence     nbio.Seek_From
+	Callback   nbio.Stream_Callback
+}
+
+// Held is a stream whose operations wait in the simulated loop until delivered.
+type held struct {
+	Loop  *simulation
+	Inner nbio.Stream
+}
+
+// Drive runs the scenario end to end through Main and the loop, asking the runner at every point
+// the root does. Only the invariants observed along the way matter; the report is kept only so a
+// broken sink can fail its write.
+func drive(t *testing.T, s scenario) {
+	t.Helper()
+	loop := &simulation{Scenario: s, Command_Index: -1}
+	io := nbio.IO{}
+	io.Spawn = simulation_spawn
+	io.Storage.State = nbio.State(loop)
+	output := nbio.Stream_Memory{Memory: make([]byte, DRIVE_OUTPUT_BYTES)}
+	// A report sink with no room fails every write, driving the report failure exit.
 	if s.Broken_Output {
-		return broken_writer{}
+		output.Memory = nil
 	}
-	return io.Discard
-}
-
-// Drive builds the Main_Input a scenario describes and runs it. The Sampler
-// synthesizes each run's measurements from the scenario, the clock is virtual,
-// and the report is discarded — only the invariants observed along the way matter.
-func drive(s scenario) {
-	run := 0
-	command_index := -1
-	previous := ""
-	// The sim is the sampler's clock: virtual time accrues by each run's sleep, and the
-	// completion stamp reports it so the budget stopwatch advances without a real clock.
-	var elapsed_virtual time.Duration
-	sampler := maddox.Sampler{
-		Measure: func(command sysio.Process_Request) (result maddox.Run_Result) {
-			// Commands are measured in sequence, each with a distinct path, so a path
-			// change marks the next benchmark and resets the run counter.
-			if command.Path != previous {
-				previous = command.Path
-				command_index++
-				run = 0
-			}
-			center := s.Base + int64(command_index)*s.Divergence
-			result.Sample = sample_from(sample_value(s, center, run))
-			// Wall is this run's tight cost, extracted as a Metric into the
-			// statistics, so it carries the same representable-ceiling contract as
-			// every other metric and passes through the same clamp. The completion
-			// stamp is the accrued virtual time for the budget stopwatch, which spans
-			// the arbitrary gaps between runs and so stays on the full, unclamped
-			// sleep. A run costs its sleep.
-			wall := s.Sleep
-			if s.Wall_Pattern {
-				wall_center := s.Sleep + int64(command_index)*s.Divergence
-				wall = sample_value(s, wall_center, run)
-			}
-			wall = metric_clamp(wall)
-			result.Sample.Wall = maddox.Metric(wall)
-			elapsed_virtual += time.Duration(wall)
-			result.Completed_At = maddox.Completion_Moment(elapsed_virtual)
-			fail := false
-			if s.Fail_Command > 0 {
-				if command_index == s.Fail_Command-1 {
-					fail = true
-				}
-			}
-			if !fail {
-				if s.Fail_Every > 0 {
-					if run%s.Fail_Every == 0 {
-						fail = true
-					}
-				}
-			}
-			if fail {
-				result.Exit = maddox.Exit_Status(s.Exit)
-				result.Stderr = make(maddox.Captured_Output, s.Stderr_Bytes)
-			}
-			run++
-			return result
-		},
+	error_output := nbio.Stream_Memory{Memory: make([]byte, DRIVE_OUTPUT_BYTES)}
+	held_output := held{Loop: loop, Inner: nbio.Memory_To_Stream(&output)}
+	held_error_output := held{Loop: loop, Inner: nbio.Memory_To_Stream(&error_output)}
+	environment := make(maddox.Inherited_Environment, s.Environment_Count)
+	for index := range environment {
+		environment[index] = fmt.Sprintf("E%d=v", index)
 	}
-	maddox.Main(maddox.Main_Input{
+	start := maddox.Main(maddox.Main_Input{
 		Arguments:                scenario_arguments(s),
-		Sampler:                  sampler,
-		Output:                   report_sink(s),
-		Error_Output:             io.Discard,
+		Environment:              environment,
 		Output_Is_Terminal:       scenario_output_terminal(s),
 		Error_Output_Is_Terminal: scenario_error_output_terminal(s),
-		Machine:                  s.Machine,
 	})
+	runner := maddox.Runner{
+		IO: io,
+		Clock: time.Clock{
+			State: time.State(loop), Now_Monotonic: simulation_now,
+			Now_Realtime: simulation_realtime,
+		},
+		Output: nbio.Stream{State: nbio.State(&held_output),
+			Procedure: held_procedure},
+		Error_Output: nbio.Stream{State: nbio.State(&held_error_output),
+			Procedure: held_procedure},
+		Machine: s.Machine,
+		Start:   start,
+	}
+	for pass_index := 0; pass_index < DRIVE_PASS_COUNT; pass_index++ {
+		maddox.Work_Queued(&runner)
+		if maddox.Stopped(&runner) {
+			// A stopped run has nothing left to rearm.
+			maddox.Rearm(&runner)
+			return
+		}
+		// The first rearm judges a retired run, which a full sample store holds until the
+		// next one reduces the command, so the root asks between them.
+		if maddox.Rearm(&runner) {
+			maddox.Work_Queued(&runner)
+			maddox.Stopped(&runner)
+			for maddox.Rearm(&runner) {
+			}
+		}
+		maddox.Work_Queued(&runner)
+		if maddox.Stopped(&runner) {
+			continue
+		}
+		if !simulation_deliver(loop) {
+			t.Fatal("the simulated run waits on nothing")
+		}
+	}
+	t.Fatal("the simulated run never stopped")
+}
+
+func held_procedure(
+	state nbio.State, completion *nbio.Completion, mode nbio.Stream_Mode, buffer []byte,
+	offset int64, whence nbio.Seek_From, callback nbio.Stream_Callback,
+) {
+	stream := state.(*held)
+	stream.Loop.Submissions = append(stream.Loop.Submissions, submission{
+		Completion: completion, Stream: stream.Inner, Mode: mode, Buffer: buffer,
+		Offset: offset, Whence: whence, Callback: callback,
+	})
+}
+
+func simulation_spawn(
+	state nbio.State, completion *nbio.Completion, request nbio.Process_Request,
+	_ time.Duration, callback nbio.Process_Callback,
+) {
+	loop := state.(*simulation)
+	loop.Submissions = append(loop.Submissions, submission{
+		Spawn: true, Completion: completion, Request: request, Process: callback,
+	})
+}
+
+// Retires the most recent submission. A write reaches its memory sink; a spawn synthesizes one
+// run's measurements from the scenario. Commands are measured in sequence, each with a distinct
+// path, so a path change marks the next benchmark and resets the run counter.
+func simulation_deliver(loop *simulation) (delivered bool) {
+	if len(loop.Submissions) == 0 {
+		return false
+	}
+	next := loop.Submissions[len(loop.Submissions)-1]
+	loop.Submissions = loop.Submissions[:len(loop.Submissions)-1]
+	if !next.Spawn {
+		next.Stream.Procedure(next.Stream.State, next.Completion, next.Mode, next.Buffer,
+			next.Offset, next.Whence, next.Callback)
+		return true
+	}
+	s := loop.Scenario
+	command := next.Request
+	if command.Path != loop.Previous {
+		loop.Previous = command.Path
+		loop.Command_Index++
+		loop.Run = 0
+	}
+	if s.Spawn_Fail {
+		loop.Run++
+		next.Process(next.Completion, nbio.Process_Result{}, nbio.Canceled)
+		return true
+	}
+	center := s.Base + int64(loop.Command_Index)*s.Divergence
+	result := usage_from(sample_value(s, center, loop.Command_Index, loop.Run))
+	// Wall is this run's tight cost, extracted as a Metric into the statistics, so it carries
+	// the same representable-ceiling contract as every other metric and passes through the same
+	// clamp. A run costs its wall on the virtual clock, which ends at a year of uptime.
+	wall := s.Sleep
+	if s.Wall_Pattern {
+		wall_center := s.Sleep + int64(loop.Command_Index)*s.Divergence
+		wall = sample_value(s, wall_center, loop.Command_Index, loop.Run)
+	}
+	wall = min(metric_clamp(wall), SIMULATION_YEAR-int64(loop.Now))
+	result.Usage.Wall = time.Duration(wall)
+	loop.Now += time.Monotonic_Moment(wall)
+	fail := false
+	if s.Fail_Command > 0 {
+		if loop.Command_Index == s.Fail_Command-1 {
+			fail = true
+		}
+	}
+	if !fail {
+		if s.Fail_Every > 0 {
+			if loop.Run%s.Fail_Every == 0 {
+				fail = true
+			}
+		}
+	}
+	if fail {
+		result.Exit = s.Exit
+		result.Error_Output = make([]byte, s.Stderr_Bytes)
+	}
+	loop.Run++
+	next.Process(next.Completion, result, nil)
+	return true
+}
+
+func simulation_now(state time.State) (moment time.Monotonic_Moment) {
+	return state.(*simulation).Now
+}
+
+func simulation_realtime(state time.State) (moment time.Moment) {
+	return time.Moment(state.(*simulation).Now)
 }
 
 // Scenario_output_terminal resolves the report stream's simulated terminal state.
@@ -219,8 +362,11 @@ func scenario_arguments(s scenario) (arguments maddox.Arguments) {
 	for _, command := range command_set(s) {
 		arguments = append(arguments, command_text(command))
 	}
+	arguments = append(arguments, s.Texts...)
 	if s.Commands == 0 {
-		return arguments
+		if len(s.Texts) == 0 {
+			return arguments
+		}
 	}
 	if s.Commands == 1 {
 		if s.Words == 1 {
@@ -230,9 +376,9 @@ func scenario_arguments(s scenario) (arguments maddox.Arguments) {
 		}
 	}
 	arguments = append(arguments,
-		"-duration="+strconv.FormatInt(s.Duration, 10),
-		"-runs="+strconv.Itoa(s.Runs),
-		"-warmup="+strconv.Itoa(s.Warmup))
+		fmt.Sprintf("-duration=%d", s.Duration),
+		fmt.Sprintf("-runs=%d", s.Runs),
+		fmt.Sprintf("-warmup=%d", s.Warmup))
 	if s.Allow_Fail {
 		arguments = append(arguments, "-allow-failures")
 	}
@@ -247,22 +393,45 @@ func scenario_arguments(s scenario) (arguments maddox.Arguments) {
 	if s.Progress {
 		arguments = append(arguments, "-progress=always")
 	}
+	if s.Progress_Never {
+		arguments = append(arguments, "-progress=never")
+	}
 	return arguments
 }
 
 // Command_text joins one injected process request into Maddox's positional syntax.
-func command_text(command sysio.Process_Request) (text string) {
+func command_text(command nbio.Process_Request) (text string) {
 	words := append([]string{}, command.Environment...)
 	words = append(words, command.Path)
 	words = append(words, command.Arguments...)
-	return strings.Join(words, " ")
+	for index, word := range words {
+		if index > 0 {
+			text += " "
+		}
+		text += word
+	}
+	return text
+}
+
+// Repeats one text count times.
+func text_repeat(unit string, count int) (text string) {
+	for index := 0; index < count; index++ {
+		text += unit
+	}
+	return text
 }
 
 // Sample_value is run's metric value about a given center: the center itself for the first
 // Center_Count runs — a tight, zero-IQR median cluster — then the center plus the deviation
 // pattern, so every later spread sample falls outside the collapsed Tukey fence as an outlier.
-func sample_value(s scenario, center int64, run int) (value int64) {
+// A pattern bound to one command leaves every other command at its center.
+func sample_value(s scenario, center int64, command_index int, run int) (value int64) {
 	value = center
+	if s.Deltas_Command > 0 {
+		if command_index != s.Deltas_Command-1 {
+			return value
+		}
+	}
 	if run >= s.Center_Count {
 		if len(s.Deltas) > 0 {
 			value += s.Deltas[run%len(s.Deltas)]
@@ -274,18 +443,28 @@ func sample_value(s scenario, center int64, run int) (value int64) {
 // Command_set is the scenario's commands, each an executable plus Words-1 argument
 // words of Word_Bytes bytes, so the command and command-word length invariants see
 // the empty, one-, two-, and full-length shapes.
-func command_set(s scenario) (commands maddox.Commands) {
-	commands = make(maddox.Commands, s.Commands)
-	argument := strings.Repeat("a", s.Word_Bytes)
+func command_set(s scenario) (commands []nbio.Process_Request) {
+	commands = make([]nbio.Process_Request, s.Commands)
 	for index := range commands {
 		// A distinct path per command lets the sampler tell benchmarks apart; the argument
 		// words carry the command-word length shapes. A single-command run may set a short
 		// executable so the progress label reaches its short shapes.
-		path := "cmd" + strconv.Itoa(index)
+		path := fmt.Sprintf("cmd%d", index)
 		if s.Commands == 1 {
 			path = single_command_path(s)
 		}
-		command := sysio.Process_Request{Path: path}
+		command := nbio.Process_Request{Path: path}
+		if s.Assignment {
+			command.Environment = []string{"A=b"}
+		}
+		// The command line parser keeps a positional of at most COMMAND_TEXT_BYTES_MAX
+		// bytes, so each argument word shrinks until the whole command text fits.
+		word_bytes := s.Word_Bytes
+		if s.Words > 1 {
+			fit := (maddox.COMMAND_TEXT_BYTES_MAX-len(path))/(s.Words-1) - 1
+			word_bytes = max(0, min(word_bytes, fit))
+		}
+		argument := text_repeat("a", word_bytes)
 		for word_index := 1; word_index < s.Words; word_index++ {
 			command.Arguments = append(command.Arguments, argument)
 		}
@@ -297,10 +476,10 @@ func command_set(s scenario) (commands maddox.Commands) {
 // Single_command_path is a lone command's executable at the selected width.
 func single_command_path(s scenario) (path string) {
 	if s.Path_Wide {
-		return strings.Repeat("𝕫", s.Path_Bytes)
+		return text_repeat("𝕫", s.Path_Bytes)
 	}
 	if s.Path_Bytes > 0 {
-		return strings.Repeat("z", s.Path_Bytes)
+		return text_repeat("z", s.Path_Bytes)
 	}
 	return "cmd0"
 }
@@ -320,21 +499,21 @@ func metric_clamp(value int64) (clamped int64) {
 	return value
 }
 
-// Sample_from builds a sample whose every metric is the given value, clamped to the valid
-// metric range. A real sampler reports valid metrics: non-negative and within the
-// representable ceiling, so the clamp keeps the simulated measurements in contract rather
-// than tripping the metric guard, which only an out-of-contract sampler would.
-func sample_from(value int64) (sample maddox.Sample) {
+// Usage_from builds a run whose every metric is the given value, clamped to the valid metric
+// range. A real loop reports valid metrics: non-negative and within the representable ceiling, so
+// the clamp keeps the simulated measurements in contract rather than tripping the metric guard,
+// which only an out-of-contract loop would.
+func usage_from(value int64) (result nbio.Process_Result) {
 	value = metric_clamp(value)
-	sample.RSS_Bytes_Max = maddox.Resident_Bytes(value)
-	sample.CPU_Cycles = maddox.Cycle_Count(value)
-	sample.Instructions = maddox.Instruction_Count(value)
-	sample.Cache_References = maddox.Cache_Reference_Count(value)
-	sample.Cache_Misses = maddox.Cache_Miss_Count(value)
-	sample.Branch_Misses = maddox.Branch_Miss_Count(value)
-	sample.CPU_User = maddox.User_Time(value)
-	sample.CPU_System = maddox.System_Time(value)
-	return sample
+	result.Usage.RSS_Bytes_Max = value
+	result.Usage.Cycle_Count = uint64(value)
+	result.Usage.Instruction_Count = uint64(value)
+	result.Usage.Cache_Reference_Count = uint64(value)
+	result.Usage.Cache_Miss_Count = uint64(value)
+	result.Usage.Branch_Miss_Count = uint64(value)
+	result.Usage.CPU_User = time.Duration(value)
+	result.Usage.CPU_System = time.Duration(value)
+	return result
 }
 
 // Cursor draws structured values out of the fuzz byte string. Every read is total
@@ -386,6 +565,10 @@ func decode_scenario(data []byte) (s scenario) {
 	s.Path_Wide = flags&32 != 0
 	s.Arguments_Max = flags&64 != 0
 	s.Wall_Pattern = flags&128 != 0
+	more := cursor_u8(c)
+	s.Assignment = more&1 != 0
+	s.Progress_Never = more&2 != 0
+	s.Spawn_Fail = more&4 != 0
 	// Clamp the command and word counts to maddox's own structural ceilings, and budget the
 	// total argument bytes so the rendered report stays under its width ceiling. Importing the
 	// library bounds lets the driver reach the real maxima (COMMAND_SET_MAX, COMMAND_WORDS_MAX)
@@ -399,12 +582,13 @@ func decode_scenario(data []byte) (s scenario) {
 	// (Main caps kept runs at samples_max and treats a non-positive limit as disabled).
 	s.Runs = int(cursor_i64(c))
 	s.Warmup = int(cursor_i64(c))
-	s.Duration = int64(cursor_u16(c))
+	s.Duration = cursor_i64(c)
 	s.Base = cursor_i64(c)
 	deltas := min(int(cursor_u8(c)), SIM_DELTAS_MAX)
 	for index := 0; index < deltas; index++ {
 		s.Deltas = append(s.Deltas, cursor_i64(c))
 	}
+	s.Deltas_Command = min(int(cursor_u8(c)), maddox.COMMAND_SET_MAX)
 	s.Center_Count = min(int(cursor_u16(c)), maddox.SAMPLES_MAX)
 	s.Sleep = cursor_i64(c)
 	s.Exit = int(cursor_u8(c))
@@ -412,6 +596,16 @@ func decode_scenario(data []byte) (s scenario) {
 	s.Fail_Command = int(cursor_u8(c))
 	s.Divergence = cursor_i64(c)
 	s.Stderr_Bytes = min(int(cursor_u32(c)), maddox.CAPTURE_BYTES_MAX)
+	s.Environment_Count = min(int(cursor_u16(c)), SIM_ENVIRONMENT_MAX)
+	texts := min(int(cursor_u8(c)), SIM_TEXTS_MAX)
+	for index := 0; index < texts; index++ {
+		size := min(int(cursor_u16(c)), maddox.COMMAND_TEXT_BYTES_MAX)
+		text := make([]byte, size)
+		for byte_index := range text {
+			text[byte_index] = cursor_u8(c)
+		}
+		s.Texts = append(s.Texts, string(text))
+	}
 	s.Machine = decode_machine(c)
 	return s
 }
@@ -453,7 +647,7 @@ func decode_machine(c *cursor) (m maddox.Machine_Specs) {
 // ceiling — the invariants witness the field's length, not its bytes.
 func host_text(c *cursor) (text maddox.Host_Text) {
 	count := min(int(cursor_u16(c)), maddox.HOST_TEXT_BYTES_MAX)
-	return maddox.Host_Text(strings.Repeat("x", count))
+	return maddox.Host_Text(text_repeat("x", count))
 }
 
 // Writer is the cursor's inverse: it lays down the same big-endian fields a seed
@@ -511,18 +705,30 @@ func build(s scenario) (data []byte) {
 		flags |= 128
 	}
 	writer_u8(w, flags)
+	var more uint8
+	if s.Assignment {
+		more |= 1
+	}
+	if s.Progress_Never {
+		more |= 2
+	}
+	if s.Spawn_Fail {
+		more |= 4
+	}
+	writer_u8(w, more)
 	writer_u16(w, uint16(s.Commands))
 	writer_u16(w, uint16(s.Words))
 	writer_u16(w, uint16(s.Word_Bytes))
 	writer_u16(w, uint16(s.Path_Bytes))
 	writer_i64(w, int64(s.Runs))
 	writer_i64(w, int64(s.Warmup))
-	writer_u16(w, uint16(s.Duration))
+	writer_i64(w, s.Duration)
 	writer_i64(w, s.Base)
 	writer_u8(w, uint8(len(s.Deltas)))
 	for _, delta := range s.Deltas {
 		writer_i64(w, delta)
 	}
+	writer_u8(w, uint8(s.Deltas_Command))
 	writer_u16(w, uint16(s.Center_Count))
 	writer_i64(w, s.Sleep)
 	writer_u8(w, uint8(s.Exit))
@@ -530,6 +736,12 @@ func build(s scenario) (data []byte) {
 	writer_u8(w, uint8(s.Fail_Command))
 	writer_i64(w, s.Divergence)
 	writer_u32(w, uint32(s.Stderr_Bytes))
+	writer_u16(w, uint16(s.Environment_Count))
+	writer_u8(w, uint8(len(s.Texts)))
+	for _, text := range s.Texts {
+		writer_u16(w, uint16(len(text)))
+		w.Data = append(w.Data, text...)
+	}
 	build_machine(w, s.Machine)
 	return w.Data
 }
@@ -604,6 +816,11 @@ func seed_corpus() (seeds [][]byte) {
 	seeds = append(seeds, seeds_overflow()...)
 	seeds = append(seeds, seeds_saturation()...)
 	seeds = append(seeds, seeds_width()...)
+	seeds = append(seeds, seeds_extremes()...)
+	seeds = append(seeds, seeds_comparison()...)
+	seeds = append(seeds, seeds_document()...)
+	seeds = append(seeds, seeds_clock()...)
+	seeds = append(seeds, seeds_command_line()...)
 	return seeds
 }
 
@@ -796,7 +1013,7 @@ func seeds_progress() (seeds [][]byte) {
 			s.Progress = true
 			s.Runs = runs
 			s.Duration = 20
-			s.Sleep = 8
+			s.Sleep = 8_000_000_000
 		})
 	}
 	return [][]byte{
@@ -805,7 +1022,8 @@ func seeds_progress() (seeds [][]byte) {
 		progress(func(s *scenario) { s.Word_Bytes = 0 }),
 		progress(func(s *scenario) { s.Word_Bytes = 2 }),
 		progress(func(s *scenario) { s.Word_Bytes = maddox.COMMAND_WORD_BYTES_MAX }),
-		total(0), total(1), total(2), total(-1), total(math.MinInt64), total(math.MaxInt64),
+		total(0), total(1), total(2), total(-1), total(int(bits.INTEGER_64_MINIMUM)), total(
+			int(bits.INTEGER_64_MAXIMUM)),
 		// Progress labels at their one- and two-byte shapes: a single short-path command.
 		with(func(s *scenario) {
 			s.Progress = true
@@ -1115,19 +1333,27 @@ func seeds_failure() (seeds [][]byte) {
 // Seeds_configuration feeds the injected config ints across the range Main tolerates.
 func seeds_configuration() (seeds [][]byte) {
 	return [][]byte{
-		with(func(s *scenario) { s.Runs = 0; s.Duration = 1 }),
+		with(func(s *scenario) { s.Runs = 0; s.Duration = 1; s.Sleep = 1_000_000_000 }),
 		with(func(s *scenario) { s.Runs = 1 }),
 		with(func(s *scenario) { s.Runs = 2 }),
 		// A disabled or absurd run cap witnesses the Runs_Max boundary from the input
-		// alone; a one-grain budget stops the loop at the quorum instead of grinding to
-		// the sample ceiling, so these seeds cost three runs, not ten thousand.
-		with(func(s *scenario) { s.Runs = -1; s.Duration = 1 }),
-		with(func(s *scenario) { s.Runs = math.MinInt64; s.Duration = 1 }),
-		with(func(s *scenario) { s.Runs = math.MaxInt64; s.Duration = 1 }),
+		// alone; one-second walls spend a one-second budget at the quorum instead of
+		// grinding to the sample ceiling, so these seeds cost three runs, not ten thousand.
+		with(func(s *scenario) { s.Runs = -1; s.Duration = 1; s.Sleep = 1_000_000_000 }),
+		with(func(s *scenario) {
+			s.Runs = int(bits.INTEGER_64_MINIMUM)
+			s.Duration = 1
+			s.Sleep = 1_000_000_000
+		}),
+		with(func(s *scenario) {
+			s.Runs = int(bits.INTEGER_64_MAXIMUM)
+			s.Duration = 1
+			s.Sleep = 1_000_000_000
+		}),
 		with(func(s *scenario) { s.Warmup = 1 }),
 		with(func(s *scenario) { s.Warmup = -1 }),
-		with(func(s *scenario) { s.Warmup = math.MinInt64 }),
-		with(func(s *scenario) { s.Warmup = math.MaxInt64 }),
+		with(func(s *scenario) { s.Warmup = int(bits.INTEGER_64_MINIMUM) }),
+		with(func(s *scenario) { s.Commands = 1; s.Warmup = int(bits.INTEGER_64_MAXIMUM) }),
 	}
 }
 
@@ -1150,10 +1376,267 @@ func seeds_machine() (seeds [][]byte) {
 
 // Set_hosts sets every host-text field to a run of 'x' of the given byte count.
 func set_hosts(m *maddox.Machine_Specs, count int) {
-	text := maddox.Host_Text(strings.Repeat("x", count))
+	text := maddox.Host_Text(text_repeat("x", count))
 	m.CPU_Model = maddox.Processor_Model(text)
 	m.CPU_Arch = maddox.Processor_Architecture(text)
 	m.Operating_System_Name = maddox.Operating_System_Name(text)
 	m.Operating_System_Version = maddox.Operating_System_Version(text)
 	m.Kernel_Version = maddox.Kernel_Version(text)
+}
+
+// Both_formats is the seed as a table and as a JSON document, so the table and the document each
+// render the values it reaches.
+func both_formats(mutate func(s *scenario)) (seeds [][]byte) {
+	return [][]byte{with(mutate), with(func(s *scenario) { mutate(s); json(s) })}
+}
+
+// Seeds_extremes drives each distribution statistic and each comparison to the exact bounds its
+// arithmetic reaches, in both the reference and the candidate and in both formats.
+func seeds_extremes() (seeds [][]byte) {
+	metric := int64(maddox.METRIC_MAX)
+	groups := [][][]byte{
+		// Zero and two ceilings: the widest deviation three runs have, with the extreme
+		// minimum, maximum, and quartiles.
+		both_formats(func(s *scenario) {
+			s.Runs = 3
+			s.Base = 0
+			s.Sleep = 0
+			s.Deltas = []int64{0, metric, metric}
+			s.Wall_Pattern = true
+		}),
+		// Every run at the ceiling, then every run at zero.
+		both_formats(func(s *scenario) {
+			s.Runs = 3
+			s.Base = metric
+			s.Sleep = metric
+			s.Deltas = []int64{0}
+		}),
+		both_formats(func(s *scenario) {
+			s.Runs = 3
+			s.Base = 0
+			s.Sleep = 0
+			s.Deltas = []int64{0}
+		}),
+		// A candidate of zeros against a reference of ones: the comparison divides by the
+		// reference mean while the candidate's statistics sit at zero.
+		both_formats(func(s *scenario) {
+			s.Runs = 3
+			s.Base = 1
+			s.Divergence = -1
+			s.Sleep = 1
+			s.Deltas = []int64{0}
+			s.Wall_Pattern = true
+		}),
+	}
+	for _, group := range groups {
+		seeds = append(seeds, group...)
+	}
+	return seeds
+}
+
+// Seeds_comparison drives each comparison to the exact bounds its fixed-point arithmetic
+// reaches, the outlier and wall shapes of the document, and the widest colored delta.
+func seeds_comparison() (seeds [][]byte) {
+	groups := [][][]byte{
+		// A reference of ones against a candidate whose mean a hundredfold wraps to four
+		// short of the signed word's top: twenty-four runs at a found center and one a unit
+		// above.
+		both_formats(func(s *scenario) {
+			s.Runs = 25
+			s.Base = 1
+			s.Divergence = 1143492092887
+			s.Sleep = 1
+			s.Deltas = make([]int64, 25)
+			s.Deltas[24] = 1
+			s.Deltas_Command = 2
+			s.Wall_Pattern = true
+		}),
+		// A candidate 2^41 units above a reference of ones: a hundred times the ratio wraps
+		// to the signed word's bottom.
+		both_formats(func(s *scenario) {
+			s.Runs = 3
+			s.Base = 1
+			s.Divergence = 1 << 41
+			s.Sleep = 1
+			s.Deltas = []int64{0}
+			s.Wall_Pattern = true
+		}),
+		// A flat reference at 2^20 against a candidate of two zeros and a found spike: the
+		// pooled relative variance wraps to just under a quarter of the signed word times
+		// the four degrees, the widest confidence half-interval.
+		both_formats(func(s *scenario) {
+			s.Runs = 3
+			s.Base = 1 << 20
+			s.Divergence = -(1 << 20)
+			s.Sleep = 1 << 20
+			s.Deltas = []int64{0, 0, 3808820005640}
+			s.Deltas_Command = 2
+			s.Wall_Pattern = true
+		}),
+		// A significant slowdown whose change and interval both overrun the display cap: a
+		// reference of ones against a candidate a million units up with a spread a fifth of
+		// that, colored, so the delta text reaches its widest.
+		{with(func(s *scenario) {
+			s.Runs = 3
+			s.Base = 1
+			s.Divergence = 999_999
+			s.Sleep = 1
+			s.Deltas = []int64{0, 0, 200_000}
+			s.Deltas_Command = 2
+			s.Color = true
+			s.Wall_Pattern = true
+		})},
+	}
+	for _, group := range groups {
+		seeds = append(seeds, group...)
+	}
+	return seeds
+}
+
+// Seeds_document drives the document's and the row's small shapes: outlier counts of one and
+// two, the smallest mean that is not zero, walls summing to one and two units, a two-byte
+// failing executable, and command lines of one word and of the most words.
+func seeds_document() (seeds [][]byte) {
+	groups := [][][]byte{
+		// Outlier counts of one and two in the document.
+		{with(func(s *scenario) { mutate_outliers(s, 10); json(s) })},
+		{with(func(s *scenario) { mutate_outliers(s, 20); json(s) })},
+		// A reference whose one unit spreads over the sample cap, the smallest mean that
+		// is not zero, rendered as a row. The candidate's walls spend its one-second
+		// budget at the quorum, and its mean stays small enough that its ratio to the
+		// reference fits a word.
+		{with(func(s *scenario) {
+			s.Runs = maddox.SAMPLES_MAX
+			s.Duration = 1
+			s.Base = 0
+			s.Sleep = 0
+			s.Divergence = 400_000_000
+			s.Center_Count = maddox.SAMPLES_MAX - 1
+			s.Deltas = []int64{1}
+			s.Deltas_Command = 1
+			s.Wall_Pattern = true
+		})},
+		// Kept walls summing to one and to two units.
+		both_formats(func(s *scenario) {
+			s.Runs = 3
+			s.Sleep = 0
+			s.Deltas = []int64{0, 0, 1}
+			s.Deltas_Command = 1
+			s.Wall_Pattern = true
+		}),
+		both_formats(func(s *scenario) {
+			s.Runs = 3
+			s.Sleep = 0
+			s.Deltas = []int64{0, 1, 1}
+			s.Deltas_Command = 1
+			s.Wall_Pattern = true
+		}),
+		// A failing command whose executable is two bytes.
+		{with(func(s *scenario) {
+			s.Commands = 1
+			s.Words = 1
+			s.Path_Bytes = 2
+			s.Exit = 1
+			s.Fail_Every = 1
+		})},
+		// Command lines of one word and of the most words, in the document.
+		{with(func(s *scenario) { json(s); s.Words = 1 })},
+		{with(func(s *scenario) { json(s); s.Words = maddox.COMMAND_WORDS_MAX })},
+	}
+	for _, group := range groups {
+		seeds = append(seeds, group...)
+	}
+	return seeds
+}
+
+// Mutate_outliers is outlier_seed's scenario, for composing with other overrides.
+func mutate_outliers(s *scenario, runs int) {
+	s.Base = 1000
+	s.Runs = runs
+	s.Deltas = spike_deltas()
+	s.Wall_Pattern = true
+}
+
+// SIMULATION_YEAR_RUNS is how many ceiling walls a year of uptime holds, and one more.
+const SIMULATION_YEAR_RUNS = int(SIMULATION_YEAR/maddox.METRIC_MAX) + 2
+
+// Seeds_clock runs the virtual clock to its end: kept runs that spend the whole year from its
+// start, a second command that starts there, warmups that spend the year, and warmup walls whose
+// progress seconds land on one and two fixed-point units.
+func seeds_clock() (seeds [][]byte) {
+	return [][]byte{
+		with(func(s *scenario) {
+			s.Runs = SIMULATION_YEAR_RUNS
+			s.Sleep = maddox.METRIC_MAX
+			s.Progress = true
+		}),
+		with(func(s *scenario) {
+			json(s)
+			s.Commands = 1
+			s.Runs = SIMULATION_YEAR_RUNS
+			s.Sleep = maddox.METRIC_MAX
+		}),
+		with(func(s *scenario) {
+			s.Commands = 1
+			s.Runs = 3
+			s.Warmup = SIMULATION_YEAR_RUNS
+			s.Sleep = maddox.METRIC_MAX
+			s.Progress = true
+		}),
+		with(func(s *scenario) { s.Progress = true; s.Warmup = 1; s.Sleep = 954 }),
+		with(func(s *scenario) { s.Progress = true; s.Warmup = 1; s.Sleep = 1908 }),
+	}
+}
+
+// Seeds_command_line drives the command line's inputs: the inherited environment's sizes, an
+// assignment, the duration's extremes, an explicit progress mode, spawns that never start, and
+// positional texts that fail to parse.
+func seeds_command_line() (seeds [][]byte) {
+	environment := func(count int) (data []byte) {
+		return with(func(s *scenario) { s.Environment_Count = count; s.Assignment = true })
+	}
+	duration := func(seconds int64) (data []byte) {
+		return with(func(s *scenario) { s.Runs = 3; s.Duration = seconds })
+	}
+	text := func(texts ...string) (data []byte) {
+		return with(func(s *scenario) { s.Commands = 0; s.Texts = texts })
+	}
+	return [][]byte{
+		environment(1), environment(2), environment(SIM_ENVIRONMENT_MAX),
+		duration(bits.INTEGER_64_MINIMUM), duration(-1), duration(2),
+		duration(bits.INTEGER_64_MAXIMUM),
+		with(func(s *scenario) { s.Progress_Never = true }),
+		with(func(s *scenario) { s.Spawn_Fail = true }),
+		with(func(s *scenario) { s.Spawn_Fail = true; s.Allow_Fail = true; s.Runs = 3 }),
+		with(func(s *scenario) { s.Progress = true; s.Exit = 1; s.Fail_Every = 1 }),
+		text(""), text(" "), text("a="),
+		text("a=" + text_repeat("x", maddox.COMMAND_TEXT_BYTES_MAX-2)),
+		text(text_repeat("a ", maddox.COMMAND_TEXT_BYTES_MAX/2-1) + "a"),
+		with(func(s *scenario) {
+			s.Commands = 1
+			s.Words = 1
+			s.Path_Bytes = 1
+			s.Exit = 1
+			s.Fail_Every = 1
+		}),
+		with(func(s *scenario) {
+			s.Commands = 1
+			s.Words = 1
+			s.Path_Bytes = maddox.COMMAND_WORD_BYTES_MAX
+			s.Exit = 1
+			s.Fail_Every = 1
+		}),
+		with(func(s *scenario) {
+			s.Commands = 1
+			s.Words = 1
+			s.Path_Bytes = maddox.COMMAND_WORD_BYTES_MAX
+			s.Progress = true
+		}),
+		with(func(s *scenario) {
+			json(s)
+			s.Commands = 1
+			s.Words = 1
+			s.Path_Bytes = maddox.COMMAND_WORD_BYTES_MAX
+		}),
+	}
 }
