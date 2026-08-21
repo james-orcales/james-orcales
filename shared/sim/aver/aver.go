@@ -39,8 +39,9 @@ type Assertion_Failure struct {
 	Value any
 }
 
-// Error keeps text construction out of every successful production assertion.
-func (failure Assertion_Failure) Error() (message string) {
+// Assertion_Failure_Message keeps text construction out of every successful production
+// assertion: only a failure path calls it, and the panic carries the text it returns.
+func Assertion_Failure_Message(failure Assertion_Failure) (message string) {
 	return ASSERTION_FAILURE_MESSAGE_PREFIX + failure.Identity + failure.Reason +
 		": " + fmt.Sprint(failure.Value)
 }
@@ -711,59 +712,96 @@ func recorder_parse_directory(
 	// MatchFile must see injected source even when caller supplied OS-backed context hooks.
 	build_context.JoinPath = path.Join
 	build_context.UseAllFiles = false
-	root := strings.TrimPrefix(directory, "/")
-	fs.WalkDir(file_system, root, func(
+	parse := Directory_Parse{
+		File_System:   file_system,
+		Build_Context: build_context,
+		File_Set:      file_set,
+		Root:          strings.TrimPrefix(directory, "/"),
+	}
+	fs.WalkDir(file_system, parse.Root, func(
 		file_path string, entry fs.DirEntry, walk_error error,
 	) (err error) {
-		if walk_error != nil {
-			return walk_error
-		}
-		if entry.IsDir() {
-			if file_path == root {
-				return nil
-			}
-			return fs.SkipDir
-		}
-		if !strings.HasSuffix(file_path, ".go") {
-			return nil
-		}
-		SOURCE, read_error := fs.ReadFile(file_system, file_path)
-		if read_error != nil {
-			return nil
-		}
-		build_context.OpenFile = func(string) (reader io.ReadCloser, err error) {
-			return source_reader(SOURCE)
-		}
-		matches, match_error := build_context.MatchFile(root, entry.Name())
-		if match_error != nil {
-			return nil
-		}
-		if !matches {
-			return nil
-		}
-		name := "/" + file_path
-		file, parse_error := parser.ParseFile(
-			file_set, name, SOURCE, parser.SkipObjectResolution,
-		)
-		if parse_error == nil {
-			// Importing C requires cgo even without explicit tag.
-			if !build_context.CgoEnabled {
-				for _, imported := range file.Imports {
-					import_path, _ := strconv.Unquote(imported.Path.Value)
-					if import_path == "C" {
-						return nil
-					}
-				}
-			}
-			if strings.HasSuffix(file_path, "_test.go") {
-				test_files = append(test_files, file)
-			} else {
-				files = append(files, file)
-			}
-		}
-		return nil
+		return directory_parse_step(&parse, file_path, entry, walk_error)
 	})
-	return files, test_files
+	return parse.Files, parse.Test_Files
+}
+
+// Directory_Parse is the state one directory walk accumulates: the walk callback cannot be a
+// closure over it, thus the callback is a named step over this.
+type Directory_Parse struct {
+	// File_System is where the sources live.
+	File_System fs.FS
+	// Build_Context decides which files the platform admits.
+	Build_Context build.Context
+	// File_Set owns the positions of every parsed file.
+	File_Set *token.FileSet
+	// Root is the walked directory without its leading separator.
+	Root string
+	// Files is the production source admitted so far.
+	Files []*ast.File
+	// Test_Files is the test source admitted so far.
+	Test_Files []*ast.File
+}
+
+// One walk step: parse one admitted Go file into the matching list, or skip it.
+func directory_parse_step(
+	parse *Directory_Parse, file_path string, entry fs.DirEntry, walk_error error,
+) (err error) {
+	if walk_error != nil {
+		return walk_error
+	}
+	if entry.IsDir() {
+		if file_path == parse.Root {
+			return nil
+		}
+		return fs.SkipDir
+	}
+	if !strings.HasSuffix(file_path, ".go") {
+		return nil
+	}
+	SOURCE, read_error := fs.ReadFile(parse.File_System, file_path)
+	if read_error != nil {
+		return nil
+	}
+	parse.Build_Context.OpenFile = func(string) (reader io.ReadCloser, err error) {
+		return source_reader(SOURCE)
+	}
+	matches, match_error := parse.Build_Context.MatchFile(parse.Root, entry.Name())
+	if match_error != nil {
+		return nil
+	}
+	if !matches {
+		return nil
+	}
+	name := "/" + file_path
+	file, parse_error := parser.ParseFile(
+		parse.File_Set, name, SOURCE, parser.SkipObjectResolution,
+	)
+	if parse_error != nil {
+		return nil
+	}
+	// Importing C requires cgo even without explicit tag.
+	if !parse.Build_Context.CgoEnabled {
+		if file_imports_c(file) {
+			return nil
+		}
+	}
+	if strings.HasSuffix(file_path, "_test.go") {
+		parse.Test_Files = append(parse.Test_Files, file)
+		return nil
+	}
+	parse.Files = append(parse.Files, file)
+	return nil
+}
+
+func file_imports_c(file *ast.File) (imports_c bool) {
+	for _, imported := range file.Imports {
+		import_path, _ := strconv.Unquote(imported.Path.Value)
+		if import_path == "C" {
+			return true
+		}
+	}
+	return false
 }
 
 func source_reader(source []byte) (reader io.ReadCloser, err error) {
@@ -778,34 +816,48 @@ func recorder_check_test_assertion_calls(
 	if len(reg.Planned) == 0 {
 		return
 	}
-	var violations []string
+	visit := Test_Assertion_Visit{File_Set: file_set}
 	for _, file := range files {
-		direct_callees := ast_test_assertion_direct_callees(file)
+		visit.Direct_Callees = ast_test_assertion_direct_callees(file)
 		ast.Inspect(file, func(node ast.Node) (descend bool) {
-			switch concrete := node.(type) {
-			case *ast.CallExpr:
-				name := ast_callee_name(concrete)
-				if ast_test_assertion_writer(name) {
-					position := recorder_position(file_set, concrete)
-					violation := position + "  test source calls " + name
-					violations = append(violations, violation)
-				}
-			case *ast.SelectorExpr:
-				if direct_callees[concrete.Pos()] {
-					return true
-				}
-				name := concrete.Sel.Name
-				if ast_test_assertion_writer(name) {
-					position := recorder_position(file_set, concrete)
-					violation := position + "  test source references " + name
-					violations = append(violations, violation)
-				}
-			}
-			return true
+			return test_assertion_visit(&visit, node)
 		})
 	}
 	recorder_report_registration_failure(
-		recorder, reg, "test assertion callsites", violations)
+		recorder, reg, "test assertion callsites", visit.Violations)
+}
+
+// Test_Assertion_Visit is the state of one scan for assertion writers in test source.
+type Test_Assertion_Visit struct {
+	// File_Set renders each violation position.
+	File_Set *token.FileSet
+	// Direct_Callees marks selectors that are the callee of a call, for the current file.
+	Direct_Callees map[token.Pos]bool
+	// Violations accumulates across every file.
+	Violations []string
+}
+
+func test_assertion_visit(visit *Test_Assertion_Visit, node ast.Node) (descend bool) {
+	switch concrete := node.(type) {
+	case *ast.CallExpr:
+		name := ast_callee_name(concrete)
+		if ast_test_assertion_writer(name) {
+			position := recorder_position(visit.File_Set, concrete)
+			violation := position + "  test source calls " + name
+			visit.Violations = append(visit.Violations, violation)
+		}
+	case *ast.SelectorExpr:
+		if visit.Direct_Callees[concrete.Pos()] {
+			return true
+		}
+		name := concrete.Sel.Name
+		if ast_test_assertion_writer(name) {
+			position := recorder_position(visit.File_Set, concrete)
+			violation := position + "  test source references " + name
+			visit.Violations = append(visit.Violations, violation)
+		}
+	}
+	return true
 }
 
 func ast_test_assertion_writer(name string) (writer bool) {
@@ -821,15 +873,21 @@ func ast_test_assertion_writer(name string) (writer bool) {
 func ast_test_assertion_direct_callees(file *ast.File) (positions map[token.Pos]bool) {
 	positions = map[token.Pos]bool{}
 	ast.Inspect(file, func(node ast.Node) (descend bool) {
-		call, is_call := node.(*ast.CallExpr)
-		if is_call {
-			if ast_test_assertion_writer(ast_callee_name(call)) {
-				positions[call.Fun.Pos()] = true
-			}
-		}
-		return true
+		return ast_test_assertion_direct_callee_visit(positions, node)
 	})
 	return positions
+}
+
+func ast_test_assertion_direct_callee_visit(
+	positions map[token.Pos]bool, node ast.Node,
+) (descend bool) {
+	call, is_call := node.(*ast.CallExpr)
+	if is_call {
+		if ast_test_assertion_writer(ast_callee_name(call)) {
+			positions[call.Fun.Pos()] = true
+		}
+	}
+	return true
 }
 
 // One frontier entry of the directory-glob walk: a directory reached so far and the
@@ -1729,7 +1787,7 @@ func recorder_check_bundle_control_flow(
 	recorder *Recorder, file_set *token.FileSet, files []*ast.File,
 	package_types map[string]ast.Expr, reg *Registration,
 ) {
-	var violations []string
+	visit := Bundle_Body_Visit{File_Set: file_set}
 	for _, file := range files {
 		for _, declaration := range file.Decls {
 			function, is_function := declaration.(*ast.FuncDecl)
@@ -1742,23 +1800,44 @@ func recorder_check_bundle_control_flow(
 			if !ast_is_invariants_name(function.Name.Name) {
 				continue
 			}
-			name := function.Name.Name
-			guard := recorder_pointer_nil_guard(function, package_types)
+			visit.Name = function.Name.Name
+			visit.Guard = recorder_pointer_nil_guard(function, package_types)
 			ast.Inspect(function.Body, func(node ast.Node) (descend bool) {
-				if guard != nil && node == ast.Node(guard) {
-					return false
-				}
-				if !ast_is_control_flow(node) {
-					return true
-				}
-				violations = append(violations, recorder_position(file_set, node)+
-					"  banned: control flow inside bundle "+name)
-				return true
+				return bundle_control_flow_visit(&visit, node)
 			})
 		}
 	}
 	recorder_report_registration_failure(
-		recorder, reg, "bundle control-flow statements", violations)
+		recorder, reg, "bundle control-flow statements", visit.Violations)
+}
+
+// Bundle_Body_Visit is the state of one scan over bundle bodies. Each check over a bundle body
+// walks with a named step over this, because the walk callback cannot be a closure.
+type Bundle_Body_Visit struct {
+	// File_Set renders each violation position.
+	File_Set *token.FileSet
+	// Name is the bundle under scan.
+	Name string
+	// Guard is the one admitted nil exit of a pointer bundle, or nil.
+	Guard *ast.IfStmt
+	// Registered holds each namespace literal seen so far, for the duplicate scan.
+	Registered map[string]bool
+	// Violations accumulates across every bundle.
+	Violations []string
+}
+
+func bundle_control_flow_visit(visit *Bundle_Body_Visit, node ast.Node) (descend bool) {
+	if visit.Guard != nil {
+		if node == ast.Node(visit.Guard) {
+			return false
+		}
+	}
+	if !ast_is_control_flow(node) {
+		return true
+	}
+	visit.Violations = append(visit.Violations, recorder_position(visit.File_Set, node)+
+		"  banned: control flow inside bundle "+visit.Name)
+	return true
 }
 
 // Finds each bundle body that gives a string literal as a nested bundle namespace. The callsite
@@ -1770,7 +1849,7 @@ func recorder_check_bundle_control_flow(
 func recorder_check_bundle_literal_namespaces(
 	recorder *Recorder, file_set *token.FileSet, files []*ast.File, reg *Registration,
 ) {
-	var violations []string
+	visit := Bundle_Body_Visit{File_Set: file_set}
 	for _, file := range files {
 		for _, declaration := range file.Decls {
 			function, is_function := declaration.(*ast.FuncDecl)
@@ -1783,23 +1862,27 @@ func recorder_check_bundle_literal_namespaces(
 			if !ast_is_invariants_name(function.Name.Name) {
 				continue
 			}
-			name := function.Name.Name
+			visit.Name = function.Name.Name
 			ast.Inspect(function.Body, func(node ast.Node) (descend bool) {
-				call, is_call := node.(*ast.CallExpr)
-				if !is_call {
-					return true
-				}
-				if _, named := ast_bundle_namespace(call); !named {
-					return true
-				}
-				violations = append(violations, recorder_position(file_set, call)+
-					"  banned: literal namespace inside bundle "+name)
-				return true
+				return bundle_literal_namespace_visit(&visit, node)
 			})
 		}
 	}
 	recorder_report_registration_failure(
-		recorder, reg, "bundle literal namespaces", violations)
+		recorder, reg, "bundle literal namespaces", visit.Violations)
+}
+
+func bundle_literal_namespace_visit(visit *Bundle_Body_Visit, node ast.Node) (descend bool) {
+	call, is_call := node.(*ast.CallExpr)
+	if !is_call {
+		return true
+	}
+	if _, named := ast_bundle_namespace(call); !named {
+		return true
+	}
+	visit.Violations = append(visit.Violations, recorder_position(visit.File_Set, call)+
+		"  banned: literal namespace inside bundle "+visit.Name)
+	return true
 }
 
 // Finds one namespace literal at two bundle callsites. The repeat is a fact about the source text,
@@ -1835,24 +1918,29 @@ func recorder_check_duplicate_bundle_namespaces(
 func recorder_duplicate_namespace_violations(
 	file_set *token.FileSet, function *ast.FuncDecl, registered map[string]bool,
 ) (violations []string) {
+	visit := Bundle_Body_Visit{File_Set: file_set, Registered: registered}
 	ast.Inspect(function.Body, func(node ast.Node) (descend bool) {
-		call, is_call := node.(*ast.CallExpr)
-		if !is_call {
-			return true
-		}
-		namespace, named := ast_bundle_namespace(call)
-		if !named {
-			return true
-		}
-		if registered[namespace] {
-			violations = append(violations, recorder_position(file_set, call)+
-				"  banned: duplicate namespace "+strconv.Quote(namespace))
-			return true
-		}
-		registered[namespace] = true
-		return true
+		return bundle_duplicate_namespace_visit(&visit, node)
 	})
-	return violations
+	return visit.Violations
+}
+
+func bundle_duplicate_namespace_visit(visit *Bundle_Body_Visit, node ast.Node) (descend bool) {
+	call, is_call := node.(*ast.CallExpr)
+	if !is_call {
+		return true
+	}
+	namespace, named := ast_bundle_namespace(call)
+	if !named {
+		return true
+	}
+	if visit.Registered[namespace] {
+		visit.Violations = append(visit.Violations, recorder_position(visit.File_Set, call)+
+			"  banned: duplicate namespace "+strconv.Quote(namespace))
+		return true
+	}
+	visit.Registered[namespace] = true
+	return true
 }
 
 // Gives the compile-time literal namespace of a bundle call. named is false when the call is not a
@@ -1977,7 +2065,10 @@ func recorder_is_builtin_type_name(name string) (yes bool) {
 func recorder_pointer_nil_guard(
 	function *ast.FuncDecl, package_types map[string]ast.Expr,
 ) (guard *ast.IfStmt) {
-	if function.Type.Params == nil || len(function.Type.Params.List) == 0 {
+	if function.Type.Params == nil {
+		return nil
+	}
+	if len(function.Type.Params.List) == 0 {
 		return nil
 	}
 	subject := function.Type.Params.List[0]
@@ -1995,26 +2086,44 @@ func recorder_pointer_nil_guard(
 		return nil
 	}
 	statement, is_if := function.Body.List[0].(*ast.IfStmt)
-	if !is_if || statement.Init != nil || statement.Else != nil {
+	if !is_if {
+		return nil
+	}
+	if statement.Init != nil {
+		return nil
+	}
+	if statement.Else != nil {
 		return nil
 	}
 	condition, is_binary := statement.Cond.(*ast.BinaryExpr)
-	if !is_binary || condition.Op != token.EQL {
+	if !is_binary {
+		return nil
+	}
+	if condition.Op != token.EQL {
 		return nil
 	}
 	left, is_identifier := condition.X.(*ast.Ident)
-	if !is_identifier || left.Name != subject.Names[0].Name {
+	if !is_identifier {
+		return nil
+	}
+	if left.Name != subject.Names[0].Name {
 		return nil
 	}
 	right, is_identifier := condition.Y.(*ast.Ident)
-	if !is_identifier || right.Name != "nil" {
+	if !is_identifier {
+		return nil
+	}
+	if right.Name != "nil" {
 		return nil
 	}
 	if len(statement.Body.List) != 1 {
 		return nil
 	}
 	exit, is_return := statement.Body.List[0].(*ast.ReturnStmt)
-	if !is_return || len(exit.Results) != 0 {
+	if !is_return {
+		return nil
+	}
+	if len(exit.Results) != 0 {
 		return nil
 	}
 	return statement
@@ -2489,17 +2598,22 @@ func recorder_output_configuration_valid(recorder *Recorder) (valid bool) {
 // than the values a run reaches is a defect the gap sections cannot show.
 func recorder_collect_gaps(recorder *Recorder) (gaps []Coverage_Gap) {
 	recorder.Events.Range(func(key, value any) (continue_iteration bool) {
-		metadata := value.(*Assertion_Metadata)
-		gaps = append(gaps, assertion_metadata_gaps(metadata)...)
-		if metadata.Domain != nil {
-			gaps = append(gaps, assertion_domain_row(metadata))
-		}
-		return true
+		return coverage_gap_collect(&gaps, value)
 	})
 	sort.Slice(gaps, func(left_index int, right_index int) (less bool) {
 		return coverage_gap_less(gaps[left_index], gaps[right_index])
 	})
 	return gaps
+}
+
+// One tracker entry: its branch gaps, plus its domain row when it is a Range.
+func coverage_gap_collect(gaps *[]Coverage_Gap, value any) (continue_iteration bool) {
+	metadata := value.(*Assertion_Metadata)
+	*gaps = append(*gaps, assertion_metadata_gaps(metadata)...)
+	if metadata.Domain != nil {
+		*gaps = append(*gaps, assertion_domain_row(metadata))
+	}
+	return true
 }
 
 // Returns the coverage gaps one assertion exhibits. A Sometimes contributes a gap
@@ -2812,7 +2926,7 @@ func coverage_gap_domain_table_write(report *strings.Builder, gaps []Coverage_Ga
 				widths[column_index], len(row[column_index]))
 		}
 	}
-	coverage_gap_domain_header_write(report, widths)
+	coverage_gap_domain_header_write(report, widths[:])
 	for _, row := range rows {
 		fmt.Fprintf(report, "| %-*s | %-*s | %*s | %-*s | %-*s | %*s | %-*s |\n",
 			widths[0], row[0], widths[1], row[1], widths[2], row[2],
@@ -2823,7 +2937,7 @@ func coverage_gap_domain_table_write(report *strings.Builder, gaps []Coverage_Ga
 
 // Keeps the domain header and its alignment markers the same width as every row cell.
 func coverage_gap_domain_header_write(
-	report *strings.Builder, widths [DOMAIN_TABLE_COLUMNS]int,
+	report *strings.Builder, widths []int,
 ) {
 	fmt.Fprintf(report, "| %-*s | %-*s | %*s | %-*s | %-*s | %*s | %-*s |\n",
 		widths[0], "Assertion", widths[1], "Type", widths[2], "Link",
@@ -2899,7 +3013,7 @@ func coverage_gap_branch_table_write(report *strings.Builder, gaps []Coverage_Ga
 		widths[0], "Assertion", widths[1], "Type", widths[2], "Link",
 		widths[3], "Missing", widths[4], "Reached", widths[5], "Property",
 		widths[6], "Source")
-	coverage_gap_branch_separator_write(report, widths)
+	coverage_gap_branch_separator_write(report, widths[:])
 	for _, row := range rows {
 		fmt.Fprintf(report, "| %-*s | %-*s | %*s | %-*s | %-*s | %-*s | %-*s |\n",
 			widths[0], row[0], widths[1], row[1], widths[2], row[2],
@@ -2910,7 +3024,7 @@ func coverage_gap_branch_table_write(report *strings.Builder, gaps []Coverage_Ga
 
 // Keeps Markdown alignment markers the same width as their header and row cells.
 func coverage_gap_branch_separator_write(
-	report *strings.Builder, widths [BRANCH_TABLE_COLUMNS]int,
+	report *strings.Builder, widths []int,
 ) {
 	report.WriteString("|" + strings.Repeat("-", widths[0]+2))
 	report.WriteString("|" + strings.Repeat("-", widths[1]+2))
@@ -2975,26 +3089,40 @@ const ANSI_YELLOW = "\033[33m"
 // ANSI_RESET ends one colored span so the rest of the line keeps the terminal's own color.
 const ANSI_RESET = "\033[0m"
 
+// Property_Count is the running tally one summary walk keeps.
+type Property_Count struct {
+	// Properties counts every witnessed branch a run must show.
+	Properties int
+	// Panic_Able counts the subset whose violation terminates execution.
+	Panic_Able int
+}
+
+// One tracker entry: an Always is one panic-able property, a Sometimes must witness both its
+// true and its false branch, so it counts twice.
+func property_count_add(count *Property_Count, value any) (continue_iteration bool) {
+	metadata := value.(*Assertion_Metadata)
+	switch metadata.Kind {
+	case ASSERTION_KIND_ALWAYS:
+		count.Properties++
+		count.Panic_Able++
+	default:
+		count.Properties += 2
+	}
+	return true
+}
+
 // Recorder_Assertion_Summary keeps the enforced subset visible because an undifferentiated total
 // cannot distinguish branch exploration from contracts whose violation terminates execution.
 func Recorder_Assertion_Summary(recorder *Recorder) (summary string) {
-	properties := recorder.Forbidden_Properties
-	panic_able := recorder.Forbidden_Properties
+	count := Property_Count{
+		Properties: recorder.Forbidden_Properties,
+		Panic_Able: recorder.Forbidden_Properties,
+	}
 	recorder.Events.Range(func(key, value any) (continue_iteration bool) {
-		metadata := value.(*Assertion_Metadata)
-		switch metadata.Kind {
-		case ASSERTION_KIND_ALWAYS:
-			properties++
-			panic_able++
-		default:
-			// A Sometimes must witness both its true and its false branch, so it
-			// counts twice.
-			properties += 2
-		}
-		return true
+		return property_count_add(&count, value)
 	})
-	total := ANSI_BLUE + strconv.Itoa(properties) + ANSI_RESET
-	enforced := ANSI_YELLOW + strconv.Itoa(panic_able) + ANSI_RESET
+	total := ANSI_BLUE + strconv.Itoa(count.Properties) + ANSI_RESET
+	enforced := ANSI_YELLOW + strconv.Itoa(count.Panic_Able) + ANSI_RESET
 	if recorder.Package_Label != "" {
 		return fmt.Sprintf("✓ %s: tested %s properties, of which %s are panic-able",
 			recorder.Package_Label, total, enforced)
@@ -3201,26 +3329,39 @@ func ast_assertion_bundle_links(function *ast.FuncDecl) (links []*ast.CallExpr, 
 	if function.Body == nil {
 		return nil, false
 	}
+	search := Bundle_Links_Search{}
 	ast.Inspect(function.Body, func(node ast.Node) (descend bool) {
-		if found {
-			return false
-		}
-		call, is_call := node.(*ast.CallExpr)
-		if !is_call {
-			return true
-		}
-		if ast_assertion_chain_method(call) != "Ensure" {
-			return true
-		}
-		chain, parsed := ast_assertion_chain_from_ensure(call)
-		if !parsed {
-			return true
-		}
-		links = chain.Links
-		found = true
-		return false
+		return bundle_links_visit(&search, node)
 	})
-	return links, found
+	return search.Links, search.Found
+}
+
+// Bundle_Links_Search is the state of one walk for the first Ensure-terminated chain.
+type Bundle_Links_Search struct {
+	// Links is the chain found, empty until Found.
+	Links []*ast.CallExpr
+	// Found stops the walk at the first chain.
+	Found bool
+}
+
+func bundle_links_visit(search *Bundle_Links_Search, node ast.Node) (descend bool) {
+	if search.Found {
+		return false
+	}
+	call, is_call := node.(*ast.CallExpr)
+	if !is_call {
+		return true
+	}
+	if ast_assertion_chain_method(call) != "Ensure" {
+		return true
+	}
+	chain, parsed := ast_assertion_chain_from_ensure(call)
+	if !parsed {
+		return true
+	}
+	search.Links = chain.Links
+	search.Found = true
+	return false
 }
 
 func recorder_assertion_bundle_subject(function *ast.FuncDecl) (subject ast.Expr) {
@@ -3237,56 +3378,89 @@ func recorder_register_assertion_function(
 	recorder *Recorder, file_set *token.FileSet, function Indexed_Function,
 	index *Bundle_Index, reg *Registration,
 ) {
-	parameter := ast_assertion_namespace_parameter(function.Declaration)
-	is_bundle := ast_is_invariants_name(function.Declaration.Name.Name)
-	ensured := recorder_assertion_ensured_roots(function.Declaration)
+	visit := Assertion_Function_Visit{
+		File_Set:     file_set,
+		Function:     function,
+		Index:        index,
+		Registration: reg,
+		Parameter:    ast_assertion_namespace_parameter(function.Declaration),
+		Is_Bundle:    ast_is_invariants_name(function.Declaration.Name.Name),
+		Ensured:      recorder_assertion_ensured_roots(function.Declaration),
+	}
 	ast.Inspect(function.Declaration.Body, func(node ast.Node) (descend bool) {
-		call, is_call := node.(*ast.CallExpr)
-		if !is_call {
-			return true
-		}
-		recorder_register_assertion_always(
-			file_set, call, function.Is_Sugar,
-			indexed_function_constants(function, index), reg)
-		recorder_register_inline_assertion(
-			file_set, call, function.Is_Sugar,
-			indexed_function_constants(function, index), reg)
-		if ast_assertion_chain_method(call) == "Ensure" {
-			chain, parsed := ast_assertion_chain_from_ensure(call)
-			if !parsed {
-				recorder_invalid_chain(file_set, call, reg,
-					"Ensure does not terminate one assertion call nest")
-				return false
-			}
-			if is_bundle {
-				recorder_validate_assertion_template(
-					file_set, chain, parameter,
-					indexed_function_constants(function, index), reg)
-				return false
-			}
-			// A chain identifies itself by its subject type, and only a bundle owns
-			// one type. An ordinary body states an inline helper instead.
-			recorder_invalid_chain(file_set, chain.Root, reg,
-				"Tree chain is outside an _Invariants bundle")
-			return false
-		}
-		if ast_assertion_root(call, function.Is_Sugar) {
-			if !ensured[call.Pos()] {
-				recorder_invalid_chain(file_set, call, reg,
-					"Tree chain is not terminated by Ensure")
-			}
-			return true
-		}
-		if is_bundle {
-			return true
-		}
-		if !ast_is_invariants_name(ast_callee_name(call)) {
-			return true
-		}
-		recorder_register_assertion_bundle_call(
-			file_set, call, function.Imports, index, reg)
-		return true
+		return assertion_function_visit(&visit, node)
 	})
+}
+
+// Assertion_Function_Visit is the state of one registration walk over one function body.
+type Assertion_Function_Visit struct {
+	// File_Set renders each diagnostic position.
+	File_Set *token.FileSet
+	// Function is the body under walk with its package facts.
+	Function Indexed_Function
+	// Index resolves bundle calls to their declarations.
+	Index *Bundle_Index
+	// Registration receives every plan and diagnostic.
+	Registration *Registration
+	// Parameter is the namespace parameter name of a bundle, or empty.
+	Parameter string
+	// Is_Bundle tells a body that owns one subject type from an ordinary body.
+	Is_Bundle bool
+	// Ensured marks each chain root that an Ensure terminates.
+	Ensured map[token.Pos]bool
+}
+
+func assertion_function_visit(visit *Assertion_Function_Visit, node ast.Node) (descend bool) {
+	call, is_call := node.(*ast.CallExpr)
+	if !is_call {
+		return true
+	}
+	constants := indexed_function_constants(visit.Function, visit.Index)
+	recorder_register_assertion_always(
+		visit.File_Set, call, visit.Function.Is_Sugar, constants, visit.Registration)
+	recorder_register_inline_assertion(
+		visit.File_Set, call, visit.Function.Is_Sugar, constants, visit.Registration)
+	if ast_assertion_chain_method(call) == "Ensure" {
+		return assertion_function_visit_ensure(visit, call, constants)
+	}
+	if ast_assertion_root(call, visit.Function.Is_Sugar) {
+		if !visit.Ensured[call.Pos()] {
+			recorder_invalid_chain(visit.File_Set, call, visit.Registration,
+				"Tree chain is not terminated by Ensure")
+		}
+		return true
+	}
+	if visit.Is_Bundle {
+		return true
+	}
+	if !ast_is_invariants_name(ast_callee_name(call)) {
+		return true
+	}
+	recorder_register_assertion_bundle_call(
+		visit.File_Set, call, visit.Function.Imports, visit.Index, visit.Registration)
+	return true
+}
+
+// One Ensure: a bundle registers the chain as its template, and an ordinary body rejects it.
+func assertion_function_visit_ensure(
+	visit *Assertion_Function_Visit, call *ast.CallExpr, constants Constant_Scope,
+) (descend bool) {
+	chain, parsed := ast_assertion_chain_from_ensure(call)
+	if !parsed {
+		recorder_invalid_chain(visit.File_Set, call, visit.Registration,
+			"Ensure does not terminate one assertion call nest")
+		return false
+	}
+	if visit.Is_Bundle {
+		recorder_validate_assertion_template(
+			visit.File_Set, chain, visit.Parameter, constants, visit.Registration)
+		return false
+	}
+	// A chain identifies itself by its subject type, and only a bundle owns one type. An
+	// ordinary body states an inline helper instead.
+	recorder_invalid_chain(visit.File_Set, chain.Root, visit.Registration,
+		"Tree chain is outside an _Invariants bundle")
+	return false
 }
 
 // Registers one inline helper call. The message is the whole identity, so it goes through
@@ -3461,20 +3635,24 @@ func recorder_assertion_ensured_roots(
 ) (roots map[token.Pos]bool) {
 	roots = map[token.Pos]bool{}
 	ast.Inspect(function.Body, func(node ast.Node) (descend bool) {
-		call, is_call := node.(*ast.CallExpr)
-		if !is_call {
-			return true
-		}
-		if ast_assertion_chain_method(call) != "Ensure" {
-			return true
-		}
-		chain, parsed := ast_assertion_chain_from_ensure(call)
-		if parsed {
-			roots[chain.Root.Pos()] = true
-		}
-		return true
+		return assertion_ensured_root_visit(roots, node)
 	})
 	return roots
+}
+
+func assertion_ensured_root_visit(roots map[token.Pos]bool, node ast.Node) (descend bool) {
+	call, is_call := node.(*ast.CallExpr)
+	if !is_call {
+		return true
+	}
+	if ast_assertion_chain_method(call) != "Ensure" {
+		return true
+	}
+	chain, parsed := ast_assertion_chain_from_ensure(call)
+	if parsed {
+		roots[chain.Root.Pos()] = true
+	}
+	return true
 }
 
 func ast_assertion_chain_from_ensure(
@@ -4370,18 +4548,20 @@ func recorder_register_assertion_bundle_instance(
 	file_set *token.FileSet, function Indexed_Function, namespace Namespace,
 	owner_path []token.Pos, index *Bundle_Index, reg *Registration,
 ) {
-	functions := []Indexed_Function{function}
-	namespaces := []Namespace{namespace}
-	owner_paths := [][]token.Pos{owner_path}
-	paths := [][]string{nil}
+	expansion := Bundle_Expansion{
+		Functions:   []Indexed_Function{function},
+		Namespaces:  []Namespace{namespace},
+		Owner_Paths: [][]token.Pos{owner_path},
+		Paths:       [][]string{nil},
+	}
 	for step_index := 0; step_index < BUNDLE_EXPANSION_STEPS_MAX; step_index++ {
-		if step_index == len(functions) {
+		if step_index == len(expansion.Functions) {
 			return
 		}
-		current := functions[step_index]
-		current_namespace := namespaces[step_index]
-		current_owner_path := owner_paths[step_index]
-		current_path := paths[step_index]
+		current := expansion.Functions[step_index]
+		current_namespace := expansion.Namespaces[step_index]
+		current_owner_path := expansion.Owner_Paths[step_index]
+		current_path := expansion.Paths[step_index]
 		if recorder_assertion_bundle_cycle(file_set, current, current_path, reg) {
 			continue
 		}
@@ -4390,23 +4570,37 @@ func recorder_register_assertion_bundle_instance(
 			continue
 		}
 		name := current.Package + "." + current.Declaration.Name.Name
-		next_path := append(append([]string{}, current_path...), name)
-		enqueue := func(
-			nested Indexed_Function, nested_namespace Namespace,
-			nested_owner_path []token.Pos,
-		) {
-			functions = append(functions, nested)
-			namespaces = append(namespaces, nested_namespace)
-			owner_paths = append(owner_paths, nested_owner_path)
-			paths = append(paths, next_path)
+		visit := Bundle_Body_Walk{
+			File_Set:     file_set,
+			Function:     current,
+			Namespace:    current_namespace,
+			Owner_Path:   current_owner_path,
+			Index:        index,
+			Registration: reg,
+			Parameter:    ast_assertion_namespace_parameter(current.Declaration),
+			Expansion:    &expansion,
+			Next_Path:    append(append([]string{}, current_path...), name),
 		}
-		recorder_register_assertion_bundle_body(
-			file_set, current, current_namespace, current_owner_path,
-			index, reg, enqueue)
+		ast.Inspect(current.Declaration.Body, func(node ast.Node) (descend bool) {
+			return bundle_body_walk(&visit, node)
+		})
 	}
 	position := recorder_position(file_set, function.Declaration)
 	reg.Invalid_Chain = append(reg.Invalid_Chain,
 		position+"  helper expansion exceeds 4096 steps")
+}
+
+// Bundle_Expansion is the breadth-first queue of one root's expansion: four parallel lists,
+// one entry per bundle reached, appended as the walk of each body finds nested bundles.
+type Bundle_Expansion struct {
+	// Functions are the bundles reached, in reach order.
+	Functions []Indexed_Function
+	// Namespaces is the namespace each bundle runs under.
+	Namespaces []Namespace
+	// Owner_Paths is the static call path that reached each bundle.
+	Owner_Paths [][]token.Pos
+	// Paths is the package-qualified name chain that reached each bundle, for cycle checks.
+	Paths [][]string
 }
 
 // Compares the package-qualified bundle, not the bare name. Two packages can each declare one
@@ -4456,71 +4650,93 @@ func recorder_assertion_subject_repeat(
 	return true
 }
 
-func recorder_register_assertion_bundle_body(
-	file_set *token.FileSet, function Indexed_Function, namespace Namespace,
-	owner_path []token.Pos, index *Bundle_Index, reg *Registration,
-	enqueue func(Indexed_Function, Namespace, []token.Pos),
-) {
-	parameter := ast_assertion_namespace_parameter(function.Declaration)
-	ast.Inspect(function.Declaration.Body, func(node ast.Node) (descend bool) {
-		call, is_call := node.(*ast.CallExpr)
-		if !is_call {
-			return true
-		}
-		// An eager guard in this body runs whenever the body runs, thus it owes coverage
-		// even when its own package is never analyzed directly.
-		recorder_register_assertion_always(
-			file_set, call, function.Is_Sugar,
-			indexed_function_constants(function, index), reg)
-		recorder_register_inline_assertion(
-			file_set, call, function.Is_Sugar,
-			indexed_function_constants(function, index), reg)
-		if ast_assertion_chain_method(call) == "Ensure" {
-			chain, parsed := ast_assertion_chain_from_ensure(call)
-			if !parsed {
-				return false
-			}
-			// Read the chain's own subject argument, not the declaration's
-			// parameter. The runtime keys on whatever the call passes, thus
-			// registration must read the same expression or the two sides build
-			// different keys.
-			subject, named := ast_assertion_chain_subject_type(
-				chain.Root, function.Declaration, function.Package_Types)
-			if !named {
-				recorder_invalid_subject(file_set, chain.Root, reg)
-				return false
-			}
-			recorder_seed_assertion_chain(
-				file_set, chain,
-				Plan_Key{
-					Namespace: namespace, Package: function.Package,
-					Type: subject,
-				},
-				owner_path, indexed_function_constants(function, index),
-				reg, false)
-			return false
-		}
-		if !ast_is_invariants_name(ast_callee_name(call)) {
-			return true
-		}
-		nested_namespace, nested_owner_path, resolved :=
-			recorder_assertion_nested_namespace(call, parameter, namespace, owner_path)
-		if !resolved {
-			position := recorder_position(file_set, call)
-			reg.Invalid_Identifier = append(reg.Invalid_Identifier,
-				position+"  nested bundle namespace is not literal or forwarded")
-			return true
-		}
-		nested, found := bundle_index_lookup(
-			index, function.Imports, function.Package_Functions, call)
-		if !found {
-			unresolved := recorder_unresolved_line(file_set, call)
-			reg.Unresolved = append(reg.Unresolved, unresolved)
-			return true
-		}
-		enqueue(nested, nested_namespace, nested_owner_path)
+// Bundle_Body_Walk is the state of one walk over one bundle body during expansion.
+type Bundle_Body_Walk struct {
+	// File_Set renders each diagnostic position.
+	File_Set *token.FileSet
+	// Function is the bundle under walk with its package facts.
+	Function Indexed_Function
+	// Namespace is the namespace this bundle runs under.
+	Namespace Namespace
+	// Owner_Path is the static call path that reached this bundle.
+	Owner_Path []token.Pos
+	// Index resolves nested bundle calls to their declarations.
+	Index *Bundle_Index
+	// Registration receives every plan and diagnostic.
+	Registration *Registration
+	// Parameter is the namespace parameter name of the bundle, or empty.
+	Parameter string
+	// Expansion receives each nested bundle this body reaches.
+	Expansion *Bundle_Expansion
+	// Next_Path is the name chain a nested bundle inherits.
+	Next_Path []string
+}
+
+func bundle_body_walk(walk *Bundle_Body_Walk, node ast.Node) (descend bool) {
+	call, is_call := node.(*ast.CallExpr)
+	if !is_call {
 		return true
-	})
+	}
+	constants := indexed_function_constants(walk.Function, walk.Index)
+	// An eager guard in this body runs whenever the body runs, thus it owes coverage even
+	// when its own package is never analyzed directly.
+	recorder_register_assertion_always(
+		walk.File_Set, call, walk.Function.Is_Sugar, constants, walk.Registration)
+	recorder_register_inline_assertion(
+		walk.File_Set, call, walk.Function.Is_Sugar, constants, walk.Registration)
+	if ast_assertion_chain_method(call) == "Ensure" {
+		bundle_body_walk_ensure(walk, call, constants)
+		return false
+	}
+	if !ast_is_invariants_name(ast_callee_name(call)) {
+		return true
+	}
+	nested_namespace, nested_owner_path, resolved := recorder_assertion_nested_namespace(
+		call, walk.Parameter, walk.Namespace, walk.Owner_Path)
+	if !resolved {
+		position := recorder_position(walk.File_Set, call)
+		walk.Registration.Invalid_Identifier = append(walk.Registration.Invalid_Identifier,
+			position+"  nested bundle namespace is not literal or forwarded")
+		return true
+	}
+	nested, found := bundle_index_lookup(
+		walk.Index, walk.Function.Imports, walk.Function.Package_Functions, call)
+	if !found {
+		unresolved := recorder_unresolved_line(walk.File_Set, call)
+		walk.Registration.Unresolved = append(walk.Registration.Unresolved, unresolved)
+		return true
+	}
+	expansion := walk.Expansion
+	expansion.Functions = append(expansion.Functions, nested)
+	expansion.Namespaces = append(expansion.Namespaces, nested_namespace)
+	expansion.Owner_Paths = append(expansion.Owner_Paths, nested_owner_path)
+	expansion.Paths = append(expansion.Paths, walk.Next_Path)
+	return true
+}
+
+// One Ensure in a bundle body seeds the chain under the bundle's plan key.
+func bundle_body_walk_ensure(
+	walk *Bundle_Body_Walk, call *ast.CallExpr, constants Constant_Scope,
+) {
+	chain, parsed := ast_assertion_chain_from_ensure(call)
+	if !parsed {
+		return
+	}
+	// Read the chain's own subject argument, not the declaration's parameter. The runtime
+	// keys on whatever the call passes, thus registration must read the same expression or
+	// the two sides build different keys.
+	subject, named := ast_assertion_chain_subject_type(
+		chain.Root, walk.Function.Declaration, walk.Function.Package_Types)
+	if !named {
+		recorder_invalid_subject(walk.File_Set, chain.Root, walk.Registration)
+		return
+	}
+	recorder_seed_assertion_chain(
+		walk.File_Set, chain,
+		Plan_Key{
+			Namespace: walk.Namespace, Package: walk.Function.Package, Type: subject,
+		},
+		walk.Owner_Path, constants, walk.Registration, false)
 }
 
 func recorder_assertion_nested_namespace(

@@ -161,14 +161,17 @@ const OUTPUT_ENVIRONMENT = "INVARIANT_OUTPUT"
 
 // Coverage_Gap_Json_Write emits one compact flat array and its terminating newline.
 func Coverage_Gap_Json_Write(output io.Writer, gaps []aver.Coverage_Gap) (err error) {
-	if marshal_error := aver_flatjson.Marshal_Write(output, gaps); marshal_error != nil {
+	data, marshal_error := aver_flatjson.Marshal(gaps)
+	if marshal_error != nil {
 		return marshal_error
 	}
-	written, write_error := io.WriteString(output, "\n")
+	// One write, array and newline together: a reader that sees the array sees its terminator.
+	data = append(data, '\n')
+	written, write_error := output.Write(data)
 	if write_error != nil {
 		return write_error
 	}
-	if written != 1 {
+	if written != len(data) {
 		return io.ErrShortWrite
 	}
 	return nil
@@ -230,14 +233,17 @@ func fuzz_coverage_setup(recorder *aver.Recorder) {
 	path := file.Name()
 	file.Close()
 	os.Setenv(FUZZ_COVERAGE_FILE_ENVIRONMENT, path)
-	recorder.Merge_Fuzz_Coverage = func() {
-		opened, open_error := os.Open(path)
-		if open_error == nil {
-			aver.Recorder_Merge_Fuzz_Coverage_From(recorder, opened)
-			opened.Close()
-		}
-		os.Remove(path)
+	recorder.Merge_Fuzz_Coverage = func() { fuzz_coverage_merge(recorder, path) }
+}
+
+// Unions the worker file into the coordinator, then removes it whether or not it opened.
+func fuzz_coverage_merge(recorder *aver.Recorder, path string) {
+	opened, open_error := os.Open(path)
+	if open_error == nil {
+		aver.Recorder_Merge_Fuzz_Coverage_From(recorder, opened)
+		opened.Close()
 	}
+	os.Remove(path)
 }
 
 // Register_Packages_For_Analysis forwards to the library function on Default.

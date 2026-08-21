@@ -141,39 +141,21 @@ func Test_JSON_Output_Selection(t *testing.T) {
 	}
 }
 
-// Test_JSON_Output_Failure keeps both encoder and terminating-newline writes checked.
+// Test_JSON_Output_Failure keeps the one write checked. The failing writer is the write end of
+// a pipe whose read end is closed: every write returns EPIPE, and no fake type with a Write
+// method is needed.
 func Test_JSON_Output_Failure(t *testing.T) {
 	gap := aver.Coverage_Gap{
 		Section: "reachability", Assertion: "guard",
 		Absent: "reachability", Source: "ready",
 	}
-	if err := Coverage_Gap_Json_Write(
-		failure_writer{}, []aver.Coverage_Gap{gap},
-	); err == nil {
-		t.Fatal("encoder write failure was ignored")
+	reader, writer, pipe_error := os.Pipe()
+	if pipe_error != nil {
+		t.Fatal(pipe_error)
 	}
-	writer := &newline_failure_writer{}
+	defer writer.Close()
+	reader.Close()
 	if err := Coverage_Gap_Json_Write(writer, []aver.Coverage_Gap{gap}); err == nil {
-		t.Fatal("terminating newline failure was ignored")
+		t.Fatal("write failure was ignored")
 	}
-}
-
-type failure_writer struct{}
-
-// Write supplies the injected io.Writer failure the JSON reporter must propagate.
-func (failure_writer) Write(data []byte) (written int, err error) {
-	return 0, errors.New("write failed")
-}
-
-type newline_failure_writer struct {
-	Write_Count int
-}
-
-// Write accepts the encoded array and rejects only the required newline write.
-func (writer *newline_failure_writer) Write(data []byte) (written int, err error) {
-	writer.Write_Count++
-	if writer.Write_Count == 1 {
-		return len(data), nil
-	}
-	return 0, errors.New("newline failed")
 }

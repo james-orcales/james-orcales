@@ -1019,9 +1019,7 @@ func Number_Pointer_Invariants(value Number_Pointer, namespace aver.Namespace) {
 	}
 }
 `)
-	if code != 1 || !strings.Contains(output.String(), "control flow") {
-		t.Fatalf("pointer off-shape guard exit=%d output=%q", code, output.String())
-	}
+	assert_control_flow_rejected(t, code, output, "pointer off-shape guard")
 	_, output, code = registered_fixture(pointee + `type Number_Pointer *Number
 func Number_Pointer_Invariants(value Number_Pointer, namespace aver.Namespace) {
 	Number_Invariants(*value, namespace)
@@ -1030,9 +1028,7 @@ func Number_Pointer_Invariants(value Number_Pointer, namespace aver.Namespace) {
 	}
 }
 `)
-	if code != 1 || !strings.Contains(output.String(), "control flow") {
-		t.Fatalf("pointer late guard exit=%d output=%q", code, output.String())
-	}
+	assert_control_flow_rejected(t, code, output, "pointer late guard")
 	_, output, code = registered_fixture(`package fixture
 type Bytes []byte
 func Bytes_Invariants(value Bytes, namespace aver.Namespace) {
@@ -1042,9 +1038,7 @@ func Bytes_Invariants(value Bytes, namespace aver.Namespace) {
 	aver.Tree(value, namespace).Sometimes(len(value) == 0, "empty").Ensure()
 }
 `)
-	if code != 1 || !strings.Contains(output.String(), "control flow") {
-		t.Fatalf("non-pointer nil guard exit=%d output=%q", code, output.String())
-	}
+	assert_control_flow_rejected(t, code, output, "non-pointer nil guard")
 }
 
 // Test_Bundles_Namespace_Source keeps a nested bundle namespace at its callsite.
@@ -1953,6 +1947,20 @@ func Test_Build(t *testing.T) {
 	t.Run("constraints", registration_build_constraints)
 	t.Run("context", registration_build_context)
 	t.Run("transitive", registration_build_transitive)
+}
+
+// One registration must exit 1 and name control flow; either half alone is a different
+// defect.
+func assert_control_flow_rejected(
+	t *testing.T, code int, output *bytes.Buffer, label string,
+) {
+	t.Helper()
+	if code != 1 {
+		t.Fatalf("%s exit=%d output=%q", label, code, output.String())
+	}
+	if !strings.Contains(output.String(), "control flow") {
+		t.Fatalf("%s exit=%d output=%q", label, code, output.String())
+	}
 }
 
 func assert_range_cardinality(t *testing.T, suffix string, value_type string) {

@@ -26,8 +26,9 @@ func always_violation(recorder *Recorder, condition bool, message string) {
 		Reason:   "  Always — condition was false",
 		Value:    condition,
 	}
-	recorder_fatal_hook(recorder, failure.Error())
-	panic(failure)
+	text := Assertion_Failure_Message(failure)
+	recorder_fatal_hook(recorder, text)
+	panic(text)
 }
 
 // Carries a recorder only when a composition hook is active. The usual production builder stays
@@ -43,13 +44,17 @@ func production_builder(recorder *Recorder) (builder Assertion_Builder) {
 	return builder
 }
 
-// Delivers one production assertion failure before the assertion site panics.
-func production_fatal(builder Assertion_Builder, failure Assertion_Failure) {
+// Delivers one production assertion failure to the hook and returns its text for the site to
+// panic with. The text, not the struct, is the panic value: a recovered panic prints it without
+// a method. The site panics, not this, so every site keeps a terminating statement.
+func production_fatal(builder Assertion_Builder, failure Assertion_Failure) (message string) {
 	var recorder *Recorder
 	if builder.Context != nil {
 		recorder = (*Recorder)(builder.Context)
 	}
-	recorder_fatal_hook(recorder, failure.Error())
+	message = Assertion_Failure_Message(failure)
+	recorder_fatal_hook(recorder, message)
+	return message
 }
 
 // Recorder_Sometimes keeps only its two-branch coverage duty, which production drops, so it has
@@ -754,8 +759,7 @@ func production_range[Value Integer](
 			Reason:   "  value below min",
 			Value:    value,
 		}
-		production_fatal(builder, failure)
-		panic(failure)
+		panic(production_fatal(builder, failure))
 	}
 	if value > maximum {
 		failure := Assertion_Failure{
@@ -763,8 +767,7 @@ func production_range[Value Integer](
 			Reason:   "  value exceeds max",
 			Value:    value,
 		}
-		production_fatal(builder, failure)
-		panic(failure)
+		panic(production_fatal(builder, failure))
 	}
 	return builder
 }
@@ -779,8 +782,7 @@ func production_range_holed[Value Integer](
 			Reason:   "  value below min",
 			Value:    value,
 		}
-		production_fatal(builder, failure)
-		panic(failure)
+		panic(production_fatal(builder, failure))
 	}
 	if value > maximum {
 		failure := Assertion_Failure{
@@ -788,8 +790,7 @@ func production_range_holed[Value Integer](
 			Reason:   "  value exceeds max",
 			Value:    value,
 		}
-		production_fatal(builder, failure)
-		panic(failure)
+		panic(production_fatal(builder, failure))
 	}
 	switch value {
 	case hole_1, hole_2, hole_3, hole_4:
@@ -797,8 +798,7 @@ func production_range_holed[Value Integer](
 			Identity: "Range value is excluded",
 			Value:    value,
 		}
-		production_fatal(builder, failure)
-		panic(failure)
+		panic(production_fatal(builder, failure))
 	}
 	return builder
 }
@@ -815,8 +815,7 @@ func production_enum_2[Value Integer](
 		Reason:   "  value is not a member",
 		Value:    value,
 	}
-	production_fatal(builder, failure)
-	panic(failure)
+	panic(production_fatal(builder, failure))
 }
 
 func production_enum_3[Value Integer](
@@ -831,8 +830,7 @@ func production_enum_3[Value Integer](
 		Reason:   "  value is not a member",
 		Value:    value,
 	}
-	production_fatal(builder, failure)
-	panic(failure)
+	panic(production_fatal(builder, failure))
 }
 
 func production_enum_4[Value Integer](
@@ -848,8 +846,7 @@ func production_enum_4[Value Integer](
 		Reason:   "  value is not a member",
 		Value:    value,
 	}
-	production_fatal(builder, failure)
-	panic(failure)
+	panic(production_fatal(builder, failure))
 }
 
 // A guard body must stay inside the inline budget, thus it holds one call site and the cold body
@@ -864,8 +861,7 @@ func range_violation[Value Integer](builder Assertion_Builder, value Value, mini
 		identity, reason = RANGE_GUARD_MINIMUM, "  value below min"
 	}
 	failure := Assertion_Failure{Identity: identity, Reason: reason, Value: value}
-	production_fatal(builder, failure)
-	panic(failure)
+	panic(production_fatal(builder, failure))
 }
 
 //go:noinline
@@ -879,8 +875,7 @@ func range_holed_violation[Value Integer](
 		range_violation(builder, value, minimum)
 	}
 	failure := Assertion_Failure{Identity: "Range value is excluded", Value: value}
-	production_fatal(builder, failure)
-	panic(failure)
+	panic(production_fatal(builder, failure))
 }
 
 //go:noinline
@@ -890,6 +885,5 @@ func enum_violation[Value Integer](builder Assertion_Builder, value Value) {
 		Reason:   "  value is not a member",
 		Value:    value,
 	}
-	production_fatal(builder, failure)
-	panic(failure)
+	panic(production_fatal(builder, failure))
 }
