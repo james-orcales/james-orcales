@@ -29,9 +29,11 @@
   "opt_out_assertion_mandate_packages": [
           "**",
           "!shared/strconv/**",
+          "!shared/encoding/**",
           "!maddox/**",
           "!sloc/**",
           "!shared/random/csprng/**",
+          "!shared/compress/**",
           "!shared/math/**",
           "!shared/slices/**",
           "!shared/bytes/**",
