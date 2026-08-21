@@ -1603,21 +1603,21 @@ func Asserter_Eventually(
 	t.Helper()
 	assert(a.Clock.Now_Monotonic != nil, "testify: Asserter clock is required for Eventually")
 	assert(a.IO != nil, "testify: Asserter io is required for Eventually")
-	deadline := a.Clock.Now_Monotonic() + time.Monotonic_Moment(input.Wait)
+	deadline := time.Clock_Now_Monotonic(a.Clock) + time.Monotonic_Moment(input.Wait)
 	var poll time.Callback
 	poll = func(completion *time.Completion) {
 		if condition() {
 			return
 		}
-		if a.Clock.Now_Monotonic() >= deadline {
+		if time.Clock_Now_Monotonic(a.Clock) >= deadline {
 			message := fmt.Sprintf(
 				"Condition never satisfied within %d ns", int64(input.Wait))
 			Fail(t, message)
 			return
 		}
-		a.IO.Timeout(completion, input.Tick, poll)
+		time.Timeline_Timeout(*a.IO, completion, input.Tick, poll)
 	}
-	a.IO.Timeout(&time.Completion{}, input.Tick, poll)
+	time.Timeline_Timeout(*a.IO, &time.Completion{}, input.Tick, poll)
 }
 
 // Asserter_Never_Input pairs the two durations of Asserter_Never, which repeat a type.
@@ -1637,17 +1637,17 @@ func Asserter_Never(
 	t.Helper()
 	assert(a.Clock.Now_Monotonic != nil, "testify: Asserter clock is required for Never")
 	assert(a.IO != nil, "testify: Asserter io is required for Never")
-	deadline := a.Clock.Now_Monotonic() + time.Monotonic_Moment(input.Wait)
+	deadline := time.Clock_Now_Monotonic(a.Clock) + time.Monotonic_Moment(input.Wait)
 	var poll time.Callback
 	poll = func(completion *time.Completion) {
 		if condition() {
 			Fail(t, "Condition satisfied, but should never be")
 			return
 		}
-		if a.Clock.Now_Monotonic() >= deadline {
+		if time.Clock_Now_Monotonic(a.Clock) >= deadline {
 			return
 		}
-		a.IO.Timeout(completion, input.Tick, poll)
+		time.Timeline_Timeout(*a.IO, completion, input.Tick, poll)
 	}
-	a.IO.Timeout(&time.Completion{}, input.Tick, poll)
+	time.Timeline_Timeout(*a.IO, &time.Completion{}, input.Tick, poll)
 }

@@ -346,8 +346,15 @@ func Test_Files(t *testing.T) {
 // Test_Eventually_And_Never checks the polling assertions under a driven sim loop.
 func Test_Eventually_And_Never(t *testing.T) {
 	t.Parallel()
-	loop, driver, clock := time.New_Virtual_Timeline(
-		time.Virtual_Clock{Resolution: time.NANOSECOND})
+	// Polling arms one timeout at a time, so larger storage would hide lifecycle defects.
+	const POLLING_TIMELINE_CAPACITY = 1
+	state := time.Virtual_Timeline{}
+	queue := [POLLING_TIMELINE_CAPACITY]*time.Completion{}
+	events := [POLLING_TIMELINE_CAPACITY]time.Virtual_Event{}
+	loop, driver, clock := time.New_Virtual_Timeline(&state,
+		time.Virtual_Clock{Resolution: time.NANOSECOND}, time.Virtual_Timeline_Memory{
+			Queue: queue[:], Events: events[:],
+		})
 	a := &testify.Asserter{Clock: clock, IO: &loop}
 	poll_count := 0
 	condition := func() (satisfied bool) {
@@ -359,17 +366,22 @@ func Test_Eventually_And_Never(t *testing.T) {
 		Tick: 10 * time.NANOSECOND,
 	}
 	testify.Asserter_Eventually(a, t, condition, eventually)
-	driver.Run_For(100 * time.NANOSECOND)
+	time.Driver_Run_For(driver, 100*time.NANOSECOND)
 
-	never_loop, never_driver, never_clock := time.New_Virtual_Timeline(
-		time.Virtual_Clock{Resolution: time.NANOSECOND})
+	never_state := time.Virtual_Timeline{}
+	never_queue := [POLLING_TIMELINE_CAPACITY]*time.Completion{}
+	never_events := [POLLING_TIMELINE_CAPACITY]time.Virtual_Event{}
+	never_loop, never_driver, never_clock := time.New_Virtual_Timeline(&never_state,
+		time.Virtual_Clock{Resolution: time.NANOSECOND}, time.Virtual_Timeline_Memory{
+			Queue: never_queue[:], Events: never_events[:],
+		})
 	never_asserter := &testify.Asserter{Clock: never_clock, IO: &never_loop}
 	never := &testify.Asserter_Never_Input{
 		Wait: 50 * time.NANOSECOND,
 		Tick: 10 * time.NANOSECOND,
 	}
 	testify.Asserter_Never(never_asserter, t, func() (satisfied bool) { return false }, never)
-	never_driver.Run_For(60 * time.NANOSECOND)
+	time.Driver_Run_For(never_driver, 60*time.NANOSECOND)
 }
 
 // Test_Hard_Failures runs a failing assertion in a child test process because FailNow
