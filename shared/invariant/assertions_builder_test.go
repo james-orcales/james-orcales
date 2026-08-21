@@ -10,6 +10,7 @@ import (
 	"testing/fstest"
 
 	"local/james-orcales/shared/invariant"
+	"local/james-orcales/shared/testify"
 )
 
 // Fixture_Subject stands in for a bundle subject where the test drives the builder directly. A
@@ -110,31 +111,53 @@ func Test_Assertions_Defers_Enum_Failure(t *testing.T) {
 // Test_Assertions_Has_Zero_Allocations protects the builder's register-value shape.
 func Test_Assertions_Has_Zero_Allocations(t *testing.T) {
 	recorder := &invariant.Recorder{}
-	allocations := testing.AllocsPerRun(1000, func() {
+	testify.Zero_Allocation(t, func() {
 		fixture_assertions(recorder, "allocation").
 			Sometimes(true, "axis").Range_Int(5, 0, 10).Ensure()
 	})
-	if allocations != 0 {
-		t.Fatalf("allocations = %f, want 0", allocations)
-	}
-	recording, _, code := registered_fixture(
-		bundle_fixture("allocation", ".Sometimes(value == 0, \"axis\")"))
+	recording, _, code := registered_fixture(`package fixture
+type Fixture_Subject int
+func Fixture_Subject_Invariants(value Fixture_Subject, namespace invariant.Namespace) {
+	invariant.Always(value >= 0, "allocation always")
+	invariant.Tree(value, namespace).
+		Sometimes(value == 5, "axis").
+		Range_Int(int(value), 0, 10).
+		Range_Holed_Int(int(value), 0, 10, 1, 2, 3, 4).
+		Enum_Int(int(value), 5, 6).
+		Enum_3_Int(int(value), 5, 6, 7).
+		Enum_4_Int(int(value), 5, 6, 7, 8).
+		Ensure()
+}
+func inline(value int) {
+	invariant.Sometimes(value == 5, "allocation inline sometimes")
+	invariant.Range(value, 0, 10, "allocation inline range")
+	invariant.Range_Holed(value, 0, 10, 1, 2, 3, 4, "allocation inline holed range")
+	invariant.Enum(value, 5, 6, "allocation inline enum")
+}
+func check(value Fixture_Subject) { Fixture_Subject_Invariants(value, "allocation") }
+`)
 	if code != -1 {
 		t.Fatalf("registration exit = %d", code)
 	}
-	allocations = testing.AllocsPerRun(1000, func() {
+	testify.Zero_Allocation(t, func() {
+		invariant.Recorder_Always(recording, true, "allocation always")
+		invariant.Recorder_Sometimes(recording, true, "allocation inline sometimes")
+		invariant.Recorder_Range(recording, 5, 0, 10, "allocation inline range")
+		invariant.Recorder_Range_Holed(
+			recording, 5, 0, 10, 1, 2, 3, 4, "allocation inline holed range")
+		invariant.Recorder_Enum(recording, 5, 5, 6, "allocation inline enum")
 		fixture_assertions(recording, "allocation").
-			Sometimes(true, "axis").Ensure()
+			Sometimes(true, "axis").
+			Range_Int(5, 0, 10).
+			Range_Holed_Int(5, 0, 10, 1, 2, 3, 4).
+			Enum_Int(5, 5, 6).
+			Enum_3_Int(5, 5, 6, 7).
+			Enum_4_Int(5, 5, 6, 7, 8).
+			Ensure()
 	})
-	if allocations != 0 {
-		t.Fatalf("recording allocations = %f, want 0", allocations)
-	}
-	allocations = testing.AllocsPerRun(1000, func() {
+	testify.Zero_Allocation(t, func() {
 		benchmark_dense_root(recorder, 5)
 	})
-	if allocations != 0 {
-		t.Fatalf("dense enforcement allocations = %f, want 0", allocations)
-	}
 }
 
 // Test_Assertions_Typed_Presets_Register_Every_Integer_Width protects exact static resolution.

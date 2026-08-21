@@ -16,6 +16,7 @@ import (
 
 	core "local/james-orcales/shared/invariant"
 	invariant "local/james-orcales/shared/invariant/default"
+	"local/james-orcales/shared/testify"
 )
 
 // Test_Always_Violation prevents a false guard from returning.
@@ -254,23 +255,17 @@ func check(count int) { invariant.Range(count, 0, 4, "planned") }
 	if code != -1 {
 		t.Fatalf("exit = %d", code)
 	}
-	allocations := testing.AllocsPerRun(1000, func() {
+	testify.Zero_Allocation(t, func() {
 		core.Recorder_Range(recorder, 2, 0, 4, "planned")
 	})
-	if allocations != 0 {
-		t.Fatalf("recording allocations = %f, want 0", allocations)
-	}
 	guard := inline_metadata(t, recorder, "planned", 0, core.RANGE_GUARD_MINIMUM)
 	if guard.Frequency.Load() == 0 {
 		t.Fatal("inline Range did not credit its lower guard")
 	}
 	unplanned := &core.Recorder{}
-	allocations = testing.AllocsPerRun(1000, func() {
+	testify.Zero_Allocation(t, func() {
 		core.Recorder_Range(unplanned, 2, 0, 4, "planned")
 	})
-	if allocations != 0 {
-		t.Fatalf("plan-free allocations = %f, want 0", allocations)
-	}
 }
 
 // Test_Assertions_API pins the fluent surface shared by primitive presets.
@@ -389,13 +384,10 @@ func Test_Assertions_Foreign(t *testing.T) {
 // Test_Assertions_Allocation protects the zero-allocation runtime path.
 func Test_Assertions_Allocation(t *testing.T) {
 	recorder := &core.Recorder{}
-	allocations := testing.AllocsPerRun(1000, func() {
+	testify.Zero_Allocation(t, func() {
 		fixture_assertions(recorder, "allocation").
 			Sometimes(true, "axis").Range_Int(1, 0, 2).Ensure()
 	})
-	if allocations != 0 {
-		t.Fatalf("allocations = %f", allocations)
-	}
 }
 
 // Test_Assertions_Persistence protects structural fuzz-key round trips.

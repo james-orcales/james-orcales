@@ -4,9 +4,18 @@ import (
 	"testing"
 
 	"local/james-orcales/shared/invariant/default"
+	"local/james-orcales/shared/invariant/flatjson"
+	"local/james-orcales/shared/testify"
 )
 
 // TestMain runs this assertion seam through the default test entrypoint.
 func TestMain(m *testing.M) {
 	invariant.Run_Test_Main(m)
+}
+
+// Successful encoder guards stay on each encoded field's hot path.
+func Test_Always_Has_Zero_Allocations(t *testing.T) {
+	testify.Zero_Allocation(t, func() {
+		invariant_flatjson.Always(true, "guard")
+	})
 }
