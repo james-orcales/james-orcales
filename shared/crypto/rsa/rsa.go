@@ -840,12 +840,12 @@ func Verification_Invariants(value Verification, namespace aver.Namespace) {
 func Public_Key_Set_Bytes(
 	destination Public_Key_Destination, modulus Modulus_Unvalidated,
 ) (status Key_Status) {
-	defer func() {
-		Key_Status_Invariants(status, "Public_Key_Set_Bytes.status")
-		Public_Key_Invariants(*destination, "Public_Key_Set_Bytes.destination.output")
-	}()
+	defer func() { Key_Status_Invariants(status, "Public_Key_Set_Bytes.status") }()
 	Public_Key_Destination_Invariants(destination, "Public_Key_Set_Bytes.destination")
 	Modulus_Unvalidated_Invariants(modulus, "Public_Key_Set_Bytes.modulus")
+	defer func() {
+		Public_Key_Invariants(*destination, "Public_Key_Set_Bytes.destination.output")
+	}()
 	if len(modulus) != MODULUS_SIZE {
 		return KEY_STATUS_INPUT_INVALID
 	}
@@ -866,13 +866,13 @@ func Private_Key_Set_Bytes(
 	modulus Modulus_Unvalidated,
 	exponent Private_Exponent_Unvalidated,
 ) (status Key_Status) {
-	defer func() {
-		Key_Status_Invariants(status, "Private_Key_Set_Bytes.status")
-		Private_Key_Invariants(*destination, "Private_Key_Set_Bytes.destination.output")
-	}()
+	defer func() { Key_Status_Invariants(status, "Private_Key_Set_Bytes.status") }()
 	Private_Key_Destination_Invariants(destination, "Private_Key_Set_Bytes.destination")
 	Modulus_Unvalidated_Invariants(modulus, "Private_Key_Set_Bytes.modulus")
 	Private_Exponent_Unvalidated_Invariants(exponent, "Private_Key_Set_Bytes.exponent")
+	defer func() {
+		Private_Key_Invariants(*destination, "Private_Key_Set_Bytes.destination.output")
+	}()
 	if len(modulus) != MODULUS_SIZE {
 		return KEY_STATUS_INPUT_INVALID
 	}
@@ -972,17 +972,16 @@ func Decrypt_OAEP_SHA_256(
 	destination Destination,
 	private_key Private_Key,
 	ciphertext Ciphertext_Unvalidated,
-) (count Count, status Decrypt_Status) {
-	defer func() {
-		Count_Invariants(count, "Decrypt.count")
-		Decrypt_Status_Invariants(status, "Decrypt.status")
-	}()
+) (count Count, _ Decrypt_Status) {
+	defer func() { Count_Invariants(count, "Decrypt.count") }()
 	Destination_Invariants(destination, "Decrypt.destination")
 	Private_Key_Invariants(private_key, "Decrypt.private_key")
 	Ciphertext_Unvalidated_Invariants(ciphertext, "Decrypt.ciphertext")
+	status := DECRYPT_STATUS_INPUT_INVALID
+	defer func() { Decrypt_Status_Invariants(status, "Decrypt.status") }()
 	private_key_require(private_key)
 	if len(ciphertext) != MODULUS_SIZE {
-		return COUNT_MINIMUM, DECRYPT_STATUS_INPUT_INVALID
+		return COUNT_MINIMUM, status
 	}
 	var ciphertext_storage, encoded_storage [MODULUS_SIZE]byte
 	ciphertext_encoding := Encoded(ciphertext_storage[:])
@@ -991,7 +990,7 @@ func Decrypt_OAEP_SHA_256(
 	if integer_encoding_canonical(
 		ciphertext_encoding, &private_key.Modulus,
 	) != DECISION_TRUE {
-		return COUNT_MINIMUM, DECRYPT_STATUS_INPUT_INVALID
+		return COUNT_MINIMUM, status
 	}
 	rsa_private_operation(
 		encoded, ciphertext_encoding, &private_key.Modulus, &private_key.Exponent,
@@ -1014,17 +1013,19 @@ func Decrypt_OAEP_SHA_256(
 	}
 	message_count, valid := oaep_message_count(encoded, database)
 	if valid != DECISION_TRUE {
-		return COUNT_MINIMUM, DECRYPT_STATUS_INPUT_INVALID
+		return COUNT_MINIMUM, status
 	}
 	count = message_count
 	if len(destination) < int(count) {
-		return count, DECRYPT_STATUS_DESTINATION_TOO_SMALL
+		status = DECRYPT_STATUS_DESTINATION_TOO_SMALL
+		return count, status
 	}
 	message_start := OAEP_DATABASE_SIZE - int(count)
 	var plaintext [MESSAGE_SIZE_MAXIMUM]byte
 	copy(plaintext[:count], database[message_start:])
 	copy(destination[:count], plaintext[:count])
-	return count, DECRYPT_STATUS_OK
+	status = DECRYPT_STATUS_OK
+	return count, status
 }
 
 // Sign_PSS_SHA_256 uses one digest-width injected salt and fixed private work.
@@ -1132,13 +1133,12 @@ func Verify_PKCS1_V1_5_SHA_256(
 
 func oaep_message_count(
 	encoded Encoded, database Database,
-) (message_count Count, valid Decision) {
-	defer func() {
-		Count_Invariants(message_count, "oaep_message_count.message_count")
-		Decision_Invariants(valid, "oaep_message_count.valid")
-	}()
+) (message_count Count, _ Decision) {
+	defer func() { Count_Invariants(message_count, "oaep_message_count.message_count") }()
 	Encoded_Invariants(encoded, "oaep_message_count.encoded")
 	Database_Invariants(database, "oaep_message_count.database")
+	var valid Decision
+	defer func() { Decision_Invariants(valid, "oaep_message_count.valid") }()
 	var empty_hash_storage [HASH_SIZE]byte
 	empty_hash := Digest(empty_hash_storage[:])
 	sha256.Checksum_Into(sha256.Destination(empty_hash), sha256.KIND_SHA_256, nil)
@@ -1419,47 +1419,47 @@ func montgomery_multiply(destination Limbs, left Limbs, right Limbs, modulus Lim
 	n0_inverse = bits.WORD_64_MINIMUM - n0_inverse
 	var temporary_storage [MONTGOMERY_TEMPORARY_LIMB_COUNT]uint64
 	temporary := Temporary(temporary_storage[:])
-	add := func(temporary Temporary, multiplicand Limbs, multiplier uint64) {
-		carry := uint64(bits.WORD_64_MINIMUM)
-		for limb_index := range MODULUS_LIMB_COUNT {
-			left_word := multiplicand[limb_index]
-			left_low := left_word & MONTGOMERY_HALF_MASK
-			left_high := left_word >> bits.BIT_COUNT_32_MAXIMUM
-			right_low := multiplier & MONTGOMERY_HALF_MASK
-			right_high := multiplier >> bits.BIT_COUNT_32_MAXIMUM
-			partial := left_low * right_low
-			middle_first := left_high*right_low +
-				partial>>bits.BIT_COUNT_32_MAXIMUM
-			middle_second := left_low*right_high +
-				middle_first&MONTGOMERY_HALF_MASK
-			high := left_high*right_high +
-				middle_first>>bits.BIT_COUNT_32_MAXIMUM +
-				middle_second>>bits.BIT_COUNT_32_MAXIMUM
-			low := left_word * multiplier
-			first_sum := low + temporary[limb_index]
-			first_carry := ((low & temporary[limb_index]) |
-				((low | temporary[limb_index]) & ^first_sum)) >>
-				(bits.BIT_COUNT_64_MAXIMUM - binary.UINT_8_SIZE)
-			low = first_sum + carry
-			second_carry := ((first_sum & carry) |
-				((first_sum | carry) & ^low)) >>
-				(bits.BIT_COUNT_64_MAXIMUM - binary.UINT_8_SIZE)
-			temporary[limb_index] = low
-			carry = high + first_carry + second_carry
-		}
-		top := temporary[MODULUS_LIMB_COUNT]
-		sum := top + carry
-		top_carry := ((top & carry) | ((top | carry) & ^sum)) >>
-			(bits.BIT_COUNT_64_MAXIMUM - binary.UINT_8_SIZE)
-		temporary[MODULUS_LIMB_COUNT] = sum
-		temporary[MODULUS_LIMB_COUNT+binary.UINT_8_SIZE] += top_carry
-	}
 	for word_index := range MODULUS_LIMB_COUNT {
-		add(temporary, left, right[word_index])
-		add(
-			temporary, modulus,
-			temporary[bits.BIT_COUNT_MINIMUM]*n0_inverse,
-		)
+		multiplicands := [...]Limbs{left, modulus}
+		for operation_index, multiplicand := range multiplicands {
+			multiplier := right[word_index]
+			if operation_index == binary.UINT_8_SIZE {
+				multiplier = temporary[bits.BIT_COUNT_MINIMUM] * n0_inverse
+			}
+			carry := uint64(bits.WORD_64_MINIMUM)
+			for limb_index := range MODULUS_LIMB_COUNT {
+				left_word := multiplicand[limb_index]
+				left_low := left_word & MONTGOMERY_HALF_MASK
+				left_high := left_word >> bits.BIT_COUNT_32_MAXIMUM
+				right_low := multiplier & MONTGOMERY_HALF_MASK
+				right_high := multiplier >> bits.BIT_COUNT_32_MAXIMUM
+				partial := left_low * right_low
+				middle_first := left_high*right_low +
+					partial>>bits.BIT_COUNT_32_MAXIMUM
+				middle_second := left_low*right_high +
+					middle_first&MONTGOMERY_HALF_MASK
+				high := left_high*right_high +
+					middle_first>>bits.BIT_COUNT_32_MAXIMUM +
+					middle_second>>bits.BIT_COUNT_32_MAXIMUM
+				low := left_word * multiplier
+				first_sum := low + temporary[limb_index]
+				first_carry := ((low & temporary[limb_index]) |
+					((low | temporary[limb_index]) & ^first_sum)) >>
+					(bits.BIT_COUNT_64_MAXIMUM - binary.UINT_8_SIZE)
+				low = first_sum + carry
+				second_carry := ((first_sum & carry) |
+					((first_sum | carry) & ^low)) >>
+					(bits.BIT_COUNT_64_MAXIMUM - binary.UINT_8_SIZE)
+				temporary[limb_index] = low
+				carry = high + first_carry + second_carry
+			}
+			top := temporary[MODULUS_LIMB_COUNT]
+			sum := top + carry
+			top_carry := ((top & carry) | ((top | carry) & ^sum)) >>
+				(bits.BIT_COUNT_64_MAXIMUM - binary.UINT_8_SIZE)
+			temporary[MODULUS_LIMB_COUNT] = sum
+			temporary[MODULUS_LIMB_COUNT+binary.UINT_8_SIZE] += top_carry
+		}
 		for shift_index := range MODULUS_LIMB_COUNT + binary.UINT_8_SIZE {
 			temporary[shift_index] = temporary[shift_index+binary.UINT_8_SIZE]
 		}

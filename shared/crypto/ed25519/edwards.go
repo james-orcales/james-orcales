@@ -1002,54 +1002,53 @@ func field_multiply(destination, left, right Field_Handle) {
 		FIELD_MODULUS_LIMB_0, FIELD_MODULUS_LIMB_1,
 		FIELD_MODULUS_LIMB_2, FIELD_MODULUS_LIMB_3,
 	}
-	// Local words passed the boundary. Per-bit recording would dominate the product.
-	modular_add := func(destination_words, left_words, right_words *[FIELD_LIMB_COUNT]uint64) {
-		carry_value := uint64(bits.WORD_64_MINIMUM)
-		var sum [FIELD_LIMB_COUNT]uint64
-		for index := range sum {
-			partial := left_words[index] + right_words[index]
-			partial_carry := ((left_words[index] & right_words[index]) |
-				((left_words[index] | right_words[index]) & ^partial)) >>
-				(bits.BIT_COUNT_64_MAXIMUM - binary.UINT_8_SIZE)
-			value := partial + carry_value
-			carry_carry := ((partial & carry_value) |
-				((partial | carry_value) & ^value)) >>
-				(bits.BIT_COUNT_64_MAXIMUM - binary.UINT_8_SIZE)
-			sum[index] = value
-			carry_value = partial_carry | carry_carry
-		}
-		borrow_value := uint64(bits.WORD_64_MINIMUM)
-		var reduced [FIELD_LIMB_COUNT]uint64
-		for index := range reduced {
-			partial := sum[index] - modulus_words[index]
-			partial_borrow := ((^sum[index] & modulus_words[index]) |
-				(^(sum[index] ^ modulus_words[index]) & partial)) >>
-				(bits.BIT_COUNT_64_MAXIMUM - binary.UINT_8_SIZE)
-			value := partial - borrow_value
-			borrow_borrow := ((^partial & borrow_value) |
-				(^(partial ^ borrow_value) & value)) >>
-				(bits.BIT_COUNT_64_MAXIMUM - binary.UINT_8_SIZE)
-			reduced[index] = value
-			borrow_value = partial_borrow | borrow_borrow
-		}
-		mask := uint64(bits.WORD_64_MINIMUM) - (borrow_value ^ binary.UINT_8_SIZE)
-		for index := range destination_words {
-			destination_words[index] = sum[index] ^ mask&(reduced[index]^sum[index])
-		}
-	}
 	for bit_index := bits.BIT_COUNT_MINIMUM; bit_index < FIELD_BIT_COUNT; bit_index++ {
-		var candidate [FIELD_LIMB_COUNT]uint64
-		modular_add(&candidate, &result_words, &addend_words)
+		var additions [binary.UINT_16_SIZE][FIELD_LIMB_COUNT]uint64
+		left_operands := [...]*[FIELD_LIMB_COUNT]uint64{&result_words, &addend_words}
+		for operation_index := range additions {
+			left_words := left_operands[operation_index]
+			carry_value := uint64(bits.WORD_64_MINIMUM)
+			var sum [FIELD_LIMB_COUNT]uint64
+			for index := range sum {
+				partial := left_words[index] + addend_words[index]
+				partial_carry := ((left_words[index] & addend_words[index]) |
+					((left_words[index] | addend_words[index]) & ^partial)) >>
+					(bits.BIT_COUNT_64_MAXIMUM - binary.UINT_8_SIZE)
+				value := partial + carry_value
+				carry_carry := ((partial & carry_value) |
+					((partial | carry_value) & ^value)) >>
+					(bits.BIT_COUNT_64_MAXIMUM - binary.UINT_8_SIZE)
+				sum[index] = value
+				carry_value = partial_carry | carry_carry
+			}
+			borrow_value := uint64(bits.WORD_64_MINIMUM)
+			var reduced [FIELD_LIMB_COUNT]uint64
+			for index := range reduced {
+				partial := sum[index] - modulus_words[index]
+				partial_borrow := ((^sum[index] & modulus_words[index]) |
+					(^(sum[index] ^ modulus_words[index]) & partial)) >>
+					(bits.BIT_COUNT_64_MAXIMUM - binary.UINT_8_SIZE)
+				value := partial - borrow_value
+				borrow_borrow := ((^partial & borrow_value) |
+					(^(partial ^ borrow_value) & value)) >>
+					(bits.BIT_COUNT_64_MAXIMUM - binary.UINT_8_SIZE)
+				reduced[index] = value
+				borrow_value = partial_borrow | borrow_borrow
+			}
+			mask := uint64(bits.WORD_64_MINIMUM) - (borrow_value ^ binary.UINT_8_SIZE)
+			for index := range additions[operation_index] {
+				additions[operation_index][index] = sum[index] ^
+					mask&(reduced[index]^sum[index])
+			}
+		}
 		word_index := bit_index / bits.BIT_COUNT_64_MAXIMUM
 		word_shift := uint(bit_index % bits.BIT_COUNT_64_MAXIMUM)
 		bit := right_words[word_index] >> word_shift & binary.UINT_8_SIZE
 		mask := uint64(bits.WORD_64_MINIMUM) - bit
 		for index := range result_words {
-			result_words[index] ^= mask & (candidate[index] ^ result_words[index])
+			result_words[index] ^= mask & (additions[0][index] ^ result_words[index])
 		}
-		var doubled [FIELD_LIMB_COUNT]uint64
-		modular_add(&doubled, &addend_words, &addend_words)
-		addend_words = doubled
+		addend_words = additions[1]
 	}
 	*destination = Field{
 		Limb_0: Limb_0(result_words[0]), Limb_1: Limb_1(result_words[1]),

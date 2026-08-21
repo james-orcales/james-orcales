@@ -907,17 +907,17 @@ func Digest_Write(digest Digest_Handle, source Source) (count Count) {
 // Digest_Sum_Into writes selected complete digest or leaves short storage untouched.
 func Digest_Sum_Into(
 	digest Digest_Handle, destination Destination,
-) (count Output_Count, status Output_Status) {
-	defer func() {
-		Output_Count_Invariants(count, "Digest_Sum_Into.count")
-		Output_Status_Invariants(status, "Digest_Sum_Into.status")
-	}()
+) (count Output_Count, _ Output_Status) {
+	defer func() { Output_Count_Invariants(count, "Digest_Sum_Into.count") }()
 	Digest_Handle_Invariants(digest, "Digest_Sum_Into.digest")
 	Destination_Invariants(destination, "Digest_Sum_Into.destination")
+	var status Output_Status
+	defer func() { Output_Status_Invariants(status, "Digest_Sum_Into.status") }()
 	digest_require(digest)
 	size := Digest_Size(digest)
 	if len(destination) < int(size) {
-		return output_count(digest.Kind), OUTPUT_STATUS_TOO_SMALL
+		status = OUTPUT_STATUS_TOO_SMALL
+		return output_count(digest.Kind), status
 	}
 	copy_digest := *digest
 	var final_blocks [FINAL_BLOCK_CAPACITY]byte
@@ -951,7 +951,8 @@ func Digest_Sum_Into(
 		)
 	}
 	copy(destination[:size], full[:size])
-	return output_count(digest.Kind), OUTPUT_STATUS_OK
+	status = OUTPUT_STATUS_OK
+	return output_count(digest.Kind), status
 }
 
 // Digest_Clone_Into copies live state without aliasing caller storage.
@@ -991,18 +992,18 @@ func Digest_Block_Size(digest Digest_Handle) (size Block_Size) {
 // Checksum_Into computes selected function directly into caller storage.
 func Checksum_Into(
 	destination Destination, kind Kind, source Source,
-) (count Output_Count, status Output_Status) {
-	defer func() {
-		Output_Count_Invariants(count, "Checksum_Into.count")
-		Output_Status_Invariants(status, "Checksum_Into.status")
-	}()
+) (count Output_Count, _ Output_Status) {
+	defer func() { Output_Count_Invariants(count, "Checksum_Into.count") }()
 	Destination_Invariants(destination, "Checksum_Into.destination")
 	Kind_Invariants(kind, "Checksum_Into.kind")
 	Source_Invariants(source, "Checksum_Into.source")
+	var status Output_Status
+	defer func() { Output_Status_Invariants(status, "Checksum_Into.status") }()
 	var digest Digest
 	Digest_Init(&digest, kind)
 	Digest_Write(&digest, source)
-	return Digest_Sum_Into(&digest, destination)
+	count, status = Digest_Sum_Into(&digest, destination)
+	return count, status
 }
 
 func digest_write(digest Storage_Destination, source Source) {

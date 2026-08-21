@@ -139,16 +139,15 @@ func Key_Into(
 	password Password,
 	salt Salt,
 	iterations Iteration_Count,
-) (count Count, status Status) {
-	defer func() {
-		Count_Invariants(count, "Key_Into.count")
-		Status_Invariants(status, "Key_Into.status")
-	}()
+) (count Count, _ Status) {
+	defer func() { Count_Invariants(count, "Key_Into.count") }()
 	Destination_Invariants(destination, "Key_Into.destination")
 	hmac.Kind_Invariants(kind, "Key_Into.kind")
 	Password_Invariants(password, "Key_Into.password")
 	Salt_Invariants(salt, "Key_Into.salt")
 	Iteration_Count_Invariants(iterations, "Key_Into.iterations")
+	var status Status
+	defer func() { Status_Invariants(status, "Key_Into.status") }()
 	require_destination(destination)
 	require_password(password)
 	require_salt(salt)
@@ -162,10 +161,12 @@ func Key_Into(
 		// Refused work must not leave keyed state live until this frame is reclaimed.
 		digest = hmac.Digest{}
 		derive(destination, Digest_Handle(&digest), salt, iterations)
-		return COUNT_EMPTY, STATUS_WORK_TOO_LARGE
+		status = STATUS_WORK_TOO_LARGE
+		return COUNT_EMPTY, status
 	}
 	derive(destination, Digest_Handle(&digest), salt, iterations)
-	return Count(len(destination)), STATUS_OK
+	status = STATUS_OK
+	return Count(len(destination)), status
 }
 
 // PBKDF2 chains U values from the same keyed HMAC baseline; resetting avoids rebuilding key pads.

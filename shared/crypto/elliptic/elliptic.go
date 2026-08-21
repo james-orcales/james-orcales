@@ -512,6 +512,24 @@ func Point_Handle_Invariants(value Point_Handle, namespace aver.Namespace) {
 	Point_Invariants(*value, namespace)
 }
 
+func point_set_bytes_output(value Point_Handle) {
+	Point_Handle_Invariants(value, "point_set_bytes_output.value")
+	Point_Invariants(*value, "Point_Set_Bytes.destination.output")
+	point_require(value)
+}
+
+func point_scalar_multiply_output(value Point_Handle) {
+	Point_Handle_Invariants(value, "point_scalar_multiply_output.value")
+	Point_Invariants(*value, "Point_Scalar_Multiply.destination.output")
+	point_require(value)
+}
+
+func point_scalar_base_multiply_output(value Point_Handle) {
+	Point_Handle_Invariants(value, "point_scalar_base_multiply_output.value")
+	Point_Invariants(*value, "Point_Scalar_Base_Multiply.destination.output")
+	point_require(value)
+}
+
 // Distinct coordinate types keep invariant identity. Explicit conversion avoids making layout
 // identity a hidden precondition of arithmetic.
 func x_limbs(value X_Coordinate_Handle) (limbs Limbs) {
@@ -763,14 +781,11 @@ func Point_Generator(destination Point_Handle) {
 func Point_Set_Bytes(destination Point_Handle, source Encoding_Unvalidated) (
 	status Parse_Status,
 ) {
-	defer func() {
-		Parse_Status_Invariants(status, "Point_Set_Bytes.status")
-		Point_Invariants(*destination, "Point_Set_Bytes.destination.output")
-		point_require(destination)
-	}()
+	defer func() { Parse_Status_Invariants(status, "Point_Set_Bytes.status") }()
 	Point_Handle_Invariants(destination, "Point_Set_Bytes.destination.input.handle")
 	Point_Invariants(*destination, "Point_Set_Bytes.destination.input.point")
 	Encoding_Unvalidated_Invariants(source, "Point_Set_Bytes.source")
+	defer func() { point_set_bytes_output(destination) }()
 	point_require(destination)
 	var point Point
 	switch {
@@ -837,25 +852,25 @@ func Point_Bytes_Into(
 	destination Destination,
 	point Point_Handle,
 	kind Encoding_Kind,
-) (count Count, status Output_Status) {
-	defer func() {
-		Count_Invariants(count, "Point_Bytes_Into.count")
-		Output_Status_Invariants(status, "Point_Bytes_Into.status")
-	}()
+) (count Count, _ Output_Status) {
+	defer func() { Count_Invariants(count, "Point_Bytes_Into.count") }()
 	Destination_Invariants(destination, "Point_Bytes_Into.destination")
 	Point_Handle_Invariants(point, "Point_Bytes_Into.point.handle")
 	Point_Invariants(*point, "Point_Bytes_Into.point.value")
 	Encoding_Kind_Invariants(kind, "Point_Bytes_Into.kind")
+	status := OUTPUT_STATUS_OK
+	defer func() { Output_Status_Invariants(status, "Point_Bytes_Into.status") }()
 	point_require(point)
 	z := z_limbs(&point.Z)
 	z_zero := field_is_zero(&z)
 	if z_zero == DECISION_TRUE {
 		count = COUNT_INFINITY
 		if len(destination) < int(count) {
-			return count, OUTPUT_STATUS_DESTINATION_TOO_SMALL
+			status = OUTPUT_STATUS_DESTINATION_TOO_SMALL
+			return count, status
 		}
 		destination[bits.BIT_COUNT_MINIMUM] = POINT_INFINITY_PREFIX
-		return count, OUTPUT_STATUS_OK
+		return count, status
 	}
 	if kind == ENCODING_COMPRESSED {
 		count = COUNT_COMPRESSED
@@ -863,7 +878,8 @@ func Point_Bytes_Into(
 		count = COUNT_UNCOMPRESSED
 	}
 	if len(destination) < int(count) {
-		return count, OUTPUT_STATUS_DESTINATION_TOO_SMALL
+		status = OUTPUT_STATUS_DESTINATION_TOO_SMALL
+		return count, status
 	}
 	var inverse, x, y Limbs
 	field_inverse(&inverse, &z)
@@ -878,12 +894,12 @@ func Point_Bytes_Into(
 		destination[bits.BIT_COUNT_MINIMUM] = POINT_COMPRESSED_EVEN_PREFIX |
 			byte(Decision(y.Limb_0)&DECISION_TRUE)
 		copy(destination[ENCODING_INFINITY_SIZE:count], x_encoding[:])
-		return count, OUTPUT_STATUS_OK
+		return count, status
 	}
 	destination[bits.BIT_COUNT_MINIMUM] = POINT_UNCOMPRESSED_PREFIX
 	copy(destination[ENCODING_INFINITY_SIZE:ENCODING_COMPRESSED_SIZE], x_encoding[:])
 	copy(destination[ENCODING_COMPRESSED_SIZE:count], y_encoding[:])
-	return count, OUTPUT_STATUS_OK
+	return count, status
 }
 
 // Point_Add uses a complete formula so identity and exceptional inputs need no secret branch.
@@ -917,11 +933,7 @@ func Point_Double(destination Point_Handle, source Point_Handle) {
 func Point_Scalar_Multiply(
 	destination Point_Handle, point Point_Handle, scalar Scalar_Unvalidated,
 ) (status Scalar_Status) {
-	defer func() {
-		Scalar_Status_Invariants(status, "Point_Scalar_Multiply.status")
-		Point_Invariants(*destination, "Point_Scalar_Multiply.destination.output")
-		point_require(destination)
-	}()
+	defer func() { Scalar_Status_Invariants(status, "Point_Scalar_Multiply.status") }()
 	Point_Handle_Invariants(
 		destination, "Point_Scalar_Multiply.destination.input.handle",
 	)
@@ -929,6 +941,7 @@ func Point_Scalar_Multiply(
 	Point_Handle_Invariants(point, "Point_Scalar_Multiply.point.handle")
 	Point_Invariants(*point, "Point_Scalar_Multiply.point.value")
 	Scalar_Unvalidated_Invariants(scalar, "Point_Scalar_Multiply.scalar")
+	defer func() { point_scalar_multiply_output(destination) }()
 	point_require(destination)
 	point_require(point)
 	if len(scalar) != SCALAR_SIZE {
@@ -948,11 +961,7 @@ func Point_Scalar_Multiply(
 func Point_Scalar_Base_Multiply(
 	destination Point_Handle, scalar Scalar_Unvalidated,
 ) (status Scalar_Status) {
-	defer func() {
-		Scalar_Status_Invariants(status, "Point_Scalar_Base_Multiply.status")
-		Point_Invariants(*destination, "Point_Scalar_Base_Multiply.destination.output")
-		point_require(destination)
-	}()
+	defer func() { Scalar_Status_Invariants(status, "Point_Scalar_Base_Multiply.status") }()
 	Point_Handle_Invariants(
 		destination, "Point_Scalar_Base_Multiply.destination.input.handle",
 	)
@@ -960,6 +969,7 @@ func Point_Scalar_Base_Multiply(
 		*destination, "Point_Scalar_Base_Multiply.destination.input.point",
 	)
 	Scalar_Unvalidated_Invariants(scalar, "Point_Scalar_Base_Multiply.scalar")
+	defer func() { point_scalar_base_multiply_output(destination) }()
 	point_require(destination)
 	if len(scalar) != SCALAR_SIZE {
 		return SCALAR_STATUS_INPUT_INVALID
@@ -1256,57 +1266,54 @@ func field_multiply(destination Limbs_Handle, left Limbs_Handle, right Limbs_Han
 		multiplier[index] = uint64(limb(right, limb_index))
 		modulus_words[index] = uint64(limb(&modulus, limb_index))
 	}
-	// These local words already passed the typed boundary. Rechecking each bit would make
-	// invariant recording dominate the constant-time multiplication.
-	modular_add := func(destination_words, left_words, right_words *[FIELD_LIMB_COUNT]uint64) {
-		carry_value := uint64(bits.WORD_64_MINIMUM)
-		var sum [FIELD_LIMB_COUNT]uint64
-		for index := range sum {
-			partial := left_words[index] + right_words[index]
-			partial_carry := ((left_words[index] & right_words[index]) |
-				((left_words[index] | right_words[index]) & ^partial)) >>
-				(bits.BIT_COUNT_64_MAXIMUM - binary.UINT_8_SIZE)
-			value := partial + carry_value
-			carry_carry := ((partial & carry_value) |
-				((partial | carry_value) & ^value)) >>
-				(bits.BIT_COUNT_64_MAXIMUM - binary.UINT_8_SIZE)
-			sum[index] = value
-			carry_value = partial_carry | carry_carry
-		}
-		borrow_value := uint64(bits.WORD_64_MINIMUM)
-		var reduced [FIELD_LIMB_COUNT]uint64
-		for index := range reduced {
-			partial := sum[index] - modulus_words[index]
-			partial_borrow := ((^sum[index] & modulus_words[index]) |
-				(^(sum[index] ^ modulus_words[index]) & partial)) >>
-				(bits.BIT_COUNT_64_MAXIMUM - binary.UINT_8_SIZE)
-			value := partial - borrow_value
-			borrow_borrow := ((^partial & borrow_value) |
-				(^(partial ^ borrow_value) & value)) >>
-				(bits.BIT_COUNT_64_MAXIMUM - binary.UINT_8_SIZE)
-			reduced[index] = value
-			borrow_value = partial_borrow | borrow_borrow
-		}
-		reduce := carry_value | (borrow_value ^ uint64(DECISION_TRUE))
-		mask := uint64(bits.WORD_64_MINIMUM) - reduce
-		for index := range destination_words {
-			destination_words[index] = sum[index] ^
-				mask&(reduced[index]^sum[index])
-		}
-	}
 	for bit_index := bits.BIT_COUNT_MINIMUM; bit_index < P256_BIT_COUNT; bit_index++ {
-		var candidate [FIELD_LIMB_COUNT]uint64
-		modular_add(&candidate, &result_words, &addend_words)
+		var additions [binary.UINT_16_SIZE][FIELD_LIMB_COUNT]uint64
+		left_operands := [...]*[FIELD_LIMB_COUNT]uint64{&result_words, &addend_words}
+		for operation_index := range additions {
+			left_words := left_operands[operation_index]
+			carry_value := uint64(bits.WORD_64_MINIMUM)
+			var sum [FIELD_LIMB_COUNT]uint64
+			for index := range sum {
+				partial := left_words[index] + addend_words[index]
+				partial_carry := ((left_words[index] & addend_words[index]) |
+					((left_words[index] | addend_words[index]) & ^partial)) >>
+					(bits.BIT_COUNT_64_MAXIMUM - binary.UINT_8_SIZE)
+				value := partial + carry_value
+				carry_carry := ((partial & carry_value) |
+					((partial | carry_value) & ^value)) >>
+					(bits.BIT_COUNT_64_MAXIMUM - binary.UINT_8_SIZE)
+				sum[index] = value
+				carry_value = partial_carry | carry_carry
+			}
+			borrow_value := uint64(bits.WORD_64_MINIMUM)
+			var reduced [FIELD_LIMB_COUNT]uint64
+			for index := range reduced {
+				partial := sum[index] - modulus_words[index]
+				partial_borrow := ((^sum[index] & modulus_words[index]) |
+					(^(sum[index] ^ modulus_words[index]) & partial)) >>
+					(bits.BIT_COUNT_64_MAXIMUM - binary.UINT_8_SIZE)
+				value := partial - borrow_value
+				borrow_borrow := ((^partial & borrow_value) |
+					(^(partial ^ borrow_value) & value)) >>
+					(bits.BIT_COUNT_64_MAXIMUM - binary.UINT_8_SIZE)
+				reduced[index] = value
+				borrow_value = partial_borrow | borrow_borrow
+			}
+			reduce := carry_value | (borrow_value ^ uint64(DECISION_TRUE))
+			mask := uint64(bits.WORD_64_MINIMUM) - reduce
+			for index := range additions[operation_index] {
+				additions[operation_index][index] = sum[index] ^
+					mask&(reduced[index]^sum[index])
+			}
+		}
 		word_index, word_shift := bit_index/bits.BIT_COUNT_64_MAXIMUM,
 			uint(bit_index%bits.BIT_COUNT_64_MAXIMUM)
 		bit := multiplier[word_index] >> word_shift & binary.UINT_8_SIZE
 		mask := uint64(bits.WORD_64_MINIMUM) - bit
 		for index := range result_words {
-			result_words[index] ^= mask & (candidate[index] ^ result_words[index])
+			result_words[index] ^= mask & (additions[0][index] ^ result_words[index])
 		}
-		var doubled [FIELD_LIMB_COUNT]uint64
-		modular_add(&doubled, &addend_words, &addend_words)
-		addend_words = doubled
+		addend_words = additions[1]
 	}
 	for index := range result_words {
 		limb_set(destination, Limb_Index(index), Limb_Value(result_words[index]))

@@ -70,42 +70,6 @@ const DECISION_FALSE Decision = Decision(bits.WORD_64_MINIMUM)
 // DECISION_TRUE accepts one constant-time scalar condition.
 const DECISION_TRUE Decision = DECISION_FALSE + binary.UINT_8_SIZE
 
-// SCALAR_LIMB_INDEX_MINIMUM identifies least-significant word.
-const SCALAR_LIMB_INDEX_MINIMUM Scalar_Limb_Index = Scalar_Limb_Index(bits.WORD_8_MINIMUM)
-
-// SCALAR_LIMB_INDEX_SECOND identifies second word.
-const SCALAR_LIMB_INDEX_SECOND = SCALAR_LIMB_INDEX_MINIMUM + binary.UINT_8_SIZE
-
-// SCALAR_LIMB_INDEX_THIRD identifies third word.
-const SCALAR_LIMB_INDEX_THIRD = SCALAR_LIMB_INDEX_SECOND + binary.UINT_8_SIZE
-
-// SCALAR_LIMB_INDEX_MAXIMUM identifies most-significant word.
-const SCALAR_LIMB_INDEX_MAXIMUM = SCALAR_LIMB_INDEX_THIRD + binary.UINT_8_SIZE
-
-// Scalar_Limb_Index selects one fixed scalar word.
-type Scalar_Limb_Index uint8
-
-// Scalar_Limb_Index_Invariants covers every scalar word position.
-func Scalar_Limb_Index_Invariants(value Scalar_Limb_Index, namespace aver.Namespace) {
-	aver.Tree(value, namespace).
-		Enum_4_Uint8(
-			uint8(value), uint8(SCALAR_LIMB_INDEX_MINIMUM),
-			uint8(SCALAR_LIMB_INDEX_SECOND), uint8(SCALAR_LIMB_INDEX_THIRD),
-			uint8(SCALAR_LIMB_INDEX_MAXIMUM),
-		).
-		Ensure()
-}
-
-// Scalar_Limb_Value carries one arithmetic word across safe accessors.
-type Scalar_Limb_Value uint64
-
-// Scalar_Limb_Value_Invariants spans every word value.
-func Scalar_Limb_Value_Invariants(value Scalar_Limb_Value, namespace aver.Namespace) {
-	aver.Tree(value, namespace).
-		Range_Uint64(uint64(value), bits.WORD_64_MINIMUM, bits.WORD_64_MAXIMUM).
-		Ensure()
-}
-
 // Scalar_Limb_0 gives the first word one layout identity.
 type Scalar_Limb_0 uint64
 
@@ -387,12 +351,12 @@ func Verification_Invariants(value Verification, namespace aver.Namespace) {
 func Private_Key_Set_Bytes(
 	destination Private_Key_Destination, source Private_Key_Unvalidated,
 ) (status Key_Status) {
-	defer func() {
-		Key_Status_Invariants(status, "Private_Key_Set_Bytes.status")
-		Private_Key_Invariants(*destination, "Private_Key_Set_Bytes.destination.output")
-	}()
+	defer func() { Key_Status_Invariants(status, "Private_Key_Set_Bytes.status") }()
 	Private_Key_Destination_Invariants(destination, "Private_Key_Set_Bytes.destination")
 	Private_Key_Unvalidated_Invariants(source, "Private_Key_Set_Bytes.source")
+	defer func() {
+		Private_Key_Invariants(*destination, "Private_Key_Set_Bytes.destination.output")
+	}()
 	if len(source) != PRIVATE_KEY_SIZE {
 		return KEY_STATUS_INPUT_INVALID
 	}
@@ -439,12 +403,12 @@ func Public_Key_From_Private(
 func Public_Key_Set_Bytes(
 	destination Public_Key_Destination, source Public_Key_Unvalidated,
 ) (status Key_Status) {
-	defer func() {
-		Key_Status_Invariants(status, "Public_Key_Set_Bytes.status")
-		Public_Key_Invariants(*destination, "Public_Key_Set_Bytes.destination.output")
-	}()
+	defer func() { Key_Status_Invariants(status, "Public_Key_Set_Bytes.status") }()
 	Public_Key_Destination_Invariants(destination, "Public_Key_Set_Bytes.destination")
 	Public_Key_Unvalidated_Invariants(source, "Public_Key_Set_Bytes.source")
+	defer func() {
+		Public_Key_Invariants(*destination, "Public_Key_Set_Bytes.destination.output")
+	}()
 	if len(source) != PUBLIC_KEY_SIZE {
 		return KEY_STATUS_INPUT_INVALID
 	}
@@ -500,14 +464,12 @@ func Sign(
 	private_key Private_Key,
 	digest Digest,
 ) (status Sign_Status) {
-	defer func() {
-		Sign_Status_Invariants(status, "Sign.status")
-		Signature_Invariants(destination, "Sign.destination.output")
-	}()
+	defer func() { Sign_Status_Invariants(status, "Sign.status") }()
 	Signature_Invariants(destination, "Sign.destination")
 	Private_Key_Invariants(private_key, "Sign.private_key")
 	Digest_Invariants(digest, "Sign.digest")
 	prng.Source_Invariants(generator, "Sign.generator")
+	defer func() { Signature_Invariants(destination, "Sign.destination.output") }()
 	aver.Always(
 		private_key.Ready == READY_COMPLETE,
 		"Signing receives a ready ECDSA private key.",
@@ -697,55 +659,25 @@ func scalar_decode_reduce(
 	scalar_select(destination, &reduced, destination, borrow^DECISION_TRUE)
 }
 
-func scalar_limb(
-	value Scalar_Handle, index Scalar_Limb_Index,
-) (limb Scalar_Limb_Value) {
-	defer func() { Scalar_Limb_Value_Invariants(limb, "scalar_limb.limb") }()
-	Scalar_Handle_Invariants(value, "scalar_limb.value")
-	Scalar_Limb_Index_Invariants(index, "scalar_limb.index")
-	switch index {
-	case bits.BIT_COUNT_MINIMUM:
-		return Scalar_Limb_Value(value.Limb_0)
-	case binary.UINT_8_SIZE:
-		return Scalar_Limb_Value(value.Limb_1)
-	case binary.UINT_16_SIZE:
-		return Scalar_Limb_Value(value.Limb_2)
-	default:
-		return Scalar_Limb_Value(value.Limb_3)
-	}
-}
-
-func scalar_limb_set(
-	destination Scalar_Handle, index Scalar_Limb_Index, limb Scalar_Limb_Value,
-) {
-	Scalar_Handle_Invariants(destination, "scalar_limb_set.destination")
-	Scalar_Limb_Index_Invariants(index, "scalar_limb_set.index")
-	Scalar_Limb_Value_Invariants(limb, "scalar_limb_set.limb")
-	switch index {
-	case bits.BIT_COUNT_MINIMUM:
-		destination.Limb_0 = Scalar_Limb_0(limb)
-	case binary.UINT_8_SIZE:
-		destination.Limb_1 = Scalar_Limb_1(limb)
-	case binary.UINT_16_SIZE:
-		destination.Limb_2 = Scalar_Limb_2(limb)
-	default:
-		destination.Limb_3 = Scalar_Limb_3(limb)
-	}
-}
-
 func scalar_decode_raw(
 	destination Scalar_Handle, source Scalar_Encoding,
 ) {
 	Scalar_Handle_Invariants(destination, "scalar_decode_raw.destination")
 	Scalar_Encoding_Invariants(source, "scalar_decode_raw.source")
+	var words [SCALAR_LIMB_COUNT]uint64
 	for index := bits.BIT_COUNT_MINIMUM; index < SCALAR_LIMB_COUNT; index++ {
 		source_index := SCALAR_SIZE -
 			(index+binary.UINT_8_SIZE)*binary.UINT_64_SIZE
-		limb := binary.Uint_64(
+		words[index] = uint64(binary.Uint_64(
 			binary.Bytes(source[source_index:source_index+binary.UINT_64_SIZE]),
 			binary.BIG_ENDIAN,
-		)
-		scalar_limb_set(destination, Scalar_Limb_Index(index), Scalar_Limb_Value(limb))
+		))
+	}
+	*destination = Scalar{
+		Limb_0: Scalar_Limb_0(words[0]),
+		Limb_1: Scalar_Limb_1(words[1]),
+		Limb_2: Scalar_Limb_2(words[2]),
+		Limb_3: Scalar_Limb_3(words[3]),
 	}
 }
 
@@ -754,14 +686,17 @@ func scalar_encode(
 ) {
 	Scalar_Encoding_Invariants(destination, "scalar_encode.destination")
 	Scalar_Handle_Invariants(source, "scalar_encode.source")
+	words := [SCALAR_LIMB_COUNT]uint64{
+		uint64(source.Limb_0), uint64(source.Limb_1),
+		uint64(source.Limb_2), uint64(source.Limb_3),
+	}
 	for index := bits.BIT_COUNT_MINIMUM; index < SCALAR_LIMB_COUNT; index++ {
 		destination_index := SCALAR_SIZE -
 			(index+binary.UINT_8_SIZE)*binary.UINT_64_SIZE
 		destination_end := destination_index + binary.UINT_64_SIZE
-		limb := scalar_limb(source, Scalar_Limb_Index(index))
 		binary.Put_Uint_64(
 			binary.Bytes(destination[destination_index:destination_end]),
-			binary.Word_64(limb), binary.BIG_ENDIAN,
+			binary.Word_64(words[index]), binary.BIG_ENDIAN,
 		)
 	}
 }
@@ -785,76 +720,73 @@ func scalar_add(
 	)
 }
 
-func scalar_multiply(
-	destination Scalar_Handle,
-	left Scalar_Handle,
-	right Scalar_Handle,
-) {
+func scalar_multiply(destination, left, right Scalar_Handle) {
 	Scalar_Handle_Invariants(destination, "scalar_multiply.destination")
 	Scalar_Handle_Invariants(left, "scalar_multiply.left")
 	Scalar_Handle_Invariants(right, "scalar_multiply.right")
-	var result_words, addend_words, right_words, order_words [SCALAR_LIMB_COUNT]uint64
+	var result_words [SCALAR_LIMB_COUNT]uint64
+	addend_words := [...]uint64{
+		uint64(left.Limb_0), uint64(left.Limb_1), uint64(left.Limb_2), uint64(left.Limb_3)}
+	right_words := [...]uint64{
+		uint64(right.Limb_0), uint64(right.Limb_1),
+		uint64(right.Limb_2), uint64(right.Limb_3)}
 	var order Scalar
 	scalar_order(&order)
-	for index := bits.BIT_COUNT_MINIMUM; index < SCALAR_LIMB_COUNT; index++ {
-		addend_words[index] = uint64(scalar_limb(left, Scalar_Limb_Index(index)))
-		right_words[index] = uint64(scalar_limb(right, Scalar_Limb_Index(index)))
-		order_words[index] = uint64(scalar_limb(&order, Scalar_Limb_Index(index)))
-	}
-	modular_add := func(destination_words, left_words, right_words *[SCALAR_LIMB_COUNT]uint64) {
-		carry_value := uint64(bits.WORD_64_MINIMUM)
-		var sum [SCALAR_LIMB_COUNT]uint64
-		for index := range sum {
-			partial := left_words[index] + right_words[index]
-			partial_carry := ((left_words[index] & right_words[index]) |
-				((left_words[index] | right_words[index]) & ^partial)) >>
-				(bits.BIT_COUNT_64_MAXIMUM - binary.UINT_8_SIZE)
-			value := partial + carry_value
-			carry_carry := ((partial & carry_value) |
-				((partial | carry_value) & ^value)) >>
-				(bits.BIT_COUNT_64_MAXIMUM - binary.UINT_8_SIZE)
-			sum[index] = value
-			carry_value = partial_carry | carry_carry
-		}
-		borrow_value := uint64(bits.WORD_64_MINIMUM)
-		var reduced [SCALAR_LIMB_COUNT]uint64
-		for index := range reduced {
-			partial := sum[index] - order_words[index]
-			partial_borrow := ((^sum[index] & order_words[index]) |
-				(^(sum[index] ^ order_words[index]) & partial)) >>
-				(bits.BIT_COUNT_64_MAXIMUM - binary.UINT_8_SIZE)
-			value := partial - borrow_value
-			borrow_borrow := ((^partial & borrow_value) |
-				(^(partial ^ borrow_value) & value)) >>
-				(bits.BIT_COUNT_64_MAXIMUM - binary.UINT_8_SIZE)
-			reduced[index] = value
-			borrow_value = partial_borrow | borrow_borrow
-		}
-		reduce := carry_value | (borrow_value ^ uint64(DECISION_TRUE))
-		mask := uint64(bits.WORD_64_MINIMUM) - reduce
-		for index := range destination_words {
-			destination_words[index] = sum[index] ^
-				mask&(reduced[index]^sum[index])
-		}
-	}
+	order_words := [...]uint64{
+		uint64(order.Limb_0), uint64(order.Limb_1),
+		uint64(order.Limb_2), uint64(order.Limb_3)}
 	for bit_index := range SCALAR_SIZE * bits.BIT_COUNT_8_MAXIMUM {
-		var candidate [SCALAR_LIMB_COUNT]uint64
-		modular_add(&candidate, &result_words, &addend_words)
+		var additions [binary.UINT_16_SIZE][SCALAR_LIMB_COUNT]uint64
+		left_operands := [...]*[SCALAR_LIMB_COUNT]uint64{&result_words, &addend_words}
+		for operation_index := range additions {
+			left_words := left_operands[operation_index]
+			carry_value := uint64(bits.WORD_64_MINIMUM)
+			var sum [SCALAR_LIMB_COUNT]uint64
+			for index := range sum {
+				partial := left_words[index] + addend_words[index]
+				partial_carry := ((left_words[index] & addend_words[index]) |
+					((left_words[index] | addend_words[index]) & ^partial)) >>
+					(bits.BIT_COUNT_64_MAXIMUM - binary.UINT_8_SIZE)
+				value := partial + carry_value
+				carry_carry := ((partial & carry_value) |
+					((partial | carry_value) & ^value)) >>
+					(bits.BIT_COUNT_64_MAXIMUM - binary.UINT_8_SIZE)
+				sum[index] = value
+				carry_value = partial_carry | carry_carry
+			}
+			borrow_value := uint64(bits.WORD_64_MINIMUM)
+			var reduced [SCALAR_LIMB_COUNT]uint64
+			for index := range reduced {
+				partial := sum[index] - order_words[index]
+				partial_borrow := ((^sum[index] & order_words[index]) |
+					(^(sum[index] ^ order_words[index]) & partial)) >>
+					(bits.BIT_COUNT_64_MAXIMUM - binary.UINT_8_SIZE)
+				value := partial - borrow_value
+				borrow_borrow := ((^partial & borrow_value) |
+					(^(partial ^ borrow_value) & value)) >>
+					(bits.BIT_COUNT_64_MAXIMUM - binary.UINT_8_SIZE)
+				reduced[index] = value
+				borrow_value = partial_borrow | borrow_borrow
+			}
+			reduce := carry_value | (borrow_value ^ uint64(DECISION_TRUE))
+			mask := uint64(bits.WORD_64_MINIMUM) - reduce
+			for index := range additions[operation_index] {
+				additions[operation_index][index] = sum[index] ^
+					mask&(reduced[index]^sum[index])
+			}
+		}
 		word_index := bit_index / bits.BIT_COUNT_64_MAXIMUM
 		word_shift := uint(bit_index % bits.BIT_COUNT_64_MAXIMUM)
 		bit := right_words[word_index] >> word_shift & binary.UINT_8_SIZE
 		mask := uint64(bits.WORD_64_MINIMUM) - bit
 		for index := range result_words {
-			result_words[index] ^= mask & (candidate[index] ^ result_words[index])
+			result_words[index] ^= mask & (additions[0][index] ^ result_words[index])
 		}
-		var doubled [SCALAR_LIMB_COUNT]uint64
-		modular_add(&doubled, &addend_words, &addend_words)
-		addend_words = doubled
+		addend_words = additions[1]
 	}
-	for index := bits.BIT_COUNT_MINIMUM; index < SCALAR_LIMB_COUNT; index++ {
-		limb_index := Scalar_Limb_Index(index)
-		limb := Scalar_Limb_Value(result_words[index])
-		scalar_limb_set(destination, limb_index, limb)
+	*destination = Scalar{
+		Limb_0: Scalar_Limb_0(result_words[0]), Limb_1: Scalar_Limb_1(result_words[1]),
+		Limb_2: Scalar_Limb_2(result_words[2]), Limb_3: Scalar_Limb_3(result_words[3]),
 	}
 }
 
@@ -866,6 +798,10 @@ func scalar_inverse(
 	Scalar_Handle_Invariants(source, "scalar_inverse.source")
 	var exponent Scalar
 	scalar_order_minus_two(&exponent)
+	exponent_words := [SCALAR_LIMB_COUNT]uint64{
+		uint64(exponent.Limb_0), uint64(exponent.Limb_1),
+		uint64(exponent.Limb_2), uint64(exponent.Limb_3),
+	}
 	var result Scalar
 	scalar_one(&result)
 	scalar_bit_count := SCALAR_SIZE * bits.BIT_COUNT_8_MAXIMUM
@@ -876,8 +812,7 @@ func scalar_inverse(
 		scalar_multiply(&product, &square, source)
 		word_index := bit_index / bits.BIT_COUNT_64_MAXIMUM
 		word_shift := uint(bit_index % bits.BIT_COUNT_64_MAXIMUM)
-		bit := uint64(scalar_limb(&exponent, Scalar_Limb_Index(word_index))) >>
-			word_shift & binary.UINT_8_SIZE
+		bit := exponent_words[word_index] >> word_shift & binary.UINT_8_SIZE
 		scalar_select(&result, &product, &square, Decision(bit))
 	}
 	*destination = result
@@ -901,11 +836,10 @@ func scalar_equal(
 	defer func() { Decision_Invariants(equal, "scalar_equal.equal") }()
 	Scalar_Handle_Invariants(left, "scalar_equal.left")
 	Scalar_Handle_Invariants(right, "scalar_equal.right")
-	difference := uint64(bits.WORD_64_MINIMUM)
-	for index := bits.BIT_COUNT_MINIMUM; index < SCALAR_LIMB_COUNT; index++ {
-		difference |= uint64(scalar_limb(left, Scalar_Limb_Index(index))) ^
-			uint64(scalar_limb(right, Scalar_Limb_Index(index)))
-	}
+	difference := uint64(left.Limb_0) ^ uint64(right.Limb_0)
+	difference |= uint64(left.Limb_1) ^ uint64(right.Limb_1)
+	difference |= uint64(left.Limb_2) ^ uint64(right.Limb_2)
+	difference |= uint64(left.Limb_3) ^ uint64(right.Limb_3)
 	equal = Decision((difference|-difference)>>
 		(bits.BIT_COUNT_64_MAXIMUM-binary.UINT_8_SIZE) ^ binary.UINT_8_SIZE)
 	return equal
@@ -945,16 +879,16 @@ func scalar_select(
 	Scalar_Handle_Invariants(second, "scalar_select.second")
 	Decision_Invariants(choice, "scalar_select.choice")
 	mask := uint64(bits.WORD_64_MINIMUM) - uint64(choice)
-	var selected Scalar
-	for index := bits.BIT_COUNT_MINIMUM; index < SCALAR_LIMB_COUNT; index++ {
-		first_word := uint64(scalar_limb(first, Scalar_Limb_Index(index)))
-		second_word := uint64(scalar_limb(second, Scalar_Limb_Index(index)))
-		scalar_limb_set(
-			&selected, Scalar_Limb_Index(index),
-			Scalar_Limb_Value(second_word^mask&(first_word^second_word)),
-		)
+	*destination = Scalar{
+		Limb_0: Scalar_Limb_0(uint64(second.Limb_0) ^
+			mask&(uint64(first.Limb_0)^uint64(second.Limb_0))),
+		Limb_1: Scalar_Limb_1(uint64(second.Limb_1) ^
+			mask&(uint64(first.Limb_1)^uint64(second.Limb_1))),
+		Limb_2: Scalar_Limb_2(uint64(second.Limb_2) ^
+			mask&(uint64(first.Limb_2)^uint64(second.Limb_2))),
+		Limb_3: Scalar_Limb_3(uint64(second.Limb_3) ^
+			mask&(uint64(first.Limb_3)^uint64(second.Limb_3))),
 	}
-	*destination = selected
 }
 
 func scalar_limbs_add(
@@ -967,10 +901,18 @@ func scalar_limbs_add(
 	Scalar_Handle_Invariants(left, "scalar_limbs_add.left")
 	Scalar_Handle_Invariants(right, "scalar_limbs_add.right")
 	carry_value := uint64(bits.WORD_64_MINIMUM)
-	var sum Scalar
+	left_words := [SCALAR_LIMB_COUNT]uint64{
+		uint64(left.Limb_0), uint64(left.Limb_1),
+		uint64(left.Limb_2), uint64(left.Limb_3),
+	}
+	right_words := [SCALAR_LIMB_COUNT]uint64{
+		uint64(right.Limb_0), uint64(right.Limb_1),
+		uint64(right.Limb_2), uint64(right.Limb_3),
+	}
+	var words [SCALAR_LIMB_COUNT]uint64
 	for index := bits.BIT_COUNT_MINIMUM; index < SCALAR_LIMB_COUNT; index++ {
-		left_word := uint64(scalar_limb(left, Scalar_Limb_Index(index)))
-		right_word := uint64(scalar_limb(right, Scalar_Limb_Index(index)))
+		left_word := left_words[index]
+		right_word := right_words[index]
 		partial := left_word + right_word
 		partial_carry := ((left_word & right_word) |
 			((left_word | right_word) & ^partial)) >>
@@ -979,10 +921,15 @@ func scalar_limbs_add(
 		carry_carry := ((partial & carry_value) |
 			((partial | carry_value) & ^value)) >>
 			(bits.BIT_COUNT_64_MAXIMUM - binary.UINT_8_SIZE)
-		scalar_limb_set(&sum, Scalar_Limb_Index(index), Scalar_Limb_Value(value))
+		words[index] = value
 		carry_value = partial_carry | carry_carry
 	}
-	*destination = sum
+	*destination = Scalar{
+		Limb_0: Scalar_Limb_0(words[0]),
+		Limb_1: Scalar_Limb_1(words[1]),
+		Limb_2: Scalar_Limb_2(words[2]),
+		Limb_3: Scalar_Limb_3(words[3]),
+	}
 	carry = Decision(carry_value)
 	return carry
 }
@@ -997,10 +944,18 @@ func scalar_limbs_subtract(
 	Scalar_Handle_Invariants(left, "scalar_limbs_subtract.left")
 	Scalar_Handle_Invariants(right, "scalar_limbs_subtract.right")
 	borrow_value := uint64(bits.WORD_64_MINIMUM)
-	var difference Scalar
+	left_words := [SCALAR_LIMB_COUNT]uint64{
+		uint64(left.Limb_0), uint64(left.Limb_1),
+		uint64(left.Limb_2), uint64(left.Limb_3),
+	}
+	right_words := [SCALAR_LIMB_COUNT]uint64{
+		uint64(right.Limb_0), uint64(right.Limb_1),
+		uint64(right.Limb_2), uint64(right.Limb_3),
+	}
+	var words [SCALAR_LIMB_COUNT]uint64
 	for index := bits.BIT_COUNT_MINIMUM; index < SCALAR_LIMB_COUNT; index++ {
-		left_word := uint64(scalar_limb(left, Scalar_Limb_Index(index)))
-		right_word := uint64(scalar_limb(right, Scalar_Limb_Index(index)))
+		left_word := left_words[index]
+		right_word := right_words[index]
 		partial := left_word - right_word
 		partial_borrow := ((^left_word & right_word) |
 			(^(left_word ^ right_word) & partial)) >>
@@ -1009,10 +964,15 @@ func scalar_limbs_subtract(
 		borrow_borrow := ((^partial & borrow_value) |
 			(^(partial ^ borrow_value) & value)) >>
 			(bits.BIT_COUNT_64_MAXIMUM - binary.UINT_8_SIZE)
-		scalar_limb_set(&difference, Scalar_Limb_Index(index), Scalar_Limb_Value(value))
+		words[index] = value
 		borrow_value = partial_borrow | borrow_borrow
 	}
-	*destination = difference
+	*destination = Scalar{
+		Limb_0: Scalar_Limb_0(words[0]),
+		Limb_1: Scalar_Limb_1(words[1]),
+		Limb_2: Scalar_Limb_2(words[2]),
+		Limb_3: Scalar_Limb_3(words[3]),
+	}
 	borrow = Decision(borrow_value)
 	return borrow
 }
@@ -1045,16 +1005,13 @@ func scalar_half_order(destination Scalar_Handle) {
 	Scalar_Handle_Invariants(destination, "scalar_half_order.destination")
 	var order Scalar
 	scalar_order(&order)
-	for index := bits.BIT_COUNT_MINIMUM; index < SCALAR_LIMB_COUNT; index++ {
-		value := uint64(scalar_limb(&order, Scalar_Limb_Index(index))) >> binary.UINT_8_SIZE
-		if index+binary.UINT_8_SIZE < SCALAR_LIMB_COUNT {
-			value |= uint64(scalar_limb(
-				&order, Scalar_Limb_Index(index+binary.UINT_8_SIZE),
-			)) <<
-				(bits.BIT_COUNT_64_MAXIMUM - binary.UINT_8_SIZE)
-		}
-		scalar_limb_set(
-			destination, Scalar_Limb_Index(index), Scalar_Limb_Value(value),
-		)
+	*destination = Scalar{
+		Limb_0: Scalar_Limb_0(uint64(order.Limb_0)>>binary.UINT_8_SIZE |
+			uint64(order.Limb_1)<<(bits.BIT_COUNT_64_MAXIMUM-binary.UINT_8_SIZE)),
+		Limb_1: Scalar_Limb_1(uint64(order.Limb_1)>>binary.UINT_8_SIZE |
+			uint64(order.Limb_2)<<(bits.BIT_COUNT_64_MAXIMUM-binary.UINT_8_SIZE)),
+		Limb_2: Scalar_Limb_2(uint64(order.Limb_2)>>binary.UINT_8_SIZE |
+			uint64(order.Limb_3)<<(bits.BIT_COUNT_64_MAXIMUM-binary.UINT_8_SIZE)),
+		Limb_3: Scalar_Limb_3(uint64(order.Limb_3) >> binary.UINT_8_SIZE),
 	}
 }

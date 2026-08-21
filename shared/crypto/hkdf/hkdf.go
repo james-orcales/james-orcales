@@ -194,28 +194,29 @@ func Extract_Into(
 	kind hmac.Kind,
 	secret Secret,
 	salt Salt,
-) (count Extract_Count, status Extract_Status) {
-	defer func() {
-		Extract_Count_Invariants(count, "Extract_Into.count")
-		Extract_Status_Invariants(status, "Extract_Into.status")
-	}()
+) (count Extract_Count, _ Extract_Status) {
+	defer func() { Extract_Count_Invariants(count, "Extract_Into.count") }()
 	Extract_Destination_Invariants(destination, "Extract_Into.destination")
 	hmac.Kind_Invariants(kind, "Extract_Into.kind")
 	Secret_Invariants(secret, "Extract_Into.secret")
 	Salt_Invariants(salt, "Extract_Into.salt")
+	var status Extract_Status
+	defer func() { Extract_Status_Invariants(status, "Extract_Into.status") }()
 	require_kind(kind)
 	require_extract_destination(destination)
 	require_secret(secret)
 	require_salt(salt)
 	count = Pseudorandom_Key_Size(kind)
 	if len(destination) < int(count) {
-		return count, EXTRACT_STATUS_TOO_SMALL
+		status = EXTRACT_STATUS_TOO_SMALL
+		return count, status
 	}
 	var digest hmac.Digest
 	hmac.Digest_Init(&digest, kind, hmac.Key(salt))
 	hmac.Digest_Write(&digest, hmac.Source(secret))
 	hmac.Digest_Sum_Into(&digest, hmac.Destination(destination[:count]))
-	return count, EXTRACT_STATUS_OK
+	status = EXTRACT_STATUS_OK
+	return count, status
 }
 
 // Expand_Into fills caller storage with at most 255 selected-hash blocks.
@@ -224,24 +225,25 @@ func Expand_Into(
 	kind hmac.Kind,
 	pseudorandom_key Pseudorandom_Key,
 	info Info,
-) (count Count, status Expand_Status) {
-	defer func() {
-		Count_Invariants(count, "Expand_Into.count")
-		Expand_Status_Invariants(status, "Expand_Into.status")
-	}()
+) (count Count, _ Expand_Status) {
+	defer func() { Count_Invariants(count, "Expand_Into.count") }()
 	Destination_Invariants(destination, "Expand_Into.destination")
 	hmac.Kind_Invariants(kind, "Expand_Into.kind")
 	Pseudorandom_Key_Invariants(pseudorandom_key, "Expand_Into.pseudorandom_key")
 	Info_Invariants(info, "Expand_Into.info")
+	var status Expand_Status
+	defer func() { Expand_Status_Invariants(status, "Expand_Into.status") }()
 	require_kind(kind)
 	require_destination(destination)
 	require_pseudorandom_key(pseudorandom_key)
 	require_info(info)
 	if len(destination) > int(Output_Size_Maximum(kind)) {
-		return COUNT_EMPTY, EXPAND_STATUS_TOO_LARGE
+		status = EXPAND_STATUS_TOO_LARGE
+		return COUNT_EMPTY, status
 	}
 	expand(destination, kind, pseudorandom_key, info)
-	return Count(len(destination)), EXPAND_STATUS_OK
+	status = EXPAND_STATUS_OK
+	return Count(len(destination)), status
 }
 
 // Key_Into performs extraction and expansion without exposing intermediate key material.
@@ -251,28 +253,29 @@ func Key_Into(
 	secret Secret,
 	salt Salt,
 	info Info,
-) (count Count, status Expand_Status) {
-	defer func() {
-		Count_Invariants(count, "Key_Into.count")
-		Expand_Status_Invariants(status, "Key_Into.status")
-	}()
+) (count Count, _ Expand_Status) {
+	defer func() { Count_Invariants(count, "Key_Into.count") }()
 	Destination_Invariants(destination, "Key_Into.destination")
 	hmac.Kind_Invariants(kind, "Key_Into.kind")
 	Secret_Invariants(secret, "Key_Into.secret")
 	Salt_Invariants(salt, "Key_Into.salt")
 	Info_Invariants(info, "Key_Into.info")
+	var status Expand_Status
+	defer func() { Expand_Status_Invariants(status, "Key_Into.status") }()
 	require_kind(kind)
 	require_destination(destination)
 	require_secret(secret)
 	require_salt(salt)
 	require_info(info)
 	if len(destination) > int(Output_Size_Maximum(kind)) {
-		return COUNT_EMPTY, EXPAND_STATUS_TOO_LARGE
+		status = EXPAND_STATUS_TOO_LARGE
+		return COUNT_EMPTY, status
 	}
 	var pseudorandom_key [hmac.DIGEST_SIZE_MAXIMUM]byte
 	key_count, _ := Extract_Into(pseudorandom_key[:], kind, secret, salt)
 	expand(destination, kind, pseudorandom_key[:key_count], info)
-	return Count(len(destination)), EXPAND_STATUS_OK
+	status = EXPAND_STATUS_OK
+	return Count(len(destination)), status
 }
 
 // Pseudorandom_Key_Size reports selected extraction width.

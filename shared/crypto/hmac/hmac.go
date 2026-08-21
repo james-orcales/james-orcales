@@ -505,17 +505,17 @@ func Digest_Write(digest Digest_Handle, source Source) (count Count) {
 func Digest_Sum_Into(
 	digest Digest_Handle,
 	destination Destination,
-) (count Output_Count, status Output_Status) {
-	defer func() {
-		Output_Count_Invariants(count, "Digest_Sum_Into.count")
-		Output_Status_Invariants(status, "Digest_Sum_Into.status")
-	}()
+) (count Output_Count, _ Output_Status) {
+	defer func() { Output_Count_Invariants(count, "Digest_Sum_Into.count") }()
 	Digest_Handle_Invariants(digest, "Digest_Sum_Into.digest")
 	Destination_Invariants(destination, "Digest_Sum_Into.destination")
+	var status Output_Status
+	defer func() { Output_Status_Invariants(status, "Digest_Sum_Into.status") }()
 	digest_require(digest)
 	count = Output_Count(Digest_Size(digest))
 	if len(destination) < int(count) {
-		return count, OUTPUT_STATUS_TOO_SMALL
+		status = OUTPUT_STATUS_TOO_SMALL
+		return count, status
 	}
 	switch digest.Kind {
 	case KIND_MD5:
@@ -535,7 +535,8 @@ func Digest_Sum_Into(
 			SHA_512_Destination(destination[:count]), digest.Inner, digest.Outer,
 		)
 	}
-	return count, OUTPUT_STATUS_OK
+	status = OUTPUT_STATUS_OK
+	return count, status
 }
 
 // Digest_Clone_Into copies live keyed state without aliasing caller storage.

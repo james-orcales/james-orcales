@@ -780,12 +780,12 @@ func Verification_Invariants(value Verification, namespace aver.Namespace) {
 func Parse_Certificate(
 	destination Certificate_Destination, source Encoded,
 ) (status Parse_Status) {
-	defer func() {
-		Parse_Status_Invariants(status, "Parse_Certificate.status")
-		Certificate_Invariants(*destination, "Parse_Certificate.destination.output")
-	}()
+	defer func() { Parse_Status_Invariants(status, "Parse_Certificate.status") }()
 	Certificate_Destination_Invariants(destination, "Parse_Certificate.destination")
 	Encoded_Invariants(source, "Parse_Certificate.source")
+	defer func() {
+		Certificate_Invariants(*destination, "Parse_Certificate.destination.output")
+	}()
 	var storage_bytes [ENCODED_SIZE_MAXIMUM]byte
 	storage := Storage(storage_bytes[:])
 	copy(storage, source)
@@ -833,15 +833,16 @@ func parse(
 	destination Parsed_Certificate_Destination, storage Storage, source Span,
 ) (
 	signature_algorithm Signature_Algorithm,
-	accepted Decision,
+	_ Decision,
 ) {
 	defer func() {
 		Signature_Algorithm_Invariants(signature_algorithm, "parse.signature_algorithm")
-		Decision_Invariants(accepted, "parse.accepted")
 	}()
 	Parsed_Certificate_Destination_Invariants(destination, "parse.destination")
 	Storage_Invariants(storage, "parse.storage")
 	Span_Invariants(source, "parse.source")
+	var accepted Decision
+	defer func() { Decision_Invariants(accepted, "parse.accepted") }()
 	var outer_identifier Identifier
 	var outer_content, outer_encoded, tail Span
 	accepted = take_element(
@@ -869,21 +870,19 @@ func parse(
 
 func parse_certificate_content(
 	destination Parsed_Certificate_Destination, storage Storage, content Span,
-) (
-	signature_algorithm Signature_Algorithm,
-	accepted Decision,
-) {
+) (signature_algorithm Signature_Algorithm, _ Decision) {
 	defer func() {
 		Signature_Algorithm_Invariants(
 			signature_algorithm, "parse_certificate_content.signature_algorithm",
 		)
-		Decision_Invariants(accepted, "parse_certificate_content.accepted")
 	}()
 	Parsed_Certificate_Destination_Invariants(
 		destination, "parse_certificate_content.destination",
 	)
 	Storage_Invariants(storage, "parse_certificate_content.storage")
 	Span_Invariants(content, "parse_certificate_content.content")
+	var accepted Decision
+	defer func() { Decision_Invariants(accepted, "parse_certificate_content.accepted") }()
 	var parsed, tbs_parsed Parsed_Certificate
 	var tbs_identifier, signature_identifier, ignored_identifier Identifier
 	var ignored, tbs_span, tail, algorithm_span, signature_content, signature_span Span
@@ -1442,13 +1441,16 @@ func name_set_valid(
 
 func signature_algorithm_parse(
 	storage Storage, algorithm Span,
-) (result Signature_Algorithm, recognized Decision) {
+) (result Signature_Algorithm, _ Decision) {
 	defer func() {
 		Signature_Algorithm_Invariants(result, "signature_algorithm_parse.result")
-		Decision_Invariants(recognized, "signature_algorithm_parse.recognized")
 	}()
 	Storage_Invariants(storage, "signature_algorithm_parse.storage")
 	Span_Invariants(algorithm, "signature_algorithm_parse.algorithm")
+	var recognized Decision
+	defer func() {
+		Decision_Invariants(recognized, "signature_algorithm_parse.recognized")
+	}()
 	algorithm_bytes := storage[int(algorithm.Start):int(algorithm.End)]
 	if string(algorithm_bytes) == RSA_SIGNATURE_IDENTIFIER_ENCODING {
 		result = SIGNATURE_ALGORITHM_RSA_SHA_256

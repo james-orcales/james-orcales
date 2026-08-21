@@ -262,16 +262,15 @@ func Parse_Status_Invariants(value Parse_Status, namespace aver.Namespace) {
 func Parse_Algorithm_Identifier(
 	destination Algorithm_Identifier_Destination, source Encoded,
 ) (status Parse_Status) {
-	defer func() {
-		Parse_Status_Invariants(status, "Parse_Algorithm_Identifier.status")
-		Algorithm_Identifier_Invariants(
-			*destination, "Parse_Algorithm_Identifier.destination.output",
-		)
-	}()
+	defer func() { Parse_Status_Invariants(status, "Parse_Algorithm_Identifier.status") }()
 	Algorithm_Identifier_Destination_Invariants(
 		destination, "Parse_Algorithm_Identifier.destination",
 	)
 	Encoded_Invariants(source, "Parse_Algorithm_Identifier.source")
+	defer func() {
+		Algorithm_Identifier_Invariants(
+			*destination, "Parse_Algorithm_Identifier.destination.output")
+	}()
 	sequence, consumed, _, decode_status := asn1.Decode(asn1.Encoded(source))
 	if decode_status != asn1.STATUS_OK {
 		return PARSE_STATUS_INPUT_INVALID
@@ -325,12 +324,10 @@ func Parse_Algorithm_Identifier(
 
 // Parse_Name validates each single-valued RDN before borrowing a common name.
 func Parse_Name(destination Name_Destination, source Encoded) (status Parse_Status) {
-	defer func() {
-		Parse_Status_Invariants(status, "Parse_Name.status")
-		Name_Invariants(*destination, "Parse_Name.destination.output")
-	}()
+	defer func() { Parse_Status_Invariants(status, "Parse_Name.status") }()
 	Name_Destination_Invariants(destination, "Parse_Name.destination")
 	Encoded_Invariants(source, "Parse_Name.source")
+	defer func() { Name_Invariants(*destination, "Parse_Name.destination.output") }()
 	sequence, consumed, _, decode_status := asn1.Decode(asn1.Encoded(source))
 	if decode_status != asn1.STATUS_OK {
 		return PARSE_STATUS_INPUT_INVALID
@@ -359,46 +356,47 @@ func Parse_Name(destination Name_Destination, source Encoded) (status Parse_Stat
 
 func parse_name_content(
 	content asn1.Content,
-) (common_name Common_Name, status Parse_Status) {
+) (common_name Common_Name, _ Parse_Status) {
 	defer func() {
 		Common_Name_Invariants(common_name, "parse_name_content.common_name")
-		Parse_Status_Invariants(status, "parse_name_content.status")
 	}()
 	asn1.Content_Invariants(content, "parse_name_content.content")
+	status := PARSE_STATUS_INPUT_INVALID
+	defer func() { Parse_Status_Invariants(status, "parse_name_content.status") }()
 	for len(content) > ENCODED_SIZE_MINIMUM {
 		set, set_consumed, _, set_status := asn1.Decode(asn1.Encoded(content))
 		if set_status != asn1.STATUS_OK {
-			return common_name, PARSE_STATUS_INPUT_INVALID
+			return common_name, status
 		}
 		if set.Class != asn1.CLASS_UNIVERSAL {
-			return common_name, PARSE_STATUS_INPUT_INVALID
+			return common_name, status
 		}
 		if set.Tag != TAG_SET {
-			return common_name, PARSE_STATUS_INPUT_INVALID
+			return common_name, status
 		}
 		if !bool(set.Constructed) {
-			return common_name, PARSE_STATUS_INPUT_INVALID
+			return common_name, status
 		}
 		attribute, attribute_consumed, _, attribute_status :=
 			asn1.Decode(asn1.Encoded(set.Content))
 		if attribute_status != asn1.STATUS_OK {
-			return common_name, PARSE_STATUS_INPUT_INVALID
+			return common_name, status
 		}
 		if int(attribute_consumed) != len(set.Content) {
-			return common_name, PARSE_STATUS_INPUT_INVALID
+			return common_name, status
 		}
 		if attribute.Class != asn1.CLASS_UNIVERSAL {
-			return common_name, PARSE_STATUS_INPUT_INVALID
+			return common_name, status
 		}
 		if attribute.Tag != TAG_SEQUENCE {
-			return common_name, PARSE_STATUS_INPUT_INVALID
+			return common_name, status
 		}
 		oid, oid_consumed, _, oid_status := asn1.Decode(asn1.Encoded(attribute.Content))
 		if oid_status != asn1.STATUS_OK {
-			return common_name, PARSE_STATUS_INPUT_INVALID
+			return common_name, status
 		}
 		if oid.Tag != TAG_OBJECT_IDENTIFIER {
-			return common_name, PARSE_STATUS_INPUT_INVALID
+			return common_name, status
 		}
 		value_source := attribute.Content[int(oid_consumed):]
 		value, value_consumed, _, value_status := asn1.Decode(asn1.Encoded(value_source))
@@ -415,17 +413,19 @@ func parse_name_content(
 		}
 		content = content[int(set_consumed):]
 	}
-	return common_name, PARSE_STATUS_OK
+	status = PARSE_STATUS_OK
+	return common_name, status
 }
 
 func algorithm_from_oid(
 	oid Borrowed,
-) (algorithm Algorithm, recognition Recognition) {
+) (algorithm Algorithm, _ Recognition) {
+	defer func() { Algorithm_Invariants(algorithm, "algorithm_from_oid.algorithm") }()
+	Borrowed_Invariants(oid, "algorithm_from_oid.oid")
+	var recognition Recognition
 	defer func() {
-		Algorithm_Invariants(algorithm, "algorithm_from_oid.algorithm")
 		Recognition_Invariants(recognition, "algorithm_from_oid.recognition")
 	}()
-	Borrowed_Invariants(oid, "algorithm_from_oid.oid")
 	for _, fixture := range [...]struct {
 		OID       string
 		Algorithm Algorithm
@@ -438,7 +438,8 @@ func algorithm_from_oid(
 	} {
 		if string(oid) == fixture.OID {
 			algorithm = fixture.Algorithm
-			return algorithm, RECOGNITION_TRUE
+			recognition = RECOGNITION_TRUE
+			return algorithm, recognition
 		}
 	}
 	return algorithm, recognition
