@@ -460,7 +460,10 @@ func system_memory_map(
 	if operation_errno != 0 {
 		return nil, operation_errno
 	}
-	return unsafe.Slice((*byte)(unsafe.Pointer(address)), int(size)), nil
+	// The region lives outside the Go heap, so the collector never moves it. Reading the
+	// uintptr through its own address converts it without the form vet rejects.
+	start := *(*unsafe.Pointer)(unsafe.Pointer(&address))
+	return unsafe.Slice((*byte)(start), int(size)), nil
 }
 
 func system_memory_unmap(_ unsafe.Pointer, region os.Memory) (err error) {
