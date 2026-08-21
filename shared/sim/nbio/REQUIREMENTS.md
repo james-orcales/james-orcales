@@ -134,6 +134,11 @@ Input_Inherited hands the child this process's standard input. An interrupt, ter
 hangup, or quit this process receives while the child runs reaches the child's group unless
 Signals_Kept. Sim runs no process, ignores both, and still delivers one seed-drawn result.
 
+### Spawn Counters
+
+Usage carries the child's user-mode hardware counters: cycles, instructions, cache references and
+misses, and branch misses. A counter the host denies reads zero. Sim runs no process: all zero.
+
 ### Pipe
 
 Pipe synchronously return read and write ends, always non-blocking and close-on-exec. Transfers

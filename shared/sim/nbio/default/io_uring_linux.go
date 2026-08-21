@@ -58,6 +58,116 @@ type Platform_Operation struct {
 	Statx_Mask uint32
 }
 
+// LINUX_PERFORMANCE_ATTRIBUTE_WORD_COUNT is PERF_ATTR_SIZE_VER0, 64 bytes, in 64-bit words. The
+// kernel accept any published size, and the first one hold every field set here.
+const LINUX_PERFORMANCE_ATTRIBUTE_WORD_COUNT = 8
+
+// LINUX_PERFORMANCE_TYPE_HARDWARE is PERF_TYPE_HARDWARE.
+const LINUX_PERFORMANCE_TYPE_HARDWARE = 0
+
+// LINUX_PERFORMANCE_ATTRIBUTE_FLAGS set disabled, inherit, exclude_kernel, exclude_hv, and
+// enable_on_exec. Parent never exec, thus its own copy stay off, and each child copy count from
+// its exec alone.
+const LINUX_PERFORMANCE_ATTRIBUTE_FLAGS = 1<<0 | 1<<1 | 1<<5 | 1<<6 | 1<<12
+
+// LINUX_PERFORMANCE_CLOSE_ON_EXECUTE is PERF_FLAG_FD_CLOEXEC, thus no child inherit the event.
+const LINUX_PERFORMANCE_CLOSE_ON_EXECUTE = 1 << 3
+
+// LINUX_PERFORMANCE_EVENT_DISABLE is PERF_EVENT_IOC_DISABLE.
+const LINUX_PERFORMANCE_EVENT_DISABLE = 0x2401
+
+// LINUX_PERFORMANCE_EVENT_RESET is PERF_EVENT_IOC_RESET.
+const LINUX_PERFORMANCE_EVENT_RESET = 0x2403
+
+// LINUX_PERFORMANCE_GROUP is PERF_IOC_FLAG_GROUP: an ioctl reach every event of the group.
+const LINUX_PERFORMANCE_GROUP = 1
+
+// LINUX_PERFORMANCE_VALUE_BYTES is one u64 count read from an event.
+const LINUX_PERFORMANCE_VALUE_BYTES = 8
+
+// Open one perf event per counter for the calling thread, cycles leading the group. An event the
+// host deny stay -1 and read zero. Caller hold the thread locked through fork.
+func process_counters_open(spawn *Spawn) {
+	// PERF_COUNT_HW_CPU_CYCLES leads; INSTRUCTIONS, CACHE_REFERENCES, CACHE_MISSES, and
+	// BRANCH_MISSES follow it into the group.
+	spawn.Cycle_Descriptor = process_counter_open(0, -1)
+	if spawn.Cycle_Descriptor < 0 {
+		return
+	}
+	spawn.Instruction_Descriptor = process_counter_open(1, spawn.Cycle_Descriptor)
+	spawn.Cache_Reference_Descriptor = process_counter_open(2, spawn.Cycle_Descriptor)
+	spawn.Cache_Miss_Descriptor = process_counter_open(3, spawn.Cycle_Descriptor)
+	spawn.Branch_Miss_Descriptor = process_counter_open(5, spawn.Cycle_Descriptor)
+	syscall.Syscall(syscall.SYS_IOCTL, uintptr(spawn.Cycle_Descriptor),
+		LINUX_PERFORMANCE_EVENT_RESET, LINUX_PERFORMANCE_GROUP)
+}
+
+// Open one hardware perf event for the calling thread in leader's group, or -1 when denied.
+func process_counter_open(configuration uint64, leader int) (descriptor int) {
+	attribute := [LINUX_PERFORMANCE_ATTRIBUTE_WORD_COUNT]uint64{}
+	attribute[0] = LINUX_PERFORMANCE_TYPE_HARDWARE | uint64(unsafe.Sizeof(attribute))<<32
+	attribute[1] = configuration
+	attribute[5] = LINUX_PERFORMANCE_ATTRIBUTE_FLAGS
+	opened, _, errno := syscall.Syscall6(
+		syscall.SYS_PERF_EVENT_OPEN, uintptr(unsafe.Pointer(&attribute)), 0,
+		^uintptr(0), uintptr(leader), LINUX_PERFORMANCE_CLOSE_ON_EXECUTE, 0,
+	)
+	if errno != 0 {
+		return -1
+	}
+	return int(opened)
+}
+
+// Close every open perf event.
+func process_counters_close(spawn *Spawn) {
+	process_counter_close(&spawn.Cycle_Descriptor)
+	process_counter_close(&spawn.Instruction_Descriptor)
+	process_counter_close(&spawn.Cache_Reference_Descriptor)
+	process_counter_close(&spawn.Cache_Miss_Descriptor)
+	process_counter_close(&spawn.Branch_Miss_Descriptor)
+}
+
+// Close one perf event once and mark it released.
+func process_counter_close(descriptor *int) {
+	if *descriptor < 0 {
+		return
+	}
+	syscall.Close(*descriptor)
+	*descriptor = -1
+}
+
+// Read every perf event of the exited child. The child copy fold into the parent event at exit,
+// thus the parent descriptor hold the child's count.
+func process_counters_read(spawn *Spawn) (counters nbio.Process_Usage) {
+	if spawn.Cycle_Descriptor < 0 {
+		return counters
+	}
+	syscall.Syscall(syscall.SYS_IOCTL, uintptr(spawn.Cycle_Descriptor),
+		LINUX_PERFORMANCE_EVENT_DISABLE, LINUX_PERFORMANCE_GROUP)
+	counters.Cycle_Count = process_counter_value(spawn.Cycle_Descriptor)
+	counters.Instruction_Count = process_counter_value(spawn.Instruction_Descriptor)
+	counters.Cache_Reference_Count = process_counter_value(spawn.Cache_Reference_Descriptor)
+	counters.Cache_Miss_Count = process_counter_value(spawn.Cache_Miss_Descriptor)
+	counters.Branch_Miss_Count = process_counter_value(spawn.Branch_Miss_Descriptor)
+	return counters
+}
+
+// Read one perf event value. A denied or short read is a zero count, never a failed spawn.
+func process_counter_value(descriptor int) (value uint64) {
+	if descriptor < 0 {
+		return 0
+	}
+	storage := [LINUX_PERFORMANCE_VALUE_BYTES]byte{}
+	count, read_err := syscall.Read(descriptor, storage[:])
+	if read_err != nil {
+		return 0
+	}
+	if count != len(storage) {
+		return 0
+	}
+	return uint64(binary.Uint_64(binary.Bytes(storage[:]), binary.LITTLE_ENDIAN))
+}
+
 // Build child process attributes. Setpgid put child in its own group, thus deadline kill its
 // descendants too. PidFD ask kernel for descriptor naming child, made atomic at fork, thus exit
 // watch never name process identifier that could be reused.

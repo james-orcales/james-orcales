@@ -76,6 +76,52 @@ func process_attributes(spawn *Spawn) (attributes *syscall.SysProcAttr) {
 	return &spawn.System_Attributes
 }
 
+// DARWIN_PROC_INFO_CALL is proc_info(2), the call libproc's proc_pid_rusage wraps.
+const DARWIN_PROC_INFO_CALL = 336
+
+// DARWIN_PROC_INFO_PID_RUSAGE selects the rusage query of proc_info.
+const DARWIN_PROC_INFO_PID_RUSAGE = 9
+
+// DARWIN_RUSAGE_INFO_V4 is the first rusage_info flavor carrying instructions and cycles.
+const DARWIN_RUSAGE_INFO_V4 = 4
+
+// DARWIN_RUSAGE_INFO_V4_WORD_COUNT is rusage_info_v4 in 64-bit words: a two-word UUID, then 35
+// counters.
+const DARWIN_RUSAGE_INFO_V4_WORD_COUNT = 37
+
+// DARWIN_RUSAGE_INSTRUCTIONS_INDEX is ri_instructions, the thirtieth counter after the UUID.
+const DARWIN_RUSAGE_INSTRUCTIONS_INDEX = 31
+
+// DARWIN_RUSAGE_CYCLES_INDEX is ri_cycles, directly after ri_instructions.
+const DARWIN_RUSAGE_CYCLES_INDEX = 32
+
+// Darwin exposes counters without setup, thus nothing is opened before fork.
+func process_counters_open(spawn *Spawn) {
+	aver.Always(spawn.Cycle_Descriptor == -1, "A Darwin spawn opens no counter descriptor.")
+}
+
+// Darwin opened nothing to close.
+func process_counters_close(spawn *Spawn) {
+	aver.Always(spawn.Cycle_Descriptor == -1, "A Darwin spawn holds no counter descriptor.")
+}
+
+// Read cycles and instructions of the exited, unreaped child. A failed query reads zero: the
+// counters are sparse metrics, never a failed spawn.
+func process_counters_read(spawn *Spawn) (counters nbio.Process_Usage) {
+	information := [DARWIN_RUSAGE_INFO_V4_WORD_COUNT]uint64{}
+	_, _, errno := syscall.Syscall6(
+		DARWIN_PROC_INFO_CALL, DARWIN_PROC_INFO_PID_RUSAGE, uintptr(spawn.Identifier),
+		DARWIN_RUSAGE_INFO_V4, 0, uintptr(unsafe.Pointer(&information)),
+		unsafe.Sizeof(information),
+	)
+	if errno != 0 {
+		return counters
+	}
+	counters.Instruction_Count = information[DARWIN_RUSAGE_INSTRUCTIONS_INDEX]
+	counters.Cycle_Count = information[DARWIN_RUSAGE_CYCLES_INDEX]
+	return counters
+}
+
 // Report nothing to check after fork: EVFILT_PROC need only process identifier.
 func process_watch_ready(_ *Spawn) (err error) { return nil }
 

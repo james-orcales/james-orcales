@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"os/signal"
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -3483,4 +3484,35 @@ func spawn_signalled(
 	))
 	nbio.Driver_Deinit(driver)
 	return result, operation_err
+}
+
+// Test_Operating_System_IO_Spawn_Counters verifies a child that computes reports its hardware
+// counters. Darwin always exposes cycles and instructions; a Linux host may deny perf events, thus
+// only Darwin must report them.
+func Test_Operating_System_IO_Spawn_Counters(t *testing.T) {
+	host := new_operating_system_clock()
+	loop, _, driver := operating_system_loop(t, host)
+	callback_count := 0
+	result := nbio.Process_Result{}
+	var operation_err error
+	var completion nbio.Completion
+	nbio.IO_Spawn(loop, &completion, nbio.Process_Request{
+		Path:      "/bin/sh",
+		Arguments: []string{"-c", "i=0; while [ $i -lt 20000 ]; do i=$((i+1)); done"},
+	}, REAL_DEADLINE, func(
+		_ *nbio.Completion, spawned nbio.Process_Result, err error,
+	) {
+		callback_count++
+		result = spawned
+		operation_err = err
+	})
+	testify.True(t, operating_system_run_until(
+		t, driver, func() (finished bool) { return callback_count > 0 },
+	))
+	testify.No_Error(t, operation_err)
+	if runtime.GOOS == "darwin" {
+		testify.Positive(t, result.Usage.Cycle_Count)
+		testify.Positive(t, result.Usage.Instruction_Count)
+	}
+	nbio.Driver_Deinit(driver)
 }

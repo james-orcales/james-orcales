@@ -671,6 +671,22 @@ func Test_Sim_Spawn_Inheritance(t *testing.T) {
 	nbio.IO_Deinit(loop)
 }
 
+// Test_Sim_Spawn_Counters verifies the simulator, which runs no process, reports zero counters.
+func Test_Sim_Spawn_Counters(t *testing.T) {
+	for seed := uint64(0); seed < 64; seed++ {
+		loop, driver, _ := sim_loop(seed)
+		usage := nbio.Process_Usage{Cycle_Count: 1}
+		var completion nbio.Completion
+		nbio.IO_Spawn(loop, &completion, nbio.Process_Request{Path: "true"}, SIM_DEADLINE,
+			func(_ *nbio.Completion, spawned nbio.Process_Result, _ error) {
+				usage = spawned.Usage
+			})
+		nbio.Driver_Run_For(driver, SIM_DEADLINE)
+		testify.Equal(t, nbio.Process_Usage{}, usage, seed)
+		nbio.IO_Deinit(loop)
+	}
+}
+
 // Test_Sim_Pipe verifies a read armed on an empty pipe waits for the writer, bytes arrive in
 // order, and closing the write end reads as end of file.
 func Test_Sim_Pipe(t *testing.T) {

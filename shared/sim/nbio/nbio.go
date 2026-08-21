@@ -209,6 +209,18 @@ type Process_Usage struct {
 	CPU_System time.Duration
 	// RSS_Bytes_Max is the peak resident set size in bytes.
 	RSS_Bytes_Max int64
+	// Cycle_Count is the CPU cycles the process spent in user mode. It and the four counts
+	// below read hardware performance counters, thus a host that exposes none reports zero,
+	// never a failed spawn. Darwin exposes cycles and instructions only.
+	Cycle_Count uint64
+	// Instruction_Count is the instructions the process retired in user mode.
+	Instruction_Count uint64
+	// Cache_Reference_Count is the last-level cache references the process made in user mode.
+	Cache_Reference_Count uint64
+	// Cache_Miss_Count is the last-level cache misses the process took in user mode.
+	Cache_Miss_Count uint64
+	// Branch_Miss_Count is the mispredicted branches the process took in user mode.
+	Branch_Miss_Count uint64
 }
 
 // Process_Result is a finished process's outcome: its exit code, captured output, and

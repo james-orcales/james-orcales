@@ -361,6 +361,18 @@ type Spawn struct {
 	Started time.Monotonic_Moment
 	// Exit_Descriptor is Linux pidfd polled for exit, or -1 on Darwin.
 	Exit_Descriptor int
+	// Cycle_Descriptor is the Linux perf event counting cycles, leader of the child's counter
+	// group. It and the four below are -1 when never opened or already closed; Darwin opens
+	// none.
+	Cycle_Descriptor int
+	// Instruction_Descriptor is the Linux perf event counting instructions.
+	Instruction_Descriptor int
+	// Cache_Reference_Descriptor is the Linux perf event counting cache references.
+	Cache_Reference_Descriptor int
+	// Cache_Miss_Descriptor is the Linux perf event counting cache misses.
+	Cache_Miss_Descriptor int
+	// Branch_Miss_Descriptor is the Linux perf event counting branch misses.
+	Branch_Miss_Descriptor int
 	// Input_Descriptor is write end of child standard input. -1 once closed.
 	Input_Descriptor int
 	// Output_Descriptor is read end of child standard output. -1 once closed.
@@ -472,6 +484,11 @@ func operating_system_spawn_acquire(state *Operating_System) (spawn *Spawn) {
 		slot.Used = true
 		slot.Operating_System = state
 		slot.Exit_Descriptor = -1
+		slot.Cycle_Descriptor = -1
+		slot.Instruction_Descriptor = -1
+		slot.Cache_Reference_Descriptor = -1
+		slot.Cache_Miss_Descriptor = -1
+		slot.Branch_Miss_Descriptor = -1
 		slot.Input_Descriptor = -1
 		slot.Output_Descriptor = -1
 		slot.Error_Descriptor = -1
@@ -518,17 +535,19 @@ func process_start(
 		Files: spawn.Child_Files[:],
 		Sys:   process_attributes(spawn),
 	}
-	identifier, _, start_err := syscall.StartProcess(path, argv, &spawn.Attributes)
+	identifier, start_err := process_fork(spawn, path, argv)
 	// Child hold its own copies once StartProcess return, thus parent release three ends it
 	// handed over, whether or not fork succeeded.
 	process_release_child(state, process_child_owned(spawn))
 	if start_err != nil {
+		process_counters_close(spawn)
 		process_close_pipes(state, spawn)
 		return start_err
 	}
 	spawn.Identifier = identifier
 	if ready_err := process_watch_ready(spawn); ready_err != nil {
 		syscall.Kill(-identifier, syscall.SIGKILL)
+		process_counters_close(spawn)
 		process_close_pipes(state, spawn)
 		process_reap(identifier)
 		return ready_err
@@ -865,6 +884,9 @@ func process_exited(completion nbio.Completion_Handle) {
 // spawn whose caller already retired on its deadline still release kernel process entry.
 func process_exit(state *Operating_System, spawn *Spawn) {
 	defer process_finish(state, spawn)
+	// Read before reap: Darwin answer only while the exited child is still a zombie.
+	counters := process_counters_read(spawn)
+	process_counters_close(spawn)
 	exit, usage, reap_err := process_reap(spawn.Identifier)
 	spawn.Exited = true
 	if spawn.Exit_Descriptor >= 0 {
@@ -878,8 +900,23 @@ func process_exit(state *Operating_System, spawn *Spawn) {
 	if reap_err != nil {
 		return
 	}
+	usage.Cycle_Count = counters.Cycle_Count
+	usage.Instruction_Count = counters.Instruction_Count
+	usage.Cache_Reference_Count = counters.Cache_Reference_Count
+	usage.Cache_Miss_Count = counters.Cache_Miss_Count
+	usage.Branch_Miss_Count = counters.Branch_Miss_Count
 	spawn.Result.Exit = exit
 	spawn.Result.Usage = usage
+}
+
+// Fork child. Counter setup and fork share one OS thread, because a Linux perf event opened for
+// the calling thread reach only child that thread fork.
+func process_fork(spawn *Spawn, path string, argv []string) (identifier int, err error) {
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+	process_counters_open(spawn)
+	identifier, _, err = syscall.StartProcess(path, argv, &spawn.Attributes)
+	return identifier, err
 }
 
 // Kill whole process group of child when its deadline win, then bound drain of pipes a surviving
