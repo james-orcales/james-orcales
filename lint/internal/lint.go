@@ -5370,6 +5370,12 @@ func check_no_banned_stdlib_import(
 			if directory_within(directory, SIGNAL_GATEWAY_DIRECTORY) {
 				continue
 			}
+		} else if process_binding_import(import_path) {
+			// Process bindings have exactly three owners; invariant's cycle exemption
+			// cannot widen them.
+			if directory_within_process_gateway(directory) {
+				continue
+			}
 		} else {
 			if invariant_directory {
 				continue
@@ -5377,16 +5383,8 @@ func check_no_banned_stdlib_import(
 			// Simulation backend implements shared OS boundary, so replacement needs
 			// family it wraps.
 			if family == "os" {
-				if directory_within(directory, "shared/os") {
+				if directory_within(directory, "shared/os/default") {
 					continue
-				}
-				// Signal gateway earns the bare package for one type alone: the
-				// chan os.Signal that os/signal writes to. The family around it —
-				// os/exec above all — stays banned there like everywhere else.
-				if import_path == "os" {
-					if directory_within(directory, SIGNAL_GATEWAY_DIRECTORY) {
-						continue
-					}
 				}
 			}
 		}
@@ -5398,6 +5396,25 @@ func check_no_banned_stdlib_import(
 		})
 	}
 	return diags
+}
+
+func process_binding_import(import_path string) (binding bool) {
+	switch import_path {
+	case "os", "syscall":
+		return true
+	}
+	return false
+}
+
+func directory_within_process_gateway(directory string) (within bool) {
+	for _, gateway := range []string{
+		"shared/os/default", "shared/sim/nbio/default", "shared/sim/time/default",
+	} {
+		if directory_within(directory, gateway) {
+			return true
+		}
+	}
+	return false
 }
 
 // SIGNAL_GATEWAY_DIRECTORY is the loop backend, which owns signal registration because it
@@ -5428,7 +5445,7 @@ func banned_stdlib_import_family(import_path string) (family string) {
 	}
 	for _, candidate := range []string{
 		"archive", "bytes", "compress", "container", "encoding", "flag", "io", "math",
-		"os", "slices", "strconv", "strings", "unicode", "uuid",
+		"os", "slices", "strconv", "strings", "syscall", "unicode", "uuid",
 	} {
 		if import_path == candidate {
 			return candidate

@@ -185,6 +185,11 @@ Outside `shared/sim/aver/**`, banned stdlib families are archive, bytes, compres
 encoding, flag, io, math, os, rand, slices, strconv, strings, unicode, and uuid. Exact shared
 counterparts under crypto, database, go, hash, net, path, sort, and text are also banned.
 
+### Process Gateways
+
+Only `shared/os/default`, `shared/sim/nbio/default`, and `shared/sim/time/default` import `os` or
+`syscall`. No other file may, package main, tests, and `shared/sim/aver/**` included.
+
 ### Import Aliases
 
 Import alias is permitted only when imported package's declared name collides with another import.

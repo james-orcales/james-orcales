@@ -2313,16 +2313,17 @@ func specification_os_import_boundary(t *testing.T) {
 	if specification_flags(t, third_party, "Banned import") {
 		t.Error("third-party OS path must stay allowed")
 	}
-	for _, filename := range []string{
-		"shared/os/rule.go",
-		"shared/os/default/rule.go",
-	} {
-		files := map[string][]byte{
-			filename: []byte("package os\n\nimport \"os/exec\"\n"),
-		}
-		if specification_flags(t, files, "Banned import") {
-			t.Errorf("simulation OS file %q must be allowed", filename)
-		}
+	allowed := map[string][]byte{
+		"shared/os/default/rule.go": []byte("package os\n\nimport \"os/exec\"\n"),
+	}
+	if specification_flags(t, allowed, "Banned import") {
+		t.Error("shared/os/default must allow os/exec")
+	}
+	pure_tier := map[string][]byte{
+		"shared/os/rule.go": []byte("package os\n\nimport \"os/exec\"\n"),
+	}
+	if !specification_flags(t, pure_tier, "Banned import") {
+		t.Error("shared/os outside its default tier must not import os/exec")
 	}
 	named_like := map[string][]byte{
 		"shared/os_extra/rule.go": []byte(
@@ -2332,6 +2333,48 @@ func specification_os_import_boundary(t *testing.T) {
 		t.Fatal("directory named like simulation OS must stay banned")
 	}
 	specification_signal_gateway_boundary(t)
+	specification_process_gateway_boundary(t)
+}
+
+// Process bindings reach the rest of the tree only through injection, so no exemption the
+// wider ban grants — main, tests, invariant, shared/os — may widen who imports them.
+func specification_process_gateway_boundary(t *testing.T) {
+	t.Helper()
+	for _, import_path := range []string{"os", "syscall"} {
+		for _, filename := range []string{
+			"shared/os/default/rule.go",
+			"shared/os/default/rule_test.go",
+			"shared/sim/nbio/default/rule.go",
+			"shared/sim/time/default/rule.go",
+		} {
+			allowed := map[string][]byte{
+				filename: []byte(
+					"package fixture\n\nimport \"" + import_path + "\"\n"),
+			}
+			if specification_flags(t, allowed, "Banned import") {
+				t.Errorf("gateway file %q must allow %q", filename, import_path)
+			}
+		}
+		for _, filename := range []string{
+			"shared/os/rule.go",
+			"shared/os/default_extra/rule.go",
+			"shared/sim/aver/rule.go",
+			"shared/sim/time/rule.go",
+			"shared/sim/io/default/rule.go",
+			"pkg/shared/os/default/rule.go",
+			"pkg/main.go",
+			"pkg/internal/rule_test.go",
+		} {
+			banned := map[string][]byte{
+				filename: []byte(
+					"package main\n\nimport \"" + import_path + "\"\n"),
+			}
+			if !specification_flags(t, banned, "Banned import") {
+				t.Errorf("file %q outside the gateways must not import %q",
+					filename, import_path)
+			}
+		}
+	}
 }
 
 // The tier that drains the notifier between polls owns signal registration, and no other.
