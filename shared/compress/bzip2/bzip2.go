@@ -1236,10 +1236,16 @@ func emit_block(
 	First_Position_Invariants(position, "emit_block.position")
 	last := -1
 	equal_count := 0
-	checksum_value := checksum
+	checksum_word := ^(uint32(checksum[0])<<24 |
+		uint32(checksum[1])<<16 | uint32(checksum[2])<<8 | uint32(checksum[3]))
+	var checksum_table [BYTE_VALUE_COUNT]uint32
+	checksum_table_fill(&checksum_table)
+	status = EMIT_STATUS_OK
+emission:
 	for used_index := 0; used_index < len(transform); used_index++ {
 		if uint32(position) >= uint32(len(transform)) {
-			return count, checksum_value, EMIT_STATUS_INPUT_INVALID
+			status = EMIT_STATUS_INPUT_INVALID
+			break
 		}
 		position = First_Position(transform[position])
 		value := byte(position)
@@ -1247,11 +1253,13 @@ func emit_block(
 		if equal_count == 3 {
 			for repeat := int(value); repeat > 0; repeat-- {
 				if int(count) == len(destination) {
-					return count, checksum_value, EMIT_STATUS_OUTPUT_TOO_SMALL
+					status = EMIT_STATUS_OUTPUT_TOO_SMALL
+					break emission
 				}
 				destination[count] = byte(last)
 				count++
-				checksum_value = checksum_update(checksum_value, Byte_Value(last))
+				checksum_index := byte(checksum_word>>24) ^ byte(last)
+				checksum_word = checksum_table[checksum_index] ^ checksum_word<<8
 			}
 			equal_count = 0
 			last = -1
@@ -1264,13 +1272,35 @@ func emit_block(
 		}
 		last = int(value)
 		if int(count) == len(destination) {
-			return count, checksum_value, EMIT_STATUS_OUTPUT_TOO_SMALL
+			status = EMIT_STATUS_OUTPUT_TOO_SMALL
+			break
 		}
 		destination[count] = value
 		count++
-		checksum_value = checksum_update(checksum_value, Byte_Value(value))
+		checksum_index := byte(checksum_word>>24) ^ value
+		checksum_word = checksum_table[checksum_index] ^ checksum_word<<8
 	}
-	return count, checksum_value, EMIT_STATUS_OK
+	checksum_word = ^checksum_word
+	checksum = Checksum{
+		byte(checksum_word >> 24), byte(checksum_word >> 16),
+		byte(checksum_word >> 8), byte(checksum_word),
+	}
+	return count, checksum, status
+}
+
+func checksum_table_fill(destination *[BYTE_VALUE_COUNT]uint32) {
+	const POLYNOMIAL = 0x04c11db7
+	for value := range BYTE_VALUE_COUNT {
+		table_value := uint32(value) << 24
+		for range 8 {
+			if table_value&0x80000000 != 0 {
+				table_value = table_value<<1 ^ POLYNOMIAL
+			} else {
+				table_value <<= 1
+			}
+		}
+		destination[value] = table_value
+	}
 }
 
 func selector_read(
@@ -1439,27 +1469,4 @@ func bit_reader_read(
 	reader.Bits_Count -= Bit_Count(count)
 	reader.Bits &= Bit_Buffer(1<<reader.Bits_Count) - 1
 	return value, true
-}
-
-func checksum_update(checksum Checksum, value Byte_Value) (next Checksum) {
-	defer func() { Checksum_Invariants(next, "checksum_update.next") }()
-	Checksum_Invariants(checksum, "checksum_update.checksum")
-	Byte_Value_Invariants(value, "checksum_update.value")
-	checksum_value := uint32(checksum[0])<<24 | uint32(checksum[1])<<16 |
-		uint32(checksum[2])<<8 | uint32(checksum[3])
-	crc := ^checksum_value
-	table_value := uint32(byte(crc>>24)^byte(value)) << 24
-	const POLYNOMIAL = 0x04c11db7
-	for bit_index := 0; bit_index < 8; bit_index++ {
-		if table_value&0x80000000 != 0 {
-			table_value = table_value<<1 ^ POLYNOMIAL
-		} else {
-			table_value <<= 1
-		}
-	}
-	next_value := ^(table_value ^ crc<<8)
-	return Checksum{
-		byte(next_value >> 24), byte(next_value >> 16),
-		byte(next_value >> 8), byte(next_value),
-	}
 }
