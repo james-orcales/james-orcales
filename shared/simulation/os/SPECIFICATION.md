@@ -31,9 +31,9 @@ Working_Directory returns the stated directory and no error.
 
 Hostname returns the stated machine name and no error.
 
-### Identifier
+### Process Identifier
 
-Identifier returns the stated process id, which is always positive.
+Process_Identifier returns the stated process id, which is always positive.
 
 ### Effective User Identifier
 

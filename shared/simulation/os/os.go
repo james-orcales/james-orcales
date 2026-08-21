@@ -18,7 +18,7 @@ import (
 
 	invariant "local/james-orcales/shared/invariant/default"
 	"local/james-orcales/shared/random/prng"
-	"local/james-orcales/shared/simulation/io"
+	"local/james-orcales/shared/simulation/nbio"
 	"local/james-orcales/shared/simulation/time"
 )
 
@@ -39,8 +39,8 @@ type OS struct {
 	Working_Directory func() (path string, err error)
 	// Hostname returns the name the kernel gives this machine.
 	Hostname func() (name string, err error)
-	// Identifier returns the process id.
-	Identifier func() (identifier int)
+	// Process_Identifier returns the process id.
+	Process_Identifier func() (identifier int)
 	// Effective_User_Identifier returns the user id the kernel checks permission against,
 	// which a setuid image makes different from the user who started the process.
 	Effective_User_Identifier func() (identifier int)
@@ -52,16 +52,16 @@ type OS struct {
 	// deadline, or with time.Deadline_Exceeded. The lifetime is finite deliberately: a
 	// permanent waiter is a process that cannot state when it is done.
 	Watch_Signal func(
-		completion *time.Completion, callback Signal_Callback, signal Signal,
-		deadline time.Duration,
+		completion *time.Completion, signal Signal, deadline time.Duration,
+		callback Signal_Callback,
 	)
 	// Spawn runs request until it finishes or the deadline expires. Expiry kills the
 	// subprocess group and returns time.Deadline_Exceeded with any partial result. The
 	// simulated backend draws the exit code from its seed and returns no output, since
 	// scripted output is disallowed.
 	Spawn func(
-		completion *time.Completion, callback Process_Callback, request Process_Request,
-		deadline time.Duration,
+		completion *time.Completion, request Process_Request, deadline time.Duration,
+		callback Process_Callback,
 	)
 }
 
@@ -75,7 +75,7 @@ func OS_Invariants(system OS, namespace invariant.Namespace) {
 	invariant.Always(system.Executable != nil, "An OS reads its executable path.")
 	invariant.Always(system.Working_Directory != nil, "An OS reads its working directory.")
 	invariant.Always(system.Hostname != nil, "An OS reads its host name.")
-	invariant.Always(system.Identifier != nil, "An OS reads its process id.")
+	invariant.Always(system.Process_Identifier != nil, "An OS reads its process id.")
 	invariant.Always(
 		system.Effective_User_Identifier != nil, "An OS reads its effective user id.")
 	invariant.Always(system.Self_Exec != nil, "An OS replaces its own image.")
@@ -102,8 +102,8 @@ type Virtual_OS struct {
 	Working_Directory string
 	// Hostname becomes the simulated machine name.
 	Hostname string
-	// Identifier becomes the simulated process id.
-	Identifier int
+	// Process_Identifier becomes the simulated process id.
+	Process_Identifier int
 	// Effective_User_Identifier becomes the simulated effective user id. Zero is root, so a
 	// simulation states it deliberately and the field carries no positive bound.
 	Effective_User_Identifier int
@@ -113,11 +113,11 @@ type Virtual_OS struct {
 // kernel this repository targets, and pid 1 is init, so a simulation that states zero has left
 // the field unset rather than described a real process.
 func Virtual_OS_Invariants(virtual Virtual_OS, namespace invariant.Namespace) {
-	invariant.Always(virtual.Identifier > 0, "A Virtual_OS has a positive process id.")
+	invariant.Always(virtual.Process_Identifier > 0, "A Virtual_OS has a positive process id.")
 }
 
 // Virtual_OS_To_OS turns simulated ambient state into the vtable every caller holds, the
-// counterpart of time.Virtual_Clock_To_Any_Clock. Each reader copies before it answers, so a caller
+// counterpart of time.Virtual_Clock_To_Clock. Each reader copies before it answers, so a caller
 // that keeps or edits a returned slice cannot change what the next read sees.
 // It fills the ambient readers alone, so the OS it returns is not yet whole: the signal watch
 // and the spawn retire a completion, which is a backend's queue and not plain data.
@@ -143,8 +143,8 @@ func Virtual_OS_To_OS(virtual Virtual_OS) (system OS) {
 		Hostname: func() (name string, err error) {
 			return virtual.Hostname, nil
 		},
-		Identifier: func() (identifier int) {
-			return virtual.Identifier
+		Process_Identifier: func() (identifier int) {
+			return virtual.Process_Identifier
 		},
 		Effective_User_Identifier: func() (identifier int) {
 			return virtual.Effective_User_Identifier
@@ -219,9 +219,9 @@ type Process_Request struct {
 	// The loop writes to the stream on its own thread, so a Stream that waits on the world
 	// stalls every other operation. A Stream moves memory only, which is what makes it the
 	// right sink here.
-	Stdout io.Stream
+	Stdout nbio.Stream
 	// Stderr is the standard-error counterpart, same live-or-capture rule.
-	Stderr io.Stream
+	Stderr nbio.Stream
 }
 
 // Process_Usage is the resource accounting a finished process reports.
@@ -280,18 +280,18 @@ func New_Simulated_OS(seed uint64, virtual Virtual_OS, pump time.Timeline) (syst
 	state := &Sim{Timeline: pump, Generator: prng.New(seed)}
 	system = Virtual_OS_To_OS(virtual)
 	system.Watch_Signal = func(
-		completion *time.Completion, callback Signal_Callback, signal Signal,
-		deadline time.Duration,
+		completion *time.Completion, signal Signal, deadline time.Duration,
+		callback Signal_Callback,
 	) {
 		invariant.Always(deadline > 0, "A signal-watch deadline is positive and finite.")
-		sim_watch_signal(state, completion, callback, signal, deadline)
+		sim_watch_signal(state, completion, signal, deadline, callback)
 	}
 	system.Spawn = func(
-		completion *time.Completion, callback Process_Callback, request Process_Request,
-		deadline time.Duration,
+		completion *time.Completion, request Process_Request, deadline time.Duration,
+		callback Process_Callback,
 	) {
 		invariant.Always(deadline > 0, "A spawn deadline is positive and finite.")
-		sim_spawn(state, completion, callback, deadline)
+		sim_spawn(state, completion, deadline, callback)
 	}
 	OS_Invariants(system, "new_sim.system")
 	return system
@@ -300,28 +300,27 @@ func New_Simulated_OS(seed uint64, virtual Virtual_OS, pump time.Timeline) (syst
 // Watches for a signal that, in the simulation, arrives at a seed-drawn grain — the operating
 // system event modeled as a seed outcome. It fires callback exactly once.
 func sim_watch_signal(
-	state *Sim, completion *time.Completion, callback Signal_Callback, signal Signal,
-	deadline time.Duration,
+	state *Sim, completion *time.Completion, signal Signal, deadline time.Duration,
+	callback Signal_Callback,
 ) {
 	latency := sim_latency(state)
 	if latency >= deadline {
-		state.Timeline.Submit(completion, deadline, func() {
+		state.Timeline.Submit(completion, deadline, func(_ *time.Completion) {
 			callback(completion, Signal(-1), time.Deadline_Exceeded)
 		})
 	} else {
-		state.Timeline.Submit(completion, latency, func() {
+		state.Timeline.Submit(completion, latency, func(_ *time.Completion) {
 			callback(completion, signal, nil)
 		})
 	}
-	state.Timeline.Classify(completion, time.OPERATION_SIGNAL)
 }
 
 // Delivers a subprocess result drawn from the seed: the exit code varies (usually zero,
 // occasionally non-zero for fault coverage) with no captured output — scripted output is
 // disallowed, so the seed decides success or failure, not a canned payload.
 func sim_spawn(
-	state *Sim, completion *time.Completion, callback Process_Callback,
-	deadline time.Duration,
+	state *Sim, completion *time.Completion, deadline time.Duration,
+	callback Process_Callback,
 ) {
 	exit := 0
 	if prng.Generator_Below(&state.Generator, SIM_SPAWN_FAIL_GRAINS) == 0 {
@@ -329,16 +328,14 @@ func sim_spawn(
 	}
 	latency := sim_latency(state)
 	if latency >= deadline {
-		state.Timeline.Submit(completion, deadline, func() {
+		state.Timeline.Submit(completion, deadline, func(_ *time.Completion) {
 			callback(completion, Process_Result{}, time.Deadline_Exceeded)
 		})
-		state.Timeline.Classify(completion, time.OPERATION_SPAWN)
 		return
 	}
-	state.Timeline.Submit(completion, latency, func() {
+	state.Timeline.Submit(completion, latency, func(_ *time.Completion) {
 		callback(completion, Process_Result{Exit: exit}, nil)
 	})
-	state.Timeline.Classify(completion, time.OPERATION_SPAWN)
 }
 
 // Draws one simulated operation's virtual latency from the seed.

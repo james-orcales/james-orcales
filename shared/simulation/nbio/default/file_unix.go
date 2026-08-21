@@ -5,6 +5,7 @@ package nbio
 import (
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"net"
 	"path/filepath"
 	"strings"
@@ -12,62 +13,61 @@ import (
 	"unsafe"
 
 	invariant "local/james-orcales/shared/invariant/default"
-	io "local/james-orcales/shared/simulation/nbio"
+	"local/james-orcales/shared/simulation/nbio"
 	sysos "local/james-orcales/shared/simulation/os"
 	"local/james-orcales/shared/simulation/time"
 )
 
-// A pipe has exactly two ends: the read end and the write end.
+// Pipe has exactly two ends: read end and write end.
 const PIPE_ENDS = 2
 
-// Caps the EINTR retries of one reap. A signal can interrupt wait4, but only a broken kernel
-// interrupts it repeatedly, so a bound turns that into a reported error rather than a spin.
+// Cap EINTR retries of one reap. Signal can interrupt wait4, but only broken kernel interrupt
+// it over and over, thus bound turn that into reported error, not spin.
 const PROCESS_REAP_RETRIES_MAX = 16
 
-// Bounds one readdir pass into a fixed buffer, so a large directory is read in repeated
-// passes rather than one unbounded allocation.
+// Bound one readdir pass into fixed buffer, thus large directory is read in repeated passes,
+// not one unbounded allocation.
 const DIRECTORY_READ_BYTES = 8192
 
-// Caps the number of readdir passes so a pathological directory errors rather than looping
-// unbounded; 4096 passes of directory_read_bytes cover hundreds of thousands of entries.
+// Cap number of readdir passes, thus pathological directory error, not loop unbounded. 4096
+// passes of directory_read_bytes cover hundreds of thousands of entries.
 const DIRECTORY_READ_PASSES_MAX = 4096
 
-// Reads up to len(buffer) bytes from file at offset via the pread syscall — the raw
-// positioned read TigerBeetle's posix backend uses.
-func read_at(file io.File, buffer []byte, offset int64) (count int, err error) {
+// Read up to len(buffer) bytes from file at offset through pread syscall — raw positioned read.
+func read_at(file nbio.File, buffer []byte, offset int64) (count int, err error) {
 	return syscall.Pread(int(file), buffer, offset)
 }
 
-// Writes buffer to file at offset via the pwrite syscall.
-func write_at(file io.File, buffer []byte, offset int64) (count int, err error) {
+// Write buffer to file at offset through pwrite syscall.
+func write_at(file nbio.File, buffer []byte, offset int64) (count int, err error) {
 	return syscall.Pwrite(int(file), buffer, offset)
 }
 
-// Opens the file at path for reading via the open syscall, returning its descriptor.
+// Open file at path for read through open syscall. Return its descriptor.
 func file_open(path string) (descriptor int, err error) {
 	return syscall.Open(path, syscall.O_RDONLY|syscall.O_CLOEXEC, 0)
 }
 
-// Creates or truncates path for writing via the open syscall, returning its descriptor.
+// Make or truncate path for write through open syscall. Return its descriptor.
 func file_create(path string) (descriptor int, err error) {
 	return syscall.Open(
 		path, syscall.O_WRONLY|syscall.O_CREAT|syscall.O_TRUNC|syscall.O_CLOEXEC, 0o644,
 	)
 }
 
-// Reports whether path exists, whether it is a directory, and its byte size via lstat. An
-// absent path is Exists false with a nil error, so a caller distinguishes "not there" from a
-// real stat failure.
-func file_status(path string) (status io.File_Status, err error) {
+// Report whether path exist, whether it is directory, and its byte size, through lstat. Absent
+// path is Exists false with nil error, thus caller tell "not there" apart from real stat
+// failure.
+func file_status(path string) (status nbio.File_Status, err error) {
 	metadata := syscall.Stat_t{}
 	stat_err := syscall.Lstat(path, &metadata)
 	if stat_err == syscall.ENOENT {
-		return io.File_Status{}, nil
+		return nbio.File_Status{}, nil
 	}
 	if stat_err != nil {
-		return io.File_Status{}, stat_err
+		return nbio.File_Status{}, stat_err
 	}
-	return io.File_Status{
+	return nbio.File_Status{
 		Exists:       true,
 		Is_Directory: metadata.Mode&syscall.S_IFMT == syscall.S_IFDIR,
 		Is_Regular:   metadata.Mode&syscall.S_IFMT == syscall.S_IFREG,
@@ -75,13 +75,13 @@ func file_status(path string) (status io.File_Status, err error) {
 	}, nil
 }
 
-// The mode a created directory takes: readable and traversable by all, writable by the owner.
+// Mode a made directory take: readable and traversable by all, writable by owner.
 const DIRECTORY_MODE = 0o755
 
-// Creates path and every missing parent. Each component is created in turn, and an existing
-// directory converges rather than failing, so a repeated call is not an error. The walk is
-// bounded by the path length, and the final Status check rejects a path whose last component
-// exists as something other than a directory — the one case a converging mkdir would hide.
+// Make path and every missing parent. Each component is made in turn, and existing directory
+// converge, not fail, thus repeated call is not error. Walk is bounded by path length, and
+// final Status check reject path whose last component exist as something other than directory —
+// one case converging mkdir would hide.
 func directory_make(path string) (err error) {
 	if path == "" {
 		return syscall.ENOENT
@@ -110,18 +110,18 @@ func directory_make(path string) (err error) {
 	return nil
 }
 
-// Reads one pass of a directory's raw entries into buffer and returns the children it names.
-// The record layout is per-platform, so the walk casts to syscall.Dirent and lets the platform
-// struct supply the offsets rather than naming a byte position. The pass loop, the descriptor
-// lifetime, and the accumulation across passes all compose above the surface in Read_Directory.
+// Read one pass of directory raw entries into buffer and return children it name. Record layout
+// is per-platform, thus walk cast to syscall.Dirent and let platform struct supply offsets
+// rather than name byte position. Pass loop, descriptor lifetime, and accumulation across
+// passes all compose above surface in Read_Directory.
 func file_directory_pass(
 	descriptor int, buffer []byte,
-) (entries []io.Directory_Entry, err error) {
+) (entries []nbio.Directory_Entry, err error) {
 	count, read_err := platform_directory_read(descriptor, buffer)
 	if read_err != nil {
 		return nil, read_err
 	}
-	entries = []io.Directory_Entry{}
+	entries = []nbio.Directory_Entry{}
 	for offset := 0; offset < count; {
 		record := (*syscall.Dirent)(unsafe.Pointer(&buffer[offset]))
 		record_bytes := int(record.Reclen)
@@ -140,32 +140,32 @@ func file_directory_pass(
 	return entries, nil
 }
 
-// Decodes one directory record. keep is false for the two self-referencing entries and for a
-// record the filesystem already deleted, which is what syscall.ParseDirent dropped before this
-// walk replaced it.
+// Decode one directory record. keep is false for two self-referencing entries, and for record
+// filesystem already deleted. That is what syscall.ParseDirent dropped before this walk
+// replaced it.
 func file_directory_entry(
 	descriptor int, record *syscall.Dirent, record_bytes int,
-) (entry io.Directory_Entry, keep bool, err error) {
+) (entry nbio.Directory_Entry, keep bool, err error) {
 	if platform_directory_absent(record) {
-		return io.Directory_Entry{}, false, nil
+		return nbio.Directory_Entry{}, false, nil
 	}
 	name := file_directory_name(record, record_bytes)
 	if name == "." {
-		return io.Directory_Entry{}, false, nil
+		return nbio.Directory_Entry{}, false, nil
 	}
 	if name == ".." {
-		return io.Directory_Entry{}, false, nil
+		return nbio.Directory_Entry{}, false, nil
 	}
 	directory_bit, kind_err := file_directory_kind(descriptor, record, name)
 	if kind_err != nil {
-		return io.Directory_Entry{}, false, kind_err
+		return nbio.Directory_Entry{}, false, kind_err
 	}
-	return io.Directory_Entry{Name: name, Is_Directory: directory_bit}, true, nil
+	return nbio.Directory_Entry{Name: name, Is_Directory: directory_bit}, true, nil
 }
 
-// Returns the name a directory record holds. The kernel terminates the name with a NUL byte
-// inside the record, so the terminator bounds it on both platforms. Darwin also counts the name
-// bytes in a field of its own, but Linux does not, and the terminator serves both.
+// Return name a directory record hold. Kernel terminate name with NUL byte inside record, thus
+// terminator bound it on both platform. Darwin also count name bytes in field of its own, but
+// Linux does not, and terminator serve both.
 func file_directory_name(record *syscall.Dirent, record_bytes int) (name string) {
 	start := int(unsafe.Offsetof(record.Name))
 	invariant.Always(record_bytes > start, "A directory record holds at least one name byte.")
@@ -178,9 +178,9 @@ func file_directory_name(record *syscall.Dirent, record_bytes int) (name string)
 	return string(bytes)
 }
 
-// Reports whether a directory record names a directory. The kernel already wrote the kind into
-// the record, so the common case costs no syscall at all. Only a filesystem that leaves the
-// field empty — XFS made with ftype=0, or NFS without READDIRPLUS — costs one fstatat.
+// Report whether directory record name directory. Kernel already wrote kind into record, thus
+// common case cost no syscall at all. Only filesystem that leave field empty — XFS made with
+// ftype=0, or NFS without READDIRPLUS — cost one fstatat.
 func file_directory_kind(
 	descriptor int, record *syscall.Dirent, name string,
 ) (directory_bit bool, err error) {
@@ -190,8 +190,8 @@ func file_directory_kind(
 	return record.Type == syscall.DT_DIR, nil
 }
 
-// Reports whether name, resolved against the open directory, is itself a directory. Go exports
-// no Fstatat on this platform, so the call goes by trap number the way Open_At and Mkdir_At do.
+// Report whether name, resolved against open directory, is itself directory. Go export no
+// Fstatat on this platform, thus call go by trap number, same way Open_At and Mkdir_At do.
 func file_status_at(directory int, name string) (directory_bit bool, err error) {
 	bytes, convert_err := syscall.BytePtrFromString(name)
 	if convert_err != nil {
@@ -208,9 +208,9 @@ func file_status_at(directory int, name string) (directory_bit bool, err error) 
 	return metadata.Mode&syscall.S_IFMT == syscall.S_IFDIR, nil
 }
 
-// Reads up to len(buffer) bytes from a pipe. A pipe is not seekable, so this is plain read
-// rather than the pread read_at uses; again is true when the writer has produced nothing yet,
-// and a zero count with no error is the writer's end closing.
+// Read up to len(buffer) bytes from pipe. Pipe is not seekable, thus this is plain read, not
+// pread read_at use. again is true when writer produced nothing yet, and zero count with no
+// error is writer end closing.
 func pipe_read(descriptor int, buffer []byte) (count int, again bool, err error) {
 	count, err = syscall.Read(descriptor, buffer)
 	if err != nil {
@@ -219,8 +219,8 @@ func pipe_read(descriptor int, buffer []byte) (count int, again bool, err error)
 	return count, false, nil
 }
 
-// Writes up to len(buffer) bytes to a pipe; again is true when the pipe buffer is full and the
-// operation must stay armed.
+// Write up to len(buffer) bytes to pipe. again is true when pipe buffer is full and operation
+// must stay armed.
 func pipe_write(descriptor int, buffer []byte) (count int, again bool, err error) {
 	count, err = syscall.Write(descriptor, buffer)
 	if err != nil {
@@ -229,10 +229,10 @@ func pipe_write(descriptor int, buffer []byte) (count int, again bool, err error
 	return count, false, nil
 }
 
-// Creates a pipe and returns its read and write ends. Neither end is configured: the caller
-// keeps one end and hands the other to the child, and only the kept end takes close-on-exec and
-// non-blocking mode. The two ends are separate open file descriptions, so configuring one does
-// not change what the child sees on the other.
+// Make pipe and return its read and write ends. Neither end is configured: caller keep one end
+// and hand other to child, and only kept end take close-on-exec and non-blocking mode. Two ends
+// are separate open file descriptions, thus config of one does not change what child see on
+// other.
 func pipe_open() (read int, write int, err error) {
 	descriptors := [PIPE_ENDS]int{}
 	if pipe_err := syscall.Pipe(descriptors[:]); pipe_err != nil {
@@ -241,8 +241,8 @@ func pipe_open() (read int, write int, err error) {
 	return descriptors[0], descriptors[1], nil
 }
 
-// Configures the end of a pipe the loop keeps: close-on-exec so a later spawn does not inherit
-// it, and non-blocking so the loop's eager attempt reports EAGAIN instead of waiting.
+// Config end of pipe loop keep: close-on-exec, thus later spawn does not inherit it, and
+// non-blocking, thus loop eager attempt report EAGAIN instead of wait.
 func pipe_retain(descriptor int) (err error) {
 	if flag_err := descriptor_close_on_exec(descriptor); flag_err != nil {
 		return flag_err
@@ -250,7 +250,7 @@ func pipe_retain(descriptor int) (err error) {
 	return syscall.SetNonblock(descriptor, true)
 }
 
-// Sets FD_CLOEXEC on descriptor. Both platforms carry SYS_FCNTL, so one raw call covers them.
+// Set FD_CLOEXEC on descriptor. Both platform carry SYS_FCNTL, thus one raw call cover them.
 func descriptor_close_on_exec(descriptor int) (err error) {
 	_, _, errno := syscall.Syscall(
 		syscall.SYS_FCNTL, uintptr(descriptor), uintptr(syscall.F_SETFD),
@@ -262,10 +262,10 @@ func descriptor_close_on_exec(descriptor int) (err error) {
 	return nil
 }
 
-// Resolves an executable name the way a shell does, because syscall.StartProcess requires a
-// path while callers pass bare names such as sh or fc-cache. A name holding a slash is used as
-// given. This mirrors os/exec's own fallback: reject a directory, then accept any execute bit,
-// and let StartProcess report EACCES when the mode bits promise more than the file allows.
+// Resolve executable name same way shell do, because syscall.StartProcess require path while
+// caller pass bare name such as sh or fc-cache. Name holding slash is used as given. This
+// mirror os/exec own fallback: reject directory, then accept any execute bit, and let
+// StartProcess report EACCES when mode bits promise more than file allow.
 func executable_path(name string, search string) (path string, err error) {
 	if name == "" {
 		return "", syscall.ENOENT
@@ -285,7 +285,7 @@ func executable_path(name string, search string) (path string, err error) {
 	return "", syscall.ENOENT
 }
 
-// Reports whether path names a regular file carrying an execute bit.
+// Report whether path name regular file carrying execute bit.
 func executable_check(path string) (err error) {
 	metadata := syscall.Stat_t{}
 	if stat_err := syscall.Stat(path, &metadata); stat_err != nil {
@@ -300,8 +300,8 @@ func executable_check(path string) (err error) {
 	return nil
 }
 
-// Reaps an exited child, returning its exit code and resource accounting. WNOHANG returns at
-// once because the caller runs this only after the kernel reported the exit.
+// Reap exited child. Return its exit code and resource accounting. WNOHANG return at once,
+// because caller run this only after kernel reported exit.
 func process_reap(identifier int) (exit int, usage sysos.Process_Usage, err error) {
 	status := syscall.WaitStatus(0)
 	rusage := syscall.Rusage{}
@@ -328,8 +328,8 @@ func process_reap(identifier int) (exit int, usage sysos.Process_Usage, err erro
 	return process_exit_code(status), usage, nil
 }
 
-// Reports the portable exit code: a signalled child reports 128 plus its signal, matching the
-// convention every shell uses and the value os.ProcessState.ExitCode reported before.
+// Report portable exit code: signalled child report 128 plus its signal, same as convention
+// every shell use, and value os.ProcessState.ExitCode reported before.
 func process_exit_code(status syscall.WaitStatus) (exit int) {
 	if status.Signaled() {
 		return 128 + int(status.Signal())
@@ -337,8 +337,8 @@ func process_exit_code(status syscall.WaitStatus) (exit int) {
 	return status.ExitStatus()
 }
 
-// Reports the remote IP address of descriptor via getpeername; a non-IP peer yields the
-// empty address with no error.
+// Report remote IP address of descriptor through getpeername. Non-IP peer yield empty address
+// with no error.
 func socket_peer_address(descriptor int) (address string, err error) {
 	storage := [SOCKET_ADDRESS_BYTES]byte{}
 	size := uint32(SOCKET_ADDRESS_BYTES)
@@ -350,21 +350,21 @@ func socket_peer_address(descriptor int) (address string, err error) {
 		return "", errno
 	}
 	peer, decode_err := socket_address_decode(&storage, size)
-	// A peer that is neither IPv4 nor IPv6 is not an error here, only an absent address.
+	// Peer that is neither IPv4 nor IPv6 is not error here, only absent address.
 	if decode_err == syscall.EAFNOSUPPORT {
 		return "", nil
 	}
 	if decode_err != nil {
 		return "", decode_err
 	}
-	if peer.Family == io.FAMILY_IPV4 {
-		return net.IP(peer.IP[:io.IPV4_ADDRESS_BYTES]).String(), nil
+	if peer.Family == nbio.FAMILY_IPV4 {
+		return net.IP(peer.IP[:nbio.IPV4_ADDRESS_BYTES]).String(), nil
 	}
 	return net.IP(peer.IP[:]).String(), nil
 }
 
-// Reports whether err is the non-blocking "try again" signal that keeps an operation
-// armed rather than completing it.
+// Report whether err is non-blocking "try again" signal that keep operation armed, not complete
+// it.
 func socket_again(err error) (again bool) {
 	if err == syscall.EAGAIN {
 		return true
@@ -372,30 +372,29 @@ func socket_again(err error) (again bool) {
 	return err == syscall.EWOULDBLOCK
 }
 
-// The wire size of a sockaddr_in, which bounds the bytes the kernel reads for an IPv4 address.
+// Wire size of sockaddr_in, which bound bytes kernel read for IPv4 address.
 const SOCKET_ADDRESS_IPV4_BYTES = 16
 
-// The wire size of a sockaddr_in6, which is also the full storage size a decode may receive.
+// Wire size of sockaddr_in6, which is also full storage size decode may receive.
 const SOCKET_ADDRESS_IPV6_BYTES = 28
 
-// Writes address into storage as a sockaddr and returns the byte count the kernel reads. The
-// kernel takes exactly these bytes, so this replaces syscall.Sockaddr: that interface costs an
-// allocation and a type switch to build a struct the wrapper converts straight back to this
-// same layout. The port and the address bytes sit at the same offsets on both platforms, so
-// only the two header bytes need the platform.
+// Write address into storage as sockaddr and return byte count kernel read. Kernel take exactly
+// these bytes, thus this replace syscall.Sockaddr: that interface cost allocation and type
+// switch to build struct wrapper convert straight back to this same layout. Port and address
+// bytes sit at same offsets on both platform, thus only two header bytes need platform.
 func socket_address_encode(
-	address io.Address, storage *[SOCKET_ADDRESS_BYTES]byte,
+	address nbio.Address, storage *[SOCKET_ADDRESS_BYTES]byte,
 ) (size uint32, err error) {
 	for index := range storage {
 		storage[index] = 0
 	}
-	if address.Family == io.FAMILY_IPV4 {
+	if address.Family == nbio.FAMILY_IPV4 {
 		platform_address_header(storage, syscall.AF_INET, SOCKET_ADDRESS_IPV4_BYTES)
 		binary.BigEndian.PutUint16(storage[2:4], address.Port)
-		copy(storage[4:8], address.IP[:io.IPV4_ADDRESS_BYTES])
+		copy(storage[4:8], address.IP[:nbio.IPV4_ADDRESS_BYTES])
 		return SOCKET_ADDRESS_IPV4_BYTES, nil
 	}
-	if address.Family == io.FAMILY_IPV6 {
+	if address.Family == nbio.FAMILY_IPV6 {
 		platform_address_header(storage, syscall.AF_INET6, SOCKET_ADDRESS_IPV6_BYTES)
 		binary.BigEndian.PutUint16(storage[2:4], address.Port)
 		copy(storage[8:24], address.IP[:])
@@ -404,46 +403,46 @@ func socket_address_encode(
 	return 0, syscall.EAFNOSUPPORT
 }
 
-// Reads the sockaddr the kernel wrote into storage. size is what the kernel reported it filled,
-// so a truncated answer fails rather than decodes whatever the zeroed remainder happens to say.
+// Read sockaddr kernel wrote into storage. size is what kernel reported it filled, thus
+// truncated answer fail, not decode whatever zeroed remainder happen to say.
 func socket_address_decode(
 	storage *[SOCKET_ADDRESS_BYTES]byte, size uint32,
-) (address io.Address, err error) {
+) (address nbio.Address, err error) {
 	family := platform_address_family(storage)
 	port := binary.BigEndian.Uint16(storage[2:4])
 	if family == syscall.AF_INET {
 		if size < SOCKET_ADDRESS_IPV4_BYTES {
-			return io.Address{}, syscall.EINVAL
+			return nbio.Address{}, syscall.EINVAL
 		}
-		ip := [io.IPV4_ADDRESS_BYTES]byte{}
+		ip := [nbio.IPV4_ADDRESS_BYTES]byte{}
 		copy(ip[:], storage[4:8])
-		return io.Address_I_Pv4(ip, port), nil
+		return nbio.Address_IPV4(ip, port), nil
 	}
 	if family == syscall.AF_INET6 {
 		if size < SOCKET_ADDRESS_IPV6_BYTES {
-			return io.Address{}, syscall.EINVAL
+			return nbio.Address{}, syscall.EINVAL
 		}
-		ip := [io.IPV6_ADDRESS_BYTES]byte{}
+		ip := [nbio.IPV6_ADDRESS_BYTES]byte{}
 		copy(ip[:], storage[8:24])
-		return io.Address_I_Pv6(ip, port), nil
+		return nbio.Address_IPV6(ip, port), nil
 	}
-	return io.Address{}, syscall.EAFNOSUPPORT
+	return nbio.Address{}, syscall.EAFNOSUPPORT
 }
 
-// Maps the backend-independent family to the platform's socket family constant. Each platform's
-// syscall package carries its own value, so one function serves both.
-func socket_family(family io.Address_Family) (system int) {
-	if family == io.FAMILY_IPV6 {
+// Map backend-independent family to platform socket family constant. Each platform syscall
+// package carry its own value, thus one function serve both.
+func socket_family(family nbio.Address_Family) (system int) {
+	if family == nbio.FAMILY_IPV6 {
 		return syscall.AF_INET6
 	}
 	return syscall.AF_INET
 }
 
-// Resolve turns a host into the IPv4 literal socket_address_encode requires: an IP literal passes
-// through unchanged, a name is looked up and its first IPv4 returned. The encode takes only an
-// explicit family so no lookup runs on the dial path — a caller resolves here first and hands
-// Connect an address, never a name. It is
-// the prod Resolver injected into the shared http client, failing closed when the host has no IPv4.
+// Resolve turn host into IPv4 literal socket_address_encode require: IP literal pass through
+// unchanged, name is looked up and its first IPv4 returned. Encode take only explicit family,
+// thus no lookup run on dial path — caller resolve here first and hand Connect address, never
+// name. It is prod Resolver injected into shared http client, failing closed when host has no
+// IPv4.
 func Resolve(host string) (address string, err error) {
 	if net.ParseIP(host) != nil {
 		return host, nil
@@ -460,8 +459,8 @@ func Resolve(host string) (address string, err error) {
 	return "", errors.New("io: no IPv4 address for host " + host)
 }
 
-// Accepts one pending connection on listener, returning a non-blocking connected
-// descriptor; again is true when none is ready yet.
+// Accept one pending connection on listener. Return non-blocking connected descriptor. again is
+// true when none is ready yet.
 func socket_accept(listener int) (descriptor int, again bool, err error) {
 	descriptor, _, err = syscall.Accept(listener)
 	if err != nil {
@@ -480,15 +479,15 @@ func socket_accept(listener int) (descriptor int, again bool, err error) {
 	return descriptor, false, nil
 }
 
-// Socket_Connect_Start_Input keeps the caller-owned descriptor and typed address together.
+// Socket_Connect_Start_Input keep caller-owned descriptor and typed address together.
 type Socket_Connect_Start_Input struct {
-	// Descriptor preserves caller ownership during the connect syscall.
+	// Descriptor keep caller ownership during connect syscall.
 	Descriptor int
-	// Address prevents a DNS name from entering the syscall boundary.
-	Address io.Address
+	// Address stop DNS name from entry into syscall boundary.
+	Address nbio.Address
 }
 
-// Begins connecting a caller-owned descriptor; an in-progress handshake completes later.
+// Begin connect of caller-owned descriptor. In-progress handshake complete later.
 func socket_connect_start(input *Socket_Connect_Start_Input) (err error) {
 	connect_err := socket_connect_call(input.Descriptor, input.Address)
 	if connect_err == nil {
@@ -500,9 +499,9 @@ func socket_connect_start(input *Socket_Connect_Start_Input) (err error) {
 	return socket_connect_translate(connect_err)
 }
 
-// Issues one connect. Every socket here is non-blocking, so the call returns EINPROGRESS at
-// once when the handshake has further to go and never waits, which is what lets it go raw.
-func socket_connect_call(descriptor int, address io.Address) (err error) {
+// Issue one connect. Every socket here is non-blocking, thus call return EINPROGRESS at once
+// when handshake has further to go, and never wait. That is what let it go raw.
+func socket_connect_call(descriptor int, address nbio.Address) (err error) {
 	storage := [SOCKET_ADDRESS_BYTES]byte{}
 	size, encode_err := socket_address_encode(address, &storage)
 	if encode_err != nil {
@@ -518,8 +517,7 @@ func socket_connect_call(descriptor int, address io.Address) (err error) {
 	return nil
 }
 
-// Returns the pending error on descriptor after a connect completes, or nil when the
-// handshake succeeded.
+// Return pending error on descriptor after connect complete, or nil when handshake succeeded.
 func socket_connect_error(descriptor int) (err error) {
 	value, get_err := syscall.GetsockoptInt(descriptor, syscall.SOL_SOCKET, syscall.SO_ERROR)
 	if get_err != nil {
@@ -531,47 +529,213 @@ func socket_connect_error(descriptor int) (err error) {
 	return nil
 }
 
-// Sets one portable socket option. It is the setsockopt primitive: every caller-selected socket
-// setting arrives here, and the platform-mandatory ones stay in socket_open.
-func socket_option_set(descriptor int, option io.Socket_Option, value int) (err error) {
-	// A platform answers first, because one portable option can need a different name or a
-	// privileged variant there. The shared table covers what both platforms spell the same.
-	handled, platform_err := platform_option_set(descriptor, option, value)
-	if handled {
-		return platform_err
+// A distinct primitive per transport prevents a TCP profile from reaching a UDP descriptor.
+func socket_open_tcp(
+	family nbio.Address_Family, options nbio.TCP_Options,
+) (descriptor int, err error) {
+	descriptor, err = socket_open_tcp_raw(family)
+	if err != nil {
+		return -1, err
 	}
-	level, name, known := socket_option_name(option)
-	if !known {
+	option_err := socket_tcp_options_set(descriptor, options)
+	if option_err != nil {
+		syscall.Close(descriptor)
+		return -1, option_err
+	}
+	return descriptor, nil
+}
+
+// A distinct primitive per transport prevents a UDP profile from omitting its generic limits.
+func socket_open_udp(
+	family nbio.Address_Family, options nbio.UDP_Options,
+) (descriptor int, err error) {
+	descriptor, err = socket_open_udp_raw(family)
+	if err != nil {
+		return -1, err
+	}
+	option_err := socket_udp_options_set(descriptor, options)
+	if option_err != nil {
+		syscall.Close(descriptor)
+		return -1, option_err
+	}
+	return descriptor, nil
+}
+
+// Apply all TCP limits before ownership can leave this package.
+func socket_tcp_options_set(descriptor int, options nbio.TCP_Options) (err error) {
+	generic_err := socket_options_set(
+		descriptor,
+		options.Receive_Buffer_Bytes,
+		options.Send_Buffer_Bytes,
+		options.Receive_Low_Water_Bytes,
+		options.Linger_Timeout,
+	)
+	if generic_err != nil {
+		return generic_err
+	}
+	if options.Maximum_Segment_Bytes > nbio.TCP_MAXIMUM_SEGMENT_BYTES_MAXIMUM {
 		return syscall.EINVAL
 	}
-	return syscall.SetsockoptInt(descriptor, level, name, value)
-}
-
-// Maps a portable socket option to its level and name.
-func socket_option_name(option io.Socket_Option) (level int, name int, known bool) {
-	switch option {
-	case io.SOCKET_OPTION_RECEIVE_BUFFER:
-		return syscall.SOL_SOCKET, syscall.SO_RCVBUF, true
-	case io.SOCKET_OPTION_SEND_BUFFER:
-		return syscall.SOL_SOCKET, syscall.SO_SNDBUF, true
-	case io.SOCKET_OPTION_KEEPALIVE:
-		return syscall.SOL_SOCKET, syscall.SO_KEEPALIVE, true
-	case io.SOCKET_OPTION_REUSE_ADDRESS:
-		return syscall.SOL_SOCKET, syscall.SO_REUSEADDR, true
-	case io.SOCKET_OPTION_NO_DELAY:
-		return syscall.IPPROTO_TCP, syscall.TCP_NODELAY, true
+	if options.Maximum_Segment_Bytes == 0 {
+		return syscall.EINVAL
 	}
-	return 0, 0, false
+	maximum_segment := platform_tcp_maximum_segment_clamp(options.Maximum_Segment_Bytes)
+	maximum_segment_err := syscall.SetsockoptInt(
+		descriptor, syscall.IPPROTO_TCP, syscall.TCP_MAXSEG, int(maximum_segment))
+	if maximum_segment_err != nil {
+		return fmt.Errorf("set TCP maximum segment: %w", maximum_segment_err)
+	}
+	if !socket_option_integer_valid(options.Not_Sent_Low_Water_Bytes) {
+		return syscall.EINVAL
+	}
+	not_sent_err := syscall.SetsockoptInt(
+		descriptor, syscall.IPPROTO_TCP, SOCKET_TCP_NOT_SENT_LOW_WATER,
+		int(options.Not_Sent_Low_Water_Bytes))
+	if not_sent_err != nil {
+		return fmt.Errorf("set TCP not-sent low water: %w", not_sent_err)
+	}
+	keepalive_err := socket_keepalive_set(descriptor, options.Keepalive)
+	if keepalive_err != nil {
+		return keepalive_err
+	}
+	if !options.No_Delay {
+		return nil
+	}
+	return syscall.SetsockoptInt(
+		descriptor, syscall.IPPROTO_TCP, syscall.TCP_NODELAY, 1)
 }
 
-// Gives a socket its local address, the bind primitive. bind only records the address in the
-// kernel, so it cannot block and the raw call skips the scheduler handoff that syscall.Syscall
-// performs for a call that can.
-func socket_bind(descriptor int, address io.Address) (err error) {
+// Apply all UDP limits before ownership can leave this package.
+func socket_udp_options_set(descriptor int, options nbio.UDP_Options) (err error) {
+	return socket_options_set(
+		descriptor,
+		options.Receive_Buffer_Bytes,
+		options.Send_Buffer_Bytes,
+		options.Receive_Low_Water_Bytes,
+		options.Linger_Timeout,
+	)
+}
+
+// Apply all generic limits before ownership can leave this package.
+func socket_options_set(
+	descriptor int,
+	receive_buffer_bytes uint32,
+	send_buffer_bytes uint32,
+	receive_low_water_bytes uint32,
+	linger_timeout time.Duration,
+) (err error) {
+	if !socket_option_integer_valid(receive_buffer_bytes) {
+		return syscall.EINVAL
+	}
+	receive_buffer_err := platform_receive_buffer_set(descriptor, int(receive_buffer_bytes))
+	if receive_buffer_err != nil {
+		return fmt.Errorf("set socket receive buffer: %w", receive_buffer_err)
+	}
+	if !socket_option_integer_valid(send_buffer_bytes) {
+		return syscall.EINVAL
+	}
+	send_buffer_err := platform_send_buffer_set(descriptor, int(send_buffer_bytes))
+	if send_buffer_err != nil {
+		return fmt.Errorf("set socket send buffer: %w", send_buffer_err)
+	}
+	if !socket_option_integer_valid(receive_low_water_bytes) {
+		return syscall.EINVAL
+	}
+	receive_low_water_err := syscall.SetsockoptInt(
+		descriptor, syscall.SOL_SOCKET, syscall.SO_RCVLOWAT,
+		int(receive_low_water_bytes))
+	if receive_low_water_err != nil {
+		return fmt.Errorf("set socket receive low water: %w", receive_low_water_err)
+	}
+	if !socket_linger_valid(linger_timeout) {
+		return syscall.EINVAL
+	}
+	linger := syscall.Linger{
+		Onoff: 1, Linger: int32(linger_timeout / time.SECOND),
+	}
+	linger_err := syscall.SetsockoptLinger(
+		descriptor, syscall.SOL_SOCKET, syscall.SO_LINGER, &linger)
+	if linger_err != nil {
+		return fmt.Errorf("set socket linger: %w", linger_err)
+	}
+	return nil
+}
+
+// The syscall takes a positive signed integer, thus zero cannot enable a limit.
+func socket_option_integer_valid(value uint32) (valid bool) {
+	return value > 0 && value <= nbio.SOCKET_OPTION_INTEGER_MAXIMUM
+}
+
+// Linger has a signed whole-second field on both supported kernels.
+func socket_linger_valid(value time.Duration) (valid bool) {
+	if value <= 0 {
+		return false
+	}
+	if value%time.SECOND != 0 {
+		return false
+	}
+	return value/time.SECOND <= time.Duration(nbio.SOCKET_OPTION_INTEGER_MAXIMUM)
+}
+
+// Direct ownership requires all keepalive limits before this function enables the option.
+func socket_keepalive_set(descriptor int, keepalive nbio.TCP_Keepalive) (err error) {
+	if !socket_keepalive_duration_valid(keepalive.Idle) {
+		return syscall.EINVAL
+	}
+	if !socket_keepalive_duration_valid(keepalive.Interval) {
+		return syscall.EINVAL
+	}
+	if keepalive.Probe_Count == 0 {
+		return syscall.EINVAL
+	}
+	if keepalive.Probe_Count > nbio.TCP_KEEPALIVE_PROBE_COUNT_MAXIMUM {
+		return syscall.EINVAL
+	}
+	enable_err := syscall.SetsockoptInt(
+		descriptor, syscall.SOL_SOCKET, syscall.SO_KEEPALIVE, 1)
+	if enable_err != nil {
+		return fmt.Errorf("enable TCP keepalive: %w", enable_err)
+	}
+	idle_err := platform_keepalive_idle_set(
+		descriptor, int(keepalive.Idle/time.SECOND))
+	if idle_err != nil {
+		return fmt.Errorf("set TCP keepalive idle: %w", idle_err)
+	}
+	interval_err := platform_keepalive_interval_set(
+		descriptor, int(keepalive.Interval/time.SECOND))
+	if interval_err != nil {
+		return fmt.Errorf("set TCP keepalive interval: %w", interval_err)
+	}
+	count_err := platform_keepalive_count_set(descriptor, int(keepalive.Probe_Count))
+	if count_err != nil {
+		return fmt.Errorf("set TCP keepalive probe count: %w", count_err)
+	}
+	return nil
+}
+
+// The platform setters take signed whole seconds, so no rounding or sign change is permitted.
+func socket_keepalive_duration_valid(value time.Duration) (valid bool) {
+	if value <= 0 {
+		return false
+	}
+	if value%time.SECOND != 0 {
+		return false
+	}
+	return value/time.SECOND <= time.Duration(nbio.SOCKET_OPTION_INTEGER_MAXIMUM)
+}
+
+// Give socket its local address. Address reuse must precede bind, thus every bound socket has
+// the same restart behavior and no caller can omit the option.
+func socket_bind(descriptor int, address nbio.Address) (err error) {
 	storage := [SOCKET_ADDRESS_BYTES]byte{}
 	size, encode_err := socket_address_encode(address, &storage)
 	if encode_err != nil {
 		return encode_err
+	}
+	reuse_err := syscall.SetsockoptInt(
+		descriptor, syscall.SOL_SOCKET, syscall.SO_REUSEADDR, 1)
+	if reuse_err != nil {
+		return reuse_err
 	}
 	_, _, errno := syscall.RawSyscall(
 		syscall.SYS_BIND, uintptr(descriptor),
@@ -583,7 +747,7 @@ func socket_bind(descriptor int, address io.Address) (err error) {
 	return nil
 }
 
-// Marks a bound socket as accepting, the listen primitive.
+// Mark bound socket accepting, listen primitive.
 func socket_listen_mark(descriptor int, backlog uint32) (err error) {
 	if backlog == 0 {
 		return syscall.EINVAL
@@ -591,9 +755,9 @@ func socket_listen_mark(descriptor int, backlog uint32) (err error) {
 	return syscall.Listen(descriptor, int(backlog))
 }
 
-// Reports a socket's own address, the getsockname primitive. The call only reads kernel state,
-// so it cannot block and goes raw.
-func socket_name(descriptor int) (address io.Address, err error) {
+// Report socket own address, getsockname primitive. Call only read kernel state, thus it cannot
+// block and go raw.
+func socket_name(descriptor int) (address nbio.Address, err error) {
 	storage := [SOCKET_ADDRESS_BYTES]byte{}
 	size := uint32(SOCKET_ADDRESS_BYTES)
 	_, _, errno := syscall.RawSyscall(
@@ -601,31 +765,31 @@ func socket_name(descriptor int) (address io.Address, err error) {
 		uintptr(unsafe.Pointer(&storage[0])), uintptr(unsafe.Pointer(&size)),
 	)
 	if errno != 0 {
-		return io.Address{}, errno
+		return nbio.Address{}, errno
 	}
 	return socket_address_decode(&storage, size)
 }
 
-// Translates a filesystem errno to the backend-independent sentinel. Darwin completes a
-// filesystem operation in its eager submit and never reaches the Linux result translation, so
-// the mapping lives here where both platforms use it.
+// Translate filesystem errno to backend-independent sentinel. Darwin complete filesystem
+// operation in its eager submit and never reach Linux result translation, thus mapping live here
+// where both platform use it.
 func file_translate(err error) (translated error) {
 	if err == syscall.EEXIST {
-		return io.Path_Exists
+		return nbio.Path_Exists
 	}
 	return err
 }
 
-// Translates platform-specific connect refusal to the backend-independent sentinel.
+// Translate platform-specific connect refusal to backend-independent sentinel.
 func socket_connect_translate(err error) (translated error) {
 	if err == syscall.ECONNREFUSED {
-		return io.Connection_Refused
+		return nbio.Connection_Refused
 	}
 	return err
 }
 
-// Reads up to len(buffer) bytes from descriptor; again is true when no data is ready
-// yet, and a zero count with no error marks a closed peer.
+// Read up to len(buffer) bytes from descriptor. again is true when no data is ready yet, and
+// zero count with no error mark closed peer.
 func socket_receive(descriptor int, buffer []byte) (count int, again bool, err error) {
 	count, err = syscall.Read(descriptor, buffer)
 	if err != nil {
@@ -634,8 +798,8 @@ func socket_receive(descriptor int, buffer []byte) (count int, again bool, err e
 	return count, false, nil
 }
 
-// Writes up to len(buffer) bytes to descriptor; again is true when the kernel buffer
-// is full and the operation must stay armed.
+// Write up to len(buffer) bytes to descriptor. again is true when kernel buffer is full and
+// operation must stay armed.
 func socket_send(descriptor int, buffer []byte) (count int, again bool, err error) {
 	count, err = syscall.Write(descriptor, buffer)
 	if err != nil {
@@ -644,43 +808,31 @@ func socket_send(descriptor int, buffer []byte) (count int, again bool, err erro
 	return count, false, nil
 }
 
-// Attempts one synchronous send, returning sent false for would-block or another send failure.
-func socket_send_now(descriptor int, buffer []byte) (count int, sent bool) {
-	count, again, err := socket_send(descriptor, buffer)
-	if again {
-		return 0, false
-	}
-	if err != nil {
-		return 0, false
-	}
-	return count, true
-}
-
-// Shuts down one or both connected-socket directions synchronously.
-func socket_shutdown(descriptor int, how io.Shutdown_How) (err error) {
+// Shut down one or both connected-socket direction, synchronously.
+func socket_shutdown(descriptor int, how nbio.Shutdown_How) (err error) {
 	system_how := syscall.SHUT_RD
-	if how == io.SHUTDOWN_SEND {
+	if how == nbio.SHUTDOWN_SEND {
 		system_how = syscall.SHUT_WR
 	}
-	if how == io.SHUTDOWN_BOTH {
+	if how == nbio.SHUTDOWN_BOTH {
 		system_how = syscall.SHUT_RDWR
 	}
 	err = syscall.Shutdown(descriptor, system_how)
 	if err == syscall.ENOTCONN {
-		return io.Socket_Not_Connected
+		return nbio.Socket_Not_Connected
 	}
 	return socket_send_translate(err)
 }
 
-// Translates send-side broken-pipe errors to the portable result.
+// Translate send-side broken-pipe error to portable result.
 func socket_send_translate(err error) (translated error) {
 	if err == syscall.EPIPE {
-		return io.Broken_Pipe
+		return nbio.Broken_Pipe
 	}
 	return err
 }
 
-// Releases descriptor.
+// Release descriptor.
 func socket_close(descriptor int) (err error) {
 	return syscall.Close(descriptor)
 }

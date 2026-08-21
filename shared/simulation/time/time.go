@@ -244,8 +244,8 @@ func Skew(kind Skew_Kind, a Duration, b Tick_Count) (offset Offset) {
 	}
 }
 
-// Timeout_Callback take status, no other result. Timeout, connect, close each use it.
-type Timeout_Callback func(completion *Completion, err error)
+// Callback receives the caller-owned completion after the backend retires its operation.
+type Callback func(completion *Completion)
 
 // Retired_Twice report backend retire one completion more than one time. Derived function
 // deliver it, never hide it. Caller own completion. Caller must learn lifecycle broke.
@@ -257,8 +257,12 @@ var Deadline_Exceeded = errors.New("time: deadline exceeded")
 // Completion: caller-owned storage for one in-flight operation. Caller allocate it, thus loop
 // never allocate. Caller keep it alive until callback fire.
 type Completion struct {
-	// Callback: closure backend run on completion. Close over typed callback and computed
-	// result.
+	// Data is an opaque int whose submitting operation defines. A transfer stores its byte
+	// count, while an open or accept stores its descriptor.
+	Data int
+	// Error is nil on success and otherwise stores the operation failure.
+	Error error
+	// Callback closes over backend retirement work that must run before the public callback.
 	Callback func()
 	// Ready_At: uptime this operation complete at. Sit on monotonic timeline. Realtime jump
 	// must not retire operation early, or hold it late.
@@ -293,15 +297,15 @@ type Timeline struct {
 	// Submit arm completion to retire one delay from now, in Ready_At order. Every other
 	// backend surface schedule through it: read, socket accept, spawn. One queue thus hold
 	// full order.
-	Submit func(completion *Completion, delay Duration, callback func())
+	Submit func(completion *Completion, delay Duration, callback Callback)
 	// Timeout fire callback after duration on clock, off same queue every other completion
 	// use. Duration must be positive.
-	Timeout func(completion *Completion, callback Timeout_Callback, duration Duration)
+	Timeout func(completion *Completion, duration Duration, callback Callback)
 	// Open_Event make platform Event primitive.
 	Open_Event func() (event Event, err error)
 	// Event_Listen arm completion for one Event notification.
 	Event_Listen func(
-		event Event, completion *Completion, callback func(completion *Completion),
+		event Event, completion *Completion, callback Callback,
 	)
 	// Event_Trigger make armed Event completion ready. Only operation safe to call from other
 	// thread.
@@ -357,7 +361,7 @@ type Driver struct {
 	// ROOT ONLY: never inject it into library, and never inject func value of its shape.
 	// Library that write done predicate and timeout is driving loop.
 	Run_Until func(
-		done func() (finished bool), timeout Duration,
+		timeout Duration, done func() (finished bool),
 	) (completed bool, err error)
 	// Deinit release kernel resources of backend, after every submitted operation join.
 	Deinit func()
@@ -435,13 +439,13 @@ func virtual_timeline_to_clock(state *Virtual_Timeline) (clock Clock) {
 // Wire control plane onto vtable every backend and every caller hold.
 func virtual_timeline_to_timeline(state *Virtual_Timeline) (loop Timeline) {
 	return Timeline{
-		Submit: func(completion *Completion, delay Duration, callback func()) {
+		Submit: func(completion *Completion, delay Duration, callback Callback) {
 			virtual_submit(state, completion, delay, callback)
 		},
 		Timeout: func(
-			completion *Completion, callback Timeout_Callback, duration Duration,
+			completion *Completion, duration Duration, callback Callback,
 		) {
-			virtual_timeout(state, completion, callback, duration)
+			virtual_timeout(state, completion, duration, callback)
 		},
 		Open_Event: func() (event Event, err error) {
 			state.Next_Event++
@@ -450,7 +454,7 @@ func virtual_timeline_to_timeline(state *Virtual_Timeline) (loop Timeline) {
 			return handle, nil
 		},
 		Event_Listen: func(
-			event Event, completion *Completion, callback func(completion *Completion),
+			event Event, completion *Completion, callback Callback,
 		) {
 			virtual_event_listen(state, event, completion, callback)
 		},
@@ -471,22 +475,22 @@ func virtual_timeline_to_timeline(state *Virtual_Timeline) (loop Timeline) {
 // Arm one simulated timer. Live beside vtable, not inside it: vtable literal is map of
 // control plane, and body there hide that shape.
 func virtual_timeout(
-	state *Virtual_Timeline, completion *Completion, callback Timeout_Callback,
-	duration Duration,
+	state *Virtual_Timeline, completion *Completion, duration Duration,
+	callback Callback,
 ) {
 	invariant.Always(duration > 0, "A timeout duration is positive.")
-	virtual_submit(state, completion, duration, func() { callback(completion, nil) })
+	virtual_submit(state, completion, duration, callback)
 }
 
 // Arm event listener. Deliver at once when trigger already arrive.
 func virtual_event_listen(
 	state *Virtual_Timeline, event Event, completion *Completion,
-	callback func(completion *Completion),
+	callback Callback,
 ) {
 	entry := state.Events[event]
 	invariant.Always(entry != nil, "A listened event was opened by this loop.")
 	invariant.Always(!entry.Armed, "An event has at most one armed listener.")
-	virtual_arm(state, completion, func() {
+	virtual_arm(state, completion, func(completion *Completion) {
 		entry.Armed = false
 		delete(state.Listeners, event)
 		callback(completion)
@@ -521,7 +525,7 @@ func virtual_now(state *Virtual_Timeline) (now Monotonic_Moment) {
 
 // Schedule completion to fire at now plus delay. Insert it in Ready_At order.
 func virtual_submit(
-	state *Virtual_Timeline, completion *Completion, delay Duration, callback func(),
+	state *Virtual_Timeline, completion *Completion, delay Duration, callback Callback,
 ) {
 	virtual_arm(state, completion, callback)
 	completion.Ready_At = virtual_now(state) + Monotonic_Moment(delay)
@@ -531,14 +535,16 @@ func virtual_submit(
 // Arm completion, but never put it on ready-time queue. Event listener use this. Assert
 // completion is own original, not by-value copy. Then move it along lifecycle machine.
 // Completion armed while armed panic on armed-to-armed edge.
-func virtual_arm(state *Virtual_Timeline, completion *Completion, callback func()) {
+func virtual_arm(state *Virtual_Timeline, completion *Completion, callback Callback) {
 	original := completion.Self == nil || completion.Self == completion
 	invariant.Always(original,
 		"A submitted completion is its own original, never a by-value copy.")
 	completion.Self = completion
 	invariant.Always(!completion.Armed, "An armed completion is never armed a second time.")
+	completion.Data = 0
+	completion.Error = nil
 	completion.Armed = true
-	completion.Callback = callback
+	completion.Callback = func() { callback(completion) }
 }
 
 // Put already armed completion on queue as due now.
@@ -605,7 +611,7 @@ func virtual_run_for(state *Virtual_Timeline, duration Duration) {
 // pump. Cap stop stalled operation from spin without end. Negative timeout is that uncapped
 // pump, thus it panic. Never hand caller drive with no bound.
 func virtual_run_until(
-	state *Virtual_Timeline, done func() (finished bool), timeout Duration,
+	state *Virtual_Timeline, timeout Duration, done func() (finished bool),
 ) (completed bool) {
 	invariant.Always(timeout >= 0, "A Run_Until timeout is never negative.")
 	deadline := virtual_now(state) + Monotonic_Moment(timeout)
@@ -640,10 +646,10 @@ func virtual_timeline_to_driver(state *Virtual_Timeline) (driver Driver) {
 			return nil
 		},
 		Run_Until: func(
-			done func() (finished bool), timeout Duration,
+			timeout Duration, done func() (finished bool),
 		) (completed bool, err error) {
 			virtual_drive(state, func() {
-				completed = virtual_run_until(state, done, timeout)
+				completed = virtual_run_until(state, timeout, done)
 			})
 			return completed, nil
 		},

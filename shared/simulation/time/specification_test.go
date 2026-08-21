@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"local/james-orcales/shared/simulation/time"
+	"local/james-orcales/shared/testify"
 )
 
 // Test_Virtual_Clock_Monotonic check deterministic clock advance exactly one resolution per
@@ -11,19 +12,11 @@ import (
 func Test_Virtual_Clock_Monotonic(t *testing.T) {
 	c, tick := time.Virtual_Clock_To_Clock(time.Virtual_Clock{Resolution: 50, Epoch: 1000})
 
-	if got := c.Now_Monotonic(); got != 0 {
-		t.Fatalf("monotonic at tick 0 = %d, want 0", got)
-	}
-	if got := c.Now_Realtime(); got != 1000 {
-		t.Fatalf("realtime at tick 0 = %d, want 1000", got)
-	}
+	testify.Zero(t, c.Now_Monotonic())
+	testify.Equal(t, time.Moment(1000), c.Now_Realtime())
 	tick()
-	if got := c.Now_Monotonic(); got != 50 {
-		t.Fatalf("monotonic after 1 tick = %d, want 50", got)
-	}
-	if got := c.Now_Realtime(); got != 1050 {
-		t.Fatalf("realtime after 1 tick = %d, want 1050", got)
-	}
+	testify.Equal(t, time.Monotonic_Moment(50), c.Now_Monotonic())
+	testify.Equal(t, time.Moment(1050), c.Now_Realtime())
 }
 
 // Test_Virtual_Clock_Skew check modeled skew bend Now_Realtime away from true elapsed time,
@@ -37,12 +30,8 @@ func Test_Virtual_Clock_Skew(t *testing.T) {
 	tick()
 	tick()
 	// Monotonic = 2*1000 = 2000; skew = 2*1 = 2; realtime = 0 + 2000 - 2 = 1998.
-	if got := c.Now_Monotonic(); got != 2000 {
-		t.Fatalf("monotonic = %d, want 2000", got)
-	}
-	if got := c.Now_Realtime(); got != 1998 {
-		t.Fatalf("realtime = %d, want 1998 (skewed)", got)
-	}
+	testify.Equal(t, time.Monotonic_Moment(2000), c.Now_Monotonic())
+	testify.Equal(t, time.Moment(1998), c.Now_Realtime())
 
 	// Periodic skew of amplitude 1000 over four-tick period peak at quarter turn. At tick 1,
 	// sin(2pi/4) = 1, thus skew equal full amplitude and cancel elapsed span exactly.
@@ -52,9 +41,7 @@ func Test_Virtual_Clock_Skew(t *testing.T) {
 		Skew:       time.Skew(time.SKEW_KIND_PERIODIC, 1000, 4),
 	})
 	periodic_tick()
-	if got := periodic.Now_Realtime(); got != 0 {
-		t.Fatalf("periodic realtime at quarter turn = %d, want 0", got)
-	}
+	testify.Zero(t, periodic.Now_Realtime())
 }
 
 // Test_Timeline_Timeout check timeout fire exactly when virtual clock reach its deadline. No
@@ -64,18 +51,14 @@ func Test_Timeline_Timeout(t *testing.T) {
 
 	fired_at := time.Monotonic_Moment(-1)
 	var completion time.Completion
-	loop.Timeout(&completion, func(_ *time.Completion, err error) {
-		if err != nil {
-			t.Fatalf("timeout error: %v", err)
-		}
+	loop.Timeout(&completion, 5*time.NANOSECOND, func(completed *time.Completion) {
+		testify.No_Error(t, completed.Error)
 		fired_at = clock.Now_Monotonic()
-	}, 5*time.NANOSECOND)
+	})
 
 	driver.Run_For(10 * time.NANOSECOND)
 
-	if fired_at != 5 {
-		t.Fatalf("timeout fired at %d, want 5", fired_at)
-	}
+	testify.Equal(t, time.Monotonic_Moment(5), fired_at)
 }
 
 // Test_Timeline_Event check Event primitive retire its listener before callback run. Same
@@ -83,8 +66,8 @@ func Test_Timeline_Timeout(t *testing.T) {
 func Test_Timeline_Event(t *testing.T) {
 	loop, driver, _ := sim_loop(0)
 	event, open_err := loop.Open_Event()
-	if open_err != nil {
-		t.Fatalf("open event: %v", open_err)
+	if !testify.No_Error(t, open_err) {
+		return
 	}
 	fired := 0
 	var completion time.Completion
@@ -92,15 +75,11 @@ func Test_Timeline_Event(t *testing.T) {
 	loop.Event_Listen(event, &completion, callback)
 	loop.Event_Trigger(event, &completion)
 	driver.Run()
-	if fired != 1 {
-		t.Fatalf("event fired %d times, want 1", fired)
-	}
+	testify.Equal(t, 1, fired)
 	loop.Event_Listen(event, &completion, callback)
 	loop.Event_Trigger(event, &completion)
 	driver.Run()
-	if fired != 2 {
-		t.Fatalf("event fired %d times, want 2", fired)
-	}
+	testify.Equal(t, 2, fired)
 	loop.Close_Event(event)
 }
 
@@ -112,32 +91,22 @@ func Test_Timeline_Run_Until(t *testing.T) {
 
 	done := false
 	var completion time.Completion
-	loop.Timeout(&completion, func(_ *time.Completion, _ error) {
+	loop.Timeout(&completion, 3*time.NANOSECOND, func(_ *time.Completion) {
 		done = true
-	}, 3*time.NANOSECOND)
+	})
 
 	completed, drive_err := driver.Run_Until(
-		func() (finished bool) { return done }, SIM_DEADLINE,
+		SIM_DEADLINE, func() (finished bool) { return done },
 	)
-	if drive_err != nil {
-		t.Fatalf("Run_Until error: %v", drive_err)
-	}
-	if !completed {
-		t.Fatal("Run_Until reported the read did not complete")
-	}
-	if !done {
-		t.Fatal("Run_Until returned before the read completed")
-	}
+	testify.No_Error(t, drive_err)
+	testify.True(t, completed)
+	testify.True(t, done)
 
 	completed, drive_err = driver.Run_Until(
-		func() (finished bool) { return false }, SIM_DEADLINE,
+		SIM_DEADLINE, func() (finished bool) { return false },
 	)
-	if drive_err != nil {
-		t.Fatalf("Run_Until deadline error: %v", drive_err)
-	}
-	if completed {
-		t.Fatal("Run_Until reported completion for a predicate that never trips")
-	}
+	testify.No_Error(t, drive_err)
+	testify.False(t, completed)
 }
 
 // Test_Timeline_Reuse check submit of completion still in flight panic. Reused completion thus
@@ -145,13 +114,10 @@ func Test_Timeline_Run_Until(t *testing.T) {
 func Test_Timeline_Reuse(t *testing.T) {
 	loop, _, _ := sim_loop(0)
 	var completion time.Completion
-	loop.Timeout(&completion, func(_ *time.Completion, err error) {}, 5*time.NANOSECOND)
-	defer func() {
-		if recover() == nil {
-			t.Fatal("reusing an in-flight completion must panic")
-		}
-	}()
-	loop.Timeout(&completion, func(_ *time.Completion, err error) {}, 5*time.NANOSECOND)
+	loop.Timeout(&completion, 5*time.NANOSECOND, func(_ *time.Completion) {})
+	testify.Panics(t, func() {
+		loop.Timeout(&completion, 5*time.NANOSECOND, func(_ *time.Completion) {})
+	})
 }
 
 // Test_Timeline_Copy check submit of by-value copy panic. Copied completion thus fail loud,
@@ -160,15 +126,12 @@ func Test_Timeline_Reuse(t *testing.T) {
 func Test_Timeline_Copy(t *testing.T) {
 	loop, driver, _ := sim_loop(0)
 	var completion time.Completion
-	loop.Timeout(&completion, func(_ *time.Completion, err error) {}, 5*time.NANOSECOND)
+	loop.Timeout(&completion, 5*time.NANOSECOND, func(_ *time.Completion) {})
 	driver.Run_For(10 * time.NANOSECOND)
 	duplicate := completion
-	defer func() {
-		if recover() == nil {
-			t.Fatal("submitting a copied completion must panic")
-		}
-	}()
-	loop.Timeout(&duplicate, func(_ *time.Completion, err error) {}, 5*time.NANOSECOND)
+	testify.Panics(t, func() {
+		loop.Timeout(&duplicate, 5*time.NANOSECOND, func(_ *time.Completion) {})
+	})
 }
 
 // Test_Timeline_Reentrancy check drive of loop from inside completion callback panic.
@@ -176,15 +139,27 @@ func Test_Timeline_Copy(t *testing.T) {
 func Test_Timeline_Reentrancy(t *testing.T) {
 	loop, driver, _ := sim_loop(0)
 	var completion time.Completion
-	loop.Timeout(&completion, func(_ *time.Completion, err error) {
+	loop.Timeout(&completion, 5*time.NANOSECOND, func(_ *time.Completion) {
 		driver.Run()
-	}, 5*time.NANOSECOND)
-	defer func() {
-		if recover() == nil {
-			t.Fatal("driving from within a callback must panic")
-		}
-	}()
-	driver.Run_For(10 * time.NANOSECOND)
+	})
+	testify.Panics(t, func() {
+		driver.Run_For(10 * time.NANOSECOND)
+	})
+}
+
+// Test_Callback_Result keeps operation meaning outside the shared completion: Data is opaque to
+// the timeline, while each operation interprets it as its descriptor, count, or status.
+func Test_Callback_Result(t *testing.T) {
+	called := false
+	completion := time.Completion{Data: 42, Error: time.Deadline_Exceeded}
+	callback := time.Callback(func(got *time.Completion) {
+		testify.True(t, got == &completion)
+		testify.Equal(t, 42, got.Data)
+		testify.Error_Is(t, got.Error, time.Deadline_Exceeded)
+		called = true
+	})
+	callback(&completion)
+	testify.True(t, called)
 }
 
 // Test_Timeline_Unbounded check negative Run_Until timeout panic. Unbounded pump have no cap,
@@ -192,12 +167,9 @@ func Test_Timeline_Reentrancy(t *testing.T) {
 // hang run.
 func Test_Timeline_Unbounded(t *testing.T) {
 	_, driver, _ := sim_loop(0)
-	defer func() {
-		if recover() == nil {
-			t.Fatal("a negative Run_Until timeout must panic")
-		}
-	}()
-	driver.Run_Until(func() (finished bool) { return false }, -1*time.NANOSECOND)
+	testify.Panics(t, func() {
+		driver.Run_Until(-1*time.NANOSECOND, func() (finished bool) { return false })
+	})
 }
 
 // Test_Monotonic_Moment check uptime domain: zero at boot, one year of nanoseconds at maximum.
@@ -206,14 +178,8 @@ func Test_Timeline_Unbounded(t *testing.T) {
 func Test_Monotonic_Moment(t *testing.T) {
 	t.Parallel()
 	const ONE_YEAR_NANOSECONDS int64 = 365 * 24 * 60 * 60 * 1000 * 1000 * 1000
-	if time.MONOTONIC_MOMENT_MINIMUM != 0 {
-		t.Fatalf("uptime minimum = %d, want 0", time.MONOTONIC_MOMENT_MINIMUM)
-	}
-	if int64(time.MONOTONIC_MOMENT_MAXIMUM) != ONE_YEAR_NANOSECONDS {
-		t.Fatalf(
-			"uptime maximum = %d, want %d",
-			int64(time.MONOTONIC_MOMENT_MAXIMUM), ONE_YEAR_NANOSECONDS)
-	}
+	testify.Zero(t, time.MONOTONIC_MOMENT_MINIMUM)
+	testify.Equal(t, ONE_YEAR_NANOSECONDS, int64(time.MONOTONIC_MOMENT_MAXIMUM))
 }
 
 // Run_Until cap for loop tests. Generous: completion give pump back instant it fire. This

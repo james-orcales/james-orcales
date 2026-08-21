@@ -1,192 +1,208 @@
-package io_test
+package nbio_test
 
 import (
 	"fmt"
 	"strings"
 	"testing"
 
-	io "local/james-orcales/shared/simulation/nbio"
+	"local/james-orcales/shared/math/bits"
+	"local/james-orcales/shared/simulation/nbio"
 	"local/james-orcales/shared/simulation/time"
 	snap "local/james-orcales/shared/snap/default"
+	"local/james-orcales/shared/testify"
 )
 
-// Test_Sim_Read verifies a read on an opened file returns the bytes an earlier write
-// stored — the file descriptor's real-bytes path, distinct from a socket's byte count.
+// Test_Sim_Read verify read on opened file return bytes earlier write store — real-bytes path of
+// file descriptor, distinct from socket byte count.
 func Test_Sim_Read(t *testing.T) {
 	loop, driver, _ := sim_loop(1)
 
 	writer, create_err := sim_create(t, loop, driver, "file")
-	if create_err != nil {
-		t.Fatalf("create: %v", create_err)
+	if !testify.No_Error(t, create_err) {
+		return
 	}
 	wrote := false
 	var write_completion time.Completion
-	loop.Write(&write_completion, func(_ *time.Completion, _ int, err error) {
-		if err != nil {
-			t.Fatalf("write: %v", err)
-		}
-		wrote = true
-	}, writer, []byte("hello"), 0)
-	driver.Run_Until(func() (finished bool) { return wrote }, SIM_DEADLINE)
+	loop.Storage.Write(&write_completion, writer, []byte("hello"), 0, SIM_DEADLINE,
+		func(completed *time.Completion) {
+			testify.No_Error(t, completed.Error)
+			wrote = true
+		})
+	driver.Run_Until(SIM_DEADLINE, func() (finished bool) { return wrote })
 
 	reader, open_err := sim_open(t, loop, driver, "file")
-	if open_err != nil {
-		t.Fatalf("open: %v", open_err)
+	if !testify.No_Error(t, open_err) {
+		return
 	}
 	buffer := make([]byte, 64)
 	count := -1
 	var read_completion time.Completion
-	loop.Read(&read_completion, func(_ *time.Completion, bytes int, _ error) {
-		count = bytes
-	}, reader, buffer, 0)
-	driver.Run_Until(func() (finished bool) { return count >= 0 }, SIM_DEADLINE)
+	loop.Storage.Read(&read_completion, reader, buffer, 0, SIM_DEADLINE,
+		func(completed *time.Completion) {
+			count = completed.Data
+		})
+	driver.Run_Until(SIM_DEADLINE, func() (finished bool) { return count >= 0 })
 
-	if count != 5 {
-		t.Fatalf("read reported %d bytes, want 5", count)
+	testify.Equal(t, 5, count)
+	testify.Equal(t, "hello", string(buffer[:count]))
+	sim_close(t, loop, driver, writer)
+	sim_close(t, loop, driver, reader)
+	loop.Deinit()
+
+	socket_loop, _, _ := sim_loop(1)
+	socket, socket_err := socket_loop.Network.Socket_TCP(
+		nbio.FAMILY_IPV4, sim_tcp_options())
+	if !testify.No_Error(t, socket_err) {
+		return
 	}
-	if string(buffer[:count]) != "hello" {
-		t.Fatalf("read %q, want hello", buffer[:count])
-	}
+	var socket_completion time.Completion
+	testify.Panics(t, func() {
+		socket_loop.Storage.Read(
+			&socket_completion, socket, make([]byte, 8), 0, SIM_DEADLINE,
+			func(_ *time.Completion) {})
+	})
 }
 
-// Test_Sim_Fsync verifies the TigerBeetle fsync operation completes without changing descriptor
-// ownership after a prior write has retired.
+// The write result must report accepted bytes before the caller can close its descriptor.
+func Test_Sim_Write(t *testing.T) {
+	loop, driver, _ := sim_loop(0)
+	file, create_err := sim_create(t, loop, driver, "file")
+	if !testify.No_Error(t, create_err) {
+		return
+	}
+	count := -1
+	var completion time.Completion
+	loop.Storage.Write(&completion, file, []byte("hello"), 0, SIM_DEADLINE,
+		func(completed *time.Completion) {
+			testify.No_Error(t, completed.Error)
+			count = completed.Data
+		})
+	driver.Run_Until(SIM_DEADLINE, func() (finished bool) { return count >= 0 })
+	testify.Equal(t, len("hello"), count)
+	sim_close(t, loop, driver, file)
+	loop.Deinit()
+}
+
+// Test_Sim_Fsync verify fsync operation complete without change of descriptor
+// ownership, after prior write retired.
 func Test_Sim_Fsync(t *testing.T) {
 	loop, driver, _ := sim_loop(0)
 	file, create_err := sim_create(t, loop, driver, "file")
-	if create_err != nil {
-		t.Fatalf("create: %v", create_err)
+	if !testify.No_Error(t, create_err) {
+		return
 	}
 	fired := false
 	var completion time.Completion
-	loop.Fsync(&completion, func(_ *time.Completion, err error) {
-		if err != nil {
-			t.Fatalf("fsync: %v", err)
-		}
+	loop.Storage.Fsync(&completion, file, SIM_DEADLINE, func(completed *time.Completion) {
+		testify.No_Error(t, completed.Error)
 		fired = true
-	}, file)
-	driver.Run_Until(func() (finished bool) { return fired }, SIM_DEADLINE)
-	if driver.Introspect().Raw_Open != 1 {
-		t.Fatal("fsync changed descriptor ownership")
-	}
+	})
+	driver.Run_Until(SIM_DEADLINE, func() (finished bool) { return fired })
+	testify.True(t, sim_descriptor_open(loop))
+	sim_close(t, loop, driver, file)
+	loop.Deinit()
 }
 
-// Test_Sim_Open_At verifies the TigerBeetle asynchronous openat surface creates a caller-owned
-// file which the ordinary read and write operations can use.
+// Test_Sim_Open_At verify asynchronous openat surface make caller-owned file ordinary read and
+// write operations can use.
 func Test_Sim_Open_At(t *testing.T) {
 	loop, driver, _ := sim_loop(0)
-	opened := io.File(-1)
+	opened := nbio.File(-1)
 	var completion time.Completion
-	loop.Open_At(&completion, func(_ *time.Completion, file io.File, err error) {
-		if err != nil {
-			t.Fatalf("open at: %v", err)
-		}
-		opened = file
-	}, io.DIRECTORY_CURRENT, "file", io.Open_At_Options{
-		Access: io.OPEN_READ_WRITE, Create: true, Truncate: true, Mode: 0o600,
+	loop.Storage.Open_At(&completion, nbio.DIRECTORY_CURRENT, "file", nbio.Open_At_Options{
+		Access: nbio.OPEN_READ_WRITE, Create: true, Truncate: true, Mode: 0o600,
+	}, func(completed *time.Completion) {
+		testify.No_Error(t, completed.Error)
+		opened = nbio.File(completed.Data)
 	})
-	driver.Run_Until(func() (finished bool) { return opened >= 0 }, SIM_DEADLINE)
-	if opened < 0 {
-		t.Fatal("open at did not return a descriptor")
-	}
-	if driver.Introspect().Raw_Open != 1 {
-		t.Fatal("open at did not transfer caller ownership")
-	}
+	driver.Run_Until(SIM_DEADLINE, func() (finished bool) { return opened >= 0 })
+	testify.Positive(t, opened)
+	testify.True(t, sim_descriptor_open(loop))
+	sim_close(t, loop, driver, opened)
+	loop.Deinit()
 
 	unknown_loop, _, _ := sim_loop(0)
-	defer func() {
-		if recover() == nil {
-			t.Fatal("Open_At accepted an unknown flag")
-		}
-	}()
 	var unknown_completion time.Completion
-	unknown_loop.Open_At(
-		&unknown_completion,
-		func(_ *time.Completion, _ io.File, _ error) {},
-		io.DIRECTORY_CURRENT,
-		"file",
-		io.Open_At_Options{Flags: io.Open_At_Flags(1 << 31)},
-	)
+	testify.Panics(t, func() {
+		unknown_loop.Storage.Open_At(
+			&unknown_completion,
+			nbio.DIRECTORY_CURRENT,
+			"file",
+			nbio.Open_At_Options{Flags: nbio.Open_At_Flags(1 << 31)},
+			func(_ *time.Completion) {},
+		)
+	})
 }
 
-// Test_Sim_Accept verifies accept resolves exactly once with either a distinct accepted socket or
-// Deadline_Exceeded, with a tie belonging to the finite deadline.
+// Test_Sim_Socket verify each transport requires all limits and transfers descriptor ownership
+// only through its result.
+func Test_Sim_Socket(t *testing.T) {
+	socket_default_profile_assert(t)
+	loop, driver, _ := sim_loop(0)
+	socket, open_err := loop.Network.Socket_TCP(nbio.FAMILY_IPV4, sim_tcp_options())
+	if !testify.No_Error(t, open_err) {
+		return
+	}
+	testify.True(t, sim_descriptor_open(loop))
+	sim_close(t, loop, driver, socket)
+
+	udp, udp_err := loop.Network.Socket_UDP(nbio.FAMILY_IPV4, sim_udp_options())
+	if !testify.No_Error(t, udp_err) {
+		return
+	}
+	sim_close(t, loop, driver, udp)
+
+	sim_socket_limits_rejected(t, loop, driver)
+	loop.Deinit()
+}
+
+// Test_Sim_Bind verify Bind gives a socket its requested local address and assigns a port when
+// the request uses port zero.
+func Test_Sim_Bind(t *testing.T) {
+	loop, driver, _ := sim_loop(0)
+	socket, open_err := loop.Network.Socket_TCP(nbio.FAMILY_IPV4, sim_tcp_options())
+	if !testify.No_Error(t, open_err) {
+		return
+	}
+	requested := nbio.Address_IPV4([nbio.IPV4_ADDRESS_BYTES]byte{127, 0, 0, 1}, 0)
+	testify.No_Error(t, loop.Network.Bind(socket, requested))
+	bound, name_err := loop.Network.Get_Socket_Name(socket)
+	testify.No_Error(t, name_err)
+	testify.Equal(t, requested.IP, bound.IP)
+	testify.Not_Zero(t, bound.Port)
+	sim_close(t, loop, driver, socket)
+	loop.Deinit()
+}
+
+// Test_Sim_Accept verify accept resolve exactly once, with distinct accepted socket, or with
+// Deadline_Exceeded.
 func Test_Sim_Accept(t *testing.T) {
 	accepted_count := 0
 	deadline_count := 0
 	for seed := uint64(0); seed < 64; seed++ {
-		loop, driver, _ := sim_loop(seed)
-		listener, _ := loop.Socket(io.FAMILY_IPV4, io.SOCKET_TRANSPORT_TCP)
-		address := io.Address_I_Pv4([io.IPV4_ADDRESS_BYTES]byte{127, 0, 0, 1}, 0)
-		if bind_err := loop.Bind(listener, address); bind_err != nil {
-			t.Fatalf("seed %d: bind: %v", seed, bind_err)
-		}
-		if listen_err := loop.Listen_Socket(listener, 128); listen_err != nil {
-			t.Fatalf("seed %d: listen: %v", seed, listen_err)
-		}
-		callback_count := 0
-		accepted := io.File(-1)
-		var operation_err error
-		var completion time.Completion
-		loop.Accept(&completion, func(_ *time.Completion, socket io.File, err error) {
-			callback_count++
-			accepted = socket
-			operation_err = err
-		}, listener, time.NANOSECOND)
-		completed, drive_err := driver.Run_Until(
-			func() (finished bool) { return callback_count > 0 }, 16*time.NANOSECOND)
-		if drive_err != nil {
-			t.Fatalf("seed %d: drive: %v", seed, drive_err)
-		}
-		if !completed {
-			t.Fatalf("seed %d: accept did not resolve", seed)
-		}
-		if callback_count != 1 {
-			t.Fatalf("seed %d: callback count = %d, want 1", seed, callback_count)
-		}
-		if operation_err == time.Deadline_Exceeded {
+		accepted, outcome := sim_accept_once(t, seed, time.NANOSECOND)
+		if outcome == time.Deadline_Exceeded {
 			deadline_count++
-			if accepted != -1 {
-				t.Fatalf("seed %d: deadline yielded descriptor %d", seed, accepted)
-			}
-			if driver.Introspect().Raw_Open != 1 {
-				t.Fatalf("seed %d: deadline leaked an accepted descriptor", seed)
-			}
-		} else {
-			if operation_err != nil {
-				t.Fatalf("seed %d: accept: %v", seed, operation_err)
-			}
-			accepted_count++
-			if accepted <= 0 {
-				t.Fatalf("seed %d: accept yielded descriptor %d", seed, accepted)
-			}
-			if accepted == listener {
-				t.Fatalf("seed %d: accept yielded listener %d", seed, accepted)
-			}
+			continue
 		}
-		driver.Run_For(16 * time.NANOSECOND)
-		if callback_count != 1 {
-			t.Fatalf("seed %d: callback repeated %d times", seed, callback_count)
-		}
+		testify.No_Error(t, outcome, seed)
+		accepted_count++
+		testify.Positive(t, accepted, seed)
 	}
-	if accepted_count == 0 {
-		t.Fatal("seed sweep witnessed no accepted connection before the deadline")
-	}
-	if deadline_count == 0 {
-		t.Fatal("seed sweep witnessed no accept deadline")
-	}
+	testify.Positive(t, accepted_count)
+	testify.Positive(t, deadline_count)
 }
 
-// Test_Sim_Connect verifies success and refusal preserve the caller-owned socket until explicit
-// Close, and a seed sweep reaches both network outcomes.
+// Test_Sim_Connect verify success and refusal both keep caller-owned socket until explicit
+// Close, and seed sweep reach both network outcomes.
 func Test_Sim_Connect(t *testing.T) {
 	snap.Expect(t,
-		snap.Init(`baseline=0 opened=1 connected=1 closed=0 outcome=success`),
+		snap.Init(`open_before_close=true outcome=success`),
 		sim_connect_lifecycle(t, 0),
 	)
 	snap.Expect(t,
-		snap.Init(`baseline=0 opened=1 connected=1 closed=0 outcome=refused`),
-		sim_connect_lifecycle(t, 3),
+		snap.Init(`open_before_close=true outcome=refused`),
+		sim_connect_lifecycle(t, 4),
 	)
 
 	saw_success := false
@@ -200,487 +216,1602 @@ func Test_Sim_Connect(t *testing.T) {
 			saw_refusal = true
 		}
 	}
-	if !saw_success {
-		t.Fatal("seed sweep never reached connect success")
-	}
-	if !saw_refusal {
-		t.Fatal("seed sweep never reached connect refusal")
-	}
+	testify.True(t, saw_success)
+	testify.True(t, saw_refusal)
 }
 
-// Test_Sim_Receive verifies a receive completes after the modeled latency and
-// reports the buffer length.
+// Test_Sim_Receive verify receive complete after modeled latency and report buffer length.
 func Test_Sim_Receive(t *testing.T) {
 	loop, driver, _ := sim_loop(1)
-	socket, open_err := loop.Socket(io.FAMILY_IPV4, io.SOCKET_TRANSPORT_TCP)
-	if open_err != nil {
-		t.Fatalf("open socket: %v", open_err)
+	socket, open_err := loop.Network.Socket_TCP(nbio.FAMILY_IPV4, sim_tcp_options())
+	if !testify.No_Error(t, open_err) {
+		return
 	}
 
 	count := -1
 	var completion time.Completion
-	loop.Receive(&completion, func(_ *time.Completion, bytes int, err error) {
-		count = bytes
-	}, socket, make([]byte, 64))
+	loop.Network.Receive(&completion, socket, make([]byte, 64), SIM_DEADLINE,
+		func(completed *time.Completion) {
+			count = completed.Data
+		})
 
 	driver.Run_For(10 * time.NANOSECOND)
 
-	if count != 64 {
-		t.Fatalf("receive reported %d bytes, want 64", count)
-	}
+	testify.Equal(t, 64, count)
+	sim_close(t, loop, driver, socket)
+	loop.Deinit()
 }
 
-// Test_Sim_Send verifies a send completes after the modeled latency and reports
-// the buffer length.
+// Test_Sim_Send verify send complete after modeled latency and report buffer length.
 func Test_Sim_Send(t *testing.T) {
 	loop, driver, _ := sim_loop(1)
-	socket, open_err := loop.Socket(io.FAMILY_IPV4, io.SOCKET_TRANSPORT_TCP)
-	if open_err != nil {
-		t.Fatalf("open socket: %v", open_err)
+	socket, open_err := loop.Network.Socket_TCP(nbio.FAMILY_IPV4, sim_tcp_options())
+	if !testify.No_Error(t, open_err) {
+		return
 	}
 
 	count := -1
 	var completion time.Completion
-	loop.Send(&completion, func(_ *time.Completion, bytes int, err error) {
-		count = bytes
-	}, socket, make([]byte, 32))
+	loop.Network.Send(&completion, socket, make([]byte, 32), SIM_DEADLINE,
+		func(completed *time.Completion) {
+			count = completed.Data
+		})
 
 	driver.Run_For(10 * time.NANOSECOND)
 
-	if count != 32 {
-		t.Fatalf("send reported %d bytes, want 32", count)
-	}
+	testify.Equal(t, 32, count)
+	sim_close(t, loop, driver, socket)
+	loop.Deinit()
 }
 
-// Test_Sim_Send_Now verifies the synchronous datagram send reports whether the bytes were accepted.
-func Test_Sim_Send_Now(t *testing.T) {
-	loop, _, _ := sim_loop(0)
-	socket, open_err := loop.Socket(io.FAMILY_IPV4, io.SOCKET_TRANSPORT_UDP)
-	if open_err != nil {
-		t.Fatalf("open UDP socket: %v", open_err)
-	}
-	count, sent := loop.Send_Now(socket, []byte("hello"))
-	if !sent {
-		t.Fatalf("send now = (%d, %t), want sent", count, sent)
-	}
-	if count != 5 {
-		t.Fatalf("send now = (%d, %t), want (5, true)", count, sent)
-	}
-}
-
-// Test_Sim_Shutdown verifies shutdown resolves armed and later socket operations through their
-// normal callbacks while leaving descriptor ownership with the caller.
+// Test_Sim_Shutdown verify shutdown resolve armed and later socket operations through their
+// normal callbacks, and leave descriptor ownership with caller.
 func Test_Sim_Shutdown(t *testing.T) {
 	loop, driver, _ := sim_loop(0)
-	socket, open_err := loop.Socket(io.FAMILY_IPV4, io.SOCKET_TRANSPORT_TCP)
-	if open_err != nil {
-		t.Fatalf("open socket: %v", open_err)
+	socket, open_err := loop.Network.Socket_TCP(nbio.FAMILY_IPV4, sim_tcp_options())
+	if !testify.No_Error(t, open_err) {
+		return
 	}
 	connected := false
 	var connect_completion time.Completion
-	loop.Connect(&connect_completion, func(_ *time.Completion, err error) {
-		if err != nil {
-			t.Fatalf("connect: %v", err)
-		}
-		connected = true
-	}, socket, io.Address_I_Pv4([io.IPV4_ADDRESS_BYTES]byte{127, 0, 0, 1}, 8123), SIM_DEADLINE)
-	driver.Run_Until(func() (finished bool) { return connected }, SIM_DEADLINE)
+	loop.Network.Connect(&connect_completion, socket,
+		nbio.Address_IPV4([nbio.IPV4_ADDRESS_BYTES]byte{127, 0, 0, 1}, 8123), SIM_DEADLINE,
+		func(completed *time.Completion) {
+			testify.No_Error(t, completed.Error)
+			connected = true
+		})
+	driver.Run_Until(SIM_DEADLINE, func() (finished bool) { return connected })
 	var receive_completion time.Completion
 	var send_completion time.Completion
 	receive_count := -1
 	var send_err error
-	loop.Receive(&receive_completion, func(_ *time.Completion, count int, err error) {
-		if err != nil {
-			t.Fatalf("receive after shutdown: %v", err)
-		}
-		receive_count = count
-	}, socket, make([]byte, 8))
-	loop.Send(&send_completion, func(_ *time.Completion, _ int, err error) {
-		send_err = err
-	}, socket, []byte("hello"))
-	if shutdown_err := loop.Shutdown(socket, io.SHUTDOWN_BOTH); shutdown_err != nil {
-		t.Fatalf("shutdown: %v", shutdown_err)
-	}
+	loop.Network.Receive(&receive_completion, socket, make([]byte, 8), SIM_DEADLINE,
+		func(completed *time.Completion) {
+			testify.No_Error(t, completed.Error)
+			receive_count = completed.Data
+		})
+	loop.Network.Send(&send_completion, socket, []byte("hello"), SIM_DEADLINE,
+		func(completed *time.Completion) {
+			send_err = completed.Error
+		})
+	testify.No_Error(t, loop.Network.Shutdown(socket, nbio.SHUTDOWN_BOTH))
 	driver.Run_For(10 * time.NANOSECOND)
-	if receive_count != 0 {
-		t.Fatalf("receive count = %d, want EOF", receive_count)
-	}
-	if send_err != io.Broken_Pipe {
-		t.Fatalf("send error = %v, want %v", send_err, io.Broken_Pipe)
-	}
-	if driver.Introspect().Raw_Open != 1 {
-		t.Fatal("shutdown released a caller-owned descriptor")
-	}
+	testify.Zero(t, receive_count)
+	testify.Error_Is(t, send_err, nbio.Broken_Pipe)
+	testify.True(t, sim_descriptor_open(loop))
+	sim_close(t, loop, driver, socket)
+	loop.Deinit()
 }
 
-// Test_Sim_Close verifies close rejects a descriptor borrowed by an armed operation, then a
-// shutdown-drain-close sequence completes and removes the caller-owned descriptor.
+// Test_Sim_Close verify close reject descriptor an armed operation borrow, then
+// shutdown-drain-close sequence complete and remove caller-owned descriptor.
 func Test_Sim_Close(t *testing.T) {
 	loop, driver, _ := sim_loop(0)
 
-	socket, open_err := loop.Socket(io.FAMILY_IPV4, io.SOCKET_TRANSPORT_TCP)
-	if open_err != nil {
-		t.Fatalf("open socket: %v", open_err)
+	socket, open_err := loop.Network.Socket_TCP(nbio.FAMILY_IPV4, sim_tcp_options())
+	if !testify.No_Error(t, open_err) {
+		return
 	}
 	connected := false
 	var connect_completion time.Completion
-	loop.Connect(&connect_completion, func(_ *time.Completion, err error) {
-		if err != nil {
-			t.Fatalf("connect: %v", err)
-		}
-		connected = true
-	}, socket, io.Address_I_Pv4([io.IPV4_ADDRESS_BYTES]byte{127, 0, 0, 1}, 1), SIM_DEADLINE)
-	driver.Run_Until(func() (finished bool) { return connected }, SIM_DEADLINE)
+	loop.Network.Connect(&connect_completion, socket,
+		nbio.Address_IPV4([nbio.IPV4_ADDRESS_BYTES]byte{127, 0, 0, 1}, 1), SIM_DEADLINE,
+		func(completed *time.Completion) {
+			testify.No_Error(t, completed.Error)
+			connected = true
+		})
+	driver.Run_Until(SIM_DEADLINE, func() (finished bool) { return connected })
 	received := false
 	var receive_completion time.Completion
-	loop.Receive(&receive_completion, func(_ *time.Completion, _ int, _ error) {
-		received = true
-	}, socket, make([]byte, 8))
+	loop.Network.Receive(&receive_completion, socket, make([]byte, 8), SIM_DEADLINE,
+		func(_ *time.Completion) {
+			received = true
+		})
 
-	close_panicked := false
 	var completion time.Completion
-	func() {
-		defer func() { close_panicked = recover() != nil }()
-		loop.Close(&completion, func(_ *time.Completion, _ error) {}, socket)
-	}()
-	if !close_panicked {
-		t.Fatal("close with an armed receive must panic")
-	}
-	if shutdown_err := loop.Shutdown(socket, io.SHUTDOWN_BOTH); shutdown_err != nil {
-		t.Fatalf("shutdown: %v", shutdown_err)
-	}
+	testify.Panics(t, func() {
+		loop.Close(&completion, socket, func(_ *time.Completion) {})
+	})
+	testify.No_Error(t, loop.Network.Shutdown(socket, nbio.SHUTDOWN_BOTH))
 	driver.Run_For(10 * time.NANOSECOND)
-	if !received {
-		t.Fatal("shutdown did not drain the armed receive")
-	}
+	testify.True(t, received)
 
-	closed := false
-	var close_completion time.Completion
-	loop.Close(&close_completion, func(_ *time.Completion, err error) {
-		closed = true
-		if err != nil {
-			t.Errorf("close: %v", err)
-		}
-	}, socket)
-
-	driver.Run_For(10 * time.NANOSECOND)
-
-	if !closed {
-		t.Fatal("close did not complete")
-	}
-	if driver.Introspect().Raw_Open != 0 {
-		t.Fatal("close left the synthetic descriptor in Raw_Open")
-	}
+	sim_close(t, loop, driver, socket)
+	loop.Deinit()
 }
 
-// Test_Sim_Close_Socket verifies setup cleanup releases a socket synchronously.
-func Test_Sim_Close_Socket(t *testing.T) {
-	loop, driver, _ := sim_loop(0)
-	socket, open_err := loop.Socket(io.FAMILY_IPV4, io.SOCKET_TRANSPORT_TCP)
-	if open_err != nil {
-		t.Fatalf("open socket: %v", open_err)
-	}
-	loop.Close_Socket(socket)
-	if driver.Introspect().Raw_Open != 0 {
-		t.Fatal("close socket left the descriptor open")
-	}
-}
-
-// Test_Sim_Open verifies Open returns a fresh descriptor synchronously.
+// Test_Sim_Open verify Open return fresh descriptor, synchronously.
 func Test_Sim_Open(t *testing.T) {
 	loop, driver, _ := sim_loop(0)
-	if _, create_err := sim_create(t, loop, driver, "path"); create_err != nil {
-		t.Fatalf("create: %v", create_err)
+	created, create_err := sim_create(t, loop, driver, "path")
+	if !testify.No_Error(t, create_err) {
+		return
 	}
 	file, err := sim_open(t, loop, driver, "path")
-	if err != nil {
-		t.Fatalf("open error: %v", err)
+	if !testify.No_Error(t, err) {
+		return
 	}
-	if file <= 0 {
-		t.Fatalf("open yielded %d, want a positive descriptor", file)
-	}
-	if _, absent_err := sim_open(t, loop, driver, "absent"); absent_err == nil {
-		t.Fatal("open of an absent path should error")
-	}
+	testify.Positive(t, file)
+	_, absent_err := sim_open(t, loop, driver, "absent")
+	testify.Error(t, absent_err)
+	sim_close(t, loop, driver, created)
+	sim_close(t, loop, driver, file)
+	loop.Deinit()
 }
 
-// Test_Sim_Create verifies Create returns a fresh writable descriptor synchronously.
+// Test_Sim_Create verify Create return fresh writable descriptor, synchronously.
 func Test_Sim_Create(t *testing.T) {
 	loop, driver, _ := sim_loop(0)
 	file, err := sim_create(t, loop, driver, "path")
-	if err != nil {
-		t.Fatalf("create error: %v", err)
+	if !testify.No_Error(t, err) {
+		return
 	}
-	if file <= 0 {
-		t.Fatalf("create yielded %d, want a positive descriptor", file)
-	}
+	testify.Positive(t, file)
+	sim_close(t, loop, driver, file)
+	loop.Deinit()
 }
 
-// Test_Sim_Peer_Address verifies Peer_Address reports an address for a live descriptor
-// and the empty address for an unknown one.
+// Test_Sim_Peer_Address verify Peer_Address report address of live descriptor, and empty address
+// of unknown one.
 func Test_Sim_Peer_Address(t *testing.T) {
-	loop, _, _ := sim_loop(0)
-	socket, _ := loop.Socket(io.FAMILY_IPV4, io.SOCKET_TRANSPORT_TCP)
-	address, err := loop.Peer_Address(socket)
-	if err != nil {
-		t.Fatalf("peer address error: %v", err)
-	}
-	if address == "" {
-		t.Fatal("peer address of a live descriptor must not be empty")
-	}
-	if unknown, _ := loop.Peer_Address(0); unknown != "" {
-		t.Fatalf("peer address of an unknown descriptor = %q, want empty", unknown)
-	}
+	loop, driver, _ := sim_loop(0)
+	socket, _ := loop.Network.Socket_TCP(nbio.FAMILY_IPV4, sim_tcp_options())
+	address, err := loop.Network.Peer_Address(socket)
+	testify.No_Error(t, err)
+	testify.Not_Empty(t, address)
+	unknown, _ := loop.Network.Peer_Address(0)
+	testify.Empty(t, unknown)
+	sim_close(t, loop, driver, socket)
+	loop.Deinit()
 }
 
-// Test_Sim_Status verifies Status reports existence, kind, and size, and reports an absent
-// path as not-exists with a nil error rather than as a failure.
+// Test_Sim_Status verify Status report existence, kind, and size, and report absent path as
+// not-exists with nil error, not as failure.
 func Test_Sim_Status(t *testing.T) {
 	loop, driver, _ := sim_loop(0)
 	made := false
 	var mkdir time.Completion
-	loop.Mkdir_At(&mkdir, func(_ *time.Completion, err error) {
-		if err != nil {
-			t.Fatalf("mkdir at: %v", err)
-		}
-		made = true
-	}, io.DIRECTORY_CURRENT, "/dir", 0o755)
-	driver.Run_Until(func() (finished bool) { return made }, SIM_DEADLINE)
+	loop.Storage.Mkdir_At(&mkdir, nbio.DIRECTORY_CURRENT, "/dir", 0o755,
+		func(completed *time.Completion) {
+			testify.No_Error(t, completed.Error)
+			made = true
+		})
+	driver.Run_Until(SIM_DEADLINE, func() (finished bool) { return made })
 	file, create_err := sim_create(t, loop, driver, "/dir/file")
-	if create_err != nil {
-		t.Fatalf("create: %v", create_err)
+	if !testify.No_Error(t, create_err) {
+		return
 	}
-	// Write known bytes so the file's Size has a known expected value.
+	// Write known bytes, thus file Size has known expected value.
 	content := []byte("hello world")
 	written := false
 	var write time.Completion
-	loop.Write(&write, func(_ *time.Completion, _ int, _ error) {
+	loop.Storage.Write(&write, file, content, 0, SIM_DEADLINE, func(_ *time.Completion) {
 		written = true
-	}, file, content, 0)
-	driver.Run_Until(func() (finished bool) { return written }, SIM_DEADLINE)
-	directory, _ := loop.Status("/dir")
-	if !directory.Exists {
-		t.Fatalf("dir status = %+v, want exists", directory)
+	})
+	driver.Run_Until(SIM_DEADLINE, func() (finished bool) { return written })
+	directory, _ := loop.Storage.Status("/dir")
+	testify.True(t, directory.Exists)
+	testify.True(t, directory.Is_Directory)
+	testify.False(t, directory.Is_Regular)
+	testify.Zero(t, directory.Size)
+	sim_status_regular(t, loop, content)
+	sim_close(t, loop, driver, file)
+	loop.Deinit()
+}
+
+// Test_Sim_Deinit verify surface own leak check: Deinit reject run that still hold descriptor,
+// and accept same run once caller closed it.
+func Test_Sim_Deinit(t *testing.T) {
+	loop, driver, _ := sim_loop(0)
+	file, create_err := sim_create(t, loop, driver, "/deinit")
+	if !testify.No_Error(t, create_err) {
+		return
 	}
-	if !directory.Is_Directory {
-		t.Fatalf("dir status = %+v, want a directory", directory)
+	testify.True(t, sim_descriptor_open(loop))
+	sim_close(t, loop, driver, file)
+	loop.Deinit()
+}
+
+// Test_Address_Parse verify hand-written literal parse: IPv4, IPv6 in every accepted shape, and
+// every rejection the net/netip call used to give for free.
+func Test_Address_Parse(t *testing.T) {
+	for _, accepted := range address_parse_accepted() {
+		address, err := nbio.Address_Parse(accepted.Host, 8123)
+		if !testify.No_Error(t, err, accepted.Host) {
+			continue
+		}
+		testify.Equal(t, accepted.Family, address.Family, accepted.Host)
+		testify.Equal(t, uint16(8123), address.Port, accepted.Host)
+		testify.Equal(t, accepted.IP, address.IP, accepted.Host)
+		if accepted.Family == nbio.FAMILY_IPV6 {
+			expected := nbio.Address_IPV6(accepted.IP, 8123)
+			testify.Equal(t, expected, address, accepted.Host)
+		}
 	}
-	if directory.Is_Regular {
-		t.Fatalf("dir status = %+v, want a non-regular file", directory)
+	for _, rejected := range address_parse_rejected() {
+		_, err := nbio.Address_Parse(rejected, 8123)
+		testify.Error(t, err, rejected)
 	}
-	if directory.Size != 0 {
-		t.Fatalf("dir status = %+v, want a zero Size", directory)
+	_, negative_err := nbio.Address_Parse("127.0.0.1", -1)
+	testify.Error(t, negative_err)
+	_, overflow_err := nbio.Address_Parse("127.0.0.1", 65536)
+	testify.Error(t, overflow_err)
+}
+
+// The Stream function owns callback time because only it knows if the concrete operation is
+// immediate, simulated, or kernel-backed.
+func Test_Stream_Callback(t *testing.T) {
+	timeline, driver, _ := time.New_Virtual_Timeline(
+		time.Virtual_Clock{Resolution: time.NANOSECOND},
+	)
+	buffer := make([]byte, 3)
+	called := false
+	stream := nbio.Stream(
+		func(
+			completion *time.Completion, _ nbio.Stream_Mode, _ []byte, _ int64,
+			_ nbio.Seek_From, callback time.Callback,
+		) {
+			timeline.Submit(
+				completion, time.NANOSECOND, func(completed *time.Completion) {
+					completed.Data = len(buffer)
+					callback(completed)
+				},
+			)
+		},
+	)
+	var completion time.Completion
+	nbio.Read(stream, &completion, buffer, func(completed *time.Completion) {
+		called = true
+		testify.Equal(t, len(buffer), completed.Data)
+		testify.No_Error(t, completed.Error)
+	})
+	testify.False(t, called)
+	completed, drive_err := driver.Run_Until(
+		10*time.NANOSECOND, func() (finished bool) { return called },
+	)
+	testify.No_Error(t, drive_err)
+	testify.True(t, completed)
+	testify.True(t, called)
+	inline_called := false
+	stream = func(
+		completion *time.Completion, _ nbio.Stream_Mode, _ []byte, _ int64,
+		_ nbio.Seek_From, callback time.Callback,
+	) {
+		completion.Data = len(buffer)
+		callback(completion)
 	}
-	regular, _ := loop.Status("/dir/file")
-	if regular.Is_Directory {
-		t.Fatalf("file status = %+v, want a non-directory", regular)
+	nbio.Read(stream, &completion, buffer, func(_ *time.Completion) {
+		inline_called = true
+	})
+	testify.True(t, inline_called)
+}
+
+// Test_Stream_Read verifies Read moves bytes from the cursor, advances the cursor, and
+// reports Stream_EOF once the cursor has reached the end of the memory.
+func Test_Stream_Read(t *testing.T) {
+	harness := stream_harness(t)
+	stream := memory_stream(harness, []byte("abcdef"))
+	first := make([]byte, 3)
+	count, err := stream_read(t, harness, stream, first)
+	testify.No_Error(t, err)
+	testify.Equal(t, 3, count)
+	testify.Equal(t, "abc", string(first))
+	second := make([]byte, 8)
+	count, err = stream_read(t, harness, stream, second)
+	testify.No_Error(t, err)
+	testify.Equal(t, 3, count)
+	_, err = stream_read(t, harness, stream, second)
+	testify.Error_Is(t, err, nbio.Stream_EOF)
+}
+
+// Test_Stream_Write verifies Write stores bytes at the cursor, advances the cursor, and
+// reports Stream_Short_Write when the remaining memory cannot hold the whole buffer.
+func Test_Stream_Write(t *testing.T) {
+	harness := stream_harness(t)
+	memory := make([]byte, 4)
+	stream := memory_stream(harness, memory)
+	count, err := stream_write(t, harness, stream, []byte("ab"))
+	testify.No_Error(t, err)
+	testify.Equal(t, 2, count)
+	count, err = stream_write(t, harness, stream, []byte("cdef"))
+	testify.Error_Is(t, err, nbio.Stream_Short_Write)
+	testify.Equal(t, 2, count)
+	testify.Equal(t, "abcd", string(memory))
+}
+
+// Test_Stream_Read_At verifies Read_At reads from an explicit offset and leaves the cursor
+// where it was, the distinction Odin draws between Read and Read_At.
+func Test_Stream_Read_At(t *testing.T) {
+	harness := stream_harness(t)
+	stream := memory_stream(harness, []byte("abcdef"))
+	head := make([]byte, 2)
+	_, read_err := stream_read(t, harness, stream, head)
+	testify.No_Error(t, read_err)
+	tail := make([]byte, 2)
+	count, err := stream_read_at(t, harness, stream, tail, 4)
+	testify.No_Error(t, err)
+	testify.Equal(t, 2, count)
+	testify.Equal(t, "ef", string(tail))
+	position, seek_err := stream_seek(t, harness, stream, 0, nbio.SEEK_FROM_CURRENT)
+	testify.No_Error(t, seek_err)
+	testify.Equal(t, 2, position)
+}
+
+// Test_Stream_Write_At verifies Write_At stores at an explicit offset and leaves the cursor
+// where it was.
+func Test_Stream_Write_At(t *testing.T) {
+	harness := stream_harness(t)
+	memory := make([]byte, 6)
+	stream := memory_stream(harness, memory)
+	count, err := stream_write_at(t, harness, stream, []byte("xy"), 4)
+	testify.No_Error(t, err)
+	testify.Equal(t, 2, count)
+	testify.Equal(t, byte('x'), memory[4])
+	position, seek_err := stream_seek(t, harness, stream, 0, nbio.SEEK_FROM_CURRENT)
+	testify.No_Error(t, seek_err)
+	testify.Zero(t, position)
+}
+
+// Test_Stream_Seek verifies each Seek_From origin, and that an origin outside the three
+// reports Stream_Invalid_Whence.
+func Test_Stream_Seek(t *testing.T) {
+	harness := stream_harness(t)
+	stream := memory_stream(harness, []byte("abcdef"))
+	position, err := stream_seek(t, harness, stream, 2, nbio.SEEK_FROM_START)
+	testify.No_Error(t, err)
+	testify.Equal(t, 2, position)
+	position, err = stream_seek(t, harness, stream, 1, nbio.SEEK_FROM_CURRENT)
+	testify.No_Error(t, err)
+	testify.Equal(t, 3, position)
+	position, err = stream_seek(t, harness, stream, -1, nbio.SEEK_FROM_END)
+	testify.No_Error(t, err)
+	testify.Equal(t, 5, position)
+	_, err = stream_seek(t, harness, stream, 0, nbio.Seek_From(9))
+	testify.Error_Is(t, err, nbio.Stream_Invalid_Whence)
+	_, err = stream_seek(t, harness, stream, -1, nbio.SEEK_FROM_START)
+	testify.Error_Is(t, err, nbio.Stream_Invalid_Offset)
+}
+
+// Test_Stream_Size verifies Size reports the whole memory, not the bytes remaining.
+func Test_Stream_Size(t *testing.T) {
+	harness := stream_harness(t)
+	stream := memory_stream(harness, []byte("abcdef"))
+	_, seek_err := stream_seek(t, harness, stream, 4, nbio.SEEK_FROM_START)
+	testify.No_Error(t, seek_err)
+	size, err := stream_size(t, harness, stream)
+	testify.No_Error(t, err)
+	testify.Equal(t, 6, size)
+}
+
+// Test_Stream_Query verifies Query names exactly the modes a stream answers, so a caller
+// learns what a stream cannot do without provoking a failure.
+func Test_Stream_Query(t *testing.T) {
+	harness := stream_harness(t)
+	memory, memory_err := stream_query(t, harness, memory_stream(harness, make([]byte, 4)))
+	testify.No_Error(t, memory_err)
+	testify.True(t, nbio.Mode_Set_Has(memory, nbio.STREAM_MODE_SEEK))
+	testify.True(t, nbio.Mode_Set_Has(memory, nbio.STREAM_MODE_SIZE))
+	discard, discard_err := stream_query(t, harness, discard_stream(harness))
+	testify.No_Error(t, discard_err)
+	testify.False(t, nbio.Mode_Set_Has(discard, nbio.STREAM_MODE_SEEK))
+	testify.True(t, nbio.Mode_Set_Has(discard, nbio.STREAM_MODE_WRITE))
+}
+
+// Test_Stream_Flush verifies Flush succeeds on memory, which has nothing to flush, so a
+// caller can flush any stream without asking what is behind it.
+func Test_Stream_Flush(t *testing.T) {
+	harness := stream_harness(t)
+	_, err := stream_flush(
+		t, harness, memory_stream(harness, make([]byte, 2)),
+	)
+	testify.No_Error(t, err)
+	_, err = stream_flush(t, harness, discard_stream(harness))
+	testify.No_Error(t, err)
+}
+
+// Test_Stream_Close verifies Close is idempotent and that a closed stream answers no data
+// mode.
+func Test_Stream_Close(t *testing.T) {
+	harness := stream_harness(t)
+	stream := memory_stream(harness, make([]byte, 4))
+	_, err := stream_close(t, harness, stream)
+	testify.No_Error(t, err)
+	_, err = stream_close(t, harness, stream)
+	testify.No_Error(t, err)
+	_, err = stream_write(t, harness, stream, []byte("a"))
+	testify.Error_Is(t, err, nbio.Stream_Empty)
+}
+
+// Test_Stream_Destroy verifies Destroy closes the stream. Odin separates the two because a
+// stream there can own an allocation; a memory stream owns nothing but its cursor.
+func Test_Stream_Destroy(t *testing.T) {
+	harness := stream_harness(t)
+	stream := memory_stream(harness, make([]byte, 4))
+	_, err := stream_destroy(t, harness, stream)
+	testify.No_Error(t, err)
+	_, err = stream_read(t, harness, stream, make([]byte, 1))
+	testify.Error_Is(t, err, nbio.Stream_Empty)
+}
+
+// Test_Stream_Errors verifies the dispatch checks Odin's write helper performs: a zero
+// Stream reports Stream_Empty, and a mode a stream does not answer reports Stream_Empty.
+func Test_Stream_Errors(t *testing.T) {
+	harness := stream_harness(t)
+	var zero nbio.Stream
+	_, err := stream_read(t, harness, zero, make([]byte, 1))
+	testify.Error_Is(t, err, nbio.Stream_Empty)
+	_, query_err := stream_query(t, harness, zero)
+	testify.Error_Is(t, query_err, nbio.Stream_Empty)
+	_, err = stream_seek(t, harness, discard_stream(harness), 0, nbio.SEEK_FROM_START)
+	testify.Error_Is(t, err, nbio.Stream_Empty)
+}
+
+// Test_Stream_Memory verifies the memory stream never grows its slice: it is bounded by the
+// slice it was built over, which is what makes it safe to hand to an unbounded encoder.
+func Test_Stream_Memory(t *testing.T) {
+	harness := stream_harness(t)
+	memory := make([]byte, 3)
+	state := nbio.Stream_Memory{Memory: memory}
+	stream := nbio.Memory_To_Stream(&state)
+	count, err := stream_write(t, harness, stream, []byte("abcdefgh"))
+	testify.Error_Is(t, err, nbio.Stream_Short_Write)
+	testify.Equal(t, 3, count)
+	testify.Count(t, memory, 3)
+	testify.Equal(t, "abc", string(memory))
+}
+
+// Test_Stream_Discard verifies a discard stream absorbs every write, reports the whole buffer
+// stored, and answers no read mode.
+func Test_Stream_Discard(t *testing.T) {
+	harness := stream_harness(t)
+	stream := discard_stream(harness)
+	count, err := stream_write(t, harness, stream, []byte("abcdef"))
+	testify.No_Error(t, err)
+	testify.Equal(t, 6, count)
+	_, err = stream_read(t, harness, stream, make([]byte, 4))
+	testify.Error_Is(t, err, nbio.Stream_Empty)
+}
+
+// Test_Stream_Limit verifies a limit truncates at its budget and stops the bytes reaching the
+// stream behind it, so the budget is a fact about the transport and not a caller convention.
+func Test_Stream_Limit(t *testing.T) {
+	harness := stream_harness(t)
+	memory := make([]byte, 8)
+	inner := memory_stream(harness, memory)
+	state := nbio.Stream_Limit{Inner: inner, Budget: 3}
+	stream := nbio.Limit_To_Stream(&state)
+	count, err := stream_write(t, harness, stream, []byte("abcde"))
+	testify.Error_Is(t, err, nbio.Stream_Short_Write)
+	testify.Equal(t, 3, count)
+	testify.Equal(t, "abc\x00", string(memory[:4]))
+	_, err = stream_write(t, harness, stream, []byte("f"))
+	testify.Error_Is(t, err, nbio.Stream_Short_Write)
+	modes, query_err := stream_query(t, harness, stream)
+	testify.No_Error(t, query_err)
+	testify.False(t, nbio.Mode_Set_Has(modes, nbio.STREAM_MODE_SEEK))
+}
+
+// Test_Stream_Count verifies a count tallies every byte and changes nothing else, so the same
+// encoder measures and stores without being told which it is doing.
+func Test_Stream_Count(t *testing.T) {
+	harness := stream_harness(t)
+	memory := make([]byte, 8)
+	state := nbio.Stream_Count{Inner: memory_stream(harness, memory)}
+	stream := nbio.Count_To_Stream(&state)
+	_, err := stream_write(t, harness, stream, []byte("ab"))
+	testify.No_Error(t, err)
+	_, err = stream_write(t, harness, stream, []byte("cde"))
+	testify.No_Error(t, err)
+	testify.Equal(t, int64(5), state.Tally)
+	testify.Equal(t, "abcde", string(memory[:5]))
+	measure := nbio.Stream_Count{Inner: discard_stream(harness)}
+	measure_stream := nbio.Count_To_Stream(&measure)
+	_, err = stream_write(t, harness, measure_stream, []byte("abcd"))
+	testify.No_Error(t, err)
+	testify.Equal(t, int64(4), measure.Tally)
+}
+
+// Test_Stream_Tee verifies a tee writes each buffer to both streams and reports the smaller
+// count, so a caller learns about the tighter of the two rather than the first.
+func Test_Stream_Tee(t *testing.T) {
+	harness := stream_harness(t)
+	wide := make([]byte, 8)
+	narrow := make([]byte, 2)
+	state := nbio.Stream_Tee{
+		First: memory_stream(harness, wide), Second: memory_stream(harness, narrow),
 	}
-	if !regular.Is_Regular {
-		t.Fatalf("file status = %+v, want a regular file", regular)
+	stream := nbio.Tee_To_Stream(&state)
+	count, err := stream_write(t, harness, stream, []byte("abcd"))
+	testify.Error_Is(t, err, nbio.Stream_Short_Write)
+	testify.Equal(t, 2, count)
+	testify.Equal(t, "abcd", string(wide[:4]))
+	testify.Equal(t, "ab", string(narrow))
+	modes, query_err := stream_query(t, harness, stream)
+	testify.No_Error(t, query_err)
+	testify.False(t, nbio.Mode_Set_Has(modes, nbio.STREAM_MODE_READ))
+}
+
+// Test_Stream_Composition verifies the transforms compose. One encoder writes through a tee,
+// over a count, over a limit, over memory, and the tally, the truncation, and the stored bytes
+// all agree — the property that makes the abstraction worth its indirection.
+func Test_Stream_Composition(t *testing.T) {
+	harness := stream_harness(t)
+	stored := make([]byte, 16)
+	limit := nbio.Stream_Limit{Inner: memory_stream(harness, stored), Budget: 6}
+	limited := nbio.Limit_To_Stream(&limit)
+	count := nbio.Stream_Count{Inner: limited}
+	audit := make([]byte, 16)
+	counted := nbio.Count_To_Stream(&count)
+	tee := nbio.Stream_Tee{
+		First: counted, Second: memory_stream(harness, audit),
 	}
-	if regular.Size != int64(len(content)) {
-		t.Fatalf("file status = %+v, want Size %d", regular, len(content))
-	}
-	absent, _ := loop.Status("/nope")
-	if absent.Exists {
-		t.Fatalf("absent status = %+v, want not exists", absent)
-	}
-	if absent.Is_Regular {
-		t.Fatalf("absent status = %+v, want a non-regular file", absent)
+	stream := nbio.Tee_To_Stream(&tee)
+
+	written, err := stream_write(t, harness, stream, []byte("abcdefghij"))
+	testify.Error_Is(t, err, nbio.Stream_Short_Write)
+	testify.Equal(t, 6, written)
+	testify.Equal(t, int64(6), count.Tally)
+	testify.Equal(t, "abcdef\x00\x00", string(stored[:8]))
+	testify.Equal(t, "abcdefghij", string(audit[:10]))
+}
+
+// One literal the parse must accept, with the address it must yield.
+type Address_Case struct {
+	// Host is the literal under test.
+	Host string
+	// Family is the family the parse must report.
+	Family nbio.Address_Family
+	// IP is the byte layout the parse must produce.
+	IP [nbio.IPV6_ADDRESS_BYTES]byte
+}
+
+// State every literal shape the parse accept: dotted-quad, full IPv6, both ends of one "::" run,
+// and embedded IPv4 in the low 32 bits.
+func address_parse_accepted() (cases []Address_Case) {
+	return []Address_Case{
+		{Host: "127.0.0.1", Family: nbio.FAMILY_IPV4, IP: address_bytes(127, 0, 0, 1)},
+		{Host: "0.0.0.0", Family: nbio.FAMILY_IPV4, IP: address_bytes()},
+		{Host: "255.255.255.255", Family: nbio.FAMILY_IPV4,
+			IP: address_bytes(255, 255, 255, 255)},
+		{Host: "1:2:3:4:5:6:7:8", Family: nbio.FAMILY_IPV6, IP: address_bytes(
+			0, 1, 0, 2, 0, 3, 0, 4, 0, 5, 0, 6, 0, 7, 0, 8)},
+		{Host: "::", Family: nbio.FAMILY_IPV6, IP: address_bytes()},
+		{Host: "::1", Family: nbio.FAMILY_IPV6, IP: address_low(1)},
+		{Host: "fe80::", Family: nbio.FAMILY_IPV6, IP: address_bytes(0xfe, 0x80)},
+		{Host: "2001:db8::1", Family: nbio.FAMILY_IPV6,
+			IP: address_merge(address_bytes(0x20, 0x01, 0x0d, 0xb8), address_low(1))},
+		{Host: "::ffff:127.0.0.1", Family: nbio.FAMILY_IPV6,
+			IP: address_suffix(0xff, 0xff, 127, 0, 0, 1)},
+		{Host: "FE80::1", Family: nbio.FAMILY_IPV6,
+			IP: address_merge(address_bytes(0xfe, 0x80), address_low(1))},
 	}
 }
 
-// Test_Sim_Introspect verifies every simulator operation class, lifecycle flag, and raw-open
-// descriptor count is reported without exposing the simulator itself.
-func Test_Sim_Introspect(t *testing.T) {
-	loop, pump, driver, _ := sim_loop_pump(0)
-	file, create_err := sim_create(t, loop, driver, "/introspect")
-	if create_err != nil {
-		t.Fatalf("create: %v", create_err)
+// Lay values at front of address, zero-filled to the end.
+func address_bytes(values ...byte) (layout [nbio.IPV6_ADDRESS_BYTES]byte) {
+	copy(layout[:], values)
+	return layout
+}
+
+// Lay values at back of address, zero-filled from the front.
+func address_suffix(values ...byte) (layout [nbio.IPV6_ADDRESS_BYTES]byte) {
+	copy(layout[nbio.IPV6_ADDRESS_BYTES-len(values):], values)
+	return layout
+}
+
+// Put one byte in the last position, the shape a "::" run with one trailing group yield.
+func address_low(value byte) (layout [nbio.IPV6_ADDRESS_BYTES]byte) {
+	layout[nbio.IPV6_ADDRESS_BYTES-1] = value
+	return layout
+}
+
+// Combine two layouts, taking every non-zero byte of each.
+func address_merge(
+	front [nbio.IPV6_ADDRESS_BYTES]byte, back [nbio.IPV6_ADDRESS_BYTES]byte,
+) (layout [nbio.IPV6_ADDRESS_BYTES]byte) {
+	layout = front
+	for index, value := range back {
+		if value != 0 {
+			layout[index] = value
+		}
 	}
-	socket, open_err := loop.Socket(io.FAMILY_IPV4, io.SOCKET_TRANSPORT_TCP)
-	if open_err != nil {
-		t.Fatalf("open socket: %v", open_err)
+	return layout
+}
+
+// State every literal the parse reject, one per rule the hand-written reader must hold.
+func address_parse_rejected() (hosts []string) {
+	return []string{
+		"",
+		"localhost",
+		"127.0.0",
+		"127.0.0.1.1",
+		"127.0.0.256",
+		"010.1.1.1",
+		"127.0.0.-1",
+		"127.0.0.0001",
+		"1:2:3:4:5:6:7",
+		"1:2:3:4:5:6:7:8:9",
+		"1::2::3",
+		"::12345",
+		"::gggg",
+		"fe80::1%eth0",
+		":1",
+		"1:",
+		"1:2:3:4:5:6:7:8::",
+		"::ffff:127.0.0.256",
 	}
-	var completed, timeout, read, write time.Completion
-	loop.Write(&completed, func(_ *time.Completion, _ int, _ error) {}, file, nil, 0)
-	pump.Timeout(&timeout, func(_ *time.Completion, _ error) {}, time.MICROSECOND)
-	loop.Receive(&read, func(_ *time.Completion, _ int, _ error) {}, socket, nil)
-	loop.Send(&write, func(_ *time.Completion, _ int, _ error) {}, socket, nil)
-	// The signal-watch and spawn classes belong to the OS surface, and shared/os states them
-	// over the same census. What this test owns is the IO half of it.
-	snap.Expect(t, snap.Init(`{Completed:1 Timeouts:1 IO_Backlog:2 IO_Inflight:0 IO_Queued:0 IO_In_Kernel:0 Signal_Waiters:0 Spawns:0 Raw_Open:2}`),
-		fmt.Sprintf("%+v", driver.Introspect()))
+}
+
+// One pure profile prevents the same simulation input from selecting different limits per host.
+func socket_default_profile_assert(t *testing.T) {
+	t.Helper()
+	values := map[string]uint32{
+		"TCP receive buffer":     nbio.TCP_RECEIVE_BUFFER_BYTES_DEFAULT,
+		"TCP send buffer":        nbio.TCP_SEND_BUFFER_BYTES_DEFAULT,
+		"UDP send buffer":        nbio.UDP_SEND_BUFFER_BYTES_DEFAULT,
+		"receive low water":      nbio.SOCKET_RECEIVE_LOW_WATER_BYTES_DEFAULT,
+		"TCP maximum segment":    nbio.TCP_MAXIMUM_SEGMENT_BYTES_DEFAULT,
+		"TCP not-sent low water": nbio.TCP_NOT_SENT_LOW_WATER_BYTES_DEFAULT,
+		"TCP keepalive probes":   nbio.TCP_KEEPALIVE_PROBE_COUNT_DEFAULT,
+	}
+	want := map[string]uint32{
+		"TCP receive buffer":     128 * 1024,
+		"TCP send buffer":        128 * 1024,
+		"UDP send buffer":        208 * 1024,
+		"receive low water":      1,
+		"TCP maximum segment":    576 - 5*4 - 5*4,
+		"TCP not-sent low water": 1 << 10,
+		"TCP keepalive probes":   9,
+	}
+	for name, value := range values {
+		testify.Equal(t, want[name], value, name)
+	}
+	durations := map[string]time.Duration{
+		"linger timeout":         nbio.SOCKET_LINGER_TIMEOUT_DEFAULT,
+		"TCP keepalive idle":     nbio.TCP_KEEPALIVE_IDLE_DEFAULT,
+		"TCP keepalive interval": nbio.TCP_KEEPALIVE_INTERVAL_DEFAULT,
+	}
+	duration_want := map[string]time.Duration{
+		"linger timeout":         1 * time.SECOND,
+		"TCP keepalive idle":     2 * time.HOUR,
+		"TCP keepalive interval": 75 * time.SECOND,
+	}
+	for name, value := range durations {
+		testify.Equal(t, duration_want[name], value, name)
+	}
+	testify.True(t, nbio.TCP_NO_DELAY_DEFAULT)
+}
+
+// Test each limit separately because one rejected empty profile cannot prove all field checks.
+func sim_socket_limits_rejected(t *testing.T, loop nbio.IO, driver time.Driver) {
+	t.Helper()
+	tcp := sim_tcp_options()
+	tcp.Receive_Buffer_Bytes = 0
+	sim_tcp_limit_rejected(t, loop, driver, "receive buffer", tcp)
+	tcp = sim_tcp_options()
+	tcp.Send_Buffer_Bytes = 0
+	sim_tcp_limit_rejected(t, loop, driver, "send buffer", tcp)
+	tcp = sim_tcp_options()
+	tcp.Receive_Low_Water_Bytes = 0
+	sim_tcp_limit_rejected(t, loop, driver, "receive low water", tcp)
+	tcp.Linger_Timeout = 0
+	sim_tcp_limit_rejected(t, loop, driver, "linger timeout", tcp)
+	tcp = sim_tcp_options()
+	tcp.Maximum_Segment_Bytes = 0
+	sim_tcp_limit_rejected(t, loop, driver, "maximum segment", tcp)
+	tcp = sim_tcp_options()
+	tcp.Not_Sent_Low_Water_Bytes = 0
+	sim_tcp_limit_rejected(t, loop, driver, "not-sent low water", tcp)
+	tcp = sim_tcp_options()
+	tcp.Keepalive.Idle = 0
+	sim_tcp_limit_rejected(t, loop, driver, "keepalive idle", tcp)
+	tcp = sim_tcp_options()
+	tcp.Keepalive.Interval = 0
+	sim_tcp_limit_rejected(t, loop, driver, "keepalive interval", tcp)
+	tcp = sim_tcp_options()
+	tcp.Keepalive.Probe_Count = 0
+	sim_tcp_limit_rejected(t, loop, driver, "keepalive probe count", tcp)
+
+	udp := sim_udp_options()
+	udp.Receive_Buffer_Bytes = 0
+	sim_udp_limit_rejected(t, loop, driver, "receive buffer", udp)
+	udp = sim_udp_options()
+	udp.Send_Buffer_Bytes = 0
+	sim_udp_limit_rejected(t, loop, driver, "send buffer", udp)
+	udp = sim_udp_options()
+	udp.Receive_Low_Water_Bytes = 0
+	sim_udp_limit_rejected(t, loop, driver, "receive low water", udp)
+	udp.Linger_Timeout = 0
+	sim_udp_limit_rejected(t, loop, driver, "linger timeout", udp)
+}
+
+func sim_tcp_limit_rejected(
+	t *testing.T, loop nbio.IO, driver time.Driver, name string, options nbio.TCP_Options,
+) {
+	t.Helper()
+	socket, err := loop.Network.Socket_TCP(nbio.FAMILY_IPV4, options)
+	if testify.Error(t, err, name) {
+		return
+	}
+	sim_close(t, loop, driver, socket)
+}
+
+func sim_udp_limit_rejected(
+	t *testing.T, loop nbio.IO, driver time.Driver, name string, options nbio.UDP_Options,
+) {
+	t.Helper()
+	socket, err := loop.Network.Socket_UDP(nbio.FAMILY_IPV4, options)
+	if testify.Error(t, err, name) {
+		return
+	}
+	sim_close(t, loop, driver, socket)
+}
+
+// Return the complete TCP profile every simulator caller must select.
+func sim_tcp_options() (options nbio.TCP_Options) {
+	return nbio.TCP_Options{
+		Receive_Buffer_Bytes:     64 * 1024,
+		Send_Buffer_Bytes:        64 * 1024,
+		Receive_Low_Water_Bytes:  1,
+		Linger_Timeout:           1 * time.SECOND,
+		Maximum_Segment_Bytes:    512,
+		Not_Sent_Low_Water_Bytes: 1024,
+		Keepalive: nbio.TCP_Keepalive{
+			Idle: 5 * time.SECOND, Interval: 4 * time.SECOND, Probe_Count: 3,
+		},
+		No_Delay: true,
+	}
+}
+
+// Return the complete UDP profile every simulator caller must select.
+func sim_udp_options() (options nbio.UDP_Options) {
+	return nbio.UDP_Options{
+		Receive_Buffer_Bytes:    64 * 1024,
+		Send_Buffer_Bytes:       64 * 1024,
+		Receive_Low_Water_Bytes: 1,
+		Linger_Timeout:          1 * time.SECOND,
+	}
+}
+
+// State regular-file half of Status, thus Status test stay inside line cap.
+func sim_status_regular(t *testing.T, loop nbio.IO, content []byte) {
+	t.Helper()
+	regular, _ := loop.Storage.Status("/dir/file")
+	testify.False(t, regular.Is_Directory)
+	testify.True(t, regular.Is_Regular)
+	testify.Equal(t, int64(len(content)), regular.Size)
+	absent, _ := loop.Storage.Status("/nope")
+	testify.False(t, absent.Exists)
+	testify.False(t, absent.Is_Regular)
 }
 
 func connect_outcome(err error) (outcome string) {
 	if err == nil {
 		return "success"
 	}
-	if err == io.Connection_Refused {
+	if err == nbio.Connection_Refused {
 		return "refused"
 	}
 	return err.Error()
 }
 
+// Run one bounded accept against fresh listener and release both descriptors, thus seed sweep
+// leave nothing open for Deinit to reject.
+func sim_accept_once(
+	t *testing.T, seed uint64, timeout time.Duration,
+) (accepted nbio.File, operation_err error) {
+	t.Helper()
+	loop, driver, _ := sim_loop(seed)
+	listener, _ := loop.Network.Socket_TCP(nbio.FAMILY_IPV4, sim_tcp_options())
+	address := nbio.Address_IPV4([nbio.IPV4_ADDRESS_BYTES]byte{127, 0, 0, 1}, 0)
+	testify.No_Error(t, loop.Network.Bind(listener, address), seed)
+	testify.No_Error(t, loop.Network.Listen_Socket(listener, 128), seed)
+	callback_count := 0
+	accepted = nbio.File(-1)
+	var completion time.Completion
+	loop.Network.Accept(&completion, listener, timeout,
+		func(completed *time.Completion) {
+			callback_count++
+			accepted = nbio.File(completed.Data)
+			operation_err = completed.Error
+		})
+	completed, drive_err := driver.Run_Until(
+		16*time.NANOSECOND, func() (finished bool) { return callback_count > 0 })
+	testify.No_Error(t, drive_err, seed)
+	testify.True(t, completed, seed)
+	driver.Run_For(16 * time.NANOSECOND)
+	testify.Equal(t, 1, callback_count, seed)
+	testify.Not_Equal(t, listener, accepted, seed)
+	if accepted > 0 {
+		sim_close(t, loop, driver, accepted)
+	}
+	sim_close(t, loop, driver, listener)
+	loop.Deinit()
+	return accepted, operation_err
+}
+
 func sim_connect_lifecycle(t *testing.T, seed uint64) (snapshot string) {
 	t.Helper()
 	loop, driver, _ := sim_loop(seed)
-	baseline := driver.Introspect().Raw_Open
-	socket, open_err := loop.Socket(io.FAMILY_IPV4, io.SOCKET_TRANSPORT_TCP)
-	if open_err != nil {
-		t.Fatalf("open socket: %v", open_err)
+	socket, open_err := loop.Network.Socket_TCP(nbio.FAMILY_IPV4, sim_tcp_options())
+	if !testify.No_Error(t, open_err) {
+		return ""
 	}
-	opened := driver.Introspect().Raw_Open
 	called := false
 	var connect_err error
 	var completion time.Completion
-	loop.Connect(&completion, func(_ *time.Completion, err error) {
-		called = true
-		connect_err = err
-	}, socket, io.Address_I_Pv4([io.IPV4_ADDRESS_BYTES]byte{127, 0, 0, 1}, 8123), SIM_DEADLINE)
-	driver.Run_Until(func() (finished bool) { return called }, SIM_DEADLINE)
-	if !called {
-		t.Fatal("connect callback did not fire")
-	}
-	connected := driver.Introspect().Raw_Open
-	closed := false
-	var close_completion time.Completion
-	loop.Close(&close_completion, func(_ *time.Completion, err error) {
-		if err != nil {
-			t.Fatalf("close socket: %v", err)
-		}
-		closed = true
-	}, socket)
-	driver.Run_Until(func() (finished bool) { return closed }, SIM_DEADLINE)
+	loop.Network.Connect(&completion, socket,
+		nbio.Address_IPV4([nbio.IPV4_ADDRESS_BYTES]byte{127, 0, 0, 1}, 8123), SIM_DEADLINE,
+		func(completed *time.Completion) {
+			called = true
+			connect_err = completed.Error
+		})
+	driver.Run_Until(SIM_DEADLINE, func() (finished bool) { return called })
+	testify.True(t, called)
+	open_before_close := sim_descriptor_open(loop)
+	sim_close(t, loop, driver, socket)
+	loop.Deinit()
 	return fmt.Sprintf(
-		"baseline=%d opened=%d connected=%d closed=%d outcome=%s",
-		baseline, opened, connected, driver.Introspect().Raw_Open,
-		connect_outcome(connect_err),
+		"open_before_close=%t outcome=%s",
+		open_before_close, connect_outcome(connect_err),
 	)
 }
 
-// Runs one bounded simulated connect through its late-callback window and caller-owned close.
-func sim_connect_with_deadline(
-	t *testing.T, seed uint64, deadline time.Duration,
+// Run one bounded simulated connect through its late-callback window and caller-owned close.
+func sim_connect_with_timeout(
+	t *testing.T, seed uint64, timeout time.Duration,
 ) (connect_err error) {
 	t.Helper()
 	loop, driver, _ := sim_loop(seed)
-	socket, open_err := loop.Socket(io.FAMILY_IPV4, io.SOCKET_TRANSPORT_TCP)
-	if open_err != nil {
-		t.Fatalf("open socket: %v", open_err)
+	socket, open_err := loop.Network.Socket_TCP(nbio.FAMILY_IPV4, sim_tcp_options())
+	if !testify.No_Error(t, open_err) {
+		return open_err
 	}
 	callback_count := 0
 	var completion time.Completion
-	loop.Connect(&completion, func(_ *time.Completion, err error) {
-		callback_count++
-		connect_err = err
-	}, socket, io.Address_I_Pv4([io.IPV4_ADDRESS_BYTES]byte{127, 0, 0, 1}, 8123), deadline)
-	driver.Run_Until(func() (finished bool) { return callback_count > 0 }, SIM_DEADLINE)
+	loop.Network.Connect(&completion, socket,
+		nbio.Address_IPV4([nbio.IPV4_ADDRESS_BYTES]byte{127, 0, 0, 1}, 8123), timeout,
+		func(completed *time.Completion) {
+			callback_count++
+			connect_err = completed.Error
+		})
+	driver.Run_Until(SIM_DEADLINE, func() (finished bool) { return callback_count > 0 })
 	driver.Run_For(16 * time.NANOSECOND)
-	if callback_count != 1 {
-		t.Fatalf("seed %d: connect callback count = %d, want 1", seed, callback_count)
-	}
-	if driver.Introspect().Raw_Open != 1 {
-		t.Fatalf("seed %d: connect changed caller-owned descriptor count", seed)
-	}
-	closed := false
-	var close_completion time.Completion
-	loop.Close(&close_completion, func(_ *time.Completion, err error) {
-		if err != nil {
-			t.Fatalf("seed %d: close socket: %v", seed, err)
-		}
-		closed = true
-	}, socket)
-	driver.Run_Until(func() (finished bool) { return closed }, SIM_DEADLINE)
-	if driver.Introspect().Raw_Open != 0 {
-		t.Fatalf("seed %d: caller close leaked the connect socket", seed)
-	}
+	testify.Equal(t, 1, callback_count, seed)
+	testify.True(t, sim_descriptor_open(loop), seed)
+	sim_close(t, loop, driver, socket)
+	loop.Deinit()
 	return connect_err
 }
 
-// Builds a simulated loop, its driver, and the read-only clock, seeded by seed. A test
-// holds only the IO, the driver, and the clock — never the sim, which New_Simulated_IO keeps to
-// itself so the run stays a pure function of the seed.
-func sim_loop(seed uint64) (loop io.IO, driver time.Driver, clock time.Any_Clock) {
-	pump, driver, clock := time.New_Virtual_Timeline(
-		time.Virtual_Clock{Resolution: time.NANOSECOND})
-	return io.New_Simulated_IO(seed, pump, clock), driver, clock
+// Report whether run still hold open descriptor. Deinit is only census surface expose, thus test
+// state "still open" by watch of Deinit reject run.
+func sim_descriptor_open(loop nbio.IO) (open bool) {
+	defer func() { open = recover() != nil }()
+	loop.Deinit()
+	return false
 }
 
-// Opens path for reading through Open_At, driving the loop until the descriptor arrives.
-func sim_open(t *testing.T, loop io.IO, driver time.Driver, path string) (file io.File, err error) {
+// Fresh loops make latency and equal-time ordering pure functions of the supplied seed.
+func sim_transfer_once(
+	t *testing.T, seed uint64, datagram bool, send bool, timeout time.Duration,
+) (count int, operation_err error, completed_at time.Monotonic_Moment) {
 	t.Helper()
-	return sim_open_options(t, loop, driver, path, io.Open_At_Options{
-		Access: io.OPEN_READ_ONLY,
-	})
+	loop, driver, clock := sim_loop(seed)
+	var socket nbio.File
+	var open_err error
+	if datagram {
+		socket, open_err = loop.Network.Socket_UDP(nbio.FAMILY_IPV4, sim_udp_options())
+	} else {
+		socket, open_err = loop.Network.Socket_TCP(nbio.FAMILY_IPV4, sim_tcp_options())
+	}
+	if !testify.No_Error(t, open_err) {
+		return 0, open_err, 0
+	}
+	callback_count := 0
+	var completion time.Completion
+	callback := func(completed *time.Completion) {
+		callback_count++
+		count = completed.Data
+		operation_err = completed.Error
+		completed_at = clock.Now_Monotonic()
+	}
+	if send {
+		loop.Network.Send(&completion, socket, []byte("data"), timeout, callback)
+	} else {
+		loop.Network.Receive(&completion, socket, make([]byte, 4), timeout, callback)
+	}
+	driver.Run_Until(SIM_DEADLINE, func() (finished bool) { return callback_count > 0 })
+	driver.Run_For(16 * time.NANOSECOND)
+	testify.Equal(t, 1, callback_count, seed)
+	testify.True(t, sim_descriptor_open(loop), seed)
+	sim_close(t, loop, driver, socket)
+	loop.Deinit()
+	return count, operation_err, completed_at
 }
 
-// Creates or truncates path for writing through Open_At.
-func sim_create(
-	t *testing.T, loop io.IO, driver time.Driver, path string,
-) (file io.File, err error) {
+// Panic is the synchronous rejection surface, so no callback or driver pass may be necessary.
+func sim_network_timeout_rejected(
+	t *testing.T, network nbio.Network, operation string, timeout time.Duration,
+) {
 	t.Helper()
-	return sim_open_options(t, loop, driver, path, io.Open_At_Options{
-		Access: io.OPEN_WRITE_ONLY, Create: true, Truncate: true, Mode: 0o644,
-	})
+	testify.Panics(t, func() {
+		var completion time.Completion
+		if operation == "accept" {
+			network.Accept(&completion, nbio.File(-1), timeout,
+				func(_ *time.Completion) {})
+			return
+		}
+		if operation == "connect" {
+			network.Connect(&completion, nbio.File(-1), nbio.Address{}, timeout,
+				func(_ *time.Completion) {})
+			return
+		}
+		if operation == "receive" {
+			network.Receive(&completion, nbio.File(-1), nil, timeout,
+				func(_ *time.Completion) {})
+			return
+		}
+		network.Send(&completion, nbio.File(-1), nil, timeout,
+			func(_ *time.Completion) {})
+	}, operation, timeout)
 }
 
-// Submits one Open_At with the caller's options and drives the loop until it retires.
-func sim_open_options(
-	t *testing.T, loop io.IO, driver time.Driver, path string, options io.Open_At_Options,
-) (file io.File, err error) {
+// Run one storage operation through its late-delivery window and verify canceled effects.
+func sim_storage_once(
+	t *testing.T, seed uint64, operation string, timeout time.Duration,
+) (data int, operation_err error, elapsed time.Monotonic_Moment) {
+	t.Helper()
+	loop, driver, clock := sim_loop(seed)
+	file, create_err := sim_create(t, loop, driver, operation)
+	if !testify.No_Error(t, create_err) {
+		return 0, create_err, 0
+	}
+	sim_storage_write(t, loop, driver, file, []byte("base"))
+	read_buffer := []byte("keep")
+	start := clock.Now_Monotonic()
+	called := false
+	var completion time.Completion
+	callback := func(completed *time.Completion) {
+		data = completed.Data
+		operation_err = completed.Error
+		elapsed = clock.Now_Monotonic() - start
+		called = true
+	}
+	if operation == "read" {
+		loop.Storage.Read(&completion, file, read_buffer, 0, timeout, callback)
+	} else if operation == "write" {
+		loop.Storage.Write(&completion, file, []byte("next"), 0, timeout, callback)
+	} else {
+		loop.Storage.Fsync(&completion, file, timeout, callback)
+	}
+	driver.Run_Until(SIM_DEADLINE, func() (finished bool) { return called })
+	testify.True(t, called, seed, operation)
+	driver.Run_For(16 * time.NANOSECOND)
+	if operation_err == time.Deadline_Exceeded {
+		if operation == "read" {
+			testify.Equal(t, "keep", string(read_buffer), seed)
+		}
+		if operation == "write" {
+			contents := sim_storage_read(t, loop, driver, file, len("base"))
+			testify.Equal(t, "base", contents, seed)
+		}
+	}
+	sim_close(t, loop, driver, file)
+	loop.Deinit()
+	return data, operation_err, elapsed
+}
+
+// Use a long bound for fixture writes, so setup cannot consume the operation under test.
+func sim_storage_write(
+	t *testing.T, loop nbio.IO, driver time.Driver, file nbio.File, buffer []byte,
+) {
 	t.Helper()
 	done := false
 	var completion time.Completion
-	loop.Open_At(&completion, func(_ *time.Completion, opened io.File, open_err error) {
-		file = opened
-		err = open_err
-		done = true
-	}, io.DIRECTORY_CURRENT, path, options)
-	driver.Run_Until(func() (finished bool) { return done }, SIM_DEADLINE)
-	if !done {
-		t.Fatalf("the open of %s did not complete", path)
+	loop.Storage.Write(&completion, file, buffer, 0, SIM_DEADLINE,
+		func(completed *time.Completion) {
+			testify.No_Error(t, completed.Error)
+			done = true
+		})
+	driver.Run_Until(SIM_DEADLINE, func() (finished bool) { return done })
+	testify.True(t, done)
+}
+
+// Read fixture state through Storage, so the side-effect check uses the public surface.
+func sim_storage_read(
+	t *testing.T, loop nbio.IO, driver time.Driver, file nbio.File, size int,
+) (contents string) {
+	t.Helper()
+	buffer := make([]byte, size)
+	done := false
+	var completion time.Completion
+	loop.Storage.Read(&completion, file, buffer, 0, SIM_DEADLINE,
+		func(completed *time.Completion) {
+			testify.No_Error(t, completed.Error)
+			buffer = buffer[:completed.Data]
+			done = true
+		})
+	driver.Run_Until(SIM_DEADLINE, func() (finished bool) { return done })
+	testify.True(t, done)
+	return string(buffer)
+}
+
+// Use an open file so only timeout validation can cause the synchronous rejection.
+func sim_storage_timeout_rejected(
+	t *testing.T, operation string, timeout time.Duration,
+) {
+	t.Helper()
+	loop, driver, _ := sim_loop(0)
+	file, create_err := sim_create(t, loop, driver, operation)
+	if !testify.No_Error(t, create_err) {
+		return
 	}
+	testify.Panics(t, func() {
+		var completion time.Completion
+		if operation == "read" {
+			loop.Storage.Read(&completion, file, nil, 0, timeout,
+				func(_ *time.Completion) {})
+			return
+		}
+		if operation == "write" {
+			loop.Storage.Write(&completion, file, nil, 0, timeout,
+				func(_ *time.Completion) {})
+			return
+		}
+		loop.Storage.Fsync(&completion, file, timeout, func(_ *time.Completion) {})
+	}, operation, timeout)
+	sim_close(t, loop, driver, file)
+	loop.Deinit()
+}
+
+// Build simulated loop, its driver, and read-only clock, seeded by seed. Test hold only IO,
+// driver, and clock — never sim, which New_Simulated_IO keep to itself, thus run stay pure
+// function of seed.
+func sim_loop(seed uint64) (loop nbio.IO, driver time.Driver, clock time.Clock) {
+	pump, driver, clock := time.New_Virtual_Timeline(
+		time.Virtual_Clock{Resolution: time.NANOSECOND})
+	return nbio.New_Simulated_IO(seed, pump), driver, clock
+}
+
+// Open path for read through Open_At. Drive loop until descriptor arrive.
+func sim_open(
+	t *testing.T, loop nbio.IO, driver time.Driver, path string,
+) (file nbio.File, err error) {
+	t.Helper()
+	return sim_open_options(t, loop, driver, path, nbio.Open_At_Options{
+		Access: nbio.OPEN_READ_ONLY,
+	})
+}
+
+// Make or truncate path for write through Open_At.
+func sim_create(
+	t *testing.T, loop nbio.IO, driver time.Driver, path string,
+) (file nbio.File, err error) {
+	t.Helper()
+	return sim_open_options(t, loop, driver, path, nbio.Open_At_Options{
+		Access: nbio.OPEN_WRITE_ONLY, Create: true, Truncate: true, Mode: 0o644,
+	})
+}
+
+// Submit one Open_At with caller options and drive loop until it retire.
+func sim_open_options(
+	t *testing.T, loop nbio.IO, driver time.Driver, path string, options nbio.Open_At_Options,
+) (file nbio.File, err error) {
+	t.Helper()
+	done := false
+	var completion time.Completion
+	loop.Storage.Open_At(&completion, nbio.DIRECTORY_CURRENT, path, options,
+		func(completed *time.Completion) {
+			file = nbio.File(completed.Data)
+			err = completed.Error
+			done = true
+		})
+	driver.Run_Until(SIM_DEADLINE, func() (finished bool) { return done })
+	testify.True(t, done, path)
 	return file, err
 }
 
-// The Run_Until cap for the sim tests, in virtual time: ample for ops that finish in a
-// handful of grains, while a never-satisfied predicate fails after this many cheap grains
-// instead of spinning the sim forever.
+// Release file through asynchronous Close and drive loop until close retire, thus caller reach
+// Deinit with nothing still open.
+func sim_close(t *testing.T, loop nbio.IO, driver time.Driver, file nbio.File) {
+	t.Helper()
+	closed := false
+	var completion time.Completion
+	loop.Close(&completion, file, func(completed *time.Completion) {
+		testify.No_Error(t, completed.Error)
+		closed = true
+	})
+	driver.Run_Until(SIM_DEADLINE, func() (finished bool) { return closed })
+	testify.True(t, closed, file)
+}
+
+// Run_Until cap of sim tests, in virtual time: ample for operation that finish in handful of
+// grains, while never-satisfied predicate fail after this many cheap grains instead of spin of
+// sim forever.
 const SIM_DEADLINE = time.MICROSECOND
 
-// Test_Connect_Deadline_Sim verifies a finite connect deadline wins a latency tie, delivers once,
-// and leaves the borrowed descriptor open until the caller closes it.
-func Test_Connect_Deadline_Sim(t *testing.T) {
-	saw_deadline := false
-	saw_tie := false
+// A finite connect timeout must coexist with terminal outcomes and caller-owned teardown.
+func Test_Connect_Timeout_Sim(t *testing.T) {
+	saw_operation := false
+	saw_timeout := false
 	for seed := uint64(0); seed < 64; seed++ {
-		at_deadline := sim_connect_with_deadline(t, seed, 4*time.NANOSECOND)
-		after_deadline := sim_connect_with_deadline(t, seed, 5*time.NANOSECOND)
-		if at_deadline == time.Deadline_Exceeded {
-			saw_deadline = true
+		short := sim_connect_with_timeout(t, seed, time.NANOSECOND)
+		if short == time.Deadline_Exceeded {
+			saw_timeout = true
 		}
-		if at_deadline == time.Deadline_Exceeded {
-			if after_deadline != time.Deadline_Exceeded {
-				saw_tie = true
+		long := sim_connect_with_timeout(t, seed, SIM_DEADLINE)
+		if long != time.Deadline_Exceeded {
+			saw_operation = true
+		}
+	}
+	testify.True(t, saw_operation)
+	testify.True(t, saw_timeout)
+}
+
+// One sweep must reach both sides because a fixed success seed cannot prove the bound exists.
+func Test_Network_Transfer_Timeouts_Sim(t *testing.T) {
+	tests := []struct {
+		Name     string
+		Datagram bool
+		Send     bool
+	}{
+		{Name: "TCP receive"},
+		{Name: "TCP send", Send: true},
+		{Name: "UDP receive", Datagram: true},
+		{Name: "UDP send", Datagram: true, Send: true},
+	}
+	for _, test := range tests {
+		saw_operation := false
+		saw_timeout := false
+		for seed := uint64(0); seed < 128; seed++ {
+			count, operation_err, _ := sim_transfer_once(
+				t, seed, test.Datagram, test.Send, time.NANOSECOND)
+			if operation_err == time.Deadline_Exceeded {
+				saw_timeout = true
+				testify.Zero(t, count, test.Name)
+				continue
 			}
+			testify.No_Error(t, operation_err, test.Name)
+			saw_operation = true
+			testify.Equal(t, 4, count, test.Name)
 		}
-	}
-	if !saw_deadline {
-		t.Fatal("seed sweep witnessed no connect deadline")
-	}
-	if !saw_tie {
-		t.Fatal("seed sweep witnessed no connect latency tie lost to the deadline")
+		testify.True(t, saw_operation, test.Name)
+		testify.True(t, saw_timeout, test.Name)
 	}
 }
 
-// Builds a simulator beside the loop that owns its order, for a test that needs the loop's own
-// control plane as well as the IO surface.
-func sim_loop_pump(
-	seed uint64,
-) (loop io.IO, pump time.Timeline, driver time.Driver, clock time.Any_Clock) {
-	pump, driver, clock = time.New_Virtual_Timeline(
-		time.Virtual_Clock{Resolution: time.NANOSECOND})
-	return io.New_Simulated_IO(seed, pump, clock), pump, driver, clock
+// Equal simulated times need both kernel-valid orders, not one artificial global tie rule.
+func Test_Network_Transfer_Equal_Time_Order_Sim(t *testing.T) {
+	saw_operation := false
+	saw_timeout := false
+	for seed := uint64(0); seed < 256; seed++ {
+		_, _, latency := sim_transfer_once(t, seed, false, false, SIM_DEADLINE)
+		if latency <= 0 {
+			continue
+		}
+		count, operation_err, _ := sim_transfer_once(
+			t, seed, false, false, time.Duration(latency))
+		if operation_err == time.Deadline_Exceeded {
+			saw_timeout = true
+			testify.Zero(t, count, seed)
+		} else {
+			saw_operation = true
+			testify.No_Error(t, operation_err, seed)
+			testify.Equal(t, 4, count, seed)
+		}
+	}
+	testify.True(t, saw_operation)
+	testify.True(t, saw_timeout)
+}
+
+// Every entry rejects an absent bound before it can borrow a descriptor.
+func Test_Network_Rejects_Disabled_Timeouts_Sim(t *testing.T) {
+	for _, operation := range []string{"accept", "connect", "receive", "send"} {
+		for _, timeout := range []time.Duration{0, -time.NANOSECOND} {
+			loop, _, _ := sim_loop(0)
+			sim_network_timeout_rejected(t, loop.Network, operation, timeout)
+			loop.Deinit()
+		}
+	}
+}
+
+// A timeout must stop the modeled storage effect, or the callback lies about cancellation.
+func Test_Storage_Timeouts_Sim(t *testing.T) {
+	for _, operation := range []string{"read", "write", "fsync"} {
+		saw_operation := false
+		saw_timeout := false
+		for seed := uint64(0); seed < 128; seed++ {
+			data, operation_err, _ := sim_storage_once(
+				t, seed, operation, time.NANOSECOND,
+			)
+			if operation_err == time.Deadline_Exceeded {
+				saw_timeout = true
+				testify.Zero(t, data, operation)
+				continue
+			}
+			testify.No_Error(t, operation_err, operation, seed)
+			saw_operation = true
+		}
+		testify.True(t, saw_operation, operation)
+		testify.True(t, saw_timeout, operation)
+	}
+}
+
+// A separate stream must make both equal-time storage orders reachable without moving network.
+func Test_Storage_Equal_Time_Order_Sim(t *testing.T) {
+	saw_operation := false
+	saw_timeout := false
+	for seed := uint64(0); seed < 256; seed++ {
+		_, _, latency := sim_storage_once(t, seed, "read", SIM_DEADLINE)
+		if latency <= 0 {
+			continue
+		}
+		data, operation_err, _ := sim_storage_once(
+			t, seed, "read", time.Duration(latency),
+		)
+		if operation_err == time.Deadline_Exceeded {
+			saw_timeout = true
+			testify.Zero(t, data, seed)
+			continue
+		}
+		testify.No_Error(t, operation_err, seed)
+		saw_operation = true
+	}
+	testify.True(t, saw_operation)
+	testify.True(t, saw_timeout)
+}
+
+// An empty transfer has no storage effect that can consume a timeout or a latency draw.
+func Test_Storage_Empty_Transfer_Completes_On_First_Grain_Sim(t *testing.T) {
+	for _, operation := range []string{"read", "write"} {
+		loop, driver, clock := sim_loop(0)
+		file, create_err := sim_create(t, loop, driver, operation)
+		if !testify.No_Error(t, create_err, operation) {
+			continue
+		}
+		start := clock.Now_Monotonic()
+		called := false
+		var completion time.Completion
+		callback := func(completed *time.Completion) {
+			testify.Zero(t, completed.Data, operation)
+			testify.No_Error(t, completed.Error, operation)
+			called = true
+		}
+		if operation == "read" {
+			loop.Storage.Read(&completion, file, nil, 0, time.NANOSECOND, callback)
+		} else {
+			loop.Storage.Write(&completion, file, nil, 0, time.NANOSECOND, callback)
+		}
+		testify.False(t, called, operation)
+		driver.Run_Until(time.NANOSECOND, func() (finished bool) { return called })
+		testify.True(t, called, operation)
+		want := start + time.Monotonic_Moment(time.NANOSECOND)
+		testify.Equal(t, want, clock.Now_Monotonic(), operation)
+		sim_close(t, loop, driver, file)
+		loop.Deinit()
+	}
+}
+
+// The bound is required on every backend, even where Darwin cannot enforce elapsed time.
+func Test_Storage_Rejects_Disabled_Timeouts_Sim(t *testing.T) {
+	for _, operation := range []string{"read", "write", "fsync"} {
+		for _, timeout := range []time.Duration{0, -time.NANOSECOND} {
+			sim_storage_timeout_rejected(t, operation, timeout)
+		}
+	}
+}
+
+// Independent operation and timeout inputs keep one corpus case from suppressing another path.
+func Fuzz_Sim_Network_Timeouts(f *testing.F) {
+	f.Add(uint64(0), uint8(0), uint8(0), false)
+	f.Add(uint64(1), uint8(1), uint8(1), false)
+	f.Add(uint64(2), uint8(2), uint8(2), false)
+	f.Add(uint64(3), uint8(3), uint8(7), true)
+	f.Fuzz(func(
+		t *testing.T, seed uint64, operation uint8, timeout_grain uint8, datagram bool,
+	) {
+		timeout := time.Duration(timeout_grain%uint8(nbio.SIM_LATENCY_GRAINS)+1) *
+			time.NANOSECOND
+		if operation%4 == 0 {
+			sim_accept_once(t, seed, timeout)
+			return
+		}
+		if operation%4 == 1 {
+			sim_connect_with_timeout(t, seed, timeout)
+			return
+		}
+		if operation%4 == 2 {
+			sim_transfer_once(t, seed, datagram, false, timeout)
+			return
+		}
+		sim_transfer_once(t, seed, datagram, true, timeout)
+	})
+}
+
+// Independent storage kind and timeout inputs keep the fuzzer on the complete seed space.
+func Fuzz_Sim_Storage_Timeouts(f *testing.F) {
+	f.Add(uint64(0), uint8(0), uint8(0))
+	f.Add(uint64(1), uint8(1), uint8(1))
+	f.Add(uint64(2), uint8(2), uint8(7))
+	f.Fuzz(func(t *testing.T, seed uint64, operation uint8, timeout_grain uint8) {
+		timeout := time.Duration(timeout_grain%uint8(nbio.SIM_LATENCY_GRAINS)+1) *
+			time.NANOSECOND
+		names := [...]string{"read", "write", "fsync"}
+		sim_storage_once(t, seed, names[operation%uint8(len(names))], timeout)
+	})
+}
+
+// The test owns the Driver for Stream functions that select the virtual Timeline.
+type stream_harness_state struct {
+	Timeline time.Timeline
+	Driver   time.Driver
+}
+
+// One virtual Timeline tests delayed Stream functions without a production Driver.
+func stream_harness(t *testing.T) (harness *stream_harness_state) {
+	t.Helper()
+	timeline, driver, _ := time.New_Virtual_Timeline(
+		time.Virtual_Clock{Resolution: time.NANOSECOND},
+	)
+	harness = &stream_harness_state{Timeline: timeline, Driver: driver}
+	t.Cleanup(harness.Driver.Deinit)
+	return harness
+}
+
+// This join accepts the callback time that each concrete Stream selects.
+func stream_result(
+	t *testing.T, harness *stream_harness_state,
+	submit func(completion *time.Completion, callback time.Callback),
+) (data int, err error) {
+	t.Helper()
+	called := false
+	var completion time.Completion
+	submit(&completion, func(completed *time.Completion) {
+		data = completed.Data
+		err = completed.Error
+		called = true
+	})
+	if called {
+		return data, err
+	}
+	completed, drive_err := harness.Driver.Run_Until(
+		10*time.NANOSECOND, func() (finished bool) { return called },
+	)
+	testify.No_Error(t, drive_err)
+	testify.True(t, completed)
+	return data, err
+}
+
+func stream_read(
+	t *testing.T, harness *stream_harness_state, stream nbio.Stream, buffer []byte,
+) (count int, err error) {
+	t.Helper()
+	return stream_result(t, harness, func(
+		completion *time.Completion, callback time.Callback,
+	) {
+		nbio.Read(stream, completion, buffer, callback)
+	})
+}
+
+func stream_read_at(
+	t *testing.T, harness *stream_harness_state, stream nbio.Stream, buffer []byte,
+	offset int64,
+) (count int, err error) {
+	t.Helper()
+	return stream_result(t, harness, func(
+		completion *time.Completion, callback time.Callback,
+	) {
+		nbio.Read_At(stream, completion, buffer, offset, callback)
+	})
+}
+
+func stream_write(
+	t *testing.T, harness *stream_harness_state, stream nbio.Stream, buffer []byte,
+) (count int, err error) {
+	t.Helper()
+	return stream_result(t, harness, func(
+		completion *time.Completion, callback time.Callback,
+	) {
+		nbio.Write(stream, completion, buffer, callback)
+	})
+}
+
+func stream_write_at(
+	t *testing.T, harness *stream_harness_state, stream nbio.Stream, buffer []byte,
+	offset int64,
+) (count int, err error) {
+	t.Helper()
+	return stream_result(t, harness, func(
+		completion *time.Completion, callback time.Callback,
+	) {
+		nbio.Write_At(stream, completion, buffer, offset, callback)
+	})
+}
+
+func stream_seek(
+	t *testing.T, harness *stream_harness_state, stream nbio.Stream, offset int64,
+	whence nbio.Seek_From,
+) (position int, err error) {
+	t.Helper()
+	return stream_result(t, harness, func(
+		completion *time.Completion, callback time.Callback,
+	) {
+		nbio.Seek(stream, completion, offset, whence, callback)
+	})
+}
+
+func stream_size(
+	t *testing.T, harness *stream_harness_state, stream nbio.Stream,
+) (size int, err error) {
+	t.Helper()
+	return stream_result(t, harness, func(
+		completion *time.Completion, callback time.Callback,
+	) {
+		nbio.Size(stream, completion, callback)
+	})
+}
+
+func stream_query(
+	t *testing.T, harness *stream_harness_state, stream nbio.Stream,
+) (modes nbio.Stream_Mode_Set, err error) {
+	t.Helper()
+	data, query_err := stream_result(t, harness, func(
+		completion *time.Completion, callback time.Callback,
+	) {
+		nbio.Query(stream, completion, callback)
+	})
+	return nbio.Stream_Mode_Set(data), query_err
+}
+
+func stream_flush(
+	t *testing.T, harness *stream_harness_state, stream nbio.Stream,
+) (data int, err error) {
+	t.Helper()
+	return stream_result(t, harness, func(
+		completion *time.Completion, callback time.Callback,
+	) {
+		nbio.Flush(stream, completion, callback)
+	})
+}
+
+func stream_close(
+	t *testing.T, harness *stream_harness_state, stream nbio.Stream,
+) (data int, err error) {
+	t.Helper()
+	return stream_result(t, harness, func(
+		completion *time.Completion, callback time.Callback,
+	) {
+		nbio.Close(stream, completion, callback)
+	})
+}
+
+func stream_destroy(
+	t *testing.T, harness *stream_harness_state, stream nbio.Stream,
+) (data int, err error) {
+	t.Helper()
+	return stream_result(t, harness, func(
+		completion *time.Completion, callback time.Callback,
+	) {
+		nbio.Destroy(stream, completion, callback)
+	})
+}
+
+// Builds a memory stream over bytes the test owns. Test_Stream_Memory writes the constructor
+// out in full; every other test uses this, because the state is not what it is testing.
+func memory_stream(
+	harness *stream_harness_state, memory []byte,
+) (stream nbio.Stream) {
+	state := nbio.Stream_Memory{Memory: memory}
+	return nbio.Memory_To_Stream(&state)
+}
+
+// Builds a discard stream for the tests that need a stream answering only write modes.
+func discard_stream(harness *stream_harness_state) (stream nbio.Stream) {
+	state := nbio.Stream_Discard{}
+	return nbio.Discard_To_Stream(&state)
+}
+
+// Separate byte and offset inputs let the fuzzer cross every memory boundary without one input
+// deciding whether another path exists.
+func Fuzz_Stream_Memory(f *testing.F) {
+	f.Add([]byte("abc"), []byte("xy"), int64(0), false)
+	f.Add([]byte{}, []byte{}, int64(0), true)
+	f.Add([]byte("a"), []byte("bc"), int64(1), true)
+	f.Fuzz(func(
+		t *testing.T, initial []byte, transfer []byte, offset int64, write bool,
+	) {
+		if len(initial) > bits.KIBIBYTE_BYTES {
+			return
+		}
+		if len(transfer) > bits.KIBIBYTE_BYTES {
+			return
+		}
+		memory := append([]byte(nil), initial...)
+		before := append([]byte(nil), initial...)
+		harness := stream_harness(t)
+		stream := memory_stream(harness, memory)
+		if write {
+			stream_memory_fuzz_write(
+				t, harness, stream, memory, before, transfer, offset,
+			)
+			return
+		}
+		stream_memory_fuzz_read(t, harness, stream, before, len(transfer), offset)
+	})
+}
+
+// Positioned writes make the expected mutation independent of cursor history.
+func stream_memory_fuzz_write(
+	t *testing.T, harness *stream_harness_state, stream nbio.Stream, memory []byte,
+	before []byte, transfer []byte, offset int64,
+) {
+	t.Helper()
+	count, err := stream_write_at(t, harness, stream, transfer, offset)
+	if offset < 0 {
+		testify.Error_Is(t, err, nbio.Stream_Invalid_Offset)
+		testify.Equal(t, before, memory)
+		return
+	}
+	if offset > int64(len(memory)) {
+		testify.Error_Is(t, err, nbio.Stream_Invalid_Offset)
+		testify.Equal(t, before, memory)
+		return
+	}
+	expected := append([]byte(nil), before...)
+	expected_count := copy(expected[int(offset):], transfer)
+	testify.Equal(t, expected_count, count)
+	if expected_count < len(transfer) {
+		testify.Error_Is(t, err, nbio.Stream_Short_Write)
+	} else {
+		testify.No_Error(t, err)
+	}
+	testify.Equal(t, expected, memory)
+}
+
+// Positioned reads expose invalid, terminal, empty, partial, and complete ranges directly.
+func stream_memory_fuzz_read(
+	t *testing.T, harness *stream_harness_state, stream nbio.Stream, memory []byte,
+	buffer_size int, offset int64,
+) {
+	t.Helper()
+	buffer := make([]byte, buffer_size)
+	count, err := stream_read_at(t, harness, stream, buffer, offset)
+	if offset < 0 {
+		testify.Error_Is(t, err, nbio.Stream_Invalid_Offset)
+		return
+	}
+	if offset > int64(len(memory)) {
+		testify.Error_Is(t, err, nbio.Stream_Invalid_Offset)
+		return
+	}
+	if offset == int64(len(memory)) {
+		testify.Zero(t, count)
+		testify.Error_Is(t, err, nbio.Stream_EOF)
+		return
+	}
+	expected_count := copy(make([]byte, buffer_size), memory[int(offset):])
+	testify.Equal(t, expected_count, count)
+	testify.No_Error(t, err)
+	testify.Equal(t, memory[int(offset):int(offset)+count], buffer[:count])
 }

@@ -5,6 +5,7 @@ import (
 
 	invariant "local/james-orcales/shared/invariant/default"
 	timeos "local/james-orcales/shared/simulation/time/default"
+	"local/james-orcales/shared/testify"
 )
 
 // TestMain register package invariant roots before smoke test run.
@@ -19,10 +20,6 @@ func Test_Operating_System_Smoke(t *testing.T) {
 	host := timeos.New_Operating_System_Clock()
 	first := host.Now_Monotonic()
 	second := host.Now_Monotonic()
-	if second < first {
-		t.Errorf("monotonic regressed: %d then %d", first, second)
-	}
-	if host.Now_Realtime() <= 0 {
-		t.Error("realtime must be positive nanoseconds since the Unix epoch")
-	}
+	testify.True(t, second >= first, first, second)
+	testify.Positive(t, host.Now_Realtime())
 }

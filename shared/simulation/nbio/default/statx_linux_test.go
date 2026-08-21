@@ -6,61 +6,54 @@ import (
 	"path/filepath"
 	"testing"
 
-	io "local/james-orcales/shared/simulation/nbio"
+	"local/james-orcales/shared/simulation/nbio"
 	"local/james-orcales/shared/simulation/time"
 	timeos "local/james-orcales/shared/simulation/time/default"
+	"local/james-orcales/shared/testify"
 )
 
-// Test_Operating_System_IO_Statx ports the Linux-only tail of TigerBeetle's
-// open/write/read/close/statx test and verifies the written size through IORING_OP_STATX.
+// Test_Operating_System_IO_Statx cover Linux-only tail of
+// open/write/read/close/statx chain, and verify written size through IORING_OP_STATX.
 func Test_Operating_System_IO_Statx(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "statx")
-	clock, _ := timeos.New_Operating_System_Any_Clock()
+	clock := timeos.New_Operating_System_Clock()
 	loop, _, driver := operating_system_loop(t, clock)
-	opened := io.File(-1)
+	opened := nbio.File(-1)
 	var open_completion time.Completion
-	loop.Open_At(&open_completion, func(_ *time.Completion, file io.File, err error) {
-		if err != nil {
-			t.Errorf("open at: %v", err)
+	loop.Storage.Open_At(&open_completion, nbio.DIRECTORY_CURRENT, path, nbio.Open_At_Options{
+		Access: nbio.OPEN_READ_WRITE, Create: true, Truncate: true, Mode: 0o600,
+	}, func(completed *time.Completion) {
+		if !testify.No_Error(t, completed.Error) {
 			return
 		}
-		opened = file
-	}, io.DIRECTORY_CURRENT, path, io.Open_At_Options{
-		Access: io.OPEN_READ_WRITE, Create: true, Truncate: true, Mode: 0o600,
+		opened = nbio.File(completed.Data)
 	})
-	if !operating_system_run_until(t, driver, func() (finished bool) { return opened >= 0 }) {
-		t.Fatal("open at did not complete")
-	}
+	testify.True(t,
+		operating_system_run_until(
+			t, driver, func() (finished bool) { return opened >= 0 },
+		))
 	written := false
 	var write_completion time.Completion
-	loop.Write(&write_completion, func(_ *time.Completion, count int, err error) {
-		if err != nil {
-			t.Errorf("write: %v", err)
-		}
-		written = count == 5
-	}, opened, []byte("hello"), 10)
-	if !operating_system_run_until(t, driver, func() (finished bool) { return written }) {
-		t.Fatal("write did not complete")
-	}
+	loop.Storage.Write(&write_completion, opened, []byte("hello"), 10, REAL_DEADLINE,
+		func(completed *time.Completion) {
+			testify.No_Error(t, completed.Error)
+			written = completed.Data == 5
+		})
+	testify.True(t,
+		operating_system_run_until(t, driver, func() (finished bool) { return written }))
 	self_exec_close(loop, driver, opened)
 
-	status := io.Statx{}
+	status := nbio.Statx{}
 	statted := false
 	var statx_completion time.Completion
 	loop.Statx(
-		&statx_completion,
-		func(_ *time.Completion, err error) {
-			if err != nil {
-				t.Errorf("statx: %v", err)
-			}
+		&statx_completion, nbio.DIRECTORY_CURRENT, path, 0, nbio.STATX_BASIC_STATS, &status,
+		func(completed *time.Completion) {
+			testify.No_Error(t, completed.Error)
 			statted = true
 		},
-		io.DIRECTORY_CURRENT, path, 0, io.STATX_BASIC_STATS, &status,
 	)
-	if !operating_system_run_until(t, driver, func() (finished bool) { return statted }) {
-		t.Fatal("statx did not complete")
-	}
-	if status.Size != 15 {
-		t.Fatalf("statx size = %d, want 15", status.Size)
-	}
+	testify.True(t,
+		operating_system_run_until(t, driver, func() (finished bool) { return statted }))
+	testify.Equal(t, uint64(15), status.Size)
 }

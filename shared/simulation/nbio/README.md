@@ -20,10 +20,13 @@ One vocabulary, each term built from the ones before it:
 - A **`Completion`** — the caller-owned identity of one in-flight operation: submitting
   it is the emission, its callback firing is the observation.
 - **`IO`** — the surface an application emits through and registers what it will
-  observe: its entire io vocabulary, held whole by every tier beneath the root. It
-  stays op-level so the simulator can sit under the program and fault it per
-  operation; coarser injected verbs would put an untested translation layer between
-  the two.
+  observe: its whole io vocabulary, in two halves. `IO.Network` carry every socket
+  endpoint, `IO.Storage` every file endpoint, and a tier hold the half it use — a
+  package that only write files hold `Storage` and cannot reach a socket. `Close` and
+  `Deinit` stay flat on `IO`, because both name a descriptor and both half hand
+  descriptors out. It stays op-level so the simulator can sit under the program and
+  fault it per operation; coarser injected verbs would put an untested translation
+  layer between the two.
 - **`Driver`** — the crank (`Run` / `Run_For` / `Run_Until`): delivering observations
   is advancing the timeline, so it is held **only by the code that constructed it**.
 - **`time.Clock`** — an application's local, read-only view of time; never a source
@@ -108,11 +111,11 @@ predicate; the root pumps. Section 5 shows the shapes.
 Two backends behind the same surface, constructed only at a composition root:
 
 ```go
-// Real OS backend — a binary's package main.
+// Real OS backend — package main of binary.
 clock, tick := timeos.New_Operating_System_Clock()
 loop, driver := iodefault.New_Operating_System_IO(clock)
 
-// Deterministic simulator — a test harness. The seed is the ONLY input.
+// Deterministic simulator — test harness. Seed is ONLY input.
 loop, driver, clock := io.New_Simulated_IO(seed)
 ```
 
@@ -126,8 +129,8 @@ entry point wired onto the one loop, per-application virtual clocks.
 
 ```go
 driver.Run()                       // one pass: dispatch whatever is ready NOW, then return
-driver.Run_For(duration)           // crank for a duration of (real | virtual) time
-completed := driver.Run_Until(done, timeout)  // crank until done() — the root's pump
+driver.Run_For(duration)           // crank for duration of (real | virtual) time
+completed := driver.Run_Until(done, timeout)  // crank until done() — pump of root
 ```
 
 `Run_Until` semantics, exactly:
@@ -151,14 +154,14 @@ Submitting from a callback is the model working as intended (only *driving* from
 callback is banned). A protocol step chains to the next:
 
 ```go
-socket, err := loop.Open_Socket_TCP(io.FAMILY_IPV4, options)
+socket, err := loop.Network.Socket_TCP(io.FAMILY_IPV4, options)
 if err != nil { ... }
 state.Socket = socket
 loop.Connect(&connect_completion, func(_ *io.Completion, err error) {
 	if err != nil { ... ; return }
 	loop.Send(&send_completion, func(_ *io.Completion, count int, err error) {
 		if err != nil { ... ; return }
-		receive_first(socket)   // submits the first Receive
+		receive_first(socket)   // submit first Receive
 	}, socket, request)
 }, socket, address, 30*time.SECOND)
 ```
@@ -182,7 +185,7 @@ rearm function — called by the root, outside any callback — turns recorded s
 submissions. Callback writes state, rearm submits, the call graph stays acyclic:
 
 ```go
-// State replaces the call stack: the cursor is the program counter.
+// State replace call stack: cursor is program counter.
 type mirror struct {
 	Writes           []write
 	Index            int
@@ -193,7 +196,7 @@ type mirror struct {
 	Close_Completion io.Completion
 }
 
-// Called by the root only. Reports whether it armed anything.
+// Root call it only. Report whether it armed anything.
 func mirror_rearm(loop io.IO, state *mirror) (armed bool) {
 	if !state.Write_Queued {
 		return false
@@ -204,7 +207,7 @@ func mirror_rearm(loop io.IO, state *mirror) (armed bool) {
 		return false
 	}
 	next := state.Writes[state.Index]
-	file, err := loop.Create(next.Path) // inline op: no completion, no timeline
+	file, err := loop.Create(next.Path) // inline operation: no completion, no timeline
 	if err != nil {
 		state.Status = 1
 		state.Done = true
@@ -216,8 +219,8 @@ func mirror_rearm(loop io.IO, state *mirror) (armed bool) {
 	return true
 }
 
-// Completion: record progress and queue the continuation — never submit the next
-// iteration here; that is rearm's job, from the root.
+// Completion: record progress and queue continuation — never submit next iteration here.
+// That is job of rearm, from root.
 func mirror_written(loop io.IO, state *mirror, file io.File, err error) {
 	if err != nil {
 		state.Status = 1
@@ -244,10 +247,10 @@ for the root to call:
 
 ```go
 type Runner struct {
-	Cadence     func()                  // run periodic work whose interval has elapsed
-	Rearm       func() (armed bool)     // submit any continuations recorded by callbacks
-	Work_Queued func() (queued bool)    // is there a recorded continuation waiting?
-	Stopped     func() (finished bool)  // is the application finished?
+	Cadence     func()                  // run periodic work whose interval elapsed
+	Rearm       func() (armed bool)     // submit any continuation callbacks recorded
+	Work_Queued func() (queued bool)    // is recorded continuation waiting?
+	Stopped     func() (finished bool)  // is application finished?
 }
 ```
 
@@ -257,12 +260,12 @@ universe package in simulation — runs the same loop either way:
 ```go
 for !runner.Stopped() {
 	runner.Cadence()
-	for runner.Rearm() {   // keep arming until no continuation is waiting
+	for runner.Rearm() {   // keep arm until no continuation wait
 		driver.Run()
 	}
 	driver.Run_Until(func() (finished bool) {
 		return runner.Stopped() || runner.Work_Queued()
-	}, tick)               // sleep until a completion records new work, or the tick
+	}, tick)               // sleep until completion record new work, or tick
 }
 ```
 
@@ -291,13 +294,13 @@ Shutdown is therefore just another state transition. The application watches for
 signals at startup, and the first one to arrive starts a bounded drain:
 
 ```go
-// At startup — armed once, alongside the listeners and timers.
+// At startup — armed once, beside listeners and timers.
 loop.Watch_Signal(&state.Terminate_Completion,
 	func(_ *io.Completion, _ io.Signal) { drain_begin(state) }, io.SIGNAL_TERMINATE)
 loop.Watch_Signal(&state.Interrupt_Completion,
 	func(_ *io.Completion, _ io.Signal) { drain_begin(state) }, io.SIGNAL_INTERRUPT)
 
-// The first signal starts the drain; a second one changes nothing.
+// First signal start drain. Second one change nothing.
 func drain_begin(state *daemon) {
 	if state.Draining {
 		return
@@ -306,7 +309,7 @@ func drain_begin(state *daemon) {
 	state.Drain_Deadline = state.Clock.Now_Monotonic() + time.Moment(drain_timeout)
 }
 
-// Called from Cadence every pass: stop when the work is gone or time is up.
+// Cadence call it every pass: stop when work is gone, or time is up.
 func drain_tick(state *daemon) {
 	if !state.Draining {
 		return

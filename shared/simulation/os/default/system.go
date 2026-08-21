@@ -30,10 +30,10 @@ func New_Operating_System() (host os.OS) {
 		Variable: func(name string) (value string, found bool) {
 			return syscall.Getenv(name)
 		},
-		Executable:        startup.Executable,
-		Working_Directory: syscall.Getwd,
-		Hostname:          system_hostname,
-		Identifier:        syscall.Getpid,
+		Executable:         startup.Executable,
+		Working_Directory:  syscall.Getwd,
+		Hostname:           system_hostname,
+		Process_Identifier: syscall.Getpid,
 
 		Effective_User_Identifier: syscall.Geteuid,
 		Self_Exec: func(path string, arguments []string, environment []string) (err error) {

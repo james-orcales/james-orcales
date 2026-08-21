@@ -1,4 +1,4 @@
-package io_test
+package nbio_test
 
 import (
 	"testing"
@@ -6,7 +6,7 @@ import (
 	invariant "local/james-orcales/shared/invariant/default"
 )
 
-// TestMain registers the completion-machine assertions. Thus, an unused legal edge fails the suite.
+// TestMain register completion-machine assertions. Thus unused legal edge fail suite.
 func TestMain(m *testing.M) {
 	invariant.Run_Test_Main(m)
 }

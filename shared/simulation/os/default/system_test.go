@@ -7,6 +7,7 @@ import (
 	invariant "local/james-orcales/shared/invariant/default"
 	"local/james-orcales/shared/simulation/os"
 	system_os "local/james-orcales/shared/simulation/os/default"
+	"local/james-orcales/shared/testify"
 )
 
 // TestMain registers the package invariant roots before the smoke test runs.
@@ -19,33 +20,17 @@ func TestMain(m *testing.M) {
 // constructor asserts every slot is filled, so reaching the end proves the vtable is whole.
 func Test_Operating_System_Smoke(t *testing.T) {
 	host := system_os.New_Operating_System()
-	if arguments := host.Arguments(); len(arguments) == 0 {
-		t.Error("arguments are empty; the test binary is always argv[0]")
-	}
-	if identifier := host.Identifier(); identifier <= 0 {
-		t.Errorf("identifier = %d, want a positive process id", identifier)
-	}
+	testify.Not_Empty(t, host.Arguments())
+	testify.Positive(t, host.Process_Identifier())
 	directory, directory_err := host.Working_Directory()
-	if directory_err != nil {
-		t.Errorf("working directory: %v", directory_err)
-	}
-	if !strings.HasPrefix(directory, "/") {
-		t.Errorf("working directory = %q, want an absolute path", directory)
-	}
+	testify.No_Error(t, directory_err)
+	testify.True(t, strings.HasPrefix(directory, "/"), directory)
 	executable, executable_err := host.Executable()
-	if executable_err != nil {
-		t.Errorf("executable: %v", executable_err)
-	}
-	if executable == "" {
-		t.Error("executable is empty")
-	}
+	testify.No_Error(t, executable_err)
+	testify.Not_Empty(t, executable)
 	name, name_err := host.Hostname()
-	if name_err != nil {
-		t.Errorf("hostname: %v", name_err)
-	}
-	if name == "" {
-		t.Error("hostname is empty; both platforms name the machine")
-	}
+	testify.No_Error(t, name_err)
+	testify.Not_Empty(t, name)
 }
 
 // Test_Operating_System_Environment verifies Environment and Variable agree, because they reach
@@ -53,25 +38,23 @@ func Test_Operating_System_Smoke(t *testing.T) {
 func Test_Operating_System_Environment(t *testing.T) {
 	host := system_os.New_Operating_System()
 	variables := host.Environment()
-	if len(variables) == 0 {
-		t.Fatal("the environment is empty; the test harness always sets PATH")
+	if !testify.Not_Empty(t, variables) {
+		return
 	}
 	for _, variable := range variables {
 		name, _, split := strings.Cut(variable, "=")
-		if !split {
-			t.Fatalf("the entry %q carries no separator", variable)
+		if !testify.True(t, split, variable) {
+			continue
 		}
 		want, found := os.Environment_Lookup(variables, name)
-		if !found {
-			t.Fatalf("the name %q is absent from the block that listed it", name)
+		if !testify.True(t, found, name) {
+			continue
 		}
 		value, single := host.Variable(name)
-		if !single {
-			t.Fatalf("Variable did not find %q, which Environment listed", name)
+		if !testify.True(t, single, name) {
+			continue
 		}
-		if value != want {
-			t.Fatalf("Variable(%q) = %q, want %q", name, value, want)
-		}
+		testify.Equal(t, want, value, name)
 	}
 }
 
@@ -82,7 +65,6 @@ func Test_Operating_System_Arguments_Copy(t *testing.T) {
 	first := host.Arguments()
 	original := first[0]
 	first[0] = "edited"
-	if second := host.Arguments(); second[0] != original {
-		t.Fatalf("a later read = %q, want the edit not to reach it", second[0])
-	}
+	second := host.Arguments()
+	testify.Equal(t, original, second[0])
 }
