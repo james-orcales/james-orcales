@@ -9,8 +9,8 @@
 package uuid
 
 import (
-	"local/james-orcales/shared/random/csprng"
-	system_csprng "local/james-orcales/shared/random/csprng/default"
+	"local/james-orcales/shared/crypto/prng"
+	system_prng "local/james-orcales/shared/crypto/prng/default"
 	"local/james-orcales/shared/simulation/time/default"
 	"local/james-orcales/shared/uuid"
 )
@@ -19,16 +19,16 @@ import (
 // for entropy and the operating-system clock for the version 1, 6, and 7
 // timestamps. The node is random, drawn from crypto/rand when first needed.
 func New_Operating_System_Generator(
-	read system_csprng.Seed_Read,
-	source *csprng.Generator,
+	read system_prng.Seed_Read,
+	source *prng.Chacha,
 	state uuid.Generator_State,
 ) (generator uuid.Generator) {
 	defer func() {
 		uuid.Generator_Invariants(generator, "new_operating_system_generator.generator")
 	}()
-	csprng.Generator_Invariants(*source, "new_operating_system_generator.source")
+	prng.Chacha_Invariants(*source, "new_operating_system_generator.source")
 	uuid.Generator_State_Invariants(state, "new_operating_system_generator.state")
-	*source = system_csprng.New_Operating_System_Generator(read, csprng.CURSOR_MIN)
+	*source = system_prng.New_Operating_System_Chacha(read, prng.CURSOR_MIN)
 	clock := time.New_Operating_System_Clock()
-	return uuid.New(uuid.Source(source), clock, uuid.Node{}, state)
+	return uuid.New(prng.Chacha_To_Source(source), clock, uuid.Node{}, state)
 }

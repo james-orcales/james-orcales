@@ -7,7 +7,7 @@ import (
 	"cmp"
 	"testing"
 
-	"local/james-orcales/shared/random/prng"
+	"local/james-orcales/shared/simulation/prng"
 	"local/james-orcales/shared/slices"
 	"local/james-orcales/shared/sort"
 	"local/james-orcales/shared/testify"
@@ -349,7 +349,7 @@ func Test_Standard_Library_Largest_Random(t *testing.T) {
 	var values [sort.ELEMENT_COUNT_MAXIMUM]int
 	generator := prng.New(1)
 	for index := range values {
-		values[index] = int(prng.Generator_Below(&generator, STANDARD_SMALL_COUNT))
+		values[index] = int(prng.Xoshiro_Below(&generator, STANDARD_SMALL_COUNT))
 	}
 	testify.False(t, bool(sort.Is_Sorted(values[:], compare_integer)),
 		"deterministic random fixture must start unordered")
@@ -443,7 +443,7 @@ func Test_Standard_Library_Find_Exhaustive(t *testing.T) {
 }
 
 func run_standard_sizes(
-	t *testing.T, source []int, work []int, generator *prng.Generator,
+	t *testing.T, source []int, work []int, generator *prng.Xoshiro,
 ) {
 	for modulus := 1; modulus < len(source)*STANDARD_BINARY_PART_COUNT; modulus *= 2 {
 		distribution_limit := STANDARD_DISTRIBUTION_COUNT
@@ -464,7 +464,7 @@ func run_standard_modes(t *testing.T, source []int, work []int) {
 }
 
 func fill_standard_distribution(
-	values []int, modulus int, distribution int, generator *prng.Generator,
+	values []int, modulus int, distribution int, generator *prng.Xoshiro,
 ) {
 	left, right := 0, 1
 	for index := range values {
@@ -472,7 +472,7 @@ func fill_standard_distribution(
 		case STANDARD_SAWTOOTH:
 			values[index] = index % modulus
 		case STANDARD_RANDOM:
-			values[index] = int(prng.Generator_Below(generator, prng.Bound(modulus)))
+			values[index] = int(prng.Xoshiro_Below(generator, prng.Bound(modulus)))
 		case STANDARD_STAGGER:
 			values[index] = (index*modulus + index) % len(values)
 		case STANDARD_PLATEAU:
@@ -485,10 +485,10 @@ func fill_standard_distribution(
 }
 
 func shuffled_values(
-	generator *prng.Generator, modulus int, left int, right int,
+	generator *prng.Xoshiro, modulus int, left int, right int,
 ) (next_left int, next_right int) {
 	next_left, next_right = left, right
-	if prng.Generator_Below(generator, prng.Bound(modulus)) != 0 {
+	if prng.Xoshiro_Below(generator, prng.Bound(modulus)) != 0 {
 		next_left += STANDARD_BINARY_PART_COUNT
 		return next_left, next_right
 	}

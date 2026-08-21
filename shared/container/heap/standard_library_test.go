@@ -4,7 +4,7 @@ import (
 	"cmp"
 	"testing"
 
-	"local/james-orcales/shared/random/prng"
+	"local/james-orcales/shared/simulation/prng"
 	"local/james-orcales/shared/slices"
 	"local/james-orcales/shared/testify"
 )
@@ -170,7 +170,7 @@ func Test_Standard_Library_Fix(t *testing.T) {
 	verify_heap(t, elements)
 	generator := prng.New(1)
 	for round := 100; round > 0; round-- {
-		changed_index := prng.Generator_Below(&generator, prng.Bound(len(elements)))
+		changed_index := prng.Xoshiro_Below(&generator, prng.Bound(len(elements)))
 		if round%2 == 0 {
 			elements[changed_index] *= 2
 		} else {

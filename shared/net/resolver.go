@@ -6,7 +6,7 @@ import (
 	"unsafe"
 
 	"local/james-orcales/shared/bytes"
-	"local/james-orcales/shared/crypto/rand"
+	"local/james-orcales/shared/crypto/prng"
 	"local/james-orcales/shared/invariant/default"
 	"local/james-orcales/shared/simulation/nbio"
 	"local/james-orcales/shared/simulation/time"
@@ -480,21 +480,13 @@ const RESOLVER_STAGE_RECEIVE_TCP_MESSAGE Resolver_Stage = RESOLVER_STAGE_RECEIVE
 // RESOLVER_STAGE_CLOSE_TCP releases stream descriptor.
 const RESOLVER_STAGE_CLOSE_TCP Resolver_Stage = RESOLVER_STAGE_RECEIVE_TCP_MESSAGE + 1
 
-// Entropy keeps caller-owned cryptographic generator distinct.
-type Entropy random.Generator
-
-// Entropy_Invariants requires initialized entropy handle.
-func Entropy_Invariants(value Entropy, namespace invariant.Namespace) {
-	invariant.Always(value != nil, "Resolver entropy is bound.")
-}
-
-// Resolver_Entropy permits zero state before caller binds generator.
-type Resolver_Entropy Entropy
+// Resolver_Entropy permits zero state before caller binds a source.
+type Resolver_Entropy prng.Source
 
 // Resolver_Entropy_Invariants covers uninitialized and bound state.
 func Resolver_Entropy_Invariants(value Resolver_Entropy, namespace invariant.Namespace) {
 	invariant.Tree(value, namespace).
-		Sometimes(value != nil, "Resolver entropy is bound.").
+		Sometimes(value.State != nil, "Resolver entropy is bound.").
 		Ensure()
 }
 
@@ -817,12 +809,12 @@ func Resolver_Invariants(value Resolver, namespace invariant.Namespace) {
 // Resolver_Init binds dependencies and caller workspace without opening socket.
 func Resolver_Init(
 	resolver *Resolver,
-	loop nbio.IO, clock time.Clock, entropy Entropy,
+	loop nbio.IO, clock time.Clock, entropy prng.Source,
 	workspace Resolver_Workspace_Pointer, configuration Resolver_Configuration,
 ) {
 	Resolver_Invariants(*resolver, "Resolver_Init.resolver")
 	time.Clock_Invariants(clock, "Resolver_Init.clock")
-	Entropy_Invariants(entropy, "Resolver_Init.entropy")
+	prng.Source_Invariants(entropy, "Resolver_Init.entropy")
 	Resolver_Workspace_Pointer_Invariants(workspace, "Resolver_Init.workspace")
 	Resolver_Configuration_Invariants(configuration, "Resolver_Init.configuration")
 	invariant.Always(
@@ -864,7 +856,7 @@ func Resolve(
 	Address_Storage_Invariants(results, "Resolve.results")
 	Timeout_Invariants(timeout, "Resolve.timeout")
 	time.Clock_Invariants(time.Clock(resolver.Clock), "Resolve.clock")
-	invariant.Always(resolver.Entropy != nil, "Resolve has bound entropy.")
+	invariant.Always(resolver.Entropy.State != nil, "Resolve has bound entropy.")
 	invariant.Always(resolver.Workspace != nil, "Resolve has bound workspace.")
 	invariant.Always(completion != nil, "Resolve has completion storage.")
 	invariant.Always(completion == &resolver.Completion,
@@ -916,9 +908,9 @@ func resolver_query_build(completion *time.Completion) {
 		query[index] = 0
 	}
 	base := DNS_TCP_SIZE_BYTES
-	random.Read(
-		random.Generator(Entropy(resolver.Entropy)),
-		random.Destination(query[base:base+DNS_TRANSACTION_BYTES]),
+	prng.Source_Read(
+		prng.Source(resolver.Entropy),
+		prng.Sink(query[base:base+DNS_TRANSACTION_BYTES]),
 	)
 	resolver.Transaction = Transaction_Identifier(
 		uint16(query[base])<<8 | uint16(query[base+1]),

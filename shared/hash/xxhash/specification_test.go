@@ -5,7 +5,7 @@ import (
 
 	"local/james-orcales/shared/hash/xxhash"
 	"local/james-orcales/shared/math/bits"
-	"local/james-orcales/shared/random/prng"
+	"local/james-orcales/shared/simulation/prng"
 	"local/james-orcales/shared/testify"
 )
 
@@ -46,7 +46,7 @@ func Test_Digest_Equals_One_Shot(t *testing.T) {
 	generator := prng.New(99)
 	data := make(xxhash.Source, 1000)
 	for index := 0; index < len(data); index++ {
-		data[index] = byte(prng.Generator_Next(&generator))
+		data[index] = byte(prng.Xoshiro_Next(&generator))
 	}
 	seed := xxhash.Seed(0xabcdef)
 	want := xxhash.Hash(data, seed)

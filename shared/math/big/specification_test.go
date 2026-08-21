@@ -7,7 +7,7 @@ import (
 	"local/james-orcales/shared/encoding/binary"
 	"local/james-orcales/shared/math/big"
 	"local/james-orcales/shared/math/bits"
-	"local/james-orcales/shared/random/prng"
+	"local/james-orcales/shared/simulation/prng"
 	"local/james-orcales/shared/testify"
 )
 
@@ -2016,10 +2016,10 @@ func test_random_int_domains(t *testing.T, workspace *big.Int_Random_Workspace) 
 }
 
 func test_random_words(
-	destination *[big.RANDOM_WORD_SIZE_MAXIMUM]big.Word, generator *prng.Generator,
+	destination *[big.RANDOM_WORD_SIZE_MAXIMUM]big.Word, generator *prng.Xoshiro,
 ) {
 	for index := range destination {
-		destination[index] = big.Word(prng.Generator_Next(generator))
+		destination[index] = big.Word(prng.Xoshiro_Next(generator))
 	}
 }
 

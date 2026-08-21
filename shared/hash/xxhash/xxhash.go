@@ -1,7 +1,7 @@
 // Package xxhash is XXH64 (Yann Collet's xxHash): a fast non-cryptographic 64-bit hash for
 // fingerprints, deduplication, and in-memory hash tables keyed by trusted data. It is deliberately
 // not collision-resistant against an adversary — for maps keyed by untrusted input use a keyed
-// hash, and for unpredictable output use csprng.
+// hash, and for unpredictable output use crypto/prng.
 //
 // Hash is the one-shot form over a whole slice. Digest is the streaming form and an io.Writer (the
 // one method the house style permits), so io.Copy can feed it and Digest_Sum64 reads the result.
@@ -135,7 +135,7 @@ func Tail_Invariants(value Tail, namespace invariant.Namespace) {
 }
 
 // Digest is the streaming XXH64 state. Construct it with New_Digest; the zero value is usable only
-// after a Digest_Reset. Fields are transparent, like prng.Generator's State.
+// after a Digest_Reset. Fields are transparent, like prng.Xoshiro's State.
 type Digest struct {
 	// State keeps opaque machine words in fixed caller storage. Private element meaning keeps
 	// machine-width implementation values from pretending to have narrower semantic domains.

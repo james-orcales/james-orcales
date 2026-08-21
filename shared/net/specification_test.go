@@ -4,9 +4,9 @@ import (
 	"testing"
 	"unsafe"
 
+	"local/james-orcales/shared/crypto/prng"
 	"local/james-orcales/shared/encoding/binary"
 	"local/james-orcales/shared/net"
-	"local/james-orcales/shared/random/csprng"
 	"local/james-orcales/shared/simulation/nbio"
 	"local/james-orcales/shared/simulation/time"
 )
@@ -161,11 +161,11 @@ func Test_Deadline(t *testing.T) {
 	fixture.DNS.Virtual = &fixture.Virtual
 	fixture.DNS.Tick_On_Socket = true
 	fixture.Virtual.Resolution = time.NANOSECOND
-	fixture.Generator = csprng.New([csprng.KEY_BYTES]byte{1}, csprng.CURSOR_MIN)
+	fixture.Generator = prng.New([prng.KEY_BYTES]byte{1}, prng.CURSOR_MIN)
 	network.Resolver_Init(
 		&fixture.Resolver, fake_dns_loop(&fixture.DNS),
 		time.Virtual_Clock_To_Clock(&fixture.Virtual),
-		network.Entropy(&fixture.Generator), &fixture.Workspace,
+		prng.Chacha_To_Source(&fixture.Generator), &fixture.Workspace,
 		resolver_configuration(nbio.FAMILY_IPV4),
 	)
 	network.Resolve(
@@ -187,11 +187,11 @@ func Test_Truncated_Envelope(t *testing.T) {
 	fixture.DNS.Mode = FAKE_DNS_TCP
 	fixture.DNS.Response_Kind = FAKE_DNS_RESPONSE_TRANSACTION_MISMATCH
 	fixture.Virtual.Resolution = time.NANOSECOND
-	fixture.Generator = csprng.New([csprng.KEY_BYTES]byte{1}, csprng.CURSOR_MIN)
+	fixture.Generator = prng.New([prng.KEY_BYTES]byte{1}, prng.CURSOR_MIN)
 	network.Resolver_Init(
 		&fixture.Resolver, fake_dns_loop(&fixture.DNS),
 		time.Virtual_Clock_To_Clock(&fixture.Virtual),
-		network.Entropy(&fixture.Generator), &fixture.Workspace,
+		prng.Chacha_To_Source(&fixture.Generator), &fixture.Workspace,
 		resolver_configuration(nbio.FAMILY_IPV4),
 	)
 	network.Resolve(
@@ -216,11 +216,11 @@ func Test_TCP_Partial_Transfers(t *testing.T) {
 	fixture.DNS.TCP_Size_Limit = 1
 	fixture.DNS.TCP_Response_Limit = 1
 	fixture.Virtual.Resolution = time.NANOSECOND
-	fixture.Generator = csprng.New([csprng.KEY_BYTES]byte{1}, csprng.CURSOR_MIN)
+	fixture.Generator = prng.New([prng.KEY_BYTES]byte{1}, prng.CURSOR_MIN)
 	network.Resolver_Init(
 		&fixture.Resolver, fake_dns_loop(&fixture.DNS),
 		time.Virtual_Clock_To_Clock(&fixture.Virtual),
-		network.Entropy(&fixture.Generator), &fixture.Workspace,
+		prng.Chacha_To_Source(&fixture.Generator), &fixture.Workspace,
 		resolver_configuration(nbio.FAMILY_IPV4),
 	)
 	network.Resolve(
@@ -274,11 +274,11 @@ func Test_Deferred_Completion(t *testing.T) {
 	var fixture resolver_fixture
 	fixture.DNS.Defer_Connect = true
 	fixture.Virtual.Resolution = time.NANOSECOND
-	fixture.Generator = csprng.New([csprng.KEY_BYTES]byte{1}, csprng.CURSOR_MIN)
+	fixture.Generator = prng.New([prng.KEY_BYTES]byte{1}, prng.CURSOR_MIN)
 	network.Resolver_Init(
 		&fixture.Resolver, fake_dns_loop(&fixture.DNS),
 		time.Virtual_Clock_To_Clock(&fixture.Virtual),
-		network.Entropy(&fixture.Generator), &fixture.Workspace,
+		prng.Chacha_To_Source(&fixture.Generator), &fixture.Workspace,
 		resolver_configuration(nbio.FAMILY_IPV4),
 	)
 	callback_count := 0
@@ -395,7 +395,7 @@ type fake_dns struct {
 type resolver_fixture struct {
 	DNS       fake_dns
 	Virtual   time.Virtual_Clock
-	Generator csprng.Generator
+	Generator prng.Chacha
 	Workspace network.Resolver_Workspace
 	Resolver  network.Resolver
 	Addresses [RESOLVER_RESULT_CAPACITY]nbio.Address
@@ -410,11 +410,11 @@ func resolver_transport_error(
 	fixture.DNS.Mode = mode
 	fixture.DNS.Fault = fault
 	fixture.Virtual.Resolution = time.NANOSECOND
-	fixture.Generator = csprng.New([csprng.KEY_BYTES]byte{1}, csprng.CURSOR_MIN)
+	fixture.Generator = prng.New([prng.KEY_BYTES]byte{1}, prng.CURSOR_MIN)
 	network.Resolver_Init(
 		&fixture.Resolver, fake_dns_loop(&fixture.DNS),
 		time.Virtual_Clock_To_Clock(&fixture.Virtual),
-		network.Entropy(&fixture.Generator), &fixture.Workspace,
+		prng.Chacha_To_Source(&fixture.Generator), &fixture.Workspace,
 		resolver_configuration(nbio.FAMILY_IPV4),
 	)
 	callback_count := 0
@@ -440,11 +440,11 @@ func resolver_transport_close_error(t *testing.T) {
 	fixture.DNS.Fault = FAKE_DNS_FAULT_UDP_RECEIVE
 	fixture.DNS.Close_Error = true
 	fixture.Virtual.Resolution = time.NANOSECOND
-	fixture.Generator = csprng.New([csprng.KEY_BYTES]byte{1}, csprng.CURSOR_MIN)
+	fixture.Generator = prng.New([prng.KEY_BYTES]byte{1}, prng.CURSOR_MIN)
 	network.Resolver_Init(
 		&fixture.Resolver, fake_dns_loop(&fixture.DNS),
 		time.Virtual_Clock_To_Clock(&fixture.Virtual),
-		network.Entropy(&fixture.Generator), &fixture.Workspace,
+		prng.Chacha_To_Source(&fixture.Generator), &fixture.Workspace,
 		resolver_configuration(nbio.FAMILY_IPV4),
 	)
 	network.Resolve(
@@ -466,10 +466,10 @@ func resolver_success(t *testing.T, mode fake_dns_mode, record_type network.Reco
 	fixture.DNS.Mode = mode
 	fixture.Virtual.Resolution = time.NANOSECOND
 	clock := time.Virtual_Clock_To_Clock(&fixture.Virtual)
-	fixture.Generator = csprng.New([csprng.KEY_BYTES]byte{1}, csprng.CURSOR_MIN)
+	fixture.Generator = prng.New([prng.KEY_BYTES]byte{1}, prng.CURSOR_MIN)
 	loop := fake_dns_loop(&fixture.DNS)
 	network.Resolver_Init(
-		&fixture.Resolver, loop, clock, network.Entropy(&fixture.Generator),
+		&fixture.Resolver, loop, clock, prng.Chacha_To_Source(&fixture.Generator),
 		&fixture.Workspace, network.Resolver_Configuration{
 			Server: nbio.Address_IPV4([nbio.IPV4_ADDRESS_BYTES]byte{192, 0, 2, 53}, 53),
 			UDP:    resolver_udp_options(),
@@ -574,11 +574,11 @@ func resolver_named_error(
 		}
 	}
 	fixture.Virtual.Resolution = time.NANOSECOND
-	fixture.Generator = csprng.New([csprng.KEY_BYTES]byte{1}, csprng.CURSOR_MIN)
+	fixture.Generator = prng.New([prng.KEY_BYTES]byte{1}, prng.CURSOR_MIN)
 	network.Resolver_Init(
 		&fixture.Resolver, fake_dns_loop(&fixture.DNS),
 		time.Virtual_Clock_To_Clock(&fixture.Virtual),
-		network.Entropy(&fixture.Generator), &fixture.Workspace,
+		prng.Chacha_To_Source(&fixture.Generator), &fixture.Workspace,
 		resolver_configuration(nbio.FAMILY_IPV4),
 	)
 	name, name_error := network.Name_Validate(network.Name_Unvalidated(text))
@@ -614,11 +614,11 @@ func resolver_response_case(
 		}
 	}
 	fixture.Virtual.Resolution = time.NANOSECOND
-	fixture.Generator = csprng.New([csprng.KEY_BYTES]byte{1}, csprng.CURSOR_MIN)
+	fixture.Generator = prng.New([prng.KEY_BYTES]byte{1}, prng.CURSOR_MIN)
 	network.Resolver_Init(
 		&fixture.Resolver, fake_dns_loop(&fixture.DNS),
 		time.Virtual_Clock_To_Clock(&fixture.Virtual),
-		network.Entropy(&fixture.Generator), &fixture.Workspace,
+		prng.Chacha_To_Source(&fixture.Generator), &fixture.Workspace,
 		network.Resolver_Configuration{
 			Server: nbio.Address_IPV4(
 				[nbio.IPV4_ADDRESS_BYTES]byte{192, 0, 2, 53}, 53,
@@ -654,14 +654,14 @@ func resolver_allocation(t *testing.T, mode fake_dns_mode) {
 	fixture.DNS.Mode = mode
 	fixture.Virtual.Resolution = time.NANOSECOND
 	clock := time.Virtual_Clock_To_Clock(&fixture.Virtual)
-	fixture.Generator = csprng.New([csprng.KEY_BYTES]byte{1}, csprng.CURSOR_MIN)
+	fixture.Generator = prng.New([prng.KEY_BYTES]byte{1}, prng.CURSOR_MIN)
 	loop := fake_dns_loop(&fixture.DNS)
 	configuration := network.Resolver_Configuration{
 		Server: nbio.Address_IPV4([nbio.IPV4_ADDRESS_BYTES]byte{192, 0, 2, 53}, 53),
 		UDP:    resolver_udp_options(), TCP: resolver_tcp_options(),
 	}
 	network.Resolver_Init(
-		&fixture.Resolver, loop, clock, network.Entropy(&fixture.Generator),
+		&fixture.Resolver, loop, clock, prng.Chacha_To_Source(&fixture.Generator),
 		&fixture.Workspace, configuration,
 	)
 	name, name_error := network.Name_Validate("example.com")
@@ -708,12 +708,12 @@ func resolver_init_allocation(t *testing.T) {
 	var fixture resolver_fixture
 	fixture.Virtual.Resolution = time.NANOSECOND
 	clock := time.Virtual_Clock_To_Clock(&fixture.Virtual)
-	fixture.Generator = csprng.New([csprng.KEY_BYTES]byte{1}, csprng.CURSOR_MIN)
+	fixture.Generator = prng.New([prng.KEY_BYTES]byte{1}, prng.CURSOR_MIN)
 	loop := fake_dns_loop(&fixture.DNS)
 	configuration := resolver_configuration(nbio.FAMILY_IPV4)
 	allocations := testing.AllocsPerRun(RESOLVER_ALLOCATION_RUN_COUNT, func() {
 		network.Resolver_Init(
-			&fixture.Resolver, loop, clock, network.Entropy(&fixture.Generator),
+			&fixture.Resolver, loop, clock, prng.Chacha_To_Source(&fixture.Generator),
 			&fixture.Workspace, configuration,
 		)
 	})

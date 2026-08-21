@@ -10,7 +10,7 @@ import (
 
 	"local/james-orcales/shared/invariant/default"
 	"local/james-orcales/shared/math/bits"
-	"local/james-orcales/shared/prng"
+	"local/james-orcales/shared/simulation/prng"
 	"local/james-orcales/shared/simulation/time"
 )
 
@@ -1565,22 +1565,22 @@ type Sim struct {
 	// order live in shared/time, thus this backend arm work and can never advance it.
 	Timeline time.Timeline
 	// Generator excludes equal-time ordering so timeout races cannot perturb ordinary outcomes.
-	Generator prng.Generator
+	Generator prng.Xoshiro
 	// Timeout_Order_Generator isolates equal-time kernel ordering from operation outcomes.
-	Timeout_Order_Generator prng.Generator
+	Timeout_Order_Generator prng.Xoshiro
 	// Storage_Timeout_Order_Generator isolates storage ordering from the existing network
 	// stream.
-	Storage_Timeout_Order_Generator prng.Generator
+	Storage_Timeout_Order_Generator prng.Xoshiro
 	// Signal_Generator isolates signal arrival from every transfer stream, thus a run that
 	// arms one more read cannot move which grain a signal lands on.
-	Signal_Generator prng.Generator
+	Signal_Generator prng.Xoshiro
 	// Process_Generator isolates exit code and child latency the same way.
-	Process_Generator prng.Generator
+	Process_Generator prng.Xoshiro
 	// Link_Generator isolates whether a generated node is a symbolic link, thus adding links
 	// leaves the tree shape every banked seed already produces.
-	Link_Generator prng.Generator
+	Link_Generator prng.Xoshiro
 	// Permission_Generator isolates generated permission bits from every other axis.
-	Permission_Generator prng.Generator
+	Permission_Generator prng.Xoshiro
 	// Next_File is synthetic descriptor counter. Listen, Accept, Open_Socket, Open, and Create
 	// hand out next value, thus every descriptor is distinct.
 	Next_File File
@@ -1616,15 +1616,15 @@ func New_Simulated_IO(
 	}
 	root_generator := prng.New(prng.Seed(seed))
 	state.Timeline = pump
-	state.Generator = prng.Generator_Split(&root_generator)
-	state.Timeout_Order_Generator = prng.Generator_Split(&root_generator)
-	state.Storage_Timeout_Order_Generator = prng.Generator_Split(&root_generator)
+	state.Generator = prng.Xoshiro_Split(&root_generator)
+	state.Timeout_Order_Generator = prng.Xoshiro_Split(&root_generator)
+	state.Storage_Timeout_Order_Generator = prng.Xoshiro_Split(&root_generator)
 	// Split after every existing stream, thus adding these two axes leaves the grain each
 	// older stream draws for a given seed unchanged.
-	state.Signal_Generator = prng.Generator_Split(&root_generator)
-	state.Process_Generator = prng.Generator_Split(&root_generator)
-	state.Link_Generator = prng.Generator_Split(&root_generator)
-	state.Permission_Generator = prng.Generator_Split(&root_generator)
+	state.Signal_Generator = prng.Xoshiro_Split(&root_generator)
+	state.Process_Generator = prng.Xoshiro_Split(&root_generator)
+	state.Link_Generator = prng.Xoshiro_Split(&root_generator)
+	state.Permission_Generator = prng.Xoshiro_Split(&root_generator)
 	state.Next_File = 0
 	state.Nodes = memory.Nodes
 	state.Descriptors = memory.Descriptors
@@ -1707,7 +1707,7 @@ func sim_spawn(
 	operation := sim_operation_acquire(state, completion, SIM_OPERATION_KIND_PROCESS, nil)
 	operation.Process_Callback = callback
 	exit := 0
-	if prng.Generator_Below(&state.Process_Generator, SIM_SPAWN_FAIL_GRAINS) == 0 {
+	if prng.Xoshiro_Below(&state.Process_Generator, SIM_SPAWN_FAIL_GRAINS) == 0 {
 		exit = 1
 	}
 	latency := sim_latency_from(&state.Process_Generator)
@@ -2005,7 +2005,7 @@ func sim_connect_procedure(
 	operation.File = socket
 	operation.Address = address
 	sim_operation_borrow(operation)
-	if prng.Generator_Below(&state.Generator, 4) == 0 {
+	if prng.Xoshiro_Below(&state.Generator, 4) == 0 {
 		operation.Operation_Err = Connection_Refused
 	}
 	latency := sim_latency(state)
@@ -2772,10 +2772,10 @@ func sim_generate(state *Sim) {
 		}
 		entry_index := 0
 		for generated_count < generated_limit {
-			if !prng.Generator_Chance(&state.Generator, sim_grow_chance()) {
+			if !prng.Xoshiro_Chance(&state.Generator, sim_grow_chance()) {
 				break
 			}
-			directory := prng.Generator_Chance(
+			directory := prng.Xoshiro_Chance(
 				&state.Generator, sim_subdirectory_chance(),
 			)
 			sim_generate_child(state, directory_index, entry_index, bool(directory))
@@ -2808,7 +2808,7 @@ func sim_generate_child(state *Sim, parent int, entry_index int, directory bool)
 // Draw one generated node mode. A link points at an earlier sibling, thus the first entry of any
 // directory is never one and no generated link can dangle.
 func sim_generate_mode(state *Sim, directory bool, entry_index int) (mode File_Mode) {
-	mode = File_Mode(prng.Generator_Below(
+	mode = File_Mode(prng.Xoshiro_Below(
 		&state.Permission_Generator, prng.Bound(SIM_PERMISSION_DRAW_COUNT),
 	))
 	if directory {
@@ -2817,7 +2817,7 @@ func sim_generate_mode(state *Sim, directory bool, entry_index int) (mode File_M
 	if entry_index == 0 {
 		return mode
 	}
-	if prng.Generator_Below(&state.Link_Generator, SIM_LINK_CHANCE_DENOMINATOR) != 0 {
+	if prng.Xoshiro_Below(&state.Link_Generator, SIM_LINK_CHANCE_DENOMINATOR) != 0 {
 		return mode
 	}
 	return mode | FILE_MODE_SYMBOLIC_LINK
@@ -2860,8 +2860,8 @@ func sim_generated_name(value int, storage []byte) (count int) {
 
 // Draw file contents from seed: size Sampled from heavy-tailed distribution, filled with
 // seed-drawn bytes.
-func sim_generate_bytes(generator *prng.Generator, node *Sim_Node) {
-	roll := prng.Generator_Below(generator, 100)
+func sim_generate_bytes(generator *prng.Xoshiro, node *Sim_Node) {
+	roll := prng.Xoshiro_Below(generator, 100)
 	size := SIM_SIZE_P100
 	if roll < 25 {
 		size = 0
@@ -2876,7 +2876,7 @@ func sim_generate_bytes(generator *prng.Generator, node *Sim_Node) {
 	}
 	node.Contents_Count = size
 	for index := 0; index < size; index++ {
-		node.Contents[index] = byte(prng.Generator_Next(generator))
+		node.Contents[index] = byte(prng.Xoshiro_Next(generator))
 	}
 }
 
@@ -2887,8 +2887,8 @@ func sim_latency(state *Sim) (latency time.Duration) {
 }
 
 // Draws one simulated operation's virtual latency from the stream that owns its axis.
-func sim_latency_from(generator *prng.Generator) (latency time.Duration) {
-	return time.Duration(prng.Generator_Below(generator, SIM_LATENCY_GRAINS))
+func sim_latency_from(generator *prng.Xoshiro) (latency time.Duration) {
+	return time.Duration(prng.Xoshiro_Below(generator, SIM_LATENCY_GRAINS))
 }
 
 // Kernels can publish either terminal event when operation and timeout become ready together.
@@ -2909,7 +2909,7 @@ func sim_storage_timeout_first(
 
 // One comparison rule keeps all simulated kernel timeout races consistent.
 func sim_timeout_order_first(
-	generator *prng.Generator, latency time.Duration, timeout time.Duration,
+	generator *prng.Xoshiro, latency time.Duration, timeout time.Duration,
 ) (timeout_first bool) {
 	if latency < timeout {
 		return false
@@ -2917,7 +2917,7 @@ func sim_timeout_order_first(
 	if latency > timeout {
 		return true
 	}
-	return prng.Generator_Below(generator, 2) == 0
+	return prng.Xoshiro_Below(generator, 2) == 0
 }
 
 // Report synthetic peer address of live descriptor, simulator getpeername. Empty with no error

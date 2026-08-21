@@ -3,8 +3,8 @@ package uuid_test
 import (
 	"testing"
 
+	"local/james-orcales/shared/crypto/prng"
 	"local/james-orcales/shared/invariant/default"
-	"local/james-orcales/shared/random/csprng"
 	"local/james-orcales/shared/simulation/time"
 	"local/james-orcales/shared/uuid"
 )
@@ -32,16 +32,16 @@ func fixed_generator(seed uint64) (generator uuid.Generator) {
 func generator_at(
 	seed uint64, moment time.Moment, node uuid.Node, state uuid.Generator_State,
 ) (generator uuid.Generator) {
-	var seed_bytes [csprng.KEY_BYTES]byte
-	for index := range csprng.WORD_BYTE_COUNT {
-		seed_bytes[index] = byte(seed >> (index * csprng.WORD_BYTE_COUNT))
+	var seed_bytes [prng.KEY_BYTES]byte
+	for index := range prng.WORD_BYTE_COUNT {
+		seed_bytes[index] = byte(seed >> (index * prng.WORD_BYTE_COUNT))
 	}
-	source := new(csprng.Generator)
-	*source = csprng.New(seed_bytes, csprng.CURSOR_MIN)
+	source := new(prng.Chacha)
+	*source = prng.New(seed_bytes, prng.CURSOR_MIN)
 	virtual := time.Virtual_Clock{
 		Resolution: time.MILLISECOND,
 		Epoch:      moment,
 	}
 	clock := time.Virtual_Clock_To_Clock(&virtual)
-	return uuid.New(uuid.Source(source), clock, node, state)
+	return uuid.New(prng.Chacha_To_Source(source), clock, node, state)
 }

@@ -5,9 +5,9 @@ package network_test
 import (
 	"testing"
 
+	"local/james-orcales/shared/crypto/prng"
 	"local/james-orcales/shared/invariant/default"
 	"local/james-orcales/shared/net"
-	"local/james-orcales/shared/random/csprng"
 	"local/james-orcales/shared/simulation/nbio"
 	"local/james-orcales/shared/simulation/time"
 )
@@ -99,7 +99,7 @@ func resolver_state_boundary(t *testing.T, boundary uint16, resolve bool) {
 		network.Resolver_Init(
 			&fixture.Resolver, fake_dns_loop(&fixture.DNS),
 			time.Virtual_Clock_To_Clock(&fixture.Virtual),
-			network.Entropy(&fixture.Generator), &fixture.Workspace,
+			prng.Chacha_To_Source(&fixture.Generator), &fixture.Workspace,
 			resolver_configuration(nbio.FAMILY_IPV4),
 		)
 	})
@@ -149,7 +149,7 @@ func resolver_dependency_boundaries(t *testing.T) {
 		network.Resolver_Init(
 			&resolver, fake_dns_loop(&fixture.DNS),
 			time.Virtual_Clock_To_Clock(&fixture.Virtual),
-			network.Entropy(&fixture.Generator), nil,
+			prng.Chacha_To_Source(&fixture.Generator), nil,
 			resolver_configuration(nbio.FAMILY_IPV6),
 		)
 	})
@@ -159,7 +159,7 @@ func resolver_dependency_boundaries(t *testing.T) {
 	network.Resolver_Init(
 		&fixture.Resolver, fake_dns_loop(&fixture.DNS),
 		time.Virtual_Clock_To_Clock(&fixture.Virtual),
-		network.Entropy(&fixture.Generator), &fixture.Workspace,
+		prng.Chacha_To_Source(&fixture.Generator), &fixture.Workspace,
 		resolver_configuration(nbio.FAMILY_IPV6),
 	)
 	network.Resolve(
@@ -182,11 +182,11 @@ func resolver_dependency_boundaries(t *testing.T) {
 
 func resolver_fixture_init(fixture *resolver_fixture, family nbio.Address_Family) {
 	fixture.Virtual.Resolution = time.NANOSECOND
-	fixture.Generator = csprng.New([csprng.KEY_BYTES]byte{1}, csprng.CURSOR_MIN)
+	fixture.Generator = prng.New([prng.KEY_BYTES]byte{1}, prng.CURSOR_MIN)
 	network.Resolver_Init(
 		&fixture.Resolver, fake_dns_loop(&fixture.DNS),
 		time.Virtual_Clock_To_Clock(&fixture.Virtual),
-		network.Entropy(&fixture.Generator), &fixture.Workspace,
+		prng.Chacha_To_Source(&fixture.Generator), &fixture.Workspace,
 		resolver_configuration(family),
 	)
 }

@@ -6,9 +6,9 @@ package network_test
 import (
 	"testing"
 
+	"local/james-orcales/shared/crypto/prng"
 	"local/james-orcales/shared/invariant/default"
 	"local/james-orcales/shared/net"
-	"local/james-orcales/shared/random/csprng"
 	"local/james-orcales/shared/simulation/nbio"
 	"local/james-orcales/shared/simulation/time"
 )
@@ -34,14 +34,14 @@ func standard_library_resolve_two(t *testing.T, record_type network.Record_Type)
 	var fixture resolver_fixture
 	fixture.DNS.Response_Kind = FAKE_DNS_RESPONSE_TWO_ADDRESSES
 	fixture.Virtual.Resolution = time.NANOSECOND
-	fixture.Generator = csprng.New(
-		[csprng.KEY_BYTES]byte{byte(network.ADDRESS_STORAGE_COUNT_USABLE_MINIMUM)},
-		csprng.CURSOR_MIN,
+	fixture.Generator = prng.New(
+		[prng.KEY_BYTES]byte{byte(network.ADDRESS_STORAGE_COUNT_USABLE_MINIMUM)},
+		prng.CURSOR_MIN,
 	)
 	network.Resolver_Init(
 		&fixture.Resolver, fake_dns_loop(&fixture.DNS),
 		time.Virtual_Clock_To_Clock(&fixture.Virtual),
-		network.Entropy(&fixture.Generator), &fixture.Workspace,
+		prng.Chacha_To_Source(&fixture.Generator), &fixture.Workspace,
 		resolver_configuration(nbio.FAMILY_IPV4),
 	)
 	network.Resolve(
@@ -101,14 +101,14 @@ func standard_library_tcp_truncated_init(fixture *resolver_fixture) {
 	fixture.DNS.Mode = FAKE_DNS_TCP
 	fixture.DNS.TCP_Response_Truncated = true
 	fixture.Virtual.Resolution = time.NANOSECOND
-	fixture.Generator = csprng.New(
-		[csprng.KEY_BYTES]byte{byte(network.ADDRESS_STORAGE_COUNT_USABLE_MINIMUM)},
-		csprng.CURSOR_MIN,
+	fixture.Generator = prng.New(
+		[prng.KEY_BYTES]byte{byte(network.ADDRESS_STORAGE_COUNT_USABLE_MINIMUM)},
+		prng.CURSOR_MIN,
 	)
 	network.Resolver_Init(
 		&fixture.Resolver, fake_dns_loop(&fixture.DNS),
 		time.Virtual_Clock_To_Clock(&fixture.Virtual),
-		network.Entropy(&fixture.Generator), &fixture.Workspace,
+		prng.Chacha_To_Source(&fixture.Generator), &fixture.Workspace,
 		resolver_configuration(nbio.FAMILY_IPV4),
 	)
 }

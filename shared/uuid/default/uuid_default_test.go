@@ -3,8 +3,8 @@ package uuid_test
 import (
 	"testing"
 
+	"local/james-orcales/shared/crypto/prng"
 	"local/james-orcales/shared/invariant/default"
-	"local/james-orcales/shared/random/csprng"
 	"local/james-orcales/shared/uuid"
 	system_uuid "local/james-orcales/shared/uuid/default"
 )
@@ -17,8 +17,8 @@ func TestMain(m *testing.M) {
 // Test_Operating_System_Generator_Smoke checks the host-wired generator mints valid,
 // distinct V4 and V7 UUIDs. Real entropy is non-deterministic, so this is a smoke test.
 func Test_Operating_System_Generator_Smoke(t *testing.T) {
-	var source csprng.Generator
-	entropy := seed_source{Seed: [csprng.KEY_BYTES]byte{1}}
+	var source prng.Chacha
+	entropy := seed_source{Seed: [prng.KEY_BYTES]byte{1}}
 	generator := system_uuid.New_Operating_System_Generator(
 		entropy.Read, &source, uuid.Generator_State{},
 	)
@@ -39,8 +39,8 @@ func Test_Operating_System_Generator_Smoke(t *testing.T) {
 // Test_Operating_System_Generator_Accepts_Replay_Boundaries proves composition
 // preserves every explicit state boundary while replacing every source cursor.
 func Test_Operating_System_Generator_Accepts_Replay_Boundaries(t *testing.T) {
-	cursors := []csprng.Cursor{
-		csprng.CURSOR_MIN, 1, 2, csprng.CURSOR_MAX,
+	cursors := []prng.Cursor{
+		prng.CURSOR_MIN, 1, 2, prng.CURSOR_MAX,
 	}
 	states := []uuid.Generator_State{
 		{},
@@ -53,8 +53,8 @@ func Test_Operating_System_Generator_Accepts_Replay_Boundaries(t *testing.T) {
 		},
 	}
 	for index, cursor := range cursors {
-		source := csprng.Generator{Position: cursor}
-		entropy := seed_source{Seed: [csprng.KEY_BYTES]byte{byte(index + 1)}}
+		source := prng.Chacha{Position: cursor}
+		entropy := seed_source{Seed: [prng.KEY_BYTES]byte{byte(index + 1)}}
 		generator := system_uuid.New_Operating_System_Generator(
 			entropy.Read, &source, states[index],
 		)
@@ -71,7 +71,7 @@ func Test_Operating_System_Generator_Accepts_Replay_Boundaries(t *testing.T) {
 }
 
 type seed_source struct {
-	Seed [csprng.KEY_BYTES]byte
+	Seed [prng.KEY_BYTES]byte
 }
 
 func (source *seed_source) Read(destination []byte) (count int, err error) {

@@ -16,14 +16,13 @@ package uuid
 import (
 	"local/james-orcales/shared/bytes"
 	"local/james-orcales/shared/crypto/md5"
-	"local/james-orcales/shared/crypto/rand"
+	"local/james-orcales/shared/crypto/prng"
 	"local/james-orcales/shared/crypto/sha1"
 	"local/james-orcales/shared/database/driver"
 	"local/james-orcales/shared/encoding/binary"
 	"local/james-orcales/shared/encoding/hex"
 	"local/james-orcales/shared/invariant/default"
 	"local/james-orcales/shared/math/bits"
-	"local/james-orcales/shared/random/csprng"
 	"local/james-orcales/shared/simulation/time"
 	"local/james-orcales/shared/strings"
 )
@@ -341,14 +340,6 @@ func V7_Sequence_Invariants(value V7_Sequence, namespace invariant.Namespace) {
 		Ensure()
 }
 
-// Source is nonnil caller-owned CSPRNG state.
-type Source *csprng.Generator
-
-// Source_Invariants rejects missing entropy state before any draw.
-func Source_Invariants(value Source, _ invariant.Namespace) {
-	invariant.Always(value != nil, "UUID entropy source has caller-owned state.")
-}
-
 // Clock_Sequence_State stores zero before seed and seeded sequence plus one afterward.
 type Clock_Sequence_State uint16
 
@@ -593,7 +584,7 @@ func (value Error) Error() (text string) {
 // timestamped draw, so give each goroutine its own.
 type Generator struct {
 	// Source supplies entropy for random fields and a random node. Caller owns state.
-	Source Source
+	Source prng.Source
 	// Clock supplies wall-clock time for the timestamp fields of V1, V6, and V7.
 	Clock time.Clock
 	// Node is the 6-byte node identifier embedded in V1 and V6. A zero value draws a
@@ -610,7 +601,7 @@ type Generator struct {
 
 // Generator_Invariants composes every injected dependency and mutable ordering field.
 func Generator_Invariants(value Generator, namespace invariant.Namespace) {
-	Source_Invariants(value.Source, namespace)
+	prng.Source_Invariants(value.Source, namespace)
 	time.Clock_Invariants(value.Clock, namespace)
 	Node_Invariants(value.Node, namespace)
 	Clock_Sequence_State_Invariants(value.Clock_Sequence, namespace)
@@ -634,10 +625,10 @@ func Null_UUID_Invariants(value Null_UUID, namespace invariant.Namespace) {
 
 // New builds Generator from injected dependencies and explicit replay state.
 func New(
-	source Source, clock time.Clock, node Node, state Generator_State,
+	source prng.Source, clock time.Clock, node Node, state Generator_State,
 ) (generator Generator) {
 	defer func() { Generator_Invariants(generator, "new.generator") }()
-	Source_Invariants(source, "new.source")
+	prng.Source_Invariants(source, "new.source")
 	time.Clock_Invariants(clock, "new.clock")
 	Node_Invariants(node, "new.node")
 	Generator_State_Invariants(state, "new.state")
@@ -694,7 +685,7 @@ func Name_Space_X500() (uuid UUID) {
 func Generator_V4(generator *Generator) (uuid UUID, err error) {
 	defer func() { UUID_Invariants(uuid, "generator_v4.uuid") }()
 	Generator_Invariants(*generator, "generator_v4.generator")
-	random.Read(random.Generator(generator.Source), random.Destination(uuid[:]))
+	prng.Source_Read(generator.Source, prng.Sink(uuid[:]))
 	uuid[6] = uuid[6]&0x0f | 0x40 // Version 4.
 	uuid[8] = uuid[8]&0x3f | 0x80 // RFC 9562 variant.
 	return uuid, nil
@@ -835,7 +826,7 @@ func V5(namespace UUID, name Name) (uuid UUID) {
 // the clock sequence, advancing the sequence if the clock did not move forward so
 // successive UUIDs stay distinct and ordered.
 func generator_time(
-	clock time.Clock, source Source, clock_sequence *Clock_Sequence_State,
+	clock time.Clock, source prng.Source, clock_sequence *Clock_Sequence_State,
 	last_time *Timestamp_State,
 ) (timestamp Generated_Time, sequence Clock_Sequence) {
 	defer func() {
@@ -843,12 +834,12 @@ func generator_time(
 		Clock_Sequence_Invariants(sequence, "generator_time.sequence")
 	}()
 	time.Clock_Invariants(clock, "generator_time.clock")
-	Source_Invariants(source, "generator_time.source")
+	prng.Source_Invariants(source, "generator_time.source")
 	Clock_Sequence_State_Invariants(*clock_sequence, "generator_time.clock_sequence")
 	Timestamp_State_Invariants(*last_time, "generator_time.last_time")
 	if *clock_sequence == 0 {
 		var raw [CLOCK_SEQUENCE_BYTE_COUNT]byte
-		random.Read(random.Generator(source), random.Destination(raw[:]))
+		prng.Source_Read(source, prng.Sink(raw[:]))
 		sequence_bits := uint16(raw[0])<<bits.BIT_COUNT_8_MAXIMUM | uint16(raw[1])
 		*clock_sequence = Clock_Sequence_State(
 			Clock_Sequence(sequence_bits&CLOCK_SEQUENCE_MAXIMUM) + 1,
@@ -902,14 +893,14 @@ func generator_v7_time(
 // Resolves the node used for V1 and V6: the injected Node when set, otherwise a
 // one-time random draw from Source with the multicast bit set to mark it as not a
 // real hardware address.
-func generator_node(source Source, node Node) (resolved Node) {
+func generator_node(source prng.Source, node Node) (resolved Node) {
 	defer func() { Node_Invariants(resolved, "generator_node.resolved") }()
-	Source_Invariants(source, "generator_node.source")
+	prng.Source_Invariants(source, "generator_node.source")
 	Node_Invariants(node, "generator_node.node")
 	if node != (Node{}) {
 		return node
 	}
-	random.Read(random.Generator(source), random.Destination(node[:]))
+	prng.Source_Read(source, prng.Sink(node[:]))
 	node[0] = node[0] | 0x01 // Multicast bit: not a real MAC.
 	return node
 }

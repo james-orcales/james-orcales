@@ -6,7 +6,7 @@ import (
 
 	"local/james-orcales/shared/invariant/default"
 	"local/james-orcales/shared/jlog"
-	"local/james-orcales/shared/random/prng"
+	"local/james-orcales/shared/simulation/prng"
 	"local/james-orcales/shared/simulation/time"
 	"local/james-orcales/shared/vsr"
 )
@@ -200,7 +200,7 @@ type scheduled_message struct {
 type simulator struct {
 	T         *testing.T
 	Seed      int64
-	Generator prng.Generator
+	Generator prng.Xoshiro
 	Clock     time.Clock
 	// Tick advances the main virtual clock one resolution — returned beside Clock by
 	// Virtual_Clock_To_Clock now that the clock itself is read-only.
@@ -214,7 +214,7 @@ type simulator struct {
 	// Clock_Generator draws all per-replica clock randomness (offsets, drifts, fault onsets)
 	// from a stream SEPARATE from Generator, so adding clocks does not perturb the fault
 	// schedule the documented regression seeds reproduce.
-	Clock_Generator prng.Generator
+	Clock_Generator prng.Xoshiro
 	// Clock_Skew enables per-replica offset, drift, and injected clock faults. Off (the
 	// default run) keeps every clock identical for exact traces; the sweep turns it on.
 	Clock_Skew bool
@@ -517,7 +517,7 @@ func simulator_allocate(state *simulator, cluster_count int) {
 	for index := range state.Replicas {
 		state.Executed[index] = map[string]bool{}
 		state.Executed_Result[index] = map[string][]byte{}
-		jitter := time.Duration(50 + prng.Generator_Below(&state.Generator, 40))
+		jitter := time.Duration(50 + prng.Xoshiro_Below(&state.Generator, 40))
 		configuration := initial
 		active := index < cluster_count
 		if !active {
@@ -554,11 +554,11 @@ func simulator_allocate(state *simulator, cluster_count int) {
 func simulator_replica_clock(state *simulator) (clock time.Clock, tick func()) {
 	virtual := time.Virtual_Clock{Resolution: time.MILLISECOND}
 	if state.Clock_Skew {
-		virtual.Epoch = time.Moment(prng.Generator_Below(&state.Clock_Generator, 50)) *
+		virtual.Epoch = time.Moment(prng.Xoshiro_Below(&state.Clock_Generator, 50)) *
 			time.Moment(time.MILLISECOND)
 		// Drift A ns/tick shifts the effective rate to Resolution-A; |A| far below
 		// Resolution keeps the clock monotonic while still drifting up to ~2%.
-		rate := time.Duration(prng.Generator_Below(&state.Clock_Generator, 40001) - 20000)
+		rate := time.Duration(prng.Xoshiro_Below(&state.Clock_Generator, 40001) - 20000)
 		virtual.Skew = time.Skew(time.SKEW_KIND_LINEAR, rate, 0)
 	}
 	clock = time.Virtual_Clock_To_Clock(&virtual)
@@ -705,8 +705,8 @@ func simulator_inject_clock_fault(state *simulator, now time.Moment) {
 	if len(active) == 0 {
 		return
 	}
-	victim := active[prng.Generator_Below(&state.Clock_Generator, prng.Bound(len(active)))]
-	jump := time.Duration(20+prng.Generator_Below(&state.Clock_Generator, 40)) *
+	victim := active[prng.Xoshiro_Below(&state.Clock_Generator, prng.Bound(len(active)))]
+	jump := time.Duration(20+prng.Xoshiro_Below(&state.Clock_Generator, 40)) *
 		time.Duration(time.MILLISECOND)
 	state.Clock_Fault_Offset[victim] = jump
 	state.Clock_Fault_Until[victim] = now +
@@ -722,7 +722,7 @@ func simulator_inject_isolation(state *simulator, now time.Moment) {
 	if len(active) == 0 {
 		return
 	}
-	victim := active[prng.Generator_Below(&state.Generator, prng.Bound(len(active)))]
+	victim := active[prng.Xoshiro_Below(&state.Generator, prng.Bound(len(active)))]
 	if !is_standby(&state.Replicas[victim]) {
 		if !simulator_group_settled(state) {
 			return
@@ -745,7 +745,7 @@ func simulator_inject_crash(state *simulator, now time.Moment) {
 	if len(active) == 0 {
 		return
 	}
-	victim := active[prng.Generator_Below(&state.Generator, prng.Bound(len(active)))]
+	victim := active[prng.Xoshiro_Below(&state.Generator, prng.Bound(len(active)))]
 	if state.Replicas[victim].Status != vsr.STATUS_NORMAL {
 		return
 	}
@@ -760,7 +760,7 @@ func simulator_inject_crash(state *simulator, now time.Moment) {
 			return
 		}
 	}
-	warm := prng.Generator_Below(&state.Generator, 2) == 0
+	warm := prng.Xoshiro_Below(&state.Generator, 2) == 0
 	if warm {
 		state.Result.Warm_Recoveries_Started++
 	}
@@ -1029,7 +1029,7 @@ func simulator_tick_clients(state *simulator, now time.Moment) {
 		if state.Faultless {
 			continue // The tail drains open requests; it issues no new ones.
 		}
-		recover := prng.Generator_Below(&state.Generator, 100) < SIM_CLIENT_RECOVER_PERCENT
+		recover := prng.Xoshiro_Below(&state.Generator, 100) < SIM_CLIENT_RECOVER_PERCENT
 		if recover {
 			// Forget the request-number and re-send the last command to relearn the
 			// number from the cached reply, the §4.5 recovery path. A client with no
@@ -1208,7 +1208,7 @@ func simulator_deliver(state *simulator, now time.Moment) {
 	}
 	state.Network = held_back
 	for index := len(due) - 1; index > 0; index-- {
-		swap_index := prng.Generator_Below(&state.Generator, prng.Bound(index+1))
+		swap_index := prng.Xoshiro_Below(&state.Generator, prng.Bound(index+1))
 		due[index], due[swap_index] = due[swap_index], due[index]
 	}
 	for _, flight := range due {
@@ -1480,16 +1480,16 @@ func simulator_send(state *simulator, messages []vsr.Message, now time.Moment) {
 		}
 		if !state.Faultless {
 			// The fault-free tail delivers everything; only the faulty phase drops.
-			if prng.Generator_Below(&state.Generator, 100) < SIM_DROP_PERCENT {
+			if prng.Xoshiro_Below(&state.Generator, 100) < SIM_DROP_PERCENT {
 				continue
 			}
 		}
 		copies := 1
-		if prng.Generator_Below(&state.Generator, 100) < SIM_DUPLICATE_PERCENT {
+		if prng.Xoshiro_Below(&state.Generator, 100) < SIM_DUPLICATE_PERCENT {
 			copies = 2
 		}
 		for copy_index := 0; copy_index < copies; copy_index++ {
-			grains := prng.Generator_Below(&state.Generator, SIM_DELAY_MAX+1)
+			grains := prng.Xoshiro_Below(&state.Generator, SIM_DELAY_MAX+1)
 			delay := time.Moment(grains) * time.Moment(time.MILLISECOND)
 			state.Network = append(state.Network, scheduled_message{
 				Message: message, Deliver_At: now + delay,
