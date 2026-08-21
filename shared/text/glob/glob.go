@@ -1,3162 +1,3408 @@
-// Package glob compiles a glob pattern into a reusable matcher and tests strings
-// against it. It is a dependency-injected port of github.com/gobwas/glob (MIT,
-// Sergey Kamardin; see LICENSE.mit.kamardin), rewritten to house conventions:
-// the upstream Glob interface is gone (the linter bans interfaces), so Compile
-// returns a concrete Pattern, and Match is a free function rather than a method.
-//
-// The pattern syntax is:
-//
-//	pattern:
-//	    { term }
-//	term:
-//	    `*`         matches any sequence of non-separator characters
-//	    `**`        matches any sequence of characters
-//	    `?`         matches any single non-separator character
-//	    `[` [ `!` ] { character-range } `]`   character class (non-empty)
-//	    `{` pattern-list `}`                   pattern alternatives
-//	    c           matches character c (c is none of `*?\[{}`)
-//	    `\` c       matches character c
-//	character-range:
-//	    c           matches character c (c is none of `\-]`)
-//	    lo `-` hi   matches character c for lo <= c <= hi
-//	pattern-list:
-//	    pattern { `,` pattern }               comma-separated patterns
-//
-// The one attacker-reachable risk in a matcher over untrusted patterns is
-// unbounded parse/compile/match recursion depth from nested `{...}` groups — a
-// stack-overflow denial of service. Parse depth caps the AST depth, which caps
-// the compiled-tree and match-time recursion depth, so a single explicit bound
-// covers all three: Compile rejects any pattern whose nesting exceeds
-// PATTERN_DEPTH_MAX. See PATTERN_DEPTH_MAX.
-//
-// House layout folds the former runes, syntax, match, and compiler subpackages
-// into this single leaf package: the linter's fragmentation rule allots one
-// source file per 10000 lines, so all non-test source lives in glob.go. Where
-// upstream used an interface the linter bans one, so the parser drives a
-// concrete lexer, matchers collapse into the Matcher tagged union keyed by
-// Matcher_Kind, and the AST node payload is keyed by Node_Kind; the whole
-// shared/text/glob subtree is exempt from the recursion ban so every pass
-// recurses into its children exactly as upstream did.
+// Package glob compiles bounded glob patterns into caller-owned NFAs.
 package glob
 
 import (
-	"errors"
-	"fmt"
-	"slices"
-	"strings"
-	"unicode/utf8"
+	"local/james-orcales/shared/bytes"
+	"local/james-orcales/shared/invariant/default"
+	"local/james-orcales/shared/math/bits"
+	"local/james-orcales/shared/unicode/utf8"
 )
 
-// Pattern is a compiled glob pattern. The zero value matches nothing useful; use
-// Compile to build one.
+// PATTERN_SIZE_MINIMUM admits the empty pattern.
+const PATTERN_SIZE_MINIMUM = bytes.SLICE_SIZE_MINIMUM
+
+// PATTERN_SIZE_MAXIMUM follows the repository byte-slice boundary.
+const PATTERN_SIZE_MAXIMUM = bytes.SLICE_SIZE_MAXIMUM
+
+// PATTERN_SIZE_UNVALIDATED_MAXIMUM admits the first refused pattern size.
+const PATTERN_SIZE_UNVALIDATED_MAXIMUM = PATTERN_SIZE_MAXIMUM + utf8.CHARACTER_SIZE_MINIMUM
+
+// PATTERN_SIZE_NONEMPTY_MINIMUM is one addressable source byte.
+const PATTERN_SIZE_NONEMPTY_MINIMUM = PATTERN_SIZE_MINIMUM + utf8.CHARACTER_SIZE_MINIMUM
+
+// PATTERN_INDEX_MAXIMUM is the final byte in maximum validated source.
+const PATTERN_INDEX_MAXIMUM = PATTERN_SIZE_MAXIMUM - utf8.CHARACTER_SIZE_MINIMUM
+
+// CLASS_SOURCE_SIZE_MINIMUM contains class opener and one decoded member byte.
+const CLASS_SOURCE_SIZE_MINIMUM = len("[a")
+
+// CLASS_CHARACTER_END_MINIMUM follows opener and one decoded member byte.
+const CLASS_CHARACTER_END_MINIMUM = CLASS_SOURCE_SIZE_MINIMUM
+
+// TEXT_SIZE_MINIMUM admits the empty candidate.
+const TEXT_SIZE_MINIMUM = bytes.SLICE_SIZE_MINIMUM
+
+// TEXT_SIZE_MAXIMUM follows the repository byte-slice boundary.
+const TEXT_SIZE_MAXIMUM = bytes.SLICE_SIZE_MAXIMUM
+
+// TEXT_SIZE_UNVALIDATED_MAXIMUM admits the first refused candidate size.
+const TEXT_SIZE_UNVALIDATED_MAXIMUM = TEXT_SIZE_MAXIMUM + utf8.CHARACTER_SIZE_MINIMUM
+
+// SEPARATOR_COUNT_MINIMUM admits separator-free matching.
+const SEPARATOR_COUNT_MINIMUM = bytes.SLICE_SIZE_MINIMUM
+
+// SEPARATOR_COUNT_MAXIMUM cannot exceed one separator per pattern byte.
+const SEPARATOR_COUNT_MAXIMUM = PATTERN_SIZE_MAXIMUM
+
+// SEPARATOR_COUNT_UNVALIDATED_MAXIMUM admits the first refused count.
+const SEPARATOR_COUNT_UNVALIDATED_MAXIMUM = SEPARATOR_COUNT_MAXIMUM + utf8.CHARACTER_SIZE_MINIMUM
+
+// PATTERN_DEPTH_MAXIMUM follows the shortest complete brace group.
+const PATTERN_DEPTH_MAXIMUM = PATTERN_SIZE_MAXIMUM / len("{}")
+
+// PATTERN_DEPTH_MINIMUM is parser state outside brace alternatives.
+const PATTERN_DEPTH_MINIMUM = bytes.SLICE_SIZE_MINIMUM
+
+// PARSER_DEPTH_NONEMPTY_MINIMUM is one suspended brace group.
+const PARSER_DEPTH_NONEMPTY_MINIMUM = PATTERN_DEPTH_MINIMUM + utf8.CHARACTER_SIZE_MINIMUM
+
+// CLOSED_PARSER_DEPTH_MAXIMUM follows closing one maximum-depth group.
+const CLOSED_PARSER_DEPTH_MAXIMUM = PATTERN_DEPTH_MAXIMUM - utf8.CHARACTER_SIZE_MINIMUM
+
+// NODE_COUNT_MAXIMUM permits one syntax node per byte plus root sequence.
+const NODE_COUNT_MAXIMUM = PATTERN_SIZE_MAXIMUM + utf8.CHARACTER_SIZE_MINIMUM
+
+// CLASS_RANGE_COUNT_MAXIMUM spends the remaining bytes after one class shell.
+const CLASS_RANGE_COUNT_MAXIMUM = PATTERN_SIZE_MAXIMUM - len("[]")
+
+// CLASS_RANGE_STORAGE_COUNT_MAXIMUM admits a maximum class missing its closing shell.
+const CLASS_RANGE_STORAGE_COUNT_MAXIMUM = PATTERN_SIZE_MAXIMUM - len("[")
+
+// INSTRUCTION_COUNT_MAXIMUM permits one operation per byte plus terminal match.
+const INSTRUCTION_COUNT_MAXIMUM = PATTERN_SIZE_MAXIMUM + utf8.CHARACTER_SIZE_MINIMUM
+
+// INSTRUCTION_PC_MINIMUM is terminal match instruction index.
+const INSTRUCTION_PC_MINIMUM = bytes.SLICE_SIZE_MINIMUM
+
+// INSTRUCTION_PC_MAXIMUM is final populated arena index.
+const INSTRUCTION_PC_MAXIMUM = INSTRUCTION_COUNT_MAXIMUM - utf8.CHARACTER_SIZE_MINIMUM
+
+// INSTRUCTION_CONTINUATION_MAXIMUM leaves one slot for current instruction.
+const INSTRUCTION_CONTINUATION_MAXIMUM = INSTRUCTION_PC_MAXIMUM - utf8.CHARACTER_SIZE_MINIMUM
+
+// EMITTED_INSTRUCTION_PC_MINIMUM follows the terminal match instruction.
+const EMITTED_INSTRUCTION_PC_MINIMUM = INSTRUCTION_PC_MINIMUM + utf8.CHARACTER_SIZE_MINIMUM
+
+// ALTERNATIVE_RESULT_PC_MAXIMUM reserves minimum brace, comma, and branch emissions.
+const ALTERNATIVE_RESULT_PC_MAXIMUM = INSTRUCTION_PC_MAXIMUM - len("{,}")
+
+// ALTERNATIVE_UPDATED_PC_MAXIMUM adds one split to an alternative input result.
+const ALTERNATIVE_UPDATED_PC_MAXIMUM = ALTERNATIVE_RESULT_PC_MAXIMUM +
+	utf8.CHARACTER_SIZE_MINIMUM
+
+// STATE_GENERATION_MINIMUM is the cleared visited-set generation.
+const STATE_GENERATION_MINIMUM = bytes.SLICE_SIZE_MINIMUM
+
+// STATE_GENERATION_MAXIMUM covers initial closure plus every candidate byte.
+const STATE_GENERATION_MAXIMUM = TEXT_SIZE_MAXIMUM + utf8.CHARACTER_SIZE_MINIMUM
+
+// CLOSURE_GENERATION_MINIMUM is initial NFA closure after cleared generation.
+const CLOSURE_GENERATION_MINIMUM = STATE_GENERATION_MINIMUM + utf8.CHARACTER_SIZE_MINIMUM
+
+// CONSUME_GENERATION_MINIMUM is closure after first candidate character.
+const CONSUME_GENERATION_MINIMUM = CLOSURE_GENERATION_MINIMUM + utf8.CHARACTER_SIZE_MINIMUM
+
+// ACTIVE_STATE_COUNT_MAXIMUM spends one byte per branch plus terminal continuation.
+const ACTIVE_STATE_COUNT_MAXIMUM = PATTERN_DEPTH_MAXIMUM + utf8.CHARACTER_SIZE_MINIMUM
+
+// APPEND_STATE_COUNT_MAXIMUM preserves one active-state slot for the append.
+const APPEND_STATE_COUNT_MAXIMUM = ACTIVE_STATE_COUNT_MAXIMUM - utf8.CHARACTER_SIZE_MINIMUM
+
+// CLOSURE_COUNT_MAXIMUM spends one comma per suspended alternative branch.
+const CLOSURE_COUNT_MAXIMUM = PATTERN_DEPTH_MAXIMUM - utf8.CHARACTER_SIZE_MINIMUM
+
+// CLOSURE_APPEND_COUNT_MAXIMUM preserves one closure slot for the enqueue.
+const CLOSURE_APPEND_COUNT_MAXIMUM = CLOSURE_COUNT_MAXIMUM - utf8.CHARACTER_SIZE_MINIMUM
+
+// QUOTED_SIZE_MAXIMUM follows every pattern byte needing one escape prefix.
+const QUOTED_SIZE_MAXIMUM = PATTERN_SIZE_MAXIMUM * len(`\x`)
+
+// WORKSPACE_FIELD is the sole caller workspace pointer slot.
+const WORKSPACE_FIELD = bytes.SLICE_SIZE_MINIMUM
+
+// WORKSPACE_FIELD_COUNT fixes hostile workspace pointer storage.
+const WORKSPACE_FIELD_COUNT = WORKSPACE_FIELD + utf8.CHARACTER_SIZE_MINIMUM
+
+// PATTERN_WORKSPACE_FIELD is the sole compiled workspace pointer slot.
+const PATTERN_WORKSPACE_FIELD = bytes.SLICE_SIZE_MINIMUM
+
+// PATTERN_WORKSPACE_FIELD_COUNT fixes compiled workspace pointer storage.
+const PATTERN_WORKSPACE_FIELD_COUNT = PATTERN_WORKSPACE_FIELD + utf8.CHARACTER_SIZE_MINIMUM
+
+// PATTERN_CONTROL_START retains the NFA entry instruction.
+const PATTERN_CONTROL_START = bytes.SLICE_SIZE_MINIMUM
+
+// PATTERN_CONTROL_INSTRUCTION_COUNT retains immutable NFA length.
+const PATTERN_CONTROL_INSTRUCTION_COUNT = PATTERN_CONTROL_START + utf8.CHARACTER_SIZE_MINIMUM
+
+// PATTERN_CONTROL_SEPARATOR_COUNT retains copied separator length.
+const PATTERN_CONTROL_SEPARATOR_COUNT = PATTERN_CONTROL_INSTRUCTION_COUNT +
+	utf8.CHARACTER_SIZE_MINIMUM
+
+// PATTERN_CONTROL_COUNT fixes the complete compiled header.
+const PATTERN_CONTROL_COUNT = PATTERN_CONTROL_SEPARATOR_COUNT + utf8.CHARACTER_SIZE_MINIMUM
+
+// COMPILE_CONTROL_NODE_COUNT retains the syntax arena cursor.
+const COMPILE_CONTROL_NODE_COUNT = bytes.SLICE_SIZE_MINIMUM
+
+// COMPILE_CONTROL_RANGE_COUNT retains the class-range arena cursor.
+const COMPILE_CONTROL_RANGE_COUNT = COMPILE_CONTROL_NODE_COUNT + utf8.CHARACTER_SIZE_MINIMUM
+
+// COMPILE_CONTROL_INSTRUCTION_COUNT retains the NFA arena cursor.
+const COMPILE_CONTROL_INSTRUCTION_COUNT = COMPILE_CONTROL_RANGE_COUNT + utf8.CHARACTER_SIZE_MINIMUM
+
+// COMPILE_CONTROL_SEPARATOR_COUNT retains copied separator length.
+const COMPILE_CONTROL_SEPARATOR_COUNT = COMPILE_CONTROL_INSTRUCTION_COUNT +
+	utf8.CHARACTER_SIZE_MINIMUM
+
+// COMPILE_CONTROL_COUNT fixes every compile cursor slot.
+const COMPILE_CONTROL_COUNT = COMPILE_CONTROL_SEPARATOR_COUNT + utf8.CHARACTER_SIZE_MINIMUM
+
+// Compile_Status classifies bounded pattern compilation.
+type Compile_Status uint8
+
+// Compile_Status_Invariants excludes matcher and output-only refusals.
+func Compile_Status_Invariants(
+	value Compile_Status, namespace invariant.Namespace,
+) {
+	invariant.Tree(value, namespace).
+		Enum_4_Uint8(
+			uint8(value), uint8(STATUS_OK), uint8(STATUS_INPUT_INVALID),
+			uint8(STATUS_WORKSPACE_INVALID), uint8(STATUS_SYNTAX_INVALID),
+		).
+		Ensure()
+}
+
+// Syntax_Status classifies parser and compiler transitions.
+type Syntax_Status uint8
+
+// Syntax_Status_Invariants admits success or malformed bounded syntax.
+func Syntax_Status_Invariants(value Syntax_Status, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Enum_Uint8(uint8(value), uint8(STATUS_OK), uint8(STATUS_SYNTAX_INVALID)).
+		Ensure()
+}
+
+// Match_Status classifies bounded NFA execution.
+type Match_Status uint8
+
+// Match_Status_Invariants lists matcher-visible refusals.
+func Match_Status_Invariants(value Match_Status, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Enum_4_Uint8(
+			uint8(value), uint8(STATUS_OK), uint8(STATUS_INPUT_INVALID),
+			uint8(STATUS_WORKSPACE_INVALID), uint8(STATUS_PATTERN_INVALID),
+		).
+		Ensure()
+}
+
+// Pattern_Status classifies validated matcher state.
+type Pattern_Status uint8
+
+// Pattern_Status_Invariants admits success or hostile compiled state.
+func Pattern_Status_Invariants(value Pattern_Status, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Enum_Uint8(uint8(value), uint8(STATUS_OK), uint8(STATUS_PATTERN_INVALID)).
+		Ensure()
+}
+
+// Quote_Status classifies bounded quote output.
+type Quote_Status uint8
+
+// Quote_Status_Invariants lists quoting-visible refusals.
+func Quote_Status_Invariants(value Quote_Status, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Enum_3_Uint8(
+			uint8(value), uint8(STATUS_OK), uint8(STATUS_INPUT_INVALID),
+			uint8(STATUS_OUTPUT_TOO_SMALL),
+		).
+		Ensure()
+}
+
+// STATUS_OK means complete output committed.
+const STATUS_OK = bytes.SLICE_SIZE_MINIMUM
+
+// STATUS_INPUT_INVALID refuses hostile input beyond public bounds.
+const STATUS_INPUT_INVALID = STATUS_OK + utf8.CHARACTER_SIZE_MINIMUM
+
+// STATUS_WORKSPACE_INVALID reports absent caller storage.
+const STATUS_WORKSPACE_INVALID = STATUS_INPUT_INVALID + utf8.CHARACTER_SIZE_MINIMUM
+
+// STATUS_SYNTAX_INVALID reports malformed pattern syntax.
+const STATUS_SYNTAX_INVALID = STATUS_WORKSPACE_INVALID + utf8.CHARACTER_SIZE_MINIMUM
+
+// STATUS_OUTPUT_TOO_SMALL preserves short caller output.
+const STATUS_OUTPUT_TOO_SMALL = STATUS_SYNTAX_INVALID + utf8.CHARACTER_SIZE_MINIMUM
+
+// STATUS_PATTERN_INVALID refuses forged or stale compiled state.
+const STATUS_PATTERN_INVALID = STATUS_OUTPUT_TOO_SMALL + utf8.CHARACTER_SIZE_MINIMUM
+
+// Pattern_Source_Unvalidated is hostile borrowed pattern bytes.
+type Pattern_Source_Unvalidated []byte
+
+// Pattern_Source_Unvalidated_Invariants bounds validation witness size.
+func Pattern_Source_Unvalidated_Invariants(
+	value Pattern_Source_Unvalidated, namespace invariant.Namespace,
+) {
+	invariant.Tree(value, namespace).
+		Range_Int(
+			len(value), PATTERN_SIZE_MINIMUM,
+			PATTERN_SIZE_UNVALIDATED_MAXIMUM,
+		).
+		Ensure()
+}
+
+// Pattern_Source excludes the refused oversize witness before parser indexing.
+type Pattern_Source []byte
+
+// Pattern_Source_Invariants keeps every parser read inside the public bound.
+func Pattern_Source_Invariants(value Pattern_Source, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Range_Int(len(value), PATTERN_SIZE_MINIMUM, PATTERN_SIZE_MAXIMUM).
+		Ensure()
+}
+
+// Nonempty_Pattern_Source contains at least one parser-dispatched byte.
+type Nonempty_Pattern_Source []byte
+
+// Nonempty_Pattern_Source_Invariants excludes the parser-complete empty source.
+func Nonempty_Pattern_Source_Invariants(
+	value Nonempty_Pattern_Source, namespace invariant.Namespace,
+) {
+	invariant.Tree(value, namespace).
+		Range_Int(
+			len(value), PATTERN_SIZE_NONEMPTY_MINIMUM, PATTERN_SIZE_MAXIMUM,
+		).
+		Ensure()
+}
+
+// Class_Pattern_Source contains opener and one class member byte.
+type Class_Pattern_Source []byte
+
+// Class_Pattern_Source_Invariants follows minimum class-character syntax.
+func Class_Pattern_Source_Invariants(
+	value Class_Pattern_Source, namespace invariant.Namespace,
+) {
+	invariant.Tree(value, namespace).
+		Range_Int(len(value), CLASS_SOURCE_SIZE_MINIMUM, PATTERN_SIZE_MAXIMUM).
+		Ensure()
+}
+
+// Pattern_Position prevents parser cursors from outgrowing validated source storage.
+type Pattern_Position int
+
+// Pattern_Position_Invariants shares the exact public pattern bound.
+func Pattern_Position_Invariants(value Pattern_Position, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Range_Int(int(value), PATTERN_SIZE_MINIMUM, PATTERN_SIZE_MAXIMUM).
+		Ensure()
+}
+
+// Pattern_Index is one addressable byte in validated nonempty source.
+type Pattern_Index int
+
+// Pattern_Index_Invariants excludes the end boundary.
+func Pattern_Index_Invariants(value Pattern_Index, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Range_Int(int(value), PATTERN_SIZE_MINIMUM, PATTERN_INDEX_MAXIMUM).
+		Ensure()
+}
+
+// Nonzero_Pattern_Position follows at least one consumed source byte.
+type Nonzero_Pattern_Position int
+
+// Nonzero_Pattern_Position_Invariants excludes untouched source opening.
+func Nonzero_Pattern_Position_Invariants(
+	value Nonzero_Pattern_Position, namespace invariant.Namespace,
+) {
+	invariant.Tree(value, namespace).
+		Range_Int(
+			int(value), PATTERN_SIZE_NONEMPTY_MINIMUM, PATTERN_SIZE_MAXIMUM,
+		).
+		Ensure()
+}
+
+// Class_Character_Index follows a class opener before one decoded member.
+type Class_Character_Index int
+
+// Class_Character_Index_Invariants starts after the class opener.
+func Class_Character_Index_Invariants(
+	value Class_Character_Index, namespace invariant.Namespace,
+) {
+	invariant.Tree(value, namespace).
+		Range_Int(
+			int(value), PATTERN_SIZE_NONEMPTY_MINIMUM, PATTERN_INDEX_MAXIMUM,
+		).
+		Ensure()
+}
+
+// Class_Character_End follows opener and one decoded member.
+type Class_Character_End int
+
+// Class_Character_End_Invariants retains a consumed class character boundary.
+func Class_Character_End_Invariants(
+	value Class_Character_End, namespace invariant.Namespace,
+) {
+	invariant.Tree(value, namespace).
+		Range_Int(
+			int(value), CLASS_CHARACTER_END_MINIMUM, PATTERN_SIZE_MAXIMUM,
+		).
+		Ensure()
+}
+
+// Parser_Depth charges one frame per still-open brace group.
+type Parser_Depth int
+
+// Parser_Depth_Invariants follows the shortest complete brace-group formula.
+func Parser_Depth_Invariants(value Parser_Depth, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Range_Int(int(value), PATTERN_DEPTH_MINIMUM, PATTERN_DEPTH_MAXIMUM).
+		Ensure()
+}
+
+// Open_Parser_Depth retains at least one suspended brace group.
+type Open_Parser_Depth int
+
+// Open_Parser_Depth_Invariants excludes parser state outside groups.
+func Open_Parser_Depth_Invariants(
+	value Open_Parser_Depth, namespace invariant.Namespace,
+) {
+	invariant.Tree(value, namespace).
+		Range_Int(
+			int(value), PARSER_DEPTH_NONEMPTY_MINIMUM, PATTERN_DEPTH_MAXIMUM,
+		).
+		Ensure()
+}
+
+// Opened_Parser_Depth follows one successful group opening or full-depth refusal.
+type Opened_Parser_Depth int
+
+// Opened_Parser_Depth_Invariants excludes group-free parser state.
+func Opened_Parser_Depth_Invariants(
+	value Opened_Parser_Depth, namespace invariant.Namespace,
+) {
+	invariant.Tree(value, namespace).
+		Range_Int(
+			int(value), PARSER_DEPTH_NONEMPTY_MINIMUM, PATTERN_DEPTH_MAXIMUM,
+		).
+		Ensure()
+}
+
+// Closed_Parser_Depth follows one closed group.
+type Closed_Parser_Depth int
+
+// Closed_Parser_Depth_Invariants excludes impossible unchanged maximum depth.
+func Closed_Parser_Depth_Invariants(
+	value Closed_Parser_Depth, namespace invariant.Namespace,
+) {
+	invariant.Tree(value, namespace).
+		Range_Int(
+			int(value), PATTERN_DEPTH_MINIMUM, CLOSED_PARSER_DEPTH_MAXIMUM,
+		).
+		Ensure()
+}
+
+// Text_Unvalidated is hostile borrowed candidate bytes.
+type Text_Unvalidated []byte
+
+// Text_Unvalidated_Invariants bounds validation witness size.
+func Text_Unvalidated_Invariants(
+	value Text_Unvalidated, namespace invariant.Namespace,
+) {
+	invariant.Tree(value, namespace).
+		Range_Int(
+			len(value), TEXT_SIZE_MINIMUM, TEXT_SIZE_UNVALIDATED_MAXIMUM,
+		).
+		Ensure()
+}
+
+// Separators_Unvalidated is hostile caller separator storage.
+type Separators_Unvalidated []rune
+
+// Separators_Unvalidated_Invariants bounds separator validation work.
+func Separators_Unvalidated_Invariants(
+	value Separators_Unvalidated, namespace invariant.Namespace,
+) {
+	invariant.Tree(value, namespace).
+		Range_Int(
+			len(value), SEPARATOR_COUNT_MINIMUM,
+			SEPARATOR_COUNT_UNVALIDATED_MAXIMUM,
+		).
+		Ensure()
+}
+
+// Output is caller-owned escaped output.
+type Output []byte
+
+// Output_Invariants follows maximum escaped pattern size.
+func Output_Invariants(value Output, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Range_Int(len(value), bytes.SLICE_SIZE_MINIMUM, QUOTED_SIZE_MAXIMUM).
+		Ensure()
+}
+
+// Output_Count is committed escaped byte count.
+type Output_Count uint16
+
+// Output_Count_Invariants follows maximum escaped pattern size.
+func Output_Count_Invariants(value Output_Count, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Range_Uint16(
+			uint16(value), uint16(bytes.SLICE_SIZE_MINIMUM),
+			uint16(QUOTED_SIZE_MAXIMUM),
+		).
+		Ensure()
+}
+
+// Diagnostic_Position is first malformed pattern boundary.
+type Diagnostic_Position uint16
+
+// Diagnostic_Position_Invariants follows bounded pattern source.
+func Diagnostic_Position_Invariants(
+	value Diagnostic_Position, namespace invariant.Namespace,
+) {
+	invariant.Tree(value, namespace).
+		Range_Uint16(
+			uint16(value), uint16(PATTERN_SIZE_MINIMUM),
+			uint16(PATTERN_SIZE_MAXIMUM),
+		).
+		Ensure()
+}
+
+// Diagnostic carries scalar refusal without allocated text.
+type Diagnostic struct {
+	// Code keeps caller control flow independent from text.
+	Code Compile_Status
+	// Position locates first certain refusal boundary.
+	Position Diagnostic_Position
+}
+
+// Diagnostic_Invariants composes refusal code and position.
+func Diagnostic_Invariants(value Diagnostic, namespace invariant.Namespace) {
+	Compile_Status_Invariants(value.Code, namespace)
+	Diagnostic_Position_Invariants(value.Position, namespace)
+}
+
+// Matched reports complete-pattern match.
+type Matched bool
+
+// Matched_Invariants covers matching and rejected candidates.
+func Matched_Invariants(value Matched, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Sometimes(bool(value), "Compiled glob matches candidate.").
+		Ensure()
+}
+
+// Character is one possible metacharacter byte.
+type Character byte
+
+// Character_Invariants covers complete byte domain.
+func Character_Invariants(value Character, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Range_Uint8(uint8(value), bits.WORD_8_MINIMUM, bits.WORD_8_MAXIMUM).
+		Ensure()
+}
+
+// Special_Character reports glob metacharacter membership.
+type Special_Character bool
+
+// Special_Character_Invariants covers ordinary and quoted bytes.
+func Special_Character_Invariants(
+	value Special_Character, namespace invariant.Namespace,
+) {
+	invariant.Tree(value, namespace).
+		Sometimes(bool(value), "Byte is glob metacharacter.").
+		Ensure()
+}
+
+// Node_Kind selects one flat syntax payload.
+type Node_Kind uint8
+
+// Node_Kind_Invariants covers complete syntax union.
+func Node_Kind_Invariants(value Node_Kind, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Range_Uint8(uint8(value), uint8(NODE_SEQUENCE), uint8(NODE_CLASS)).
+		Ensure()
+}
+
+// NODE_SEQUENCE retains ordered syntax children.
+const NODE_SEQUENCE Node_Kind = Node_Kind(bytes.SLICE_SIZE_MINIMUM)
+
+// NODE_ALTERNATIVE retains brace branches.
+const NODE_ALTERNATIVE Node_Kind = NODE_SEQUENCE + utf8.CHARACTER_SIZE_MINIMUM
+
+// NODE_LITERAL retains one decoded character.
+const NODE_LITERAL Node_Kind = NODE_ALTERNATIVE + utf8.CHARACTER_SIZE_MINIMUM
+
+// NODE_STAR retains a separator-bounded repetition.
+const NODE_STAR Node_Kind = NODE_LITERAL + utf8.CHARACTER_SIZE_MINIMUM
+
+// NODE_SUPER_STAR retains an unbounded-separator repetition.
+const NODE_SUPER_STAR Node_Kind = NODE_STAR + utf8.CHARACTER_SIZE_MINIMUM
+
+// NODE_SINGLE retains one separator-bounded wildcard.
+const NODE_SINGLE Node_Kind = NODE_SUPER_STAR + utf8.CHARACTER_SIZE_MINIMUM
+
+// NODE_CLASS retains one decoded character class.
+const NODE_CLASS Node_Kind = NODE_SINGLE + utf8.CHARACTER_SIZE_MINIMUM
+
+// Atom_Kind selects one nonclass parser atom.
+type Atom_Kind uint8
+
+// Atom_Kind_Invariants lists exactly the atoms accepted by atom_append.
+func Atom_Kind_Invariants(value Atom_Kind, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Enum_4_Uint8(
+			uint8(value), uint8(NODE_LITERAL), uint8(NODE_STAR),
+			uint8(NODE_SUPER_STAR), uint8(NODE_SINGLE),
+		).
+		Ensure()
+}
+
+// ATOM_LITERAL retains one decoded character.
+const ATOM_LITERAL Atom_Kind = Atom_Kind(NODE_LITERAL)
+
+// ATOM_STAR retains separator-bounded repetition.
+const ATOM_STAR Atom_Kind = Atom_Kind(NODE_STAR)
+
+// ATOM_SUPER_STAR retains unbounded-separator repetition.
+const ATOM_SUPER_STAR Atom_Kind = Atom_Kind(NODE_SUPER_STAR)
+
+// ATOM_SINGLE retains one separator-bounded wildcard.
+const ATOM_SINGLE Atom_Kind = Atom_Kind(NODE_SINGLE)
+
+// ATOM_CHARACTER_EMPTY clears payload for nonliteral atoms.
+const ATOM_CHARACTER_EMPTY = utf8.Decoded_Character(utf8.DECODED_CHARACTER_MINIMUM)
+
+// Leaf_Kind selects one syntax node that emits one consuming instruction.
+type Leaf_Kind uint8
+
+// Leaf_Kind_Invariants excludes sequence and alternative containers.
+func Leaf_Kind_Invariants(value Leaf_Kind, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Range_Uint8(uint8(value), uint8(NODE_LITERAL), uint8(NODE_CLASS)).
+		Ensure()
+}
+
+// Node_Reference is one-based syntax slot or absent.
+type Node_Reference uint16
+
+// Node_Reference_Invariants includes absent and complete arena boundary.
+func Node_Reference_Invariants(
+	value Node_Reference, namespace invariant.Namespace,
+) {
+	invariant.Tree(value, namespace).
+		Range_Uint16(
+			uint16(value), uint16(NODE_NONE), uint16(NODE_COUNT_MAXIMUM),
+		).
+		Ensure()
+}
+
+// NODE_NONE is the absent one-based syntax reference.
+const NODE_NONE Node_Reference = Node_Reference(bytes.SLICE_SIZE_MINIMUM)
+
+// NODE_ROOT is the first one-based syntax reference.
+const NODE_ROOT Node_Reference = NODE_NONE + utf8.CHARACTER_SIZE_MINIMUM
+
+// NODE_FIRST_ALTERNATIVE is the only reference excluded from parser containers.
+const NODE_FIRST_ALTERNATIVE Node_Reference = NODE_ROOT + utf8.CHARACTER_SIZE_MINIMUM
+
+// NESTED_SEQUENCE_REFERENCE_MINIMUM follows root and first alternative.
+const NESTED_SEQUENCE_REFERENCE_MINIMUM = NODE_FIRST_ALTERNATIVE + utf8.CHARACTER_SIZE_MINIMUM
+
+// BRANCH_SEQUENCE_REFERENCE_MINIMUM follows first nested sequence.
+const BRANCH_SEQUENCE_REFERENCE_MINIMUM = NESTED_SEQUENCE_REFERENCE_MINIMUM +
+	utf8.CHARACTER_SIZE_MINIMUM
+
+// SUSPENDED_SEQUENCE_REFERENCE_MAXIMUM leaves one alternative and sequence pair.
+const SUSPENDED_SEQUENCE_REFERENCE_MAXIMUM = NODE_COUNT_MAXIMUM - len("{}")
+
+// CHILD_PARENT_REFERENCE_MAXIMUM leaves one arena slot for its child.
+const CHILD_PARENT_REFERENCE_MAXIMUM = NODE_COUNT_MAXIMUM - utf8.CHARACTER_SIZE_MINIMUM
+
+// ROOT_NODE_REFERENCE is the formula-derived parser root value.
+const ROOT_NODE_REFERENCE Root_Node_Reference = Root_Node_Reference(NODE_ROOT)
+
+// Root_Node_Reference is the fixed syntax root created before parsing input.
+type Root_Node_Reference uint16
+
+// Root_Node_Reference_Invariants fixes the formula-derived root slot.
+func Root_Node_Reference_Invariants(
+	value Root_Node_Reference, _ invariant.Namespace,
+) {
+	invariant.Always(
+		uint16(value) == uint16(ROOT_NODE_REFERENCE),
+		"Parsed syntax root occupies the first one-based node slot.",
+	)
+}
+
+// Container_Node_Reference is root or one nested sequence.
+type Container_Node_Reference uint16
+
+// Container_Node_Reference_Invariants excludes the first alternative slot.
+func Container_Node_Reference_Invariants(
+	value Container_Node_Reference, namespace invariant.Namespace,
+) {
+	invariant.Tree(value, namespace).
+		Range_Holed_Uint16(
+			uint16(value), uint16(NODE_ROOT), uint16(NODE_COUNT_MAXIMUM),
+			uint16(NODE_FIRST_ALTERNATIVE), uint16(NODE_FIRST_ALTERNATIVE),
+			uint16(NODE_FIRST_ALTERNATIVE),
+		).
+		Ensure()
+}
+
+// Nested_Sequence_Reference is one sequence inside an open group.
+type Nested_Sequence_Reference uint16
+
+// Nested_Sequence_Reference_Invariants excludes root and first alternative.
+func Nested_Sequence_Reference_Invariants(
+	value Nested_Sequence_Reference, namespace invariant.Namespace,
+) {
+	invariant.Tree(value, namespace).
+		Range_Uint16(
+			uint16(value), uint16(NESTED_SEQUENCE_REFERENCE_MINIMUM),
+			uint16(NODE_COUNT_MAXIMUM),
+		).
+		Ensure()
+}
+
+// Opened_Sequence_Reference is a nested sequence or unchanged full-arena current.
+type Opened_Sequence_Reference uint16
+
+// Opened_Sequence_Reference_Invariants follows nested sequence references.
+func Opened_Sequence_Reference_Invariants(
+	value Opened_Sequence_Reference, namespace invariant.Namespace,
+) {
+	invariant.Tree(value, namespace).
+		Range_Uint16(
+			uint16(value), uint16(NESTED_SEQUENCE_REFERENCE_MINIMUM),
+			uint16(NODE_COUNT_MAXIMUM),
+		).
+		Ensure()
+}
+
+// Branch_Sequence_Reference follows one alternative and its first sequence.
+type Branch_Sequence_Reference uint16
+
+// Branch_Sequence_Reference_Invariants starts at the first branch-created sequence.
+func Branch_Sequence_Reference_Invariants(
+	value Branch_Sequence_Reference, namespace invariant.Namespace,
+) {
+	invariant.Tree(value, namespace).
+		Range_Uint16(
+			uint16(value), uint16(BRANCH_SEQUENCE_REFERENCE_MINIMUM),
+			uint16(NODE_COUNT_MAXIMUM),
+		).
+		Ensure()
+}
+
+// Suspended_Sequence_Reference is one parent saved before an open group pair.
+type Suspended_Sequence_Reference uint16
+
+// Suspended_Sequence_Reference_Invariants reserves the opened node pair.
+func Suspended_Sequence_Reference_Invariants(
+	value Suspended_Sequence_Reference, namespace invariant.Namespace,
+) {
+	invariant.Tree(value, namespace).
+		Range_Holed_Uint16(
+			uint16(value), uint16(NODE_ROOT),
+			uint16(SUSPENDED_SEQUENCE_REFERENCE_MAXIMUM),
+			uint16(NODE_FIRST_ALTERNATIVE), uint16(NODE_FIRST_ALTERNATIVE),
+			uint16(NODE_FIRST_ALTERNATIVE),
+		).
+		Ensure()
+}
+
+// Child_Node_Reference is one created nonroot syntax node.
+type Child_Node_Reference uint16
+
+// Child_Node_Reference_Invariants excludes absent and root references.
+func Child_Node_Reference_Invariants(
+	value Child_Node_Reference, namespace invariant.Namespace,
+) {
+	invariant.Tree(value, namespace).
+		Range_Uint16(
+			uint16(value), uint16(NODE_FIRST_ALTERNATIVE),
+			uint16(NODE_COUNT_MAXIMUM),
+		).
+		Ensure()
+}
+
+// Child_Parent_Reference retains one free arena slot for the created child.
+type Child_Parent_Reference uint16
+
+// Child_Parent_Reference_Invariants excludes absent and full-arena parent state.
+func Child_Parent_Reference_Invariants(
+	value Child_Parent_Reference, namespace invariant.Namespace,
+) {
+	invariant.Tree(value, namespace).
+		Range_Uint16(
+			uint16(value), uint16(NODE_ROOT),
+			uint16(CHILD_PARENT_REFERENCE_MAXIMUM),
+		).
+		Ensure()
+}
+
+// First_Child_Reference is absent or one nonroot child node.
+type First_Child_Reference uint16
+
+// First_Child_Reference_Invariants excludes root as its own child.
+func First_Child_Reference_Invariants(
+	value First_Child_Reference, namespace invariant.Namespace,
+) {
+	invariant.Tree(value, namespace).
+		Range_Holed_Uint16(
+			uint16(value), uint16(NODE_NONE), uint16(NODE_COUNT_MAXIMUM),
+			uint16(NODE_ROOT), uint16(NODE_ROOT), uint16(NODE_ROOT),
+		).
+		Ensure()
+}
+
+// Last_Child_Reference is absent or one nonroot child node.
+type Last_Child_Reference uint16
+
+// Last_Child_Reference_Invariants excludes root as its own child.
+func Last_Child_Reference_Invariants(
+	value Last_Child_Reference, namespace invariant.Namespace,
+) {
+	invariant.Tree(value, namespace).
+		Range_Holed_Uint16(
+			uint16(value), uint16(NODE_NONE), uint16(NODE_COUNT_MAXIMUM),
+			uint16(NODE_ROOT), uint16(NODE_ROOT), uint16(NODE_ROOT),
+		).
+		Ensure()
+}
+
+// Next_Sibling_Reference is absent or follows one earlier created child.
+type Next_Sibling_Reference uint16
+
+// Next_Sibling_Reference_Invariants excludes absent predecessors and root.
+func Next_Sibling_Reference_Invariants(
+	value Next_Sibling_Reference, namespace invariant.Namespace,
+) {
+	invariant.Tree(value, namespace).
+		Range_Holed_Uint16(
+			uint16(value), uint16(NODE_NONE), uint16(NODE_COUNT_MAXIMUM),
+			uint16(NODE_ROOT), uint16(NODE_FIRST_ALTERNATIVE),
+			uint16(NODE_FIRST_ALTERNATIVE),
+		).
+		Ensure()
+}
+
+// Previous_Sibling_Reference is absent or one earlier nonroot child.
+type Previous_Sibling_Reference uint16
+
+// Previous_Sibling_Reference_Invariants leaves one later sibling arena slot.
+func Previous_Sibling_Reference_Invariants(
+	value Previous_Sibling_Reference, namespace invariant.Namespace,
+) {
+	invariant.Tree(value, namespace).
+		Range_Holed_Uint16(
+			uint16(value), uint16(NODE_NONE),
+			uint16(CHILD_PARENT_REFERENCE_MAXIMUM),
+			uint16(NODE_ROOT), uint16(NODE_ROOT), uint16(NODE_ROOT),
+		).
+		Ensure()
+}
+
+// Node_Links stores named child and sibling references.
+type Node_Links struct {
+	// First_Child opens ordered children.
+	First_Child First_Child_Reference
+	// Last_Child closes ordered children.
+	Last_Child Last_Child_Reference
+	// Next_Sibling advances compiler traversal.
+	Next_Sibling Next_Sibling_Reference
+	// Previous_Sibling reverses compiler traversal.
+	Previous_Sibling Previous_Sibling_Reference
+}
+
+// Node_Links_Invariants composes exact link roles.
+func Node_Links_Invariants(value Node_Links, namespace invariant.Namespace) {
+	First_Child_Reference_Invariants(value.First_Child, namespace)
+	Last_Child_Reference_Invariants(value.Last_Child, namespace)
+	Next_Sibling_Reference_Invariants(value.Next_Sibling, namespace)
+	Previous_Sibling_Reference_Invariants(value.Previous_Sibling, namespace)
+}
+
+// NODE_CLASS_RANGE_INDEX retains first range arena slot.
+const NODE_CLASS_RANGE_INDEX = bytes.SLICE_SIZE_MINIMUM
+
+// NODE_CLASS_RANGE_COUNT retains range length.
+const NODE_CLASS_RANGE_COUNT = NODE_CLASS_RANGE_INDEX + utf8.CHARACTER_SIZE_MINIMUM
+
+// NODE_CLASS_NEGATED retains class polarity.
+const NODE_CLASS_NEGATED = NODE_CLASS_RANGE_COUNT + utf8.CHARACTER_SIZE_MINIMUM
+
+// NODE_CLASS_FIELD_COUNT fixes every class metadata slot.
+const NODE_CLASS_FIELD_COUNT = NODE_CLASS_NEGATED + utf8.CHARACTER_SIZE_MINIMUM
+
+// Node_Class stores class opening, count, and negation.
+type Node_Class [NODE_CLASS_FIELD_COUNT]uint16
+
+// Node_Class_Invariants fixes class metadata shape.
+func Node_Class_Invariants(value Node_Class, _ invariant.Namespace) {
+	invariant.Always(
+		len(value) == NODE_CLASS_FIELD_COUNT,
+		"Syntax class has complete range metadata.",
+	)
+}
+
+// NODE_CHARACTER_FIELD is the sole literal payload slot.
+const NODE_CHARACTER_FIELD = bytes.SLICE_SIZE_MINIMUM
+
+// NODE_CHARACTER_FIELD_COUNT fixes literal payload storage.
+const NODE_CHARACTER_FIELD_COUNT = NODE_CHARACTER_FIELD + utf8.CHARACTER_SIZE_MINIMUM
+
+// Node_Character stores one decoded literal.
+type Node_Character [NODE_CHARACTER_FIELD_COUNT]rune
+
+// Node_Character_Invariants fixes literal payload shape.
+func Node_Character_Invariants(value Node_Character, _ invariant.Namespace) {
+	invariant.Always(
+		len(value) == NODE_CHARACTER_FIELD_COUNT,
+		"Syntax literal has one decoded character field.",
+	)
+}
+
+// Node stores one syntax atom or ordered container.
+type Node struct {
+	// Kind selects active payload.
+	Kind Node_Kind
+	// Character stores literal payload.
+	Character Node_Character
+	// Class stores class payload.
+	Class Node_Class
+	// Links store child and sibling structure.
+	Links Node_Links
+}
+
+// Node_Invariants composes bounded syntax record.
+func Node_Invariants(value Node, namespace invariant.Namespace) {
+	Node_Kind_Invariants(value.Kind, namespace)
+	Node_Character_Invariants(value.Character, namespace)
+	Node_Class_Invariants(value.Class, namespace)
+	Node_Links_Invariants(value.Links, namespace)
+}
+
+// Leaf_Node is one parsed atom after compiler container dispatch.
+type Leaf_Node struct {
+	// Kind selects the atomic payload.
+	Kind Leaf_Kind
+	// Character stores literal payload.
+	Character Node_Character
+	// Class stores class payload.
+	Class Node_Class
+}
+
+// Leaf_Node_Invariants composes one compiler leaf.
+func Leaf_Node_Invariants(value Leaf_Node, namespace invariant.Namespace) {
+	Leaf_Kind_Invariants(value.Kind, namespace)
+	Node_Character_Invariants(value.Character, namespace)
+	Node_Class_Invariants(value.Class, namespace)
+}
+
+// Nodes is fixed caller-owned syntax arena.
+type Nodes [NODE_COUNT_MAXIMUM]Node
+
+// Nodes_Invariants fixes complete parser capacity.
+func Nodes_Invariants(value Nodes, _ invariant.Namespace) {
+	invariant.Always(
+		len(value) == NODE_COUNT_MAXIMUM,
+		"Glob syntax arena has complete formula-derived capacity.",
+	)
+}
+
+// PARSER_ALTERNATIVE_REFERENCE_MAXIMUM leaves one nested sequence slot.
+const PARSER_ALTERNATIVE_REFERENCE_MAXIMUM = NODE_COUNT_MAXIMUM -
+	utf8.CHARACTER_SIZE_MINIMUM
+
+// Parser_Alternative_Reference is one alternative container inside a group.
+type Parser_Alternative_Reference uint16
+
+// Parser_Alternative_Reference_Invariants reserves its first sequence child.
+func Parser_Alternative_Reference_Invariants(
+	value Parser_Alternative_Reference, namespace invariant.Namespace,
+) {
+	invariant.Tree(value, namespace).
+		Range_Uint16(
+			uint16(value), uint16(NODE_FIRST_ALTERNATIVE),
+			uint16(PARSER_ALTERNATIVE_REFERENCE_MAXIMUM),
+		).
+		Ensure()
+}
+
+// Parser_References stores named group continuations.
+type Parser_References struct {
+	// Parent resumes the containing sequence.
+	Parent Suspended_Sequence_Reference
+	// Alternative owns every branch sequence.
+	Alternative Parser_Alternative_Reference
+	// Sequence is the active branch.
+	Sequence Opened_Sequence_Reference
+}
+
+// Parser_References_Invariants composes exact continuation roles.
+func Parser_References_Invariants(
+	value Parser_References, namespace invariant.Namespace,
+) {
+	Suspended_Sequence_Reference_Invariants(value.Parent, namespace)
+	Parser_Alternative_Reference_Invariants(value.Alternative, namespace)
+	Opened_Sequence_Reference_Invariants(value.Sequence, namespace)
+}
+
+// Parser_Frame suspends one brace group without recursion.
+type Parser_Frame struct {
+	// References retain group continuation.
+	References Parser_References
+}
+
+// Parser_Frame_Invariants composes fixed parser continuation.
+func Parser_Frame_Invariants(value Parser_Frame, namespace invariant.Namespace) {
+	Parser_References_Invariants(value.References, namespace)
+}
+
+// Parser_Frames is fixed brace-depth stack.
+type Parser_Frames [PATTERN_DEPTH_MAXIMUM]Parser_Frame
+
+// Parser_Frames_Invariants fixes valid nesting capacity.
+func Parser_Frames_Invariants(value Parser_Frames, _ invariant.Namespace) {
+	invariant.Always(
+		len(value) == PATTERN_DEPTH_MAXIMUM,
+		"Brace parser stack covers maximum valid nesting.",
+	)
+}
+
+// Class_Low stores inclusive range opening.
+type Class_Low rune
+
+// Class_Low_Invariants covers decoder output.
+func Class_Low_Invariants(value Class_Low, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Range_Int32(
+			int32(value), utf8.DECODED_CHARACTER_MINIMUM,
+			utf8.DECODED_CHARACTER_MAXIMUM,
+		).
+		Ensure()
+}
+
+// Class_High stores inclusive range closing.
+type Class_High rune
+
+// Class_High_Invariants covers decoder output.
+func Class_High_Invariants(value Class_High, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Range_Int32(
+			int32(value), utf8.DECODED_CHARACTER_MINIMUM,
+			utf8.DECODED_CHARACTER_MAXIMUM,
+		).
+		Ensure()
+}
+
+// Class_Range stores one inclusive decoded interval.
+type Class_Range struct {
+	// Low opens interval.
+	Low Class_Low
+	// High closes interval.
+	High Class_High
+}
+
+// Class_Range_Invariants composes decoded interval boundaries.
+func Class_Range_Invariants(value Class_Range, namespace invariant.Namespace) {
+	Class_Low_Invariants(value.Low, namespace)
+	Class_High_Invariants(value.High, namespace)
+}
+
+// Class_Ranges is fixed caller-owned hostile parse storage.
+type Class_Ranges [CLASS_RANGE_STORAGE_COUNT_MAXIMUM]Class_Range
+
+// Class_Ranges_Invariants fixes complete class capacity.
+func Class_Ranges_Invariants(value Class_Ranges, _ invariant.Namespace) {
+	invariant.Always(
+		len(value) == CLASS_RANGE_STORAGE_COUNT_MAXIMUM,
+		"Class range arena has complete pattern-derived capacity.",
+	)
+}
+
+// Instruction_Kind selects one NFA operation.
+type Instruction_Kind uint8
+
+// Instruction_Kind_Invariants covers complete VM operation set.
+func Instruction_Kind_Invariants(
+	value Instruction_Kind, namespace invariant.Namespace,
+) {
+	invariant.Tree(value, namespace).
+		Range_Uint8(
+			uint8(value), uint8(INSTRUCTION_MATCH), uint8(INSTRUCTION_SPLIT),
+		).
+		Ensure()
+}
+
+// INSTRUCTION_MATCH accepts complete candidate consumption.
+const INSTRUCTION_MATCH Instruction_Kind = Instruction_Kind(bytes.SLICE_SIZE_MINIMUM)
+
+// INSTRUCTION_LITERAL consumes one equal decoded character.
+const INSTRUCTION_LITERAL Instruction_Kind = INSTRUCTION_MATCH + utf8.CHARACTER_SIZE_MINIMUM
+
+// INSTRUCTION_STAR consumes nonseparator characters or nothing.
+const INSTRUCTION_STAR Instruction_Kind = INSTRUCTION_LITERAL + utf8.CHARACTER_SIZE_MINIMUM
+
+// INSTRUCTION_SUPER_STAR consumes any characters or nothing.
+const INSTRUCTION_SUPER_STAR Instruction_Kind = INSTRUCTION_STAR + utf8.CHARACTER_SIZE_MINIMUM
+
+// INSTRUCTION_SINGLE consumes one nonseparator character.
+const INSTRUCTION_SINGLE Instruction_Kind = INSTRUCTION_SUPER_STAR + utf8.CHARACTER_SIZE_MINIMUM
+
+// INSTRUCTION_CLASS consumes one class member.
+const INSTRUCTION_CLASS Instruction_Kind = INSTRUCTION_SINGLE + utf8.CHARACTER_SIZE_MINIMUM
+
+// INSTRUCTION_SPLIT exposes both alternative branches.
+const INSTRUCTION_SPLIT Instruction_Kind = INSTRUCTION_CLASS + utf8.CHARACTER_SIZE_MINIMUM
+
+// Instruction_PC selects one NFA instruction.
+type Instruction_PC uint16
+
+// Instruction_PC_Invariants follows complete instruction arena.
+func Instruction_PC_Invariants(value Instruction_PC, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Range_Uint16(
+			uint16(value), uint16(INSTRUCTION_PC_MINIMUM),
+			uint16(INSTRUCTION_PC_MAXIMUM),
+		).
+		Ensure()
+}
+
+// Instruction_Continuation leaves one emission slot after its target.
+type Instruction_Continuation uint16
+
+// Instruction_Continuation_Invariants excludes the already-final arena slot.
+func Instruction_Continuation_Invariants(
+	value Instruction_Continuation, namespace invariant.Namespace,
+) {
+	invariant.Tree(value, namespace).
+		Range_Uint16(
+			uint16(value), uint16(INSTRUCTION_PC_MINIMUM),
+			uint16(INSTRUCTION_CONTINUATION_MAXIMUM),
+		).
+		Ensure()
+}
+
+// Emitted_Instruction_PC follows the pre-emitted terminal match instruction.
+type Emitted_Instruction_PC uint16
+
+// Emitted_Instruction_PC_Invariants excludes terminal match slot zero.
+func Emitted_Instruction_PC_Invariants(
+	value Emitted_Instruction_PC, namespace invariant.Namespace,
+) {
+	invariant.Tree(value, namespace).
+		Range_Uint16(
+			uint16(value), uint16(EMITTED_INSTRUCTION_PC_MINIMUM),
+			uint16(INSTRUCTION_PC_MAXIMUM),
+		).
+		Ensure()
+}
+
+// Alternative_Result_PC retains emission cursor before one alternative transition.
+type Alternative_Result_PC uint16
+
+// Alternative_Result_PC_Invariants reserves minimum alternative syntax emissions.
+func Alternative_Result_PC_Invariants(
+	value Alternative_Result_PC, namespace invariant.Namespace,
+) {
+	invariant.Tree(value, namespace).
+		Range_Uint16(
+			uint16(value), uint16(INSTRUCTION_PC_MINIMUM),
+			uint16(ALTERNATIVE_RESULT_PC_MAXIMUM),
+		).
+		Ensure()
+}
+
+// Alternative_Updated_PC includes one emitted alternative split.
+type Alternative_Updated_PC uint16
+
+// Alternative_Updated_PC_Invariants reserves remaining enclosing emission slots.
+func Alternative_Updated_PC_Invariants(
+	value Alternative_Updated_PC, namespace invariant.Namespace,
+) {
+	invariant.Tree(value, namespace).
+		Range_Uint16(
+			uint16(value), uint16(INSTRUCTION_PC_MINIMUM),
+			uint16(ALTERNATIVE_UPDATED_PC_MAXIMUM),
+		).
+		Ensure()
+}
+
+// INSTRUCTION_KIND_FIELD is the sole operation selector slot.
+const INSTRUCTION_KIND_FIELD = bytes.SLICE_SIZE_MINIMUM
+
+// INSTRUCTION_KIND_FIELD_COUNT fixes operation selector storage.
+const INSTRUCTION_KIND_FIELD_COUNT = INSTRUCTION_KIND_FIELD + utf8.CHARACTER_SIZE_MINIMUM
+
+// Instruction_Kind_Storage retains one operation selector.
+type Instruction_Kind_Storage [INSTRUCTION_KIND_FIELD_COUNT]Instruction_Kind
+
+// Instruction_Kind_Storage_Invariants fixes operation storage shape.
+func Instruction_Kind_Storage_Invariants(
+	value Instruction_Kind_Storage, _ invariant.Namespace,
+) {
+	invariant.Always(
+		len(value) == INSTRUCTION_KIND_FIELD_COUNT,
+		"NFA instruction has one operation field.",
+	)
+}
+
+// INSTRUCTION_CHARACTER_FIELD is the sole literal payload slot.
+const INSTRUCTION_CHARACTER_FIELD = bytes.SLICE_SIZE_MINIMUM
+
+// INSTRUCTION_CHARACTER_FIELD_COUNT fixes literal payload storage.
+const INSTRUCTION_CHARACTER_FIELD_COUNT = INSTRUCTION_CHARACTER_FIELD + utf8.CHARACTER_SIZE_MINIMUM
+
+// Instruction_Character_Storage retains one literal character.
+type Instruction_Character_Storage [INSTRUCTION_CHARACTER_FIELD_COUNT]rune
+
+// Instruction_Character_Storage_Invariants fixes literal storage shape.
+func Instruction_Character_Storage_Invariants(
+	value Instruction_Character_Storage, _ invariant.Namespace,
+) {
+	invariant.Always(
+		len(value) == INSTRUCTION_CHARACTER_FIELD_COUNT,
+		"NFA instruction has one literal field.",
+	)
+}
+
+// INSTRUCTION_TARGET_NEXT retains primary continuation.
+const INSTRUCTION_TARGET_NEXT = bytes.SLICE_SIZE_MINIMUM
+
+// INSTRUCTION_TARGET_BRANCH retains alternative continuation.
+const INSTRUCTION_TARGET_BRANCH = INSTRUCTION_TARGET_NEXT + utf8.CHARACTER_SIZE_MINIMUM
+
+// INSTRUCTION_TARGET_COUNT fixes both continuation slots.
+const INSTRUCTION_TARGET_COUNT = INSTRUCTION_TARGET_BRANCH + utf8.CHARACTER_SIZE_MINIMUM
+
+// Instruction_Targets stores continuation and split branch.
+type Instruction_Targets [INSTRUCTION_TARGET_COUNT]Instruction_PC
+
+// Instruction_Targets_Invariants fixes control-flow shape.
+func Instruction_Targets_Invariants(
+	value Instruction_Targets, _ invariant.Namespace,
+) {
+	invariant.Always(
+		len(value) == INSTRUCTION_TARGET_COUNT,
+		"NFA instruction has continuation and branch targets.",
+	)
+}
+
+// INSTRUCTION_CLASS_RANGE_INDEX retains first class range.
+const INSTRUCTION_CLASS_RANGE_INDEX = bytes.SLICE_SIZE_MINIMUM
+
+// INSTRUCTION_CLASS_RANGE_COUNT retains class range length.
+const INSTRUCTION_CLASS_RANGE_COUNT = INSTRUCTION_CLASS_RANGE_INDEX + utf8.CHARACTER_SIZE_MINIMUM
+
+// INSTRUCTION_CLASS_NEGATED retains class polarity.
+const INSTRUCTION_CLASS_NEGATED = INSTRUCTION_CLASS_RANGE_COUNT + utf8.CHARACTER_SIZE_MINIMUM
+
+// INSTRUCTION_CLASS_FIELD_COUNT fixes class payload storage.
+const INSTRUCTION_CLASS_FIELD_COUNT = INSTRUCTION_CLASS_NEGATED + utf8.CHARACTER_SIZE_MINIMUM
+
+// Instruction_Class_Storage stores range opening, count, and negation.
+type Instruction_Class_Storage [INSTRUCTION_CLASS_FIELD_COUNT]uint16
+
+// Instruction_Class_Storage_Invariants fixes class payload shape.
+func Instruction_Class_Storage_Invariants(
+	value Instruction_Class_Storage, _ invariant.Namespace,
+) {
+	invariant.Always(
+		len(value) == INSTRUCTION_CLASS_FIELD_COUNT,
+		"NFA class instruction has complete range metadata.",
+	)
+}
+
+// Instruction is one immutable NFA operation.
+type Instruction struct {
+	// Kind selects operation.
+	Kind Instruction_Kind_Storage
+	// Character stores literal payload.
+	Character Instruction_Character_Storage
+	// Targets store continuation edges.
+	Targets Instruction_Targets
+	// Class stores class payload.
+	Class Instruction_Class_Storage
+}
+
+// Instruction_Invariants composes shape-safe NFA record.
+func Instruction_Invariants(value Instruction, namespace invariant.Namespace) {
+	Instruction_Kind_Storage_Invariants(value.Kind, namespace)
+	Instruction_Character_Storage_Invariants(value.Character, namespace)
+	Instruction_Targets_Invariants(value.Targets, namespace)
+	Instruction_Class_Storage_Invariants(value.Class, namespace)
+}
+
+// Instruction_Kinds stores every operation selector separately from payloads.
+type Instruction_Kinds [INSTRUCTION_COUNT_MAXIMUM]Instruction_Kind
+
+// Instruction_Kinds_Invariants fixes complete operation capacity.
+func Instruction_Kinds_Invariants(
+	value Instruction_Kinds, _ invariant.Namespace,
+) {
+	invariant.Always(
+		len(value) == INSTRUCTION_COUNT_MAXIMUM,
+		"NFA kind arena covers every pattern byte plus terminal match.",
+	)
+}
+
+// Instruction_Characters stores every literal payload.
+type Instruction_Characters [INSTRUCTION_COUNT_MAXIMUM]rune
+
+// Instruction_Characters_Invariants fixes complete literal capacity.
+func Instruction_Characters_Invariants(
+	value Instruction_Characters, _ invariant.Namespace,
+) {
+	invariant.Always(
+		len(value) == INSTRUCTION_COUNT_MAXIMUM,
+		"NFA literal arena covers every pattern byte plus terminal match.",
+	)
+}
+
+// Instruction_Next_Targets stores every primary continuation.
+type Instruction_Next_Targets [INSTRUCTION_COUNT_MAXIMUM]Instruction_PC
+
+// Instruction_Next_Targets_Invariants fixes continuation capacity.
+func Instruction_Next_Targets_Invariants(
+	value Instruction_Next_Targets, _ invariant.Namespace,
+) {
+	invariant.Always(
+		len(value) == INSTRUCTION_COUNT_MAXIMUM,
+		"NFA continuation arena covers every instruction.",
+	)
+}
+
+// Instruction_Branch_Targets stores every alternative continuation.
+type Instruction_Branch_Targets [INSTRUCTION_COUNT_MAXIMUM]Instruction_PC
+
+// Instruction_Branch_Targets_Invariants fixes branch capacity.
+func Instruction_Branch_Targets_Invariants(
+	value Instruction_Branch_Targets, _ invariant.Namespace,
+) {
+	invariant.Always(
+		len(value) == INSTRUCTION_COUNT_MAXIMUM,
+		"NFA branch arena covers every instruction.",
+	)
+}
+
+// Instruction_Class_Indexes stores every class range opening.
+type Instruction_Class_Indexes [INSTRUCTION_COUNT_MAXIMUM]uint16
+
+// Instruction_Class_Indexes_Invariants fixes class index capacity.
+func Instruction_Class_Indexes_Invariants(
+	value Instruction_Class_Indexes, _ invariant.Namespace,
+) {
+	invariant.Always(
+		len(value) == INSTRUCTION_COUNT_MAXIMUM,
+		"NFA class-index arena covers every instruction.",
+	)
+}
+
+// Instruction_Class_Counts stores every class range count.
+type Instruction_Class_Counts [INSTRUCTION_COUNT_MAXIMUM]uint16
+
+// Instruction_Class_Counts_Invariants fixes class count capacity.
+func Instruction_Class_Counts_Invariants(
+	value Instruction_Class_Counts, _ invariant.Namespace,
+) {
+	invariant.Always(
+		len(value) == INSTRUCTION_COUNT_MAXIMUM,
+		"NFA class-count arena covers every instruction.",
+	)
+}
+
+// Instruction_Class_Negations stores every class polarity.
+type Instruction_Class_Negations [INSTRUCTION_COUNT_MAXIMUM]uint16
+
+// Instruction_Class_Negations_Invariants fixes class polarity capacity.
+func Instruction_Class_Negations_Invariants(
+	value Instruction_Class_Negations, _ invariant.Namespace,
+) {
+	invariant.Always(
+		len(value) == INSTRUCTION_COUNT_MAXIMUM,
+		"NFA class-polarity arena covers every instruction.",
+	)
+}
+
+// COMPILE_REFERENCE_NODE retains active syntax node.
+const COMPILE_REFERENCE_NODE = bytes.SLICE_SIZE_MINIMUM
+
+// COMPILE_REFERENCE_CHILD retains active reverse child.
+const COMPILE_REFERENCE_CHILD = COMPILE_REFERENCE_NODE + utf8.CHARACTER_SIZE_MINIMUM
+
+// COMPILE_REFERENCE_COUNT fixes compiler syntax references.
+const COMPILE_REFERENCE_COUNT = COMPILE_REFERENCE_CHILD + utf8.CHARACTER_SIZE_MINIMUM
+
+// Compile_References stores active syntax node and reverse child.
+type Compile_References [COMPILE_REFERENCE_COUNT]Node_Reference
+
+// Compile_References_Invariants fixes compiler traversal shape.
+func Compile_References_Invariants(
+	value Compile_References, _ invariant.Namespace,
+) {
+	invariant.Always(
+		len(value) == COMPILE_REFERENCE_COUNT,
+		"NFA compiler frame has node and child references.",
+	)
+}
+
+// COMPILE_TARGET_CONTINUATION retains caller continuation.
+const COMPILE_TARGET_CONTINUATION = bytes.SLICE_SIZE_MINIMUM
+
+// COMPILE_TARGET_ACCUMULATED retains compiled subtree entry.
+const COMPILE_TARGET_ACCUMULATED = COMPILE_TARGET_CONTINUATION + utf8.CHARACTER_SIZE_MINIMUM
+
+// COMPILE_TARGET_COUNT fixes compiler target storage.
+const COMPILE_TARGET_COUNT = COMPILE_TARGET_ACCUMULATED + utf8.CHARACTER_SIZE_MINIMUM
+
+// Compile_Targets stores continuation and accumulated entry.
+type Compile_Targets [COMPILE_TARGET_COUNT]Instruction_PC
+
+// Compile_Targets_Invariants fixes compiler target shape.
+func Compile_Targets_Invariants(value Compile_Targets, _ invariant.Namespace) {
+	invariant.Always(
+		len(value) == COMPILE_TARGET_COUNT,
+		"NFA compiler frame has continuation and accumulated targets.",
+	)
+}
+
+// COMPILE_FRAME_STAGE retains iterative traversal stage.
+const COMPILE_FRAME_STAGE = bytes.SLICE_SIZE_MINIMUM
+
+// COMPILE_FRAME_FIRST distinguishes first alternative branch.
+const COMPILE_FRAME_FIRST = COMPILE_FRAME_STAGE + utf8.CHARACTER_SIZE_MINIMUM
+
+// COMPILE_FRAME_CONTROL_COUNT fixes compiler control storage.
+const COMPILE_FRAME_CONTROL_COUNT = COMPILE_FRAME_FIRST + utf8.CHARACTER_SIZE_MINIMUM
+
+// Compile_Frame_Control stores traversal stage and first-branch flag.
+type Compile_Frame_Control [COMPILE_FRAME_CONTROL_COUNT]uint8
+
+// Compile_Frame_Control_Invariants fixes compiler control shape.
+func Compile_Frame_Control_Invariants(
+	value Compile_Frame_Control, _ invariant.Namespace,
+) {
+	invariant.Always(
+		len(value) == COMPILE_FRAME_CONTROL_COUNT,
+		"NFA compiler frame has stage and branch state.",
+	)
+}
+
+// COMPILE_STAGE_ENTER dispatches syntax node kind.
+const COMPILE_STAGE_ENTER uint8 = bits.WORD_8_MINIMUM
+
+// COMPILE_STAGE_SEQUENCE selects next reverse sequence child.
+const COMPILE_STAGE_SEQUENCE uint8 = COMPILE_STAGE_ENTER + utf8.CHARACTER_SIZE_MINIMUM
+
+// COMPILE_STAGE_SEQUENCE_RETURN commits compiled child entry.
+const COMPILE_STAGE_SEQUENCE_RETURN uint8 = COMPILE_STAGE_SEQUENCE + utf8.CHARACTER_SIZE_MINIMUM
+
+// COMPILE_STAGE_ALTERNATIVE selects next brace branch.
+const COMPILE_STAGE_ALTERNATIVE uint8 = COMPILE_STAGE_SEQUENCE_RETURN + utf8.CHARACTER_SIZE_MINIMUM
+
+// COMPILE_STAGE_ALTERNATIVE_RETURN joins compiled branch entry.
+const COMPILE_STAGE_ALTERNATIVE_RETURN uint8 = COMPILE_STAGE_ALTERNATIVE +
+	utf8.CHARACTER_SIZE_MINIMUM
+
+// CONTROL_FALSE keeps boolean control in fixed integer storage.
+const CONTROL_FALSE uint8 = bits.WORD_8_MINIMUM
+
+// CONTROL_TRUE keeps boolean control in fixed integer storage.
+const CONTROL_TRUE uint8 = CONTROL_FALSE + utf8.CHARACTER_SIZE_MINIMUM
+
+// Compile_Frame stores one suspended syntax node.
+type Compile_Frame struct {
+	// References retain reverse traversal.
+	References Compile_References
+	// Targets retain continuation and result.
+	Targets Compile_Targets
+	// Control retains traversal state.
+	Control Compile_Frame_Control
+}
+
+// Compile_Frame_Invariants composes fixed iterative compiler frame.
+func Compile_Frame_Invariants(value Compile_Frame, namespace invariant.Namespace) {
+	Compile_References_Invariants(value.References, namespace)
+	Compile_Targets_Invariants(value.Targets, namespace)
+	Compile_Frame_Control_Invariants(value.Control, namespace)
+}
+
+// Compile_Frames is fixed syntax traversal stack.
+type Compile_Frames [NODE_COUNT_MAXIMUM]Compile_Frame
+
+// Compile_Frames_Invariants fixes nonrecursive compiler depth.
+func Compile_Frames_Invariants(value Compile_Frames, _ invariant.Namespace) {
+	invariant.Always(
+		len(value) == NODE_COUNT_MAXIMUM,
+		"NFA compiler stack covers every nested syntax node.",
+	)
+}
+
+// Compile_Depth prevents iterative syntax traversal from outgrowing its arena.
+type Compile_Depth int
+
+// Compile_Depth_Invariants follows the one-frame-per-node formula.
+func Compile_Depth_Invariants(value Compile_Depth, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Range_Int(
+			int(value), bytes.SLICE_SIZE_MINIMUM, NODE_COUNT_MAXIMUM,
+		).
+		Ensure()
+}
+
+// COMPILE_DEPTH_NONZERO_MINIMUM is one active compiler frame.
+const COMPILE_DEPTH_NONZERO_MINIMUM = bytes.SLICE_SIZE_MINIMUM + utf8.CHARACTER_SIZE_MINIMUM
+
+// COMPILE_PUSH_DEPTH_MAXIMUM leaves one compiler frame slot.
+const COMPILE_PUSH_DEPTH_MAXIMUM = NODE_COUNT_MAXIMUM - utf8.CHARACTER_SIZE_MINIMUM
+
+// COMPILE_PUSHED_DEPTH_MINIMUM follows one pushed child frame.
+const COMPILE_PUSHED_DEPTH_MINIMUM = COMPILE_DEPTH_NONZERO_MINIMUM +
+	utf8.CHARACTER_SIZE_MINIMUM
+
+// Nonzero_Compile_Depth retains at least the root compiler frame.
+type Nonzero_Compile_Depth int
+
+// Nonzero_Compile_Depth_Invariants excludes the completed empty stack.
+func Nonzero_Compile_Depth_Invariants(
+	value Nonzero_Compile_Depth, namespace invariant.Namespace,
+) {
+	invariant.Tree(value, namespace).
+		Range_Int(
+			int(value), COMPILE_DEPTH_NONZERO_MINIMUM, NODE_COUNT_MAXIMUM,
+		).
+		Ensure()
+}
+
+// Push_Compile_Depth retains one free compiler frame slot.
+type Push_Compile_Depth int
+
+// Push_Compile_Depth_Invariants excludes empty and full compiler stacks.
+func Push_Compile_Depth_Invariants(
+	value Push_Compile_Depth, namespace invariant.Namespace,
+) {
+	invariant.Tree(value, namespace).
+		Range_Int(
+			int(value), COMPILE_DEPTH_NONZERO_MINIMUM,
+			COMPILE_PUSH_DEPTH_MAXIMUM,
+		).
+		Ensure()
+}
+
+// Pushed_Compile_Depth follows one newly suspended child frame.
+type Pushed_Compile_Depth int
+
+// Pushed_Compile_Depth_Invariants excludes root-only compiler state.
+func Pushed_Compile_Depth_Invariants(
+	value Pushed_Compile_Depth, namespace invariant.Namespace,
+) {
+	invariant.Tree(value, namespace).
+		Range_Int(
+			int(value), COMPILE_PUSHED_DEPTH_MINIMUM, NODE_COUNT_MAXIMUM,
+		).
+		Ensure()
+}
+
+// Sequence_Compile_Level compresses one odd sequence-frame stack depth.
+type Sequence_Compile_Level int
+
+// Sequence_Compile_Level_Invariants follows root through maximum brace nesting.
+func Sequence_Compile_Level_Invariants(
+	value Sequence_Compile_Level, namespace invariant.Namespace,
+) {
+	invariant.Tree(value, namespace).
+		Range_Int(
+			int(value), PATTERN_DEPTH_MINIMUM, PATTERN_DEPTH_MAXIMUM,
+		).
+		Ensure()
+}
+
+// Alternative_Compile_Level compresses one even alternative-frame stack depth.
+type Alternative_Compile_Level int
+
+// Alternative_Compile_Level_Invariants starts at the first open group.
+func Alternative_Compile_Level_Invariants(
+	value Alternative_Compile_Level, namespace invariant.Namespace,
+) {
+	invariant.Tree(value, namespace).
+		Range_Int(
+			int(value), PARSER_DEPTH_NONEMPTY_MINIMUM, PATTERN_DEPTH_MAXIMUM,
+		).
+		Ensure()
+}
+
+// Sequence_Updated_Level compresses even depth after sequence transition.
+type Sequence_Updated_Level int
+
+// Sequence_Updated_Level_Invariants follows complete or pushed sequence state.
+func Sequence_Updated_Level_Invariants(
+	value Sequence_Updated_Level, namespace invariant.Namespace,
+) {
+	invariant.Tree(value, namespace).
+		Range_Int(
+			int(value), PATTERN_DEPTH_MINIMUM, PATTERN_DEPTH_MAXIMUM,
+		).
+		Ensure()
+}
+
+// Alternative_Updated_Level compresses odd depth after alternative transition.
+type Alternative_Updated_Level int
+
+// Alternative_Updated_Level_Invariants follows returned or pushed alternative state.
+func Alternative_Updated_Level_Invariants(
+	value Alternative_Updated_Level, namespace invariant.Namespace,
+) {
+	invariant.Tree(value, namespace).
+		Range_Int(
+			int(value), PATTERN_DEPTH_MINIMUM, PATTERN_DEPTH_MAXIMUM,
+		).
+		Ensure()
+}
+
+// Separator is one copied path boundary.
+type Separator rune
+
+// Separator_Invariants covers complete rune-storage domain.
+func Separator_Invariants(value Separator, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Range_Int32(
+			int32(value), utf8.CHARACTER_MINIMUM, utf8.CHARACTER_MAXIMUM,
+		).
+		Ensure()
+}
+
+// Separators is fixed caller-owned separator storage.
+type Separators [SEPARATOR_COUNT_MAXIMUM]Separator
+
+// Separators_Invariants fixes complete separator capacity.
+func Separators_Invariants(value Separators, _ invariant.Namespace) {
+	invariant.Always(
+		len(value) == SEPARATOR_COUNT_MAXIMUM,
+		"Separator storage covers maximum hostile count.",
+	)
+}
+
+// Compile_Control stores arena cursors only.
+type Compile_Control [COMPILE_CONTROL_COUNT]uint16
+
+// Compile_Control_Invariants fixes compiler cursor shape.
+func Compile_Control_Invariants(value Compile_Control, _ invariant.Namespace) {
+	invariant.Always(
+		len(value) == COMPILE_CONTROL_COUNT,
+		"Compile workspace has complete arena cursors.",
+	)
+}
+
+// Compile_Workspace owns parser and immutable NFA storage.
+type Compile_Workspace struct {
+	// Nodes own flat syntax until NFA construction ends.
+	Nodes Nodes
+	// Parser_Frames remove recursive brace parsing.
+	Parser_Frames Parser_Frames
+	// Ranges own character-class intervals.
+	Ranges Class_Ranges
+	// Instruction_Kinds own immutable operation selectors.
+	Instruction_Kinds Instruction_Kinds
+	// Instruction_Characters own immutable literal payloads.
+	Instruction_Characters Instruction_Characters
+	// Instruction_Next_Targets own primary continuation edges.
+	Instruction_Next_Targets Instruction_Next_Targets
+	// Instruction_Branch_Targets own alternative continuation edges.
+	Instruction_Branch_Targets Instruction_Branch_Targets
+	// Instruction_Class_Indexes own class range openings.
+	Instruction_Class_Indexes Instruction_Class_Indexes
+	// Instruction_Class_Counts own class range counts.
+	Instruction_Class_Counts Instruction_Class_Counts
+	// Instruction_Class_Negations own class polarity.
+	Instruction_Class_Negations Instruction_Class_Negations
+	// Compile_Frames remove recursive syntax compilation.
+	Compile_Frames Compile_Frames
+	// Separators own copied caller boundaries.
+	Separators Separators
+	// Control retains arena cursors.
+	Control Compile_Control
+}
+
+// Compile_Workspace_Invariants composes fixed caller-owned storage.
+func Compile_Workspace_Invariants(
+	value *Compile_Workspace, namespace invariant.Namespace,
+) {
+	invariant.Always(value != nil, "Compile workspace is present.")
+	Nodes_Invariants(value.Nodes, namespace)
+	Parser_Frames_Invariants(value.Parser_Frames, namespace)
+	Class_Ranges_Invariants(value.Ranges, namespace)
+	Instruction_Kinds_Invariants(value.Instruction_Kinds, namespace)
+	Instruction_Characters_Invariants(value.Instruction_Characters, namespace)
+	Instruction_Next_Targets_Invariants(
+		value.Instruction_Next_Targets, namespace,
+	)
+	Instruction_Branch_Targets_Invariants(
+		value.Instruction_Branch_Targets, namespace,
+	)
+	Instruction_Class_Indexes_Invariants(
+		value.Instruction_Class_Indexes, namespace,
+	)
+	Instruction_Class_Counts_Invariants(
+		value.Instruction_Class_Counts, namespace,
+	)
+	Instruction_Class_Negations_Invariants(
+		value.Instruction_Class_Negations, namespace,
+	)
+	Compile_Frames_Invariants(value.Compile_Frames, namespace)
+	Separators_Invariants(value.Separators, namespace)
+	Compile_Control_Invariants(value.Control, namespace)
+}
+
+// Compile_Workspace_Storage admits absent caller storage.
+type Compile_Workspace_Storage [WORKSPACE_FIELD_COUNT]*Compile_Workspace
+
+// Compile_Workspace_Storage_Invariants fixes pointer input shape.
+func Compile_Workspace_Storage_Invariants(
+	value Compile_Workspace_Storage, _ invariant.Namespace,
+) {
+	invariant.Always(
+		len(value) == WORKSPACE_FIELD_COUNT,
+		"Compile input has one workspace pointer field.",
+	)
+}
+
+// Compile_Workspace_Input carries hostile optional compile storage.
+type Compile_Workspace_Input struct {
+	// State points at caller storage when present.
+	State Compile_Workspace_Storage
+}
+
+// Compile_Workspace_Input_Invariants fixes optional pointer shape.
+func Compile_Workspace_Input_Invariants(
+	value Compile_Workspace_Input, namespace invariant.Namespace,
+) {
+	Compile_Workspace_Storage_Invariants(value.State, namespace)
+}
+
+// Compile_Input bundles bounded parser dependencies.
+type Compile_Input struct {
+	// Source is hostile borrowed pattern bytes.
+	Source Pattern_Source_Unvalidated
+	// Separators are hostile path boundaries.
+	Separators Separators_Unvalidated
+	// Workspace owns parse and NFA state.
+	Workspace Compile_Workspace_Input
+}
+
+// Compile_Input_Invariants composes hostile compile boundary.
+func Compile_Input_Invariants(value Compile_Input, namespace invariant.Namespace) {
+	Pattern_Source_Unvalidated_Invariants(value.Source, namespace)
+	Separators_Unvalidated_Invariants(value.Separators, namespace)
+	Compile_Workspace_Input_Invariants(value.Workspace, namespace)
+}
+
+// Pattern_Workspace_Storage retains one immutable compiled arena.
+type Pattern_Workspace_Storage [PATTERN_WORKSPACE_FIELD_COUNT]*Compile_Workspace
+
+// Pattern_Workspace_Storage_Invariants fixes compiled pointer shape.
+func Pattern_Workspace_Storage_Invariants(
+	value Pattern_Workspace_Storage, _ invariant.Namespace,
+) {
+	invariant.Always(
+		len(value) == PATTERN_WORKSPACE_FIELD_COUNT,
+		"Compiled pattern has one workspace pointer field.",
+	)
+}
+
+// Pattern_Control retains start and populated arena counts.
+type Pattern_Control [PATTERN_CONTROL_COUNT]uint16
+
+// Pattern_Control_Invariants fixes compiled scalar header shape.
+func Pattern_Control_Invariants(value Pattern_Control, _ invariant.Namespace) {
+	invariant.Always(
+		len(value) == PATTERN_CONTROL_COUNT,
+		"Compiled pattern has complete scalar header.",
+	)
+}
+
+// Pattern borrows immutable caller compile storage.
 type Pattern struct {
-	// Matcher is the compiled matcher tree Match evaluates. It is a pointer so a
-	// compiled Pattern is a word wide and passing it never copies the matcher; it
-	// is exported only because the house linter forbids unexported struct fields;
-	// callers should treat it as opaque and go through Match.
-	Matcher *Matcher
-	// Evaluate is the root matcher's kind-specific evaluator, resolved once at
-	// compile time. Match calls it directly, so a whole-pattern terminal matcher
-	// (Text, Prefix, …) dispatches through one indirect call rather than the
-	// Kind switch of matcher_matches — the switch loads Kind and branches on every
-	// call, which is pure overhead once the kind is already known. Recursion inside
-	// a composite still goes through matcher_matches, whose switch stays the fast
-	// path there. Both fields are exported only because the linter forbids
-	// unexported struct fields.
-	Evaluate func(matcher *Matcher, text string) (matched bool)
+	// Workspace retains compiled instructions and separators.
+	Workspace Pattern_Workspace_Storage
+	// Control retains start and populated counts.
+	Control Pattern_Control
 }
 
-// Compile parses pattern and compiles it into a Pattern. The optional separators
-// are the runes `*` and `?` refuse to cross (typically the path separator); with
-// none, `*` behaves like `**`. It returns an error for a malformed pattern or one
-// whose `{...}` nesting exceeds PATTERN_DEPTH_MAX.
-func Compile(pattern string, separators ...rune) (compiled Pattern, err error) {
-	tree, err := Parse(pattern)
-	if err != nil {
-		return Pattern{}, err
+// Pattern_Invariants verifies shape without dereferencing hostile pointer.
+func Pattern_Invariants(value Pattern, namespace invariant.Namespace) {
+	Pattern_Workspace_Storage_Invariants(value.Workspace, namespace)
+	Pattern_Control_Invariants(value.Control, namespace)
+}
+
+// Current_States stores closure before one candidate character.
+type Current_States [INSTRUCTION_COUNT_MAXIMUM]Instruction_PC
+
+// Current_States_Invariants fixes active-state capacity.
+func Current_States_Invariants(value Current_States, _ invariant.Namespace) {
+	invariant.Always(
+		len(value) == INSTRUCTION_COUNT_MAXIMUM,
+		"Current NFA state set covers every instruction once.",
+	)
+}
+
+// Next_States stores closure after one candidate character.
+type Next_States [INSTRUCTION_COUNT_MAXIMUM]Instruction_PC
+
+// Next_States_Invariants fixes next-state capacity.
+func Next_States_Invariants(value Next_States, _ invariant.Namespace) {
+	invariant.Always(
+		len(value) == INSTRUCTION_COUNT_MAXIMUM,
+		"Next NFA state set covers every instruction once.",
+	)
+}
+
+// Closure_States stores iterative epsilon traversal.
+type Closure_States [INSTRUCTION_COUNT_MAXIMUM]Instruction_PC
+
+// Closure_States_Invariants fixes epsilon traversal capacity.
+func Closure_States_Invariants(value Closure_States, _ invariant.Namespace) {
+	invariant.Always(
+		len(value) == INSTRUCTION_COUNT_MAXIMUM,
+		"NFA closure stack covers every instruction once.",
+	)
+}
+
+// State_Generation marks one closure without clearing per transition.
+type State_Generation uint16
+
+// State_Generation_Invariants follows candidate characters plus initial closure.
+func State_Generation_Invariants(
+	value State_Generation, namespace invariant.Namespace,
+) {
+	invariant.Tree(value, namespace).
+		Range_Uint16(
+			uint16(value), uint16(STATE_GENERATION_MINIMUM),
+			uint16(STATE_GENERATION_MAXIMUM),
+		).
+		Ensure()
+}
+
+// Closure_Generation follows the initial closure through final text closure.
+type Closure_Generation uint16
+
+// Closure_Generation_Invariants excludes the cleared visited-set marker.
+func Closure_Generation_Invariants(
+	value Closure_Generation, namespace invariant.Namespace,
+) {
+	invariant.Tree(value, namespace).
+		Range_Uint16(
+			uint16(value), uint16(CLOSURE_GENERATION_MINIMUM),
+			uint16(STATE_GENERATION_MAXIMUM),
+		).
+		Ensure()
+}
+
+// Consume_Generation follows closures after at least one candidate character.
+type Consume_Generation uint16
+
+// Consume_Generation_Invariants starts after initial closure generation.
+func Consume_Generation_Invariants(
+	value Consume_Generation, namespace invariant.Namespace,
+) {
+	invariant.Tree(value, namespace).
+		Range_Uint16(
+			uint16(value), uint16(CONSUME_GENERATION_MINIMUM),
+			uint16(STATE_GENERATION_MAXIMUM),
+		).
+		Ensure()
+}
+
+// State_Generations tracks visited instructions.
+type State_Generations [INSTRUCTION_COUNT_MAXIMUM]State_Generation
+
+// State_Generations_Invariants fixes visited-set capacity.
+func State_Generations_Invariants(
+	value State_Generations, _ invariant.Namespace,
+) {
+	invariant.Always(
+		len(value) == INSTRUCTION_COUNT_MAXIMUM,
+		"NFA visited set covers every instruction.",
+	)
+}
+
+// Active_Instruction_States is one bounded populated state prefix.
+type Active_Instruction_States []Instruction_PC
+
+// Active_Instruction_States_Invariants follows the compiled instruction bound.
+func Active_Instruction_States_Invariants(
+	value Active_Instruction_States, namespace invariant.Namespace,
+) {
+	invariant.Tree(value, namespace).
+		Range_Int(
+			len(value), bytes.SLICE_SIZE_MINIMUM, ACTIVE_STATE_COUNT_MAXIMUM,
+		).
+		Ensure()
+}
+
+// Instruction_State_Storage is one complete caller-owned state arena.
+type Instruction_State_Storage []Instruction_PC
+
+// Instruction_State_Storage_Invariants fixes matcher arena capacity.
+func Instruction_State_Storage_Invariants(
+	value Instruction_State_Storage, _ invariant.Namespace,
+) {
+	invariant.Always(
+		len(value) == INSTRUCTION_COUNT_MAXIMUM,
+		"Matcher state view retains complete instruction-derived capacity.",
+	)
+}
+
+// State_Count retains a possibly empty active-state prefix.
+type State_Count int
+
+// State_Count_Invariants follows maximum simultaneously consuming branches.
+func State_Count_Invariants(value State_Count, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Range_Int(
+			int(value), bytes.SLICE_SIZE_MINIMUM, ACTIVE_STATE_COUNT_MAXIMUM,
+		).
+		Ensure()
+}
+
+// Append_State_Count leaves room for one newly reached active state.
+type Append_State_Count int
+
+// Append_State_Count_Invariants excludes the already-full active prefix.
+func Append_State_Count_Invariants(
+	value Append_State_Count, namespace invariant.Namespace,
+) {
+	invariant.Tree(value, namespace).
+		Range_Int(
+			int(value), bytes.SLICE_SIZE_MINIMUM, APPEND_STATE_COUNT_MAXIMUM,
+		).
+		Ensure()
+}
+
+// Nonempty_State_Count follows one successful state addition.
+type Nonempty_State_Count int
+
+// Nonempty_State_Count_Invariants requires one reached instruction.
+func Nonempty_State_Count_Invariants(
+	value Nonempty_State_Count, namespace invariant.Namespace,
+) {
+	invariant.Tree(value, namespace).
+		Range_Int(
+			int(value), utf8.CHARACTER_SIZE_MINIMUM,
+			ACTIVE_STATE_COUNT_MAXIMUM,
+		).
+		Ensure()
+}
+
+// Closure_Count retains a possibly empty alternative traversal stack.
+type Closure_Count int
+
+// Closure_Count_Invariants follows maximum suspended comma branches.
+func Closure_Count_Invariants(value Closure_Count, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Range_Int(
+			int(value), bytes.SLICE_SIZE_MINIMUM, CLOSURE_COUNT_MAXIMUM,
+		).
+		Ensure()
+}
+
+// Closure_Append_Count leaves room for one unseen closure instruction.
+type Closure_Append_Count int
+
+// Closure_Append_Count_Invariants excludes the already-full closure stack.
+func Closure_Append_Count_Invariants(
+	value Closure_Append_Count, namespace invariant.Namespace,
+) {
+	invariant.Tree(value, namespace).
+		Range_Int(
+			int(value), bytes.SLICE_SIZE_MINIMUM, CLOSURE_APPEND_COUNT_MAXIMUM,
+		).
+		Ensure()
+}
+
+// Instruction_Count exists only after forged pattern metadata passed validation.
+type Instruction_Count int
+
+// Instruction_Count_Invariants retains terminal match and every bounded instruction.
+func Instruction_Count_Invariants(
+	value Instruction_Count, namespace invariant.Namespace,
+) {
+	invariant.Tree(value, namespace).
+		Range_Int(
+			int(value), utf8.CHARACTER_SIZE_MINIMUM, INSTRUCTION_COUNT_MAXIMUM,
+		).
+		Ensure()
+}
+
+// Class_Range_Count exists only after forged range metadata passed validation.
+type Class_Range_Count int
+
+// Class_Range_Count_Invariants follows the caller-owned class-range arena.
+func Class_Range_Count_Invariants(
+	value Class_Range_Count, namespace invariant.Namespace,
+) {
+	invariant.Tree(value, namespace).
+		Range_Int(
+			int(value), bytes.SLICE_SIZE_MINIMUM, CLASS_RANGE_COUNT_MAXIMUM,
+		).
+		Ensure()
+}
+
+// Separator_Count exists only after forged separator metadata passed validation.
+type Separator_Count int
+
+// Separator_Count_Invariants follows the caller-owned separator arena.
+func Separator_Count_Invariants(
+	value Separator_Count, namespace invariant.Namespace,
+) {
+	invariant.Tree(value, namespace).
+		Range_Int(
+			int(value), SEPARATOR_COUNT_MINIMUM, SEPARATOR_COUNT_MAXIMUM,
+		).
+		Ensure()
+}
+
+// Contains carries one membership result through caller-owned scalar storage.
+type Contains bool
+
+// Contains_Invariants requires both membership outcomes across registered paths.
+func Contains_Invariants(value Contains, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Sometimes(bool(value), "Membership succeeds.").
+		Ensure()
+}
+
+// Match_Workspace owns active, next, pending, and visited NFA states.
+type Match_Workspace struct {
+	// Current stores closure before one candidate character.
+	Current Current_States
+	// Next stores closure after one candidate character.
+	Next Next_States
+	// Closure stores iterative epsilon traversal.
+	Closure Closure_States
+	// Seen deduplicates each closure.
+	Seen State_Generations
+}
+
+// Match_Workspace_Invariants composes fixed caller-owned state sets.
+func Match_Workspace_Invariants(
+	value *Match_Workspace, namespace invariant.Namespace,
+) {
+	invariant.Always(value != nil, "Match workspace is present.")
+	Current_States_Invariants(value.Current, namespace)
+	Next_States_Invariants(value.Next, namespace)
+	Closure_States_Invariants(value.Closure, namespace)
+	State_Generations_Invariants(value.Seen, namespace)
+}
+
+// Match_Workspace_Storage admits absent caller match state.
+type Match_Workspace_Storage [WORKSPACE_FIELD_COUNT]*Match_Workspace
+
+// Match_Workspace_Storage_Invariants fixes pointer input shape.
+func Match_Workspace_Storage_Invariants(
+	value Match_Workspace_Storage, _ invariant.Namespace,
+) {
+	invariant.Always(
+		len(value) == WORKSPACE_FIELD_COUNT,
+		"Match input has one workspace pointer field.",
+	)
+}
+
+// Match_Workspace_Input carries hostile optional match storage.
+type Match_Workspace_Input struct {
+	// State points at caller storage when present.
+	State Match_Workspace_Storage
+}
+
+// Match_Workspace_Input_Invariants fixes optional pointer shape.
+func Match_Workspace_Input_Invariants(
+	value Match_Workspace_Input, namespace invariant.Namespace,
+) {
+	Match_Workspace_Storage_Invariants(value.State, namespace)
+}
+
+// Match_Input bundles immutable pattern, hostile text, and caller state.
+type Match_Input struct {
+	// Pattern points at caller compiled NFA.
+	Pattern Pattern
+	// Text is hostile borrowed candidate.
+	Text Text_Unvalidated
+	// Workspace owns mutable NFA state sets.
+	Workspace Match_Workspace_Input
+}
+
+// Match_Input_Invariants composes hostile match boundary.
+func Match_Input_Invariants(value Match_Input, namespace invariant.Namespace) {
+	Pattern_Invariants(value.Pattern, namespace)
+	Text_Unvalidated_Invariants(value.Text, namespace)
+	Match_Workspace_Input_Invariants(value.Workspace, namespace)
+}
+
+// Compile validates and emits one NFA into caller workspace.
+func Compile(input Compile_Input) (
+	pattern Pattern,
+	diagnostic Diagnostic,
+	status Compile_Status,
+) {
+	defer func() {
+		Pattern_Invariants(pattern, "Compile.pattern")
+		Diagnostic_Invariants(diagnostic, "Compile.diagnostic")
+		Compile_Status_Invariants(status, "Compile.status")
+	}()
+	Compile_Input_Invariants(input, "Compile.input")
+	if len(input.Source) > PATTERN_SIZE_MAXIMUM {
+		return Pattern{}, Diagnostic{Code: STATUS_INPUT_INVALID},
+			STATUS_INPUT_INVALID
 	}
-	matcher, err := compile_tree(tree, separators)
-	if err != nil {
-		return Pattern{}, err
+	if len(input.Separators) > SEPARATOR_COUNT_MAXIMUM {
+		return Pattern{}, Diagnostic{Code: STATUS_INPUT_INVALID},
+			STATUS_INPUT_INVALID
 	}
-	return Pattern{Matcher: &matcher, Evaluate: select_evaluator(matcher.Kind)}, nil
-}
-
-// Must_Compile is Compile without the error return: it panics when Compile would
-// fail, for patterns fixed at build time rather than supplied at runtime.
-func Must_Compile(pattern string, separators ...rune) (compiled Pattern) {
-	compiled, err := Compile(pattern, separators...)
-	if err != nil {
-		panic(fmt.Sprintf("glob: Must_Compile(%q): %v", pattern, err))
+	workspace := input.Workspace.State[WORKSPACE_FIELD]
+	if workspace == nil {
+		return Pattern{}, Diagnostic{Code: STATUS_WORKSPACE_INVALID},
+			STATUS_WORKSPACE_INVALID
 	}
-	return compiled
+	Compile_Workspace_Invariants(workspace, "Compile.workspace")
+	workspace.Control = Compile_Control{}
+	for index := range input.Separators {
+		if !bool(utf8.Valid_Character(utf8.Character(input.Separators[index]))) {
+			return Pattern{}, Diagnostic{Code: STATUS_INPUT_INVALID},
+				STATUS_INPUT_INVALID
+		}
+		workspace.Separators[index] = Separator(input.Separators[index])
+	}
+	workspace.Control[COMPILE_CONTROL_SEPARATOR_COUNT] =
+		uint16(len(input.Separators))
+	root, position, parse_status := pattern_parse(workspace, Pattern_Source(input.Source))
+	if parse_status != STATUS_OK {
+		return Pattern{}, Diagnostic{
+			Code: Compile_Status(parse_status), Position: Diagnostic_Position(position),
+		}, Compile_Status(parse_status)
+	}
+	start := pattern_compile(workspace, root)
+	pattern = Pattern{Workspace: Pattern_Workspace_Storage{workspace}}
+	pattern.Control[PATTERN_CONTROL_START] = uint16(start)
+	pattern.Control[PATTERN_CONTROL_INSTRUCTION_COUNT] =
+		workspace.Control[COMPILE_CONTROL_INSTRUCTION_COUNT]
+	pattern.Control[PATTERN_CONTROL_SEPARATOR_COUNT] =
+		workspace.Control[COMPILE_CONTROL_SEPARATOR_COUNT]
+	return pattern, Diagnostic{}, STATUS_OK
 }
 
-// Match reports whether text satisfies the compiled pattern.
-func Match(compiled Pattern, text string) (matched bool) {
-	return compiled.Evaluate(compiled.Matcher, text)
+// Match executes compiled NFA against one bounded candidate.
+func Match(input Match_Input) (matched Matched, status Match_Status) {
+	defer func() {
+		Matched_Invariants(matched, "Match.matched")
+		Match_Status_Invariants(status, "Match.status")
+	}()
+	Match_Input_Invariants(input, "Match.input")
+	if len(input.Text) > TEXT_SIZE_MAXIMUM {
+		return false, STATUS_INPUT_INVALID
+	}
+	state := pattern_validate(input.Pattern)
+	if state != STATUS_OK {
+		return false, Match_Status(state)
+	}
+	workspace := input.Workspace.State[WORKSPACE_FIELD]
+	if workspace == nil {
+		return false, STATUS_WORKSPACE_INVALID
+	}
+	Match_Workspace_Invariants(workspace, "Match.workspace")
+	for index := range workspace.Seen {
+		workspace.Seen[index] = State_Generation(STATE_GENERATION_MINIMUM)
+	}
+	compiled := input.Pattern.Workspace[PATTERN_WORKSPACE_FIELD]
+	current := Instruction_State_Storage(workspace.Current[:])
+	next := Instruction_State_Storage(workspace.Next[:])
+	current_count := State_Count(bytes.SLICE_SIZE_MINIMUM)
+	generation := Closure_Generation(CLOSURE_GENERATION_MINIMUM)
+	start := Instruction_PC(input.Pattern.Control[PATTERN_CONTROL_START])
+	current_count = State_Count(state_add(
+		input.Pattern, workspace, current, Append_State_Count(current_count),
+		start, generation,
+	))
+	position := TEXT_SIZE_MINIMUM
+	for position < len(input.Text) {
+		character, size := utf8.Decode_Character(utf8.Bytes(input.Text[position:]))
+		position += int(size)
+		generation++
+		next_count := state_consume(
+			input.Pattern, workspace,
+			Active_Instruction_States(current[:current_count]), next,
+			utf8.Decoded_Character(character), Consume_Generation(generation),
+		)
+		current, next = next, current
+		current_count = next_count
+	}
+	for index := bytes.SLICE_SIZE_MINIMUM; index < int(current_count); index++ {
+		kind := compiled.Instruction_Kinds[current[index]]
+		if kind == INSTRUCTION_MATCH {
+			return true, STATUS_OK
+		}
+	}
+	return false, STATUS_OK
 }
 
-// Quote_Meta returns text with every glob metacharacter backslash-escaped, so the
-// result compiles to a pattern that matches text literally. For example
-// Quote_Meta(`{foo*}`) returns `\{foo\*\}`.
-func Quote_Meta(text string) (quoted string) {
-	// A byte loop is correct because every metacharacter is ASCII; worst case
-	// every byte is escaped, so twice the input length is always enough.
-	buffer := make([]byte, 2*len(text))
-	position := 0
-	for index := 0; index < len(text); index++ {
-		if Special(text[index]) {
-			buffer[position] = '\\'
+// Quote_Meta_Into escapes metacharacters into caller destination atomically.
+func Quote_Meta_Into(destination Output, source Pattern_Source_Unvalidated) (
+	count Output_Count,
+	status Quote_Status,
+) {
+	defer func() {
+		Output_Count_Invariants(count, "Quote_Meta_Into.count")
+		Quote_Status_Invariants(status, "Quote_Meta_Into.status")
+	}()
+	Output_Invariants(destination, "Quote_Meta_Into.destination")
+	Pattern_Source_Unvalidated_Invariants(source, "Quote_Meta_Into.source")
+	if len(source) > PATTERN_SIZE_MAXIMUM {
+		return Output_Count(bytes.SLICE_SIZE_MINIMUM), STATUS_INPUT_INVALID
+	}
+	required_count := len(source)
+	for index := range source {
+		if bool(Special(Character(source[index]))) {
+			required_count++
+		}
+	}
+	if len(destination) < required_count {
+		return Output_Count(bytes.SLICE_SIZE_MINIMUM), STATUS_OUTPUT_TOO_SMALL
+	}
+	position := bytes.SLICE_SIZE_MINIMUM
+	for index := range source {
+		if bool(Special(Character(source[index]))) {
+			destination[position] = '\\'
 			position++
 		}
-		buffer[position] = text[index]
+		destination[position] = source[index]
 		position++
 	}
-	return string(buffer[0:position])
+	return Output_Count(position), STATUS_OK
 }
 
-// The parser and lexer below turn a glob pattern into an abstract syntax tree the
-// compiler walks. They are a dependency-injected port of the syntax, syntax/ast, and
-// syntax/lexer packages from github.com/gobwas/glob (MIT, Sergey Kamardin; see
-// LICENSE.mit.kamardin).
-//
-// Upstream split the front end across three packages wired together by a Lexer
-// interface; this port collapses them into one. The house linter bans interfaces
-// outside generic constraints, so the parser drives the concrete lexer directly
-// rather than through an abstraction, and the three-package seam the interface
-// justified no longer earns its keep. For the same reason upstream's Node.Value
-// interface{} — a type switch over Text, List, and Range payload structs — became
-// typed fields tagged by Node.Kind here: the compiler reads them with a
-// `switch node.Kind` rather than a banned type assertion.
-//
-// The linter also requires every package-level type to be exported and one source
-// file per package, so the lexer and its tokens carry exported names and share this
-// file even though the compiler consumes only Node and Node_Kind. Treat Lexer, Token, and
-// Token_Kind as internal to the front end.
-
-// PATTERN_DEPTH_MAX bounds how deeply {...} alternatives may nest. Parsing a group
-// recurses one frame per nesting level, and the compile and match passes that later
-// walk the tree recurse to the same depth, so an adversarial pattern such as
-// "{{{...}}}" nested millions deep is a stack-overflow denial of service. Parse
-// rejects any pattern that nests past this bound instead of recursing into it. 1000
-// is far above the depth any real glob needs yet far below where Go's goroutine
-// stack is at risk.
-const PATTERN_DEPTH_MAX int = 1000
-
-// Special reports whether character is a glob metacharacter — one of * ? \ [ ] { }
-// — that a caller must escape to match it literally. The top-level QuoteMeta uses
-// it. Comma, `!`, and `-` are deliberately absent: they are metacharacters only
-// inside a group or class, not on their own.
-func Special(character byte) (special bool) {
+// Special reports whether byte needs glob quoting.
+func Special(character Character) (special Special_Character) {
+	defer func() {
+		Special_Character_Invariants(special, "Special.special")
+	}()
+	Character_Invariants(character, "Special.character")
 	switch character {
 	case '*', '?', '\\', '[', ']', '{', '}':
 		return true
-	default:
-		return false
 	}
+	return false
 }
 
-// Parse compiles pattern into a parse tree rooted at a NODE_KIND_PATTERN node, or returns
-// an error on a malformed class or range, or on a pattern that nests {...}
-// alternatives past PATTERN_DEPTH_MAX. That bound is a hard security limit: the
-// recursive descent here — and the compile and match passes that later walk the
-// tree — recurse one frame per nesting level, so an unbounded pattern would overflow
-// the stack. Recursion is intentional and permitted for this parser; only its depth
-// is capped.
-func Parse(pattern string) (tree *Node, err error) {
-	tree, err = parse_lexer(new_lexer(pattern))
-	return tree, err
-}
-
-// Node_Kind tags a Node with the grammar production it represents, so a consumer reads a
-// node's payload by switching on Kind rather than a banned type assertion.
-type Node_Kind int
-
-// NODE_KIND_EMPTY is the zero value, mapping to upstream KindNothing: a node that matches
-// only the empty string. The parser never emits it; it exists so a consumer can
-// represent an empty match.
-const NODE_KIND_EMPTY Node_Kind = 0
-
-// NODE_KIND_PATTERN is an ordered sequence of child nodes — the tree root, and each
-// alternative inside a {...} group.
-const NODE_KIND_PATTERN Node_Kind = 1
-
-// NODE_KIND_LIST is a [...] character class holding its members in Characters: any one of
-// those runes, or any rune NOT among them when Negated.
-const NODE_KIND_LIST Node_Kind = 2
-
-// NODE_KIND_RANGE is a [a-z] character range spanning Low to High inclusive: any one rune
-// in that span, or any rune outside it when Negated.
-const NODE_KIND_RANGE Node_Kind = 3
-
-// NODE_KIND_TEXT is a literal run of runes held in Text, matched verbatim.
-const NODE_KIND_TEXT Node_Kind = 4
-
-// NODE_KIND_ANY is a single `*`: any run of runes up to the next separator.
-const NODE_KIND_ANY Node_Kind = 5
-
-// NODE_KIND_SUPER is `**`: any run of runes, separators included.
-const NODE_KIND_SUPER Node_Kind = 6
-
-// NODE_KIND_SINGLE is `?`: exactly one non-separator rune.
-const NODE_KIND_SINGLE Node_Kind = 7
-
-// NODE_KIND_ANY_OF is a {...} group whose NODE_KIND_PATTERN children are the alternatives, any
-// one of which may match.
-const NODE_KIND_ANY_OF Node_Kind = 8
-
-// String names the kind for debugging and Node.String output. Satisfies
-// fmt.Stringer.
-func (kind Node_Kind) String() (name string) {
-	switch kind {
-	case NODE_KIND_EMPTY:
-		return "Empty"
-	case NODE_KIND_PATTERN:
-		return "Pattern"
-	case NODE_KIND_LIST:
-		return "List"
-	case NODE_KIND_RANGE:
-		return "Range"
-	case NODE_KIND_TEXT:
-		return "Text"
-	case NODE_KIND_ANY:
-		return "Any"
-	case NODE_KIND_SUPER:
-		return "Super"
-	case NODE_KIND_SINGLE:
-		return "Single"
-	case NODE_KIND_ANY_OF:
-		return "AnyOf"
-	default:
-		return ""
-	}
-}
-
-// Node is one vertex of the parse tree. Kind selects which payload fields carry
-// meaning; the rest stay zero. Children and Parent form the tree the compiler walks,
-// doubly linked so a walk can ascend as well as descend.
-type Node struct {
-	// Kind tags which grammar production this node is, and thus which of the payload
-	// fields below are meaningful.
-	Kind Node_Kind
-	// Children are the ordered sub-nodes: a Pattern's sequence, or an AnyOf's
-	// alternatives. Empty for leaf kinds.
-	Children []*Node
-	// Parent is the enclosing node, nil only for the root. It lets the parser ascend
-	// out of a nested group without a side stack.
-	Parent *Node
-	// Text is the literal run for NODE_KIND_TEXT, matched verbatim.
-	Text string
-	// Characters holds the members of a NODE_KIND_LIST class — the runes the class admits.
-	Characters string
-	// Negated inverts a NODE_KIND_LIST or NODE_KIND_RANGE so it matches every rune it does NOT
-	// cover. Set by a leading `!` inside the brackets.
-	Negated bool
-	// Low is the inclusive lower bound rune of a NODE_KIND_RANGE.
-	Low rune
-	// High is the inclusive upper bound rune of a NODE_KIND_RANGE.
-	High rune
-}
-
-// String renders the node and its subtree as "Kind =payload [child, ...]" for test
-// output and go-doc examples; the parse path never calls it. Satisfies fmt.Stringer.
-func (node *Node) String() (rendered string) {
-	var builder strings.Builder
-	builder.WriteString(node.Kind.String())
-	payload := node_payload_string(node)
-	if payload != "" {
-		builder.WriteString(" =")
-		builder.WriteString(payload)
-	}
-	if len(node.Children) > 0 {
-		builder.WriteString(" [")
-		for child_index, child := range node.Children {
-			if child_index > 0 {
-				builder.WriteString(", ")
-			}
-			builder.WriteString(child.String())
+func pattern_parse(
+	workspace_state *Compile_Workspace,
+	source Pattern_Source,
+) (root Root_Node_Reference, position Pattern_Position, status Syntax_Status) {
+	defer func() {
+		Root_Node_Reference_Invariants(root, "pattern_parse.root")
+		Pattern_Position_Invariants(position, "pattern_parse.position")
+		Syntax_Status_Invariants(status, "pattern_parse.status")
+	}()
+	Compile_Workspace_Invariants(workspace_state, "pattern_parse.workspace_state")
+	Pattern_Source_Invariants(source, "pattern_parse.source")
+	workspace := (*Compile_Workspace)(workspace_state)
+	root_reference, status := node_create(workspace, NODE_SEQUENCE)
+	root = Root_Node_Reference(root_reference)
+	current, depth := Node_Reference(root), Parser_Depth(PATTERN_DEPTH_MINIMUM)
+	nonempty := Nonempty_Pattern_Source(source)
+	for status == STATUS_OK {
+		if position == Pattern_Position(len(source)) {
+			break
 		}
-		builder.WriteString("]")
-	}
-	return builder.String()
-}
-
-// Builds the payload fragment of Node.String for the kinds that carry one; the other
-// kinds contribute nothing.
-func node_payload_string(node *Node) (payload string) {
-	switch node.Kind {
-	case NODE_KIND_TEXT:
-		return node.Text
-	case NODE_KIND_LIST:
-		return fmt.Sprintf("negated=%t %q", node.Negated, node.Characters)
-	case NODE_KIND_RANGE:
-		return fmt.Sprintf("negated=%t %q-%q", node.Negated, node.Low, node.High)
-	default:
-		return ""
-	}
-}
-
-// Builds a node of the given kind and inserts the children under it, wiring their
-// Parent links. Payload-bearing leaves (Text, List, Range) are written as keyed Node
-// literals directly, since their fields vary by kind.
-func new_node(kind Node_Kind, children ...*Node) (node *Node) {
-	node = &Node{Kind: kind}
-	insert(node, children...)
-	return node
-}
-
-// Appends children to parent and back-links each child to parent, keeping the
-// doubly-linked shape the parser relies on to ascend out of a nested group.
-func insert(parent *Node, children ...*Node) {
-	parent.Children = append(parent.Children, children...)
-	for _, child := range children {
-		child.Parent = parent
-	}
-}
-
-// Drives the concrete lexer to build a NODE_KIND_PATTERN-rooted tree. Split from Parse so
-// a test can seed a Lexer's buffer directly rather than a source string. depth starts
-// at 0; each {...} adds one level, capped by PATTERN_DEPTH_MAX.
-func parse_lexer(lexer *Lexer) (tree *Node, err error) {
-	root := &Node{Kind: NODE_KIND_PATTERN}
-	_, err = parse_pattern(lexer, root, 0)
-	if err != nil {
-		return nil, err
-	}
-	return root, nil
-}
-
-// Reads tokens into pattern until it reaches a terminator — end of input, a `,`
-// separator, or a `}` group close — and returns which terminator stopped it, so a
-// caller inside a group knows whether more alternatives follow. The loop exits only
-// by returning; its condition is a stand-in for the banned bare `for {}`.
-func parse_pattern(lexer *Lexer, pattern *Node, depth int) (terminator Token_Kind, err error) {
-	var done bool
-	for !done {
-		token := lex_next(lexer)
-		switch token.Kind {
-		case TOKEN_EOF:
-			return TOKEN_EOF, nil
-		case TOKEN_ERROR:
-			return TOKEN_ERROR, errors.New(token.Raw)
-		case TOKEN_SEPARATOR:
-			return TOKEN_SEPARATOR, nil
-		case TOKEN_TERMS_CLOSE:
-			return TOKEN_TERMS_CLOSE, nil
-		case TOKEN_TEXT:
-			insert(pattern, &Node{Kind: NODE_KIND_TEXT, Text: token.Raw})
-		case TOKEN_ANY:
-			insert(pattern, &Node{Kind: NODE_KIND_ANY})
-		case TOKEN_SUPER:
-			insert(pattern, &Node{Kind: NODE_KIND_SUPER})
-		case TOKEN_SINGLE:
-			insert(pattern, &Node{Kind: NODE_KIND_SINGLE})
-		case TOKEN_RANGE_OPEN:
-			err = parse_range(lexer, pattern)
-			if err != nil {
-				return TOKEN_ERROR, err
-			}
-		case TOKEN_TERMS_OPEN:
-			err = parse_any_of(lexer, pattern, depth)
-			if err != nil {
-				return TOKEN_ERROR, err
-			}
-		default:
-			return TOKEN_ERROR, fmt.Errorf(
-				"unexpected %s token %q", token.Kind, token.Raw)
-		}
-	}
-	return TOKEN_EOF, nil
-}
-
-// Consumes a {...} group after its opening `{`, attaching a NODE_KIND_ANY_OF node to
-// parent with one NODE_KIND_PATTERN child per comma-separated alternative. It deepens the
-// nesting by one and rejects the pattern once depth passes PATTERN_DEPTH_MAX, the
-// recursion-depth security bound. An unterminated group ends without error, matching
-// upstream.
-func parse_any_of(lexer *Lexer, parent *Node, depth int) (err error) {
-	depth++
-	if depth > PATTERN_DEPTH_MAX {
-		return fmt.Errorf(
-			"pattern nests {...} deeper than the limit of %d", PATTERN_DEPTH_MAX)
-	}
-	any_of := &Node{Kind: NODE_KIND_ANY_OF}
-	insert(parent, any_of)
-	var done bool
-	for !done {
-		alternative := &Node{Kind: NODE_KIND_PATTERN}
-		insert(any_of, alternative)
-		var terminator Token_Kind
-		terminator, err = parse_pattern(lexer, alternative, depth)
-		if err != nil {
-			return err
-		}
-		if terminator != TOKEN_SEPARATOR {
-			done = true
-		}
-	}
-	return nil
-}
-
-// Consumes a [...] class after its opening `[`, attaching a NODE_KIND_RANGE or NODE_KIND_LIST
-// leaf to pattern. The lexer has already split the body into tokens; this assembles
-// them and rejects a class that is neither a clean lo-hi range nor a clean member
-// list.
-func parse_range(lexer *Lexer, pattern *Node) (err error) {
-	var negated bool
-	var low rune
-	var high rune
-	var characters string
-	var done bool
-	for !done {
-		token := lex_next(lexer)
-		switch token.Kind {
-		case TOKEN_EOF:
-			return errors.New("unexpected end of input inside a character class")
-		case TOKEN_ERROR:
-			return errors.New(token.Raw)
-		case TOKEN_NOT:
-			negated = true
-		case TOKEN_RANGE_LOW:
-			low, err = range_bound(token.Raw)
-			if err != nil {
-				return err
-			}
-		case TOKEN_RANGE_BETWEEN:
-			// The dash is structural; the bounds around it carry the data.
-		case TOKEN_RANGE_HIGH:
-			high, err = range_bound(token.Raw)
-			if err != nil {
-				return err
-			}
-			if high < low {
-				return errors.New("character class range ends below its start")
-			}
-		case TOKEN_TEXT:
-			characters = token.Raw
-		case TOKEN_RANGE_CLOSE:
-			// A class with both bounds is a range; with members it is a list. It
-			// must be exactly one, never both and never neither.
-			is_range := low != 0 && high != 0
-			is_characters := characters != ""
-			if is_range == is_characters {
-				return errors.New(
-					"character class is neither a range nor a member list")
-			}
-			if is_range {
-				insert(pattern, &Node{
-					Kind:    NODE_KIND_RANGE,
-					Low:     low,
-					High:    high,
-					Negated: negated,
-				})
+		character := source[position]
+		index := Pattern_Index(position)
+		parent := Container_Node_Reference(current)
+		open_depth := Open_Parser_Depth(depth)
+		nested := Nested_Sequence_Reference(current)
+		switch character {
+		case '{':
+			opened, next_depth, state := group_open(
+				workspace, parent, depth,
+			)
+			current = Node_Reference(opened)
+			depth, status = Parser_Depth(next_depth), state
+			position++
+		case ',':
+			if depth == PATTERN_DEPTH_MINIMUM {
+				end, state := literal_parse(workspace, nonempty, parent, index)
+				position, status = Pattern_Position(end), state
 			} else {
-				insert(pattern, &Node{
-					Kind:       NODE_KIND_LIST,
-					Characters: characters,
-					Negated:    negated,
-				})
+				branch, state := group_branch(workspace, nested, open_depth)
+				current, status = Node_Reference(branch), state
+				position++
 			}
-			done = true
-		}
-	}
-	return nil
-}
-
-// Decodes token_raw as exactly one rune, the low or high bound of a [a-z] range. The
-// lexer can hand over multi-rune raw text for a malformed class, so a raw holding
-// more than one rune is rejected.
-func range_bound(token_raw string) (bound rune, err error) {
-	decoded, width := utf8.DecodeRuneInString(token_raw)
-	if len(token_raw) > width {
-		return 0, errors.New("a character class range bound must be a single rune")
-	}
-	return decoded, nil
-}
-
-// Token_Kind tags a Token with its lexical category. The lexer is internal to the
-// front end; a consumer works with the Node tree, not tokens.
-type Token_Kind int
-
-// TOKEN_EOF marks the end of the pattern; the lexer returns it indefinitely once the
-// input is exhausted.
-const TOKEN_EOF Token_Kind = 0
-
-// TOKEN_ERROR carries a scan failure, its message in Token.Raw.
-const TOKEN_ERROR Token_Kind = 1
-
-// TOKEN_TEXT is a literal run of runes, escapes already resolved.
-const TOKEN_TEXT Token_Kind = 2
-
-// TOKEN_ANY is a single `*`.
-const TOKEN_ANY Token_Kind = 3
-
-// TOKEN_SUPER is `**`.
-const TOKEN_SUPER Token_Kind = 4
-
-// TOKEN_SINGLE is `?`.
-const TOKEN_SINGLE Token_Kind = 5
-
-// TOKEN_NOT is the `!` that negates a character class.
-const TOKEN_NOT Token_Kind = 6
-
-// TOKEN_SEPARATOR is the `,` between alternatives inside a {...} group.
-const TOKEN_SEPARATOR Token_Kind = 7
-
-// TOKEN_RANGE_OPEN is the `[` opening a character class.
-const TOKEN_RANGE_OPEN Token_Kind = 8
-
-// TOKEN_RANGE_CLOSE is the `]` closing a character class.
-const TOKEN_RANGE_CLOSE Token_Kind = 9
-
-// TOKEN_RANGE_LOW is the low bound rune of a [a-z] range.
-const TOKEN_RANGE_LOW Token_Kind = 10
-
-// TOKEN_RANGE_HIGH is the high bound rune of a [a-z] range.
-const TOKEN_RANGE_HIGH Token_Kind = 11
-
-// TOKEN_RANGE_BETWEEN is the `-` separating the bounds of a [a-z] range.
-const TOKEN_RANGE_BETWEEN Token_Kind = 12
-
-// TOKEN_TERMS_OPEN is the `{` opening an alternatives group.
-const TOKEN_TERMS_OPEN Token_Kind = 13
-
-// TOKEN_TERMS_CLOSE is the `}` closing an alternatives group.
-const TOKEN_TERMS_CLOSE Token_Kind = 14
-
-// String names the token kind for error messages and test output. Satisfies
-// fmt.Stringer.
-func (kind Token_Kind) String() (name string) {
-	switch kind {
-	case TOKEN_EOF:
-		return "eof"
-	case TOKEN_ERROR:
-		return "error"
-	case TOKEN_TEXT:
-		return "text"
-	case TOKEN_ANY:
-		return "any"
-	case TOKEN_SUPER:
-		return "super"
-	case TOKEN_SINGLE:
-		return "single"
-	case TOKEN_NOT:
-		return "not"
-	case TOKEN_SEPARATOR:
-		return "separator"
-	case TOKEN_RANGE_OPEN:
-		return "range_open"
-	case TOKEN_RANGE_CLOSE:
-		return "range_close"
-	case TOKEN_RANGE_LOW:
-		return "range_low"
-	case TOKEN_RANGE_HIGH:
-		return "range_high"
-	case TOKEN_RANGE_BETWEEN:
-		return "range_between"
-	case TOKEN_TERMS_OPEN:
-		return "terms_open"
-	case TOKEN_TERMS_CLOSE:
-		return "terms_close"
-	default:
-		return "undefined"
-	}
-}
-
-// Token is one lexical unit: its category and the raw source runes it spans.
-type Token struct {
-	// Kind is the token's lexical category.
-	Kind Token_Kind
-	// Raw is the source text the token spans; for TOKEN_ERROR it is the message.
-	Raw string
-}
-
-// Lexer scans a glob pattern into tokens on demand. It is exported only because the
-// linter requires every package-level type to be; the parser is its sole caller.
-type Lexer struct {
-	// Data is the pattern being scanned.
-	Data string
-	// Position is the byte offset of the next rune to read in Data.
-	Position int
-	// Error latches the first scan failure; once set, every read reports it.
-	Error error
-	// Buffer holds tokens produced ahead of the reader — one fetch of a range emits
-	// several — and is drained front to back.
-	Buffer []Token
-	// Terms_Level counts the open {...} groups, so a `,` or `}` is a separator or a
-	// group close only inside a group and literal text outside one.
-	Terms_Level int
-	// Last_Rune is the most recently read rune, kept so an unread can restore it.
-	Last_Rune rune
-	// Last_Rune_Size is Last_Rune's byte width, the amount an unread rewinds by.
-	Last_Rune_Size int
-	// Has_Rune is true when a rune has been unread and awaits re-reading.
-	Has_Rune bool
-}
-
-// Builds a lexer over source with a small token buffer preallocated for the common
-// case where one fetch emits a handful of tokens.
-func new_lexer(source string) (state *Lexer) {
-	state = &Lexer{Data: source, Buffer: make([]Token, 0, 4)}
-	return state
-}
-
-// Next returns the next token, draining the buffer first and fetching more when it
-// empties. A latched error is reported as a TOKEN_ERROR on every call. A fetch may
-// enqueue nothing (a trailing escape yields no text), so the loop repeats until a
-// token is available; end of input always eventually enqueues TOKEN_EOF.
-func lex_next(state *Lexer) (result Token) {
-	if state.Error != nil {
-		return Token{Kind: TOKEN_ERROR, Raw: state.Error.Error()}
-	}
-	for buffer_empty(state) {
-		lex_fetch_item(state)
-		if state.Error != nil {
-			return Token{Kind: TOKEN_ERROR, Raw: state.Error.Error()}
-		}
-	}
-	return buffer_shift(state)
-}
-
-// Reports whether the lexer's lookahead buffer is drained.
-func buffer_empty(state *Lexer) (empty bool) {
-	return len(state.Buffer) == 0
-}
-
-// Appends a token to the back of the lexer's lookahead buffer.
-func buffer_push(state *Lexer, value Token) {
-	state.Buffer = append(state.Buffer, value)
-}
-
-// Removes and returns the front token of the lexer's lookahead buffer.
-func buffer_shift(state *Lexer) (front Token) {
-	front = state.Buffer[0]
-	state.Buffer = state.Buffer[1:]
-	return front
-}
-
-// Reads the rune at the cursor without consuming it, returning rune 0 and width 0 at
-// end of input. A malformed UTF-8 sequence latches an error and reports end of
-// input. Rune 0 doubles as the end-of-input sentinel, following upstream: a literal
-// NUL in a glob pattern is not meaningful.
-func lex_peek(state *Lexer) (rune_value rune, width int) {
-	if state.Position == len(state.Data) {
-		return 0, 0
-	}
-	rune_value, width = utf8.DecodeRuneInString(state.Data[state.Position:])
-	if rune_value == utf8.RuneError {
-		lex_error(state, "could not decode a UTF-8 rune")
-		return 0, 0
-	}
-	return rune_value, width
-}
-
-// Reads and consumes the next rune, advancing the cursor. A previously unread rune is
-// returned first, re-advancing the cursor over it.
-func lex_read(state *Lexer) (rune_value rune) {
-	if state.Has_Rune {
-		state.Has_Rune = false
-		lex_seek(state, state.Last_Rune_Size)
-		return state.Last_Rune
-	}
-	var width int
-	rune_value, width = lex_peek(state)
-	lex_seek(state, width)
-	state.Last_Rune = rune_value
-	state.Last_Rune_Size = width
-	return rune_value
-}
-
-// Moves the cursor by width bytes; a negative width rewinds it.
-func lex_seek(state *Lexer, width int) {
-	state.Position += width
-}
-
-// Pushes the last read rune back so the next read returns it again. Two unreads in a
-// row are impossible by construction and latch an error.
-func lex_unread(state *Lexer) {
-	if state.Has_Rune {
-		lex_error(state, "could not unread a second rune")
-		return
-	}
-	lex_seek(state, -state.Last_Rune_Size)
-	state.Has_Rune = true
-}
-
-// Latches message as the lexer's error unless one is already set, so the first
-// failure is the one reported.
-func lex_error(state *Lexer, message string) {
-	if state.Error != nil {
-		return
-	}
-	state.Error = errors.New(message)
-}
-
-// Reports whether the lexer is inside at least one open {...} group.
-func lex_in_terms(state *Lexer) (inside bool) {
-	return state.Terms_Level > 0
-}
-
-// Returns the runes that end a text run outside a {...} group: the openers of the
-// other constructs.
-func text_breakers() (breakers []rune) {
-	return []rune{'?', '*', '[', '{'}
-}
-
-// Returns the runes that end a text run inside a {...} group: the text breakers plus
-// the group's own close and separator.
-func terms_breakers() (breakers []rune) {
-	return []rune{'?', '*', '[', '{', '}', ','}
-}
-
-// Returns the active text breakers for the current context.
-func lex_breakers(state *Lexer) (breakers []rune) {
-	if lex_in_terms(state) {
-		return terms_breakers()
-	}
-	return text_breakers()
-}
-
-// Reads one construct from the cursor and enqueues its token(s). A metacharacter
-// becomes its own token; `[` also scans the whole class body; anything else is
-// scanned as a text run up to the next breaker.
-func lex_fetch_item(state *Lexer) {
-	rune_value := lex_read(state)
-	switch {
-	case rune_value == 0:
-		buffer_push(state, Token{Kind: TOKEN_EOF, Raw: ""})
-	case rune_value == '{':
-		state.Terms_Level++
-		buffer_push(state, Token{Kind: TOKEN_TERMS_OPEN, Raw: string(rune_value)})
-	case rune_value == ',' && lex_in_terms(state):
-		buffer_push(state, Token{Kind: TOKEN_SEPARATOR, Raw: string(rune_value)})
-	case rune_value == '}' && lex_in_terms(state):
-		buffer_push(state, Token{Kind: TOKEN_TERMS_CLOSE, Raw: string(rune_value)})
-		state.Terms_Level--
-	case rune_value == '[':
-		buffer_push(state, Token{Kind: TOKEN_RANGE_OPEN, Raw: string(rune_value)})
-		lex_fetch_range(state)
-	case rune_value == '?':
-		buffer_push(state, Token{Kind: TOKEN_SINGLE, Raw: string(rune_value)})
-	case rune_value == '*':
-		lex_fetch_any(state, rune_value)
-	default:
-		lex_unread(state)
-		lex_fetch_text(state, lex_breakers(state))
-	}
-}
-
-// Enqueues TOKEN_SUPER for `**` or TOKEN_ANY for a lone `*`, given the first `*` is
-// already read.
-func lex_fetch_any(state *Lexer, first rune) {
-	if lex_read(state) == '*' {
-		buffer_push(state, Token{Kind: TOKEN_SUPER, Raw: string(first) + string(first)})
-		return
-	}
-	lex_unread(state)
-	buffer_push(state, Token{Kind: TOKEN_ANY, Raw: string(first)})
-}
-
-// Scans the body of a [...] class after the opening `[` and enqueues its tokens: an
-// optional `!`, then either a lo-`-`-hi range or a text run of members, closed by
-// `]`. Malformed input latches an error.
-func lex_fetch_range(state *Lexer) {
-	var want_high bool
-	var want_close bool
-	var seen_not bool
-	var done bool
-	for !done {
-		rune_value := lex_read(state)
-		switch {
-		case rune_value == 0:
-			lex_error(state, "unexpected end of input inside a character class")
-			done = true
-		case want_close:
-			lex_fetch_range_close(state, rune_value)
-			done = true
-		case want_high:
-			buffer_push(state, Token{Kind: TOKEN_RANGE_HIGH, Raw: string(rune_value)})
-			want_close = true
-		case !seen_not && rune_value == '!':
-			buffer_push(state, Token{Kind: TOKEN_NOT, Raw: string(rune_value)})
-			seen_not = true
+		case '}':
+			if depth == PATTERN_DEPTH_MINIMUM {
+				status = STATUS_SYNTAX_INVALID
+			} else {
+				parent, next_depth := group_close(workspace, open_depth)
+				current, depth = Node_Reference(parent), Parser_Depth(next_depth)
+				position++
+			}
+		case '[':
+			end, state := class_parse(workspace, nonempty, parent, index)
+			position, status = Pattern_Position(end), state
+		case '*':
+			end, state := star_parse(workspace, nonempty, parent, index)
+			position, status = Pattern_Position(end), state
+		case '?':
+			position++
+			status = atom_append(workspace, parent, ATOM_SINGLE, ATOM_CHARACTER_EMPTY)
 		default:
-			want_high = lex_fetch_range_low_or_text(state, rune_value)
-			want_close = !want_high
+			end, state := literal_parse(workspace, nonempty, parent, index)
+			position, status = Pattern_Position(end), state
 		}
 	}
-}
-
-// Handles a class member rune that is neither `!` nor a pending high bound. A `lo-`
-// prefix starts a range (enqueue the low bound and the dash, then expect the high
-// bound); otherwise the rest is a text run of members up to `]`. Returns whether a
-// high bound is now expected.
-func lex_fetch_range_low_or_text(state *Lexer, low rune) (want_high bool) {
-	next_rune, next_width := lex_peek(state)
-	if next_rune == '-' {
-		lex_seek(state, next_width)
-		buffer_push(state, Token{Kind: TOKEN_RANGE_LOW, Raw: string(low)})
-		buffer_push(state, Token{Kind: TOKEN_RANGE_BETWEEN, Raw: string(next_rune)})
-		return true
-	}
-	lex_unread(state)
-	lex_fetch_text(state, []rune{']'})
-	return false
-}
-
-// Enqueues the class-closing `]`, or latches an error when the awaited close rune is
-// something else.
-func lex_fetch_range_close(state *Lexer, rune_value rune) {
-	if rune_value != ']' {
-		lex_error(state, "expected a closing bracket to end the character class")
-		return
-	}
-	buffer_push(state, Token{Kind: TOKEN_RANGE_CLOSE, Raw: string(rune_value)})
-}
-
-// Scans a run of literal runes into a TOKEN_TEXT, stopping before the next breaker or
-// at end of input. A backslash escapes the following rune, so a breaker can be taken
-// literally. A run that yields no runes enqueues nothing.
-func lex_fetch_text(state *Lexer, breakers []rune) {
-	var data []rune
-	var escaped bool
-	var done bool
-	for !done {
-		rune_value := lex_read(state)
-		if rune_value == 0 {
-			done = true
-			continue
+	if status == STATUS_OK {
+		if depth != PATTERN_DEPTH_MINIMUM {
+			status = STATUS_SYNTAX_INVALID
 		}
-		if !escaped {
-			if rune_value == '\\' {
-				escaped = true
-				continue
+	}
+	return root, position, status
+}
+
+func star_parse(
+	workspace *Compile_Workspace,
+	source Nonempty_Pattern_Source,
+	parent Container_Node_Reference,
+	position Pattern_Index,
+) (end Nonzero_Pattern_Position, status Syntax_Status) {
+	defer func() {
+		Nonzero_Pattern_Position_Invariants(end, "star_parse.end")
+		Syntax_Status_Invariants(status, "star_parse.status")
+	}()
+	Compile_Workspace_Invariants(workspace, "star_parse.workspace")
+	Nonempty_Pattern_Source_Invariants(source, "star_parse.source")
+	Container_Node_Reference_Invariants(parent, "star_parse.parent")
+	Pattern_Index_Invariants(position, "star_parse.position")
+	cursor := Pattern_Position(position) + Pattern_Position(utf8.CHARACTER_SIZE_MINIMUM)
+	kind := ATOM_STAR
+	if cursor < Pattern_Position(len(source)) {
+		if source[cursor] == '*' {
+			kind = ATOM_SUPER_STAR
+			cursor++
+		}
+	}
+	status = atom_append(
+		workspace, parent, kind, ATOM_CHARACTER_EMPTY,
+	)
+	return Nonzero_Pattern_Position(cursor), status
+}
+
+func group_open(
+	workspace_state *Compile_Workspace,
+	current Container_Node_Reference,
+	depth Parser_Depth,
+) (
+	updated_current Opened_Sequence_Reference,
+	updated_depth Opened_Parser_Depth,
+	status Syntax_Status,
+) {
+	defer func() {
+		Opened_Sequence_Reference_Invariants(
+			updated_current, "group_open.updated_current",
+		)
+		Opened_Parser_Depth_Invariants(updated_depth, "group_open.updated_depth")
+		Syntax_Status_Invariants(status, "group_open.status")
+	}()
+	Compile_Workspace_Invariants(workspace_state, "group_open.workspace_state")
+	Container_Node_Reference_Invariants(current, "group_open.current")
+	Parser_Depth_Invariants(depth, "group_open.depth")
+	workspace := (*Compile_Workspace)(workspace_state)
+	if depth == Parser_Depth(len(workspace.Parser_Frames)) {
+		return Opened_Sequence_Reference(current), Opened_Parser_Depth(depth),
+			STATUS_SYNTAX_INVALID
+	}
+	alternative, status := node_create(workspace, NODE_ALTERNATIVE)
+	if status != STATUS_OK {
+		return Opened_Sequence_Reference(current), Opened_Parser_Depth(depth), status
+	}
+	node_append_child(
+		workspace, Child_Parent_Reference(current), Child_Node_Reference(alternative),
+	)
+	sequence, status := node_create(workspace, NODE_SEQUENCE)
+	if status != STATUS_OK {
+		return Opened_Sequence_Reference(current), Opened_Parser_Depth(depth), status
+	}
+	node_append_child(
+		workspace, Child_Parent_Reference(alternative), Child_Node_Reference(sequence),
+	)
+	workspace.Parser_Frames[depth] = Parser_Frame{References: Parser_References{
+		Parent:      Suspended_Sequence_Reference(current),
+		Alternative: Parser_Alternative_Reference(alternative),
+		Sequence:    Opened_Sequence_Reference(sequence),
+	}}
+	return Opened_Sequence_Reference(sequence),
+		Opened_Parser_Depth(depth + utf8.CHARACTER_SIZE_MINIMUM), STATUS_OK
+}
+
+func group_branch(
+	workspace_state *Compile_Workspace,
+	current Nested_Sequence_Reference,
+	depth Open_Parser_Depth,
+) (updated_current Branch_Sequence_Reference, status Syntax_Status) {
+	defer func() {
+		Branch_Sequence_Reference_Invariants(
+			updated_current, "group_branch.updated_current",
+		)
+		Syntax_Status_Invariants(status, "group_branch.status")
+	}()
+	Compile_Workspace_Invariants(workspace_state, "group_branch.workspace_state")
+	Nested_Sequence_Reference_Invariants(current, "group_branch.current")
+	Open_Parser_Depth_Invariants(depth, "group_branch.depth")
+	workspace := (*Compile_Workspace)(workspace_state)
+	frame := &workspace.Parser_Frames[int(depth)-utf8.CHARACTER_SIZE_MINIMUM]
+	sequence, status := node_create(workspace, NODE_SEQUENCE)
+	if status != STATUS_OK {
+		return Branch_Sequence_Reference(current), status
+	}
+	node_append_child(
+		workspace,
+		Child_Parent_Reference(frame.References.Alternative),
+		Child_Node_Reference(sequence),
+	)
+	frame.References.Sequence = Opened_Sequence_Reference(sequence)
+	return Branch_Sequence_Reference(sequence), STATUS_OK
+}
+
+func group_close(
+	workspace_state *Compile_Workspace,
+	depth Open_Parser_Depth,
+) (current Suspended_Sequence_Reference, updated_depth Closed_Parser_Depth) {
+	defer func() {
+		Suspended_Sequence_Reference_Invariants(current, "group_close.current")
+		Closed_Parser_Depth_Invariants(updated_depth, "group_close.updated_depth")
+	}()
+	Compile_Workspace_Invariants(workspace_state, "group_close.workspace_state")
+	Open_Parser_Depth_Invariants(depth, "group_close.depth")
+	workspace := (*Compile_Workspace)(workspace_state)
+	depth--
+	return Suspended_Sequence_Reference(
+		workspace.Parser_Frames[depth].References.Parent,
+	), Closed_Parser_Depth(depth)
+}
+
+func literal_parse(
+	workspace_state *Compile_Workspace,
+	source Nonempty_Pattern_Source,
+	parent Container_Node_Reference,
+	position Pattern_Index,
+) (updated_position Nonzero_Pattern_Position, status Syntax_Status) {
+	defer func() {
+		Nonzero_Pattern_Position_Invariants(
+			updated_position, "literal_parse.updated_position",
+		)
+		Syntax_Status_Invariants(status, "literal_parse.status")
+	}()
+	Compile_Workspace_Invariants(workspace_state, "literal_parse.workspace_state")
+	Nonempty_Pattern_Source_Invariants(source, "literal_parse.source")
+	Container_Node_Reference_Invariants(parent, "literal_parse.parent")
+	Pattern_Index_Invariants(position, "literal_parse.position")
+	workspace := (*Compile_Workspace)(workspace_state)
+	if source[position] == '\\' {
+		position++
+		if position == Pattern_Index(len(source)) {
+			return Nonzero_Pattern_Position(position), STATUS_SYNTAX_INVALID
+		}
+	}
+	character, size := utf8.Decode_Character(utf8.Bytes(source[position:]))
+	position += Pattern_Index(size)
+	return Nonzero_Pattern_Position(position),
+		atom_append(workspace, parent, ATOM_LITERAL, character)
+}
+
+func class_parse(
+	workspace *Compile_Workspace,
+	source Nonempty_Pattern_Source,
+	parent Container_Node_Reference,
+	position Pattern_Index,
+) (end Nonzero_Pattern_Position, status Syntax_Status) {
+	defer func() {
+		Nonzero_Pattern_Position_Invariants(end, "class_parse.end")
+		Syntax_Status_Invariants(status, "class_parse.status")
+	}()
+	Compile_Workspace_Invariants(workspace, "class_parse.workspace")
+	Nonempty_Pattern_Source_Invariants(source, "class_parse.source")
+	Container_Node_Reference_Invariants(parent, "class_parse.parent")
+	Pattern_Index_Invariants(position, "class_parse.position")
+	size := Pattern_Position(len(source))
+	cursor := Pattern_Position(position) + Pattern_Position(utf8.CHARACTER_SIZE_MINIMUM)
+	negated := false
+	if cursor < size {
+		negated = source[cursor] == '!'
+	}
+	if negated {
+		cursor++
+	}
+	range_index := workspace.Control[COMPILE_CONTROL_RANGE_COUNT]
+	range_count := uint16(bytes.SLICE_SIZE_MINIMUM)
+	for status == STATUS_OK {
+		if cursor == size {
+			return Nonzero_Pattern_Position(cursor), STATUS_SYNTAX_INVALID
+		}
+		if source[cursor] == ']' {
+			if range_count == bytes.SLICE_SIZE_MINIMUM {
+				return Nonzero_Pattern_Position(cursor), STATUS_SYNTAX_INVALID
 			}
-			if slices.Index(breakers, rune_value) != -1 {
-				lex_unread(state)
-				done = true
-				continue
-			}
-		}
-		escaped = false
-		data = append(data, rune_value)
-	}
-	if len(data) > 0 {
-		buffer_push(state, Token{Kind: TOKEN_TEXT, Raw: string(data)})
-	}
-}
-
-// The compiler below turns a syntax abstract syntax tree into a Matcher
-// tree, applying the same optimization passes as upstream: it glues adjacent
-// fixed-width matchers into a row, folds a run of wildcards into a single width
-// bound, factors the common head and tail out of an alternation, and splits a
-// sequence around its widest static matcher into a search tree.
-//
-// It is a dependency-injected port of the compiler subpackage of
-// github.com/gobwas/glob (MIT, Sergey Kamardin; see LICENSE.mit.kamardin).
-// Upstream modelled matchers as a Matcher interface and AST payloads as an
-// interface{} the compiler type-switched over. The house linter bans interfaces
-// outside generic constraints, so this port reads the Matcher tagged union
-// by its Kind and the Node payload by its Kind instead, and the mutating
-// builder methods (EveryOf.Add) become slices assembled once. The whole
-// shared/text/glob subtree is exempt from the recursion ban, so every pass
-// recurses into its children exactly as upstream did.
-
-// Turns a parsed syntax tree into the Matcher that recognizes the glob, threading
-// separators through every wildcard so a '*' stops at the first separator and a
-// '?' never spans one. The public Compile is the entry point; the passes
-// compile_tree drives are unexported.
-func compile_tree(tree *Node, separators []rune) (matcher Matcher, err error) {
-	matcher, err = compile(tree, separators)
-	if err != nil {
-		return Matcher{}, err
-	}
-	return matcher, nil
-}
-
-// Dispatches on the node kind: an alternation and a pattern each drive their own
-// multi-child pass, while a leaf builds one matcher the optimizer then tries to
-// tighten.
-func compile(tree *Node, separators []rune) (matcher Matcher, err error) {
-	switch tree.Kind {
-	case NODE_KIND_ANY_OF:
-		return compile_any_of(tree, separators)
-	case NODE_KIND_PATTERN:
-		return compile_pattern(tree, separators)
-	}
-	matcher, err = compile_leaf(tree, separators)
-	if err != nil {
-		return Matcher{}, err
-	}
-	return optimize_matcher(matcher), nil
-}
-
-// Builds the single matcher a leaf node denotes, before optimization. An unknown
-// kind is a malformed tree and is the one error compile surfaces.
-func compile_leaf(
-	tree *Node, separators []rune,
-) (matcher Matcher, err error) {
-	switch tree.Kind {
-	case NODE_KIND_ANY:
-		return New_Any(separators), nil
-	case NODE_KIND_SUPER:
-		return New_Super(), nil
-	case NODE_KIND_SINGLE:
-		return New_Single(separators), nil
-	case NODE_KIND_EMPTY:
-		return New_Empty(), nil
-	case NODE_KIND_LIST:
-		return New_List([]rune(tree.Characters), tree.Negated), nil
-	case NODE_KIND_RANGE:
-		return New_Range(&New_Range_Input{
-			Low: tree.Low, High: tree.High, Negated: tree.Negated}), nil
-	case NODE_KIND_TEXT:
-		return New_Text(tree.Text), nil
-	}
-	return Matcher{}, errors.New("could not compile tree: unknown node type")
-}
-
-// Compiles an ordered sequence: an empty sequence matches only the empty string,
-// otherwise the children are compiled, minimized into as few matchers as
-// possible, and folded into one search tree.
-func compile_pattern(
-	tree *Node, separators []rune,
-) (matcher Matcher, err error) {
-	if len(tree.Children) == 0 {
-		return New_Empty(), nil
-	}
-	children, err := compile_tree_children(tree, separators)
-	if err != nil {
-		return Matcher{}, err
-	}
-	matcher, err = compile_matchers(minimize_matchers(children))
-	if err != nil {
-		return Matcher{}, err
-	}
-	return optimize_matcher(matcher), nil
-}
-
-// Compiles an alternation. It first tries to factor a common head and tail out of
-// the alternatives (minimize_tree); when that rewrites the tree it compiles the
-// rewrite, otherwise it compiles each alternative into an any-of.
-func compile_any_of(
-	tree *Node, separators []rune,
-) (matcher Matcher, err error) {
-	minimized := minimize_tree(tree)
-	if minimized != nil {
-		return compile(minimized, separators)
-	}
-	children, err := compile_tree_children(tree, separators)
-	if err != nil {
-		return Matcher{}, err
-	}
-	return New_Any_Of(children...), nil
-}
-
-// Compiles every child of tree in order, optimizing each so the multi-child
-// passes see already-tightened matchers.
-func compile_tree_children(
-	tree *Node, separators []rune,
-) (matchers []Matcher, err error) {
-	for _, child := range tree.Children {
-		compiled, compile_err := compile(child, separators)
-		if compile_err != nil {
-			return nil, compile_err
-		}
-		matchers = append(matchers, optimize_matcher(compiled))
-	}
-	return matchers, nil
-}
-
-// Rewrites a matcher into a tighter equivalent where one exists: a separatorless
-// wildcard is really a super, a one-child any-of is its child, a single-member
-// list is a text, and a text-pivoted tree collapses into an affix. Kinds with no
-// rewrite pass through unchanged.
-func optimize_matcher(matcher Matcher) (optimized Matcher) {
-	switch matcher.Kind {
-	case MATCHER_KIND_ANY:
-		if len(matcher.Separators) == 0 {
-			return New_Super()
-		}
-	case MATCHER_KIND_ANY_OF:
-		if len(matcher.Children) == 1 {
-			return matcher.Children[0]
-		}
-		return matcher
-	case MATCHER_KIND_LIST:
-		if !matcher.Negated {
-			if len(matcher.Runes) == 1 {
-				return New_Text(string(matcher.Runes))
-			}
-		}
-		return matcher
-	case MATCHER_KIND_BTREE:
-		return optimize_btree(matcher)
-	}
-	return matcher
-}
-
-// Optimizes a search tree's two sides first, then collapses the whole tree only
-// when its pivot is a plain text. A non-text pivot has no tighter form, so the
-// tree stands as built.
-func optimize_btree(matcher Matcher) (optimized Matcher) {
-	if matcher.Left != nil {
-		left := optimize_matcher(*matcher.Left)
-		matcher.Left = &left
-	}
-	if matcher.Right != nil {
-		right := optimize_matcher(*matcher.Right)
-		matcher.Right = &right
-	}
-	if matcher.Value == nil {
-		return matcher
-	}
-	if matcher.Value.Kind != MATCHER_KIND_TEXT {
-		return matcher
-	}
-	return optimize_btree_text(matcher)
-}
-
-// Collapses a text-pivoted search tree into the affix matcher its sides imply:
-// two supers around a text is a contains, a super on one side is a prefix or
-// suffix, a matching affix on the empty side is a prefix-suffix, and a wildcard
-// on the empty side is a separator-bounded prefix or suffix.
-func optimize_btree_text(matcher Matcher) (optimized Matcher) {
-	literal := matcher.Value.Literal
-	left_nil := matcher.Left == nil
-	right_nil := matcher.Right == nil
-	left_super := !left_nil && matcher.Left.Kind == MATCHER_KIND_SUPER
-	left_prefix := !left_nil && matcher.Left.Kind == MATCHER_KIND_PREFIX
-	left_any := !left_nil && matcher.Left.Kind == MATCHER_KIND_ANY
-	right_super := !right_nil && matcher.Right.Kind == MATCHER_KIND_SUPER
-	right_suffix := !right_nil && matcher.Right.Kind == MATCHER_KIND_SUFFIX
-	right_any := !right_nil && matcher.Right.Kind == MATCHER_KIND_ANY
-	switch {
-	case left_nil && right_nil:
-		return New_Text(literal)
-	case left_super && right_super:
-		return New_Contains(literal, false)
-	case left_super && right_nil:
-		return New_Suffix(literal)
-	case right_super && left_nil:
-		return New_Prefix(literal)
-	case left_nil && right_suffix:
-		return New_Prefix_Suffix(&New_Prefix_Suffix_Input{
-			Prefix: literal, Suffix: matcher.Right.Suffix})
-	case right_nil && left_prefix:
-		return New_Prefix_Suffix(&New_Prefix_Suffix_Input{
-			Prefix: matcher.Left.Prefix, Suffix: literal})
-	case right_nil && left_any:
-		return New_Suffix_Any(literal, matcher.Left.Separators)
-	case left_nil && right_any:
-		return New_Prefix_Any(literal, matcher.Right.Separators)
-	}
-	return matcher
-}
-
-// Folds a run of matchers into one: a single matcher is itself, an adjacent run
-// that glues does so, otherwise the run splits around its widest static matcher
-// into a search tree so the engine can pivot on the cheapest exact match. An
-// empty run is a caller bug and the one error this pass raises.
-func compile_matchers(matchers []Matcher) (matcher Matcher, err error) {
-	if len(matchers) == 0 {
-		return Matcher{}, errors.New(
-			"compile error: need at least one matcher")
-	}
-	if len(matchers) == 1 {
-		return matchers[0], nil
-	}
-	glued, ok := glue_matchers(matchers)
-	if ok {
-		return glued, nil
-	}
-	pivot_index := compile_matchers_pivot_index(matchers)
-	if pivot_index == -1 {
-		return compile_matchers_no_pivot(matchers)
-	}
-	return compile_matchers_split(matchers, pivot_index)
-}
-
-// Reports the index of the last widest fixed-width matcher, the one to pivot the
-// search tree on, or -1 when every matcher is variable-width. The last of equal
-// widths wins so ties resolve rightward, as upstream did.
-func compile_matchers_pivot_index(matchers []Matcher) (pivot_index int) {
-	pivot_index = -1
-	widest := RUNE_WIDTH_VARIABLE
-	for index, matcher := range matchers {
-		width := Rune_Width(matcher)
-		if width == RUNE_WIDTH_VARIABLE {
-			continue
-		}
-		if width < widest {
-			continue
-		}
-		widest = width
-		pivot_index = index
-	}
-	return pivot_index
-}
-
-// Handles a run with no fixed-width matcher: the head pivots and the whole tail
-// becomes its right side, so the search still makes progress one matcher at a
-// time.
-func compile_matchers_no_pivot(
-	matchers []Matcher,
-) (matcher Matcher, err error) {
-	rest, err := compile_matchers(matchers[1:])
-	if err != nil {
-		return Matcher{}, err
-	}
-	return New_Btree(&New_Btree_Input{
-		Value: matchers[0], Left: nil, Right: &rest}), nil
-}
-
-// Builds the search tree pivoted on the chosen matcher: the matchers before it
-// compile into the left side, those after into the right, and an empty side is
-// left absent.
-func compile_matchers_split(
-	matchers []Matcher, pivot_index int,
-) (matcher Matcher, err error) {
-	value := matchers[pivot_index]
-	left_children := matchers[:pivot_index]
-	var right_children []Matcher
-	if len(matchers) > pivot_index+1 {
-		right_children = matchers[pivot_index+1:]
-	}
-	var left *Matcher
-	if len(left_children) > 0 {
-		left_compiled, left_err := compile_matchers(left_children)
-		if left_err != nil {
-			return Matcher{}, left_err
-		}
-		left = &left_compiled
-	}
-	var right *Matcher
-	if len(right_children) > 0 {
-		right_compiled, right_err := compile_matchers(right_children)
-		if right_err != nil {
-			return Matcher{}, right_err
-		}
-		right = &right_compiled
-	}
-	return New_Btree(&New_Btree_Input{
-		Value: value, Left: left, Right: right}), nil
-}
-
-// Merges an adjacent run into one matcher when it collapses either to a width
-// bound (every wildcard agrees on separators) or to a fixed-width row. The
-// every-of form is tried first because it subsumes more runs.
-func glue_matchers(matchers []Matcher) (matcher Matcher, ok bool) {
-	every, every_ok := glue_as_every(matchers)
-	if every_ok {
-		return every, true
-	}
-	row, row_ok := glue_as_row(matchers)
-	if row_ok {
-		return row, true
-	}
-	return Matcher{}, false
-}
-
-// Glues a run of two or more fixed-width matchers into one row whose width is
-// their total. A single variable-width member defeats it, since a row's width
-// must be known up front.
-func glue_as_row(matchers []Matcher) (matcher Matcher, ok bool) {
-	if len(matchers) <= 1 {
-		return Matcher{}, false
-	}
-	total_width := 0
-	children := make([]Matcher, 0, len(matchers))
-	for _, member := range matchers {
-		width := Rune_Width(member)
-		if width == RUNE_WIDTH_VARIABLE {
-			return Matcher{}, false
-		}
-		children = append(children, member)
-		total_width += width
-	}
-	return New_Row(total_width, children...), true
-}
-
-// Glues a run of two or more wildcards that all agree on their separator set into
-// a single length-and-separator constraint. A run that mixes separator sets, or
-// holds a non-wildcard, does not glue.
-func glue_as_every(matchers []Matcher) (matcher Matcher, ok bool) {
-	if len(matchers) <= 1 {
-		return Matcher{}, false
-	}
-	facts, classified := glue_every_classify(matchers)
-	if !classified {
-		return Matcher{}, false
-	}
-	return glue_every_build(&facts), true
-}
-
-// Records which wildcard kinds a run holds and the separator set they must share;
-// it fails the moment a member is not a wildcard or a member disagrees on the
-// separator set.
-func glue_every_classify(
-	matchers []Matcher,
-) (facts Glue_Every_Facts, ok bool) {
-	for index, matcher := range matchers {
-		separator, member_ok := glue_every_member_separator(matcher, &facts)
-		if !member_ok {
-			return facts, false
-		}
-		if index == 0 {
-			facts.Separator = separator
-		}
-		if !slices.Equal(separator, facts.Separator) {
-			return facts, false
-		}
-	}
-	return facts, true
-}
-
-// Records one member's kind into facts and reports the separator set it
-// constrains the run to. A super constrains nothing (the empty set); a
-// non-negated list is not a wildcard and fails the glue.
-func glue_every_member_separator(
-	matcher Matcher, facts *Glue_Every_Facts,
-) (separator []rune, ok bool) {
-	switch matcher.Kind {
-	case MATCHER_KIND_SUPER:
-		facts.Has_Super = true
-		return []rune{}, true
-	case MATCHER_KIND_ANY:
-		facts.Has_Any = true
-		return matcher.Separators, true
-	case MATCHER_KIND_SINGLE:
-		facts.Has_Single = true
-		facts.Minimum++
-		return matcher.Separators, true
-	case MATCHER_KIND_LIST:
-		if !matcher.Negated {
-			return nil, false
-		}
-		facts.Has_Single = true
-		facts.Minimum++
-		return matcher.Runes, true
-	}
-	return nil, false
-}
-
-// Glue_Every_Facts records what glue_every_classify learned about a run of
-// wildcards, so glue_every_build can pick the tightest equivalent matcher without
-// re-walking the run.
-type Glue_Every_Facts struct {
-	// Has_Any is set when the run holds a separator-bounded wildcard.
-	Has_Any bool
-	// Has_Super is set when the run holds an unbounded wildcard.
-	Has_Super bool
-	// Has_Single is set when the run holds a fixed one-rune matcher.
-	Has_Single bool
-	// Minimum is the count of one-rune matchers, the run's least width.
-	Minimum int
-	// Separator is the separator set every wildcard in the run agrees on.
-	Separator []rune
-}
-
-// Picks the tightest matcher a classified run collapses to: a pure super, a pure
-// any, or a bare minimum-width bound where the shape allows, falling back to the
-// general composite otherwise.
-func glue_every_build(facts *Glue_Every_Facts) (matcher Matcher) {
-	if facts.Has_Super {
-		if !facts.Has_Any {
-			if !facts.Has_Single {
-				return New_Super()
-			}
-		}
-	}
-	if facts.Has_Any {
-		if !facts.Has_Super {
-			if !facts.Has_Single {
-				return New_Any(facts.Separator)
-			}
-		}
-	}
-	wildcard := facts.Has_Any || facts.Has_Super
-	if wildcard {
-		if facts.Minimum > 0 {
-			if len(facts.Separator) == 0 {
-				return New_Min(facts.Minimum)
-			}
-		}
-	}
-	return glue_every_composite(facts)
-}
-
-// Builds the general every-of a mixed run reduces to: a minimum bound for its
-// one-rune matchers, a maximum bound too when no wildcard can stretch it, and a
-// separator exclusion when the run is separator-bounded.
-func glue_every_composite(facts *Glue_Every_Facts) (matcher Matcher) {
-	children := make([]Matcher, 0, 3)
-	if facts.Minimum > 0 {
-		children = append(children, New_Min(facts.Minimum))
-		if !facts.Has_Any {
-			if !facts.Has_Super {
-				children = append(children, New_Max(facts.Minimum))
-			}
-		}
-	}
-	if len(facts.Separator) > 0 {
-		children = append(
-			children, New_Contains(string(facts.Separator), true))
-	}
-	return New_Every_Of(children...)
-}
-
-// Repeatedly collapses the single most valuable gluable span until no span glues,
-// so a sequence reaches its fewest matchers. Among gluable spans it prefers a
-// wider fixed result, and among those the longer span, since a longer glued span
-// removes more matchers.
-func minimize_matchers(matchers []Matcher) (minimized []Matcher) {
-	matcher_count := len(matchers)
-	var best Matcher
-	found := false
-	best_left_index := 0
-	best_right_index := 0
-	best_count := 0
-	for left_index := 0; left_index < matcher_count; left_index++ {
-		for right_index := matcher_count; right_index > left_index; right_index-- {
-			glued, ok := glue_matchers(matchers[left_index:right_index])
-			if !ok {
-				continue
-			}
-			span_count := right_index - left_index
-			swap := !found
-			if found {
-				best_width := Rune_Width(best)
-				glued_width := Rune_Width(glued)
-				swap = best_width > RUNE_WIDTH_VARIABLE
-				swap = swap && glued_width > RUNE_WIDTH_VARIABLE
-				swap = swap && glued_width > best_width
-				swap = swap || best_count < span_count
-			}
-			if !swap {
-				continue
-			}
-			best = glued
-			found = true
-			best_left_index = left_index
-			best_right_index = right_index
-			best_count = span_count
-		}
-	}
-	if !found {
-		return matchers
-	}
-	next := make([]Matcher, 0, matcher_count)
-	next = append(next, matchers[:best_left_index]...)
-	next = append(next, best)
-	if best_right_index < matcher_count {
-		next = append(next, matchers[best_right_index:]...)
-	}
-	if len(next) == matcher_count {
-		return next
-	}
-	return minimize_matchers(next)
-}
-
-// Rewrites a node into a smaller-but-equivalent tree where a heuristic applies;
-// only an alternation has one. A nil result means no rewrite, so the caller
-// compiles the node as it stands.
-func minimize_tree(tree *Node) (minimized *Node) {
-	switch tree.Kind {
-	case NODE_KIND_ANY_OF:
-		return minimize_tree_any_of(tree)
-	}
-	return nil
-}
-
-// Factors the common leading and trailing children out of an alternation of
-// patterns, so "abcX, abcY" becomes "abc(X|Y)". A nil result means the
-// alternatives share no common head or tail, or are not all patterns.
-func minimize_tree_any_of(tree *Node) (minimized *Node) {
-	if !are_of_same_kind(tree.Children, NODE_KIND_PATTERN) {
-		return nil
-	}
-	common_left, common_right := common_children(tree.Children)
-	common_left_count := len(common_left)
-	common_right_count := len(common_right)
-	if common_left_count == 0 {
-		if common_right_count == 0 {
-			return nil
-		}
-	}
-	var result []*Node
-	if common_left_count > 0 {
-		result = append(result, &Node{
-			Kind: NODE_KIND_PATTERN, Children: common_left})
-	}
-	var alternatives []*Node
-	for _, child := range tree.Children {
-		reused := child.Children[common_left_count : len(child.Children)-common_right_count]
-		node := &Node{Kind: NODE_KIND_EMPTY}
-		if len(reused) > 0 {
-			node = &Node{Kind: NODE_KIND_PATTERN, Children: reused}
-		}
-		alternatives = append_if_unique(alternatives, node)
-	}
-	result = append(result, minimize_any_of_middle(alternatives)...)
-	if common_right_count > 0 {
-		result = append(result, &Node{
-			Kind: NODE_KIND_PATTERN, Children: common_right})
-	}
-	return &Node{Kind: NODE_KIND_PATTERN, Children: result}
-}
-
-// Wraps the reduced alternatives that sit between the common head and tail: none
-// when they all reduced away, the lone survivor bare (unless it reduced to
-// nothing), or a fresh alternation of the several.
-func minimize_any_of_middle(alternatives []*Node) (middle []*Node) {
-	switch {
-	case len(alternatives) == 1 && alternatives[0].Kind != NODE_KIND_EMPTY:
-		return []*Node{alternatives[0]}
-	case len(alternatives) > 1:
-		return []*Node{{Kind: NODE_KIND_ANY_OF, Children: alternatives}}
-	}
-	return nil
-}
-
-// Reports whether every node in the slice has the given kind, the precondition
-// the alternation-factoring heuristic needs before it may assume each child is a
-// pattern.
-func are_of_same_kind(nodes []*Node, kind Node_Kind) (same bool) {
-	for _, node := range nodes {
-		if node.Kind != kind {
-			return false
-		}
-	}
-	return true
-}
-
-// Appends node unless the slice already holds a structurally equal node, so the
-// reduced alternatives carry no duplicates.
-func append_if_unique(
-	target []*Node, node *Node,
-) (result []*Node) {
-	for _, member := range target {
-		if nodes_equal(&Nodes_Equal_Input{First: member, Second: node}) {
-			return target
-		}
-	}
-	return append(target, node)
-}
-
-// Finds the children shared by the head and by the tail of a set of pattern
-// nodes: the longest run of leading children equal across all of them, and
-// likewise the longest trailing run. It anchors the scan on the node with fewest
-// children, since no common run can be longer than that.
-func common_children(
-	nodes []*Node,
-) (common_left []*Node, common_right []*Node) {
-	if len(nodes) <= 1 {
-		return nil, nil
-	}
-	least_index := least_children(nodes)
-	if least_index == -1 {
-		return nil, nil
-	}
-	smallest_node := nodes[least_index]
-	smallest_child_count := len(smallest_node.Children)
-	common_right = make([]*Node, smallest_child_count)
-	last_right_index := smallest_child_count
-	stop_left := false
-	stop_right := false
-	common_count := 0
-	left_index := 0
-	right_index := smallest_child_count - 1
-	for right_index >= 0 {
-		if common_count >= smallest_child_count {
+			cursor++
 			break
 		}
-		if stop_left {
-			if stop_right {
-				break
-			}
+		var low utf8.Decoded_Character
+		class_end := Class_Character_End(bytes.SLICE_SIZE_MINIMUM)
+		low, class_end, status = class_character(
+			Class_Pattern_Source(source), Class_Character_Index(cursor),
+		)
+		cursor = Pattern_Position(class_end)
+		if status != STATUS_OK {
+			return Nonzero_Pattern_Position(cursor), status
 		}
-		stop_left, stop_right = common_children_column(&Common_Children_Column_Input{
-			Nodes: nodes, Smallest: smallest_node, Least_Index: least_index,
-			Left_Index: left_index, Right_Index: right_index,
-			Smallest_Child_Count: smallest_child_count,
-			Stop_Left:            stop_left, Stop_Right: stop_right,
-		})
-		if !stop_left {
-			common_count++
-			common_left = append(common_left, smallest_node.Children[left_index])
-		}
-		if !stop_right {
-			common_count++
-			last_right_index = right_index
-			common_right[right_index] = smallest_node.Children[right_index]
-		}
-		left_index++
-		right_index--
-	}
-	common_right = common_right[last_right_index:]
-	return common_left, common_right
-}
-
-// Common_Children_Column_Input carries one head/tail column pair of the
-// common-children scan: the reference node, the full node set, the column indices
-// being compared, and the running stop flags the scan threads through.
-type Common_Children_Column_Input struct {
-	// Nodes is the full set of pattern nodes being compared.
-	Nodes []*Node
-	// Smallest is the node with fewest children, the scan's reference.
-	Smallest *Node
-	// Least_Index is Smallest's position in Nodes, skipped in the comparison.
-	Least_Index int
-	// Left_Index is the leading column under comparison.
-	Left_Index int
-	// Right_Index is the trailing column of Smallest under comparison.
-	Right_Index int
-	// Smallest_Child_Count is Smallest's child count, aligning the trailing
-	// columns of nodes of different lengths.
-	Smallest_Child_Count int
-	// Stop_Left is set once the leading run has diverged, and stays set.
-	Stop_Left bool
-	// Stop_Right is set once the trailing run has diverged, and stays set.
-	Stop_Right bool
-}
-
-// Tests one head column and one tail column across every node against the
-// reference, returning the stop flags updated: a leading mismatch stops the head,
-// a trailing mismatch or an overlap with the head stops the tail. Both flags
-// latch, so once stopped a run never resumes.
-func common_children_column(
-	input *Common_Children_Column_Input,
-) (stop_left bool, stop_right bool) {
-	stop_left = input.Stop_Left
-	stop_right = input.Stop_Right
-	smallest_left := input.Smallest.Children[input.Left_Index]
-	smallest_right := input.Smallest.Children[input.Right_Index]
-	for node_index := 0; node_index < len(input.Nodes); node_index++ {
-		if stop_left {
-			if stop_right {
-				break
-			}
-		}
-		if node_index == input.Least_Index {
-			continue
-		}
-		child := input.Nodes[node_index]
-		other_left := child.Children[input.Left_Index]
-		other_right_index := input.Right_Index + len(child.Children) -
-			input.Smallest_Child_Count
-		other_right := child.Children[other_right_index]
-		left_equal := nodes_equal(
-			&Nodes_Equal_Input{First: smallest_left, Second: other_left})
-		stop_left = stop_left || !left_equal
-		stop_right = stop_right ||
-			(!stop_left && input.Right_Index <= input.Left_Index)
-		right_equal := nodes_equal(
-			&Nodes_Equal_Input{First: smallest_right, Second: other_right})
-		stop_right = stop_right || !right_equal
-	}
-	return stop_left, stop_right
-}
-
-// Reports the index of the node with the fewest children, or -1 for an empty set.
-// The common-children scan anchors on it because a shared run cannot exceed the
-// shortest node's length.
-func least_children(nodes []*Node) (least_index int) {
-	least_index = -1
-	fewest_count := -1
-	for node_index, node := range nodes {
-		take := least_index == -1
-		if !take {
-			take = len(node.Children) < fewest_count
-		}
-		if !take {
-			continue
-		}
-		fewest_count = len(node.Children)
-		least_index = node_index
-	}
-	return least_index
-}
-
-// Nodes_Equal_Input pairs the two syntax subtrees nodes_equal compares. The input
-// struct exists because two *Node parameters are otherwise swappable at
-// the call site.
-type Nodes_Equal_Input struct {
-	// First is one subtree to compare.
-	First *Node
-	// Second is the other subtree to compare.
-	Second *Node
-}
-
-// Reports whether two syntax subtrees are structurally identical, comparing kind
-// and every payload field and recursing into children. It ignores the Parent
-// back-pointer, which reflect.DeepEqual would wrongly follow and which upstream's
-// Node.Equal likewise disregarded.
-func nodes_equal(input *Nodes_Equal_Input) (equal bool) {
-	first := input.First
-	second := input.Second
-	if first == nil {
-		return second == nil
-	}
-	if second == nil {
-		return false
-	}
-	if first.Kind != second.Kind {
-		return false
-	}
-	if first.Text != second.Text {
-		return false
-	}
-	if first.Characters != second.Characters {
-		return false
-	}
-	if first.Negated != second.Negated {
-		return false
-	}
-	if first.Low != second.Low {
-		return false
-	}
-	if first.High != second.High {
-		return false
-	}
-	if len(first.Children) != len(second.Children) {
-		return false
-	}
-	for index, child := range first.Children {
-		pair := &Nodes_Equal_Input{First: child, Second: second.Children[index]}
-		if !nodes_equal(pair) {
-			return false
-		}
-	}
-	return true
-}
-
-// The matchers below evaluate the leaf and composite matchers a compiled glob is
-// built from: each matcher reports whether a whole string matches (matcher_matches) and
-// where within a string it could match (Index), the two operations the glob
-// engine composes.
-//
-// It is a dependency-injected port of the match subpackage of
-// github.com/gobwas/glob (MIT, Sergey Kamardin; see LICENSE.mit.kamardin).
-// Upstream modelled every matcher as an implementation of a Matcher INTERFACE.
-// The house linter bans interface declarations, so the twenty implementations
-// collapse into ONE tagged-union struct discriminated by Matcher_Kind, and the
-// interface's methods become the free functions matcher_matches, Index, and Rune_Width.
-// String survives as a method because it satisfies fmt.Stringer, which is
-// allowed. The whole shared/text/glob subtree is exempt from the recursion ban,
-// so composite kinds recurse into their children exactly as upstream did.
-
-// Matcher_Kind discriminates the Matcher tagged union: it names which matcher a Matcher
-// value is, and therefore which of the union's fields carry meaning.
-type Matcher_Kind int
-
-// MATCHER_KIND_ANY matches a maximal run of runes containing none of Separators — the
-// glob '*' bounded at the next separator (upstream match.Any).
-const MATCHER_KIND_ANY Matcher_Kind = 0
-
-// MATCHER_KIND_SUPER matches any string, separators included — the glob '**' (upstream
-// match.Super).
-const MATCHER_KIND_SUPER Matcher_Kind = 1
-
-// MATCHER_KIND_SINGLE matches exactly one rune that is not a separator — the glob '?'
-// (upstream match.Single).
-const MATCHER_KIND_SINGLE Matcher_Kind = 2
-
-// MATCHER_KIND_EMPTY matches only the empty string (upstream match.Nothing, renamed
-// because the linter rejects the present participle "nothing").
-const MATCHER_KIND_EMPTY Matcher_Kind = 3
-
-// MATCHER_KIND_TEXT matches one exact literal string (upstream match.Text).
-const MATCHER_KIND_TEXT Matcher_Kind = 4
-
-// MATCHER_KIND_MAX matches any run of at most Limit runes (upstream match.Max).
-const MATCHER_KIND_MAX Matcher_Kind = 5
-
-// MATCHER_KIND_MIN matches any run of at least Limit runes (upstream match.Min).
-const MATCHER_KIND_MIN Matcher_Kind = 6
-
-// MATCHER_KIND_PREFIX matches any string that begins with Prefix (upstream
-// match.Prefix).
-const MATCHER_KIND_PREFIX Matcher_Kind = 7
-
-// MATCHER_KIND_SUFFIX matches any string that ends with Suffix (upstream match.Suffix).
-const MATCHER_KIND_SUFFIX Matcher_Kind = 8
-
-// MATCHER_KIND_PREFIX_SUFFIX matches any string that begins with Prefix and ends with
-// Suffix (upstream match.PrefixSuffix).
-const MATCHER_KIND_PREFIX_SUFFIX Matcher_Kind = 9
-
-// MATCHER_KIND_CONTAINS matches when Needle occurs in the string, or, when Negated,
-// when it does not (upstream match.Contains).
-const MATCHER_KIND_CONTAINS Matcher_Kind = 10
-
-// MATCHER_KIND_RANGE matches exactly one rune inside [Low, High], inverted by Negated
-// (upstream match.Range).
-const MATCHER_KIND_RANGE Matcher_Kind = 11
-
-// MATCHER_KIND_LIST matches exactly one rune drawn from Runes, inverted by Negated
-// (upstream match.List).
-const MATCHER_KIND_LIST Matcher_Kind = 12
-
-// MATCHER_KIND_ROW matches a fixed-width sequence of adjacent child matchers whose rune
-// widths sum to Rune_Width (upstream match.Row).
-const MATCHER_KIND_ROW Matcher_Kind = 13
-
-// MATCHER_KIND_ANY_OF matches when at least one child matches (upstream match.AnyOf).
-const MATCHER_KIND_ANY_OF Matcher_Kind = 14
-
-// MATCHER_KIND_EVERY_OF matches when every child matches (upstream match.EveryOf).
-const MATCHER_KIND_EVERY_OF Matcher_Kind = 15
-
-// MATCHER_KIND_BTREE matches Value somewhere in the string with Left matching the text
-// before it and Right the text after (upstream match.BTree).
-const MATCHER_KIND_BTREE Matcher_Kind = 16
-
-// MATCHER_KIND_PREFIX_ANY matches Prefix followed by a run holding no separator
-// (upstream match.PrefixAny).
-const MATCHER_KIND_PREFIX_ANY Matcher_Kind = 17
-
-// MATCHER_KIND_SUFFIX_ANY matches a run holding no separator followed by Suffix
-// (upstream match.SuffixAny).
-const MATCHER_KIND_SUFFIX_ANY Matcher_Kind = 18
-
-// RUNE_WIDTH_VARIABLE is the Rune_Width of a matcher whose match length is not
-// fixed; it is the sentinel the composers test before assuming a width
-// (upstream lenNo).
-const RUNE_WIDTH_VARIABLE int = -1
-
-// RUNE_WIDTH_ZERO is the Rune_Width of a matcher that consumes no runes
-// (upstream lenZero).
-const RUNE_WIDTH_ZERO int = 0
-
-// RUNE_WIDTH_ONE is the Rune_Width of a single-rune matcher (upstream lenOne).
-const RUNE_WIDTH_ONE int = 1
-
-// Matcher is the tagged union of every glob matcher. Kind selects the variant;
-// each remaining field is read only by the kinds whose doc names it, and left
-// zero otherwise. The fields are exported so the compiler package that builds
-// these values can also inspect them.
-type Matcher struct {
-	// Kind selects the union variant and thus which other fields are live.
-	Kind Matcher_Kind
-	// Separators is the set that bounds a wildcard run: matching stops at the
-	// first of these runes. Read by Any, Single, Prefix_Any, Suffix_Any.
-	Separators []rune
-	// Runes is the membership set a single-rune List matches against.
-	Runes []rune
-	// Literal is the exact string a Text matcher compares against.
-	Literal string
-	// Prefix is the required leading substring for Prefix, Prefix_Suffix, and
-	// Prefix_Any.
-	Prefix string
-	// Suffix is the required trailing substring for Suffix, Prefix_Suffix, and
-	// Suffix_Any.
-	Suffix string
-	// Needle is the substring a Contains matcher searches for.
-	Needle string
-	// Low is the inclusive lower bound of a Range matcher's rune interval.
-	Low rune
-	// High is the inclusive upper bound of a Range matcher's rune interval.
-	High rune
-	// Negated inverts the membership test of Contains, Range, and List.
-	Negated bool
-	// Limit is the rune-count bound of Max (at most) and Min (at least).
-	Limit int
-	// Rune_Width is the cached rune width every constructor sets: a fixed count for
-	// the fixed-width kinds and RUNE_WIDTH_VARIABLE otherwise. Caching it lets the
-	// match-time hot paths (Row and Btree) read a child's width instead of
-	// recomputing it — and recomputing meant a 200-byte struct copy per call.
-	Rune_Width int
-	// Segments is the fixed match-length list Index returns for the kinds whose
-	// segments do not depend on the input — Text and Row. Precomputing it lets
-	// Index hand back this slice instead of allocating one per call, which matters
-	// because a Btree calls Index on its Text pivot once per candidate offset. It is
-	// read-only; callers never mutate a returned segment list.
-	Segments []int
-	// Children are the sub-matchers of the composite kinds Any_Of, Every_Of,
-	// and Row.
-	Children []Matcher
-	// Value is the pivot a Btree searches for before testing its two sides.
-	Value *Matcher
-	// Left matches the text before a Btree's Value; nil requires that side
-	// empty.
-	Left *Matcher
-	// Right matches the text after a Btree's Value; nil requires that side
-	// empty.
-	Right *Matcher
-}
-
-// New_Any builds a matcher for a wildcard run bounded by separators.
-func New_Any(separators []rune) (matcher Matcher) {
-	return Matcher{
-		Kind:       MATCHER_KIND_ANY,
-		Separators: separators,
-		Rune_Width: RUNE_WIDTH_VARIABLE,
-	}
-}
-
-// New_Super builds a matcher that accepts every string.
-func New_Super() (matcher Matcher) {
-	return Matcher{Kind: MATCHER_KIND_SUPER, Rune_Width: RUNE_WIDTH_VARIABLE}
-}
-
-// New_Single builds a matcher for one non-separator rune.
-func New_Single(separators []rune) (matcher Matcher) {
-	return Matcher{
-		Kind:       MATCHER_KIND_SINGLE,
-		Separators: separators,
-		Rune_Width: RUNE_WIDTH_ONE,
-	}
-}
-
-// New_Empty builds a matcher that accepts only the empty string (upstream
-// NewNothing, renamed because the linter rejects the participle "nothing").
-func New_Empty() (matcher Matcher) {
-	return Matcher{Kind: MATCHER_KIND_EMPTY, Rune_Width: RUNE_WIDTH_ZERO}
-}
-
-// New_Text builds a matcher for one exact literal; its rune width is cached so
-// composers need not recount it.
-func New_Text(literal string) (matcher Matcher) {
-	return Matcher{
-		Kind:       MATCHER_KIND_TEXT,
-		Literal:    literal,
-		Rune_Width: utf8.RuneCountInString(literal),
-		Segments:   []int{len(literal)},
-	}
-}
-
-// New_Max builds a matcher for a run of at most limit runes.
-func New_Max(limit int) (matcher Matcher) {
-	return Matcher{Kind: MATCHER_KIND_MAX, Limit: limit, Rune_Width: RUNE_WIDTH_VARIABLE}
-}
-
-// New_Min builds a matcher for a run of at least limit runes.
-func New_Min(limit int) (matcher Matcher) {
-	return Matcher{Kind: MATCHER_KIND_MIN, Limit: limit, Rune_Width: RUNE_WIDTH_VARIABLE}
-}
-
-// New_Prefix builds a matcher for strings beginning with prefix.
-func New_Prefix(prefix string) (matcher Matcher) {
-	return Matcher{Kind: MATCHER_KIND_PREFIX, Prefix: prefix, Rune_Width: RUNE_WIDTH_VARIABLE}
-}
-
-// New_Suffix builds a matcher for strings ending with suffix.
-func New_Suffix(suffix string) (matcher Matcher) {
-	return Matcher{Kind: MATCHER_KIND_SUFFIX, Suffix: suffix, Rune_Width: RUNE_WIDTH_VARIABLE}
-}
-
-// New_Prefix_Suffix_Input carries the two bookend substrings; the input struct
-// exists because two string parameters are swappable at the call site.
-type New_Prefix_Suffix_Input struct {
-	// Prefix is the required leading substring.
-	Prefix string
-	// Suffix is the required trailing substring.
-	Suffix string
-}
-
-// New_Prefix_Suffix builds a matcher for strings that both begin with Prefix
-// and end with Suffix.
-func New_Prefix_Suffix(input *New_Prefix_Suffix_Input) (matcher Matcher) {
-	return Matcher{
-		Kind:       MATCHER_KIND_PREFIX_SUFFIX,
-		Prefix:     input.Prefix,
-		Suffix:     input.Suffix,
-		Rune_Width: RUNE_WIDTH_VARIABLE,
-	}
-}
-
-// New_Contains builds a matcher that tests whether needle occurs; negated flips
-// the test to require its absence.
-func New_Contains(needle string, negated bool) (matcher Matcher) {
-	return Matcher{
-		Kind:       MATCHER_KIND_CONTAINS,
-		Needle:     needle,
-		Negated:    negated,
-		Rune_Width: RUNE_WIDTH_VARIABLE,
-	}
-}
-
-// New_Range_Input carries the rune interval; the input struct exists because
-// two rune parameters are swappable at the call site.
-type New_Range_Input struct {
-	// Low is the inclusive lower bound of the interval.
-	Low rune
-	// High is the inclusive upper bound of the interval.
-	High rune
-	// Negated inverts membership so the matcher accepts runes outside the
-	// interval.
-	Negated bool
-}
-
-// New_Range builds a matcher for one rune inside [Low, High], inverted by
-// Negated.
-func New_Range(input *New_Range_Input) (matcher Matcher) {
-	return Matcher{
-		Kind:       MATCHER_KIND_RANGE,
-		Low:        input.Low,
-		High:       input.High,
-		Negated:    input.Negated,
-		Rune_Width: RUNE_WIDTH_ONE,
-	}
-}
-
-// New_List builds a matcher for one rune drawn from set; negated flips it to
-// accept runes outside set.
-func New_List(set []rune, negated bool) (matcher Matcher) {
-	return Matcher{
-		Kind:       MATCHER_KIND_LIST,
-		Runes:      set,
-		Negated:    negated,
-		Rune_Width: RUNE_WIDTH_ONE,
-	}
-}
-
-// New_Row builds a fixed-width matcher for the given adjacent children whose
-// rune widths sum to width.
-func New_Row(width int, children ...Matcher) (matcher Matcher) {
-	return Matcher{
-		Kind:       MATCHER_KIND_ROW,
-		Rune_Width: width,
-		Children:   children,
-		Segments:   []int{width},
-	}
-}
-
-// New_Any_Of builds a matcher that accepts a string matched by any child.
-func New_Any_Of(children ...Matcher) (matcher Matcher) {
-	matcher = Matcher{Kind: MATCHER_KIND_ANY_OF, Children: children}
-	matcher.Rune_Width = rune_width_any_of(matcher)
-	return matcher
-}
-
-// New_Every_Of builds a matcher that accepts a string matched by every child.
-func New_Every_Of(children ...Matcher) (matcher Matcher) {
-	matcher = Matcher{Kind: MATCHER_KIND_EVERY_OF, Children: children}
-	matcher.Rune_Width = rune_width_every_of(matcher)
-	return matcher
-}
-
-// New_Btree_Input carries the pivot and its two side matchers; the input struct
-// exists because three Matcher parameters are swappable at the call site.
-type New_Btree_Input struct {
-	// Value is the pivot matcher the tree searches for.
-	Value Matcher
-	// Left matches the text before Value; nil requires that side empty.
-	Left *Matcher
-	// Right matches the text after Value; nil requires that side empty.
-	Right *Matcher
-}
-
-// New_Btree builds a pivot matcher, caching the total rune width so the search
-// window can be pre-trimmed.
-func New_Btree(input *New_Btree_Input) (matcher Matcher) {
-	value := input.Value
-	matcher = Matcher{
-		Kind:  MATCHER_KIND_BTREE,
-		Value: &value,
-		Left:  input.Left,
-		Right: input.Right,
-	}
-	matcher.Rune_Width = btree_total_rune_width(matcher)
-	return matcher
-}
-
-// New_Prefix_Any builds a matcher for prefix followed by a run that stops at the
-// first separator.
-func New_Prefix_Any(prefix string, separators []rune) (matcher Matcher) {
-	return Matcher{
-		Kind:       MATCHER_KIND_PREFIX_ANY,
-		Prefix:     prefix,
-		Separators: separators,
-		Rune_Width: RUNE_WIDTH_VARIABLE,
-	}
-}
-
-// New_Suffix_Any builds a matcher for a run that stops at the last separator,
-// followed by suffix.
-func New_Suffix_Any(suffix string, separators []rune) (matcher Matcher) {
-	return Matcher{
-		Kind:       MATCHER_KIND_SUFFIX_ANY,
-		Suffix:     suffix,
-		Separators: separators,
-		Rune_Width: RUNE_WIDTH_VARIABLE,
-	}
-}
-
-// Reports whether text is matched in full by matcher, the whole-string test.
-// The terminal kinds whose match logic was inline in the switch are their own
-// functions so a whole-pattern matcher of that kind can be dispatched straight to
-// one via Pattern.Evaluate, skipping the switch. matcher_matches delegates to the
-// same functions, so each kind's logic lives in exactly one place.
-
-func match_any(matcher *Matcher, text string) (matched bool) {
-	return Index_Any_Runes(text, matcher.Separators) == -1
-}
-
-func match_super(matcher *Matcher, text string) (matched bool) {
-	return true
-}
-
-func match_empty(matcher *Matcher, text string) (matched bool) {
-	return text == ""
-}
-
-func match_text(matcher *Matcher, text string) (matched bool) {
-	return matcher.Literal == text
-}
-
-func match_prefix(matcher *Matcher, text string) (matched bool) {
-	return strings.HasPrefix(text, matcher.Prefix)
-}
-
-func match_suffix(matcher *Matcher, text string) (matched bool) {
-	return strings.HasSuffix(text, matcher.Suffix)
-}
-
-func match_prefix_suffix(matcher *Matcher, text string) (matched bool) {
-	return strings.HasPrefix(text, matcher.Prefix) &&
-		strings.HasSuffix(text, matcher.Suffix)
-}
-
-func match_contains(matcher *Matcher, text string) (matched bool) {
-	return strings.Contains(text, matcher.Needle) != matcher.Negated
-}
-
-func match_row(matcher *Matcher, text string) (matched bool) {
-	return row_rune_width_ok(matcher, text) && row_match_all(matcher, text)
-}
-
-// Maps a matcher's kind to the function that evaluates it, resolved once by
-// Compile so Match can call it directly without re-inspecting Kind.
-func select_evaluator(
-	kind Matcher_Kind,
-) (evaluate func(matcher *Matcher, text string) (matched bool)) {
-	switch kind {
-	case MATCHER_KIND_ANY:
-		return match_any
-	case MATCHER_KIND_SUPER:
-		return match_super
-	case MATCHER_KIND_SINGLE:
-		return match_single
-	case MATCHER_KIND_EMPTY:
-		return match_empty
-	case MATCHER_KIND_TEXT:
-		return match_text
-	case MATCHER_KIND_MAX:
-		return match_max
-	case MATCHER_KIND_MIN:
-		return match_min
-	case MATCHER_KIND_PREFIX:
-		return match_prefix
-	case MATCHER_KIND_SUFFIX:
-		return match_suffix
-	case MATCHER_KIND_PREFIX_SUFFIX:
-		return match_prefix_suffix
-	case MATCHER_KIND_CONTAINS:
-		return match_contains
-	case MATCHER_KIND_RANGE:
-		return match_range
-	case MATCHER_KIND_LIST:
-		return match_list
-	case MATCHER_KIND_ROW:
-		return match_row
-	case MATCHER_KIND_ANY_OF:
-		return match_any_of
-	case MATCHER_KIND_EVERY_OF:
-		return match_every_of
-	case MATCHER_KIND_BTREE:
-		return match_btree
-	case MATCHER_KIND_PREFIX_ANY:
-		return match_prefix_any
-	case MATCHER_KIND_SUFFIX_ANY:
-		return match_suffix_any
-	}
-	return matcher_matches
-}
-
-func matcher_matches(matcher *Matcher, text string) (matched bool) {
-	switch matcher.Kind {
-	case MATCHER_KIND_ANY:
-		return match_any(matcher, text)
-	case MATCHER_KIND_SUPER:
-		return match_super(matcher, text)
-	case MATCHER_KIND_SINGLE:
-		return match_single(matcher, text)
-	case MATCHER_KIND_EMPTY:
-		return match_empty(matcher, text)
-	case MATCHER_KIND_TEXT:
-		return match_text(matcher, text)
-	case MATCHER_KIND_MAX:
-		return match_max(matcher, text)
-	case MATCHER_KIND_MIN:
-		return match_min(matcher, text)
-	case MATCHER_KIND_PREFIX:
-		return match_prefix(matcher, text)
-	case MATCHER_KIND_SUFFIX:
-		return match_suffix(matcher, text)
-	case MATCHER_KIND_PREFIX_SUFFIX:
-		return match_prefix_suffix(matcher, text)
-	case MATCHER_KIND_CONTAINS:
-		return match_contains(matcher, text)
-	case MATCHER_KIND_RANGE:
-		return match_range(matcher, text)
-	case MATCHER_KIND_LIST:
-		return match_list(matcher, text)
-	case MATCHER_KIND_ROW:
-		return match_row(matcher, text)
-	case MATCHER_KIND_ANY_OF:
-		return match_any_of(matcher, text)
-	case MATCHER_KIND_EVERY_OF:
-		return match_every_of(matcher, text)
-	case MATCHER_KIND_BTREE:
-		return match_btree(matcher, text)
-	case MATCHER_KIND_PREFIX_ANY:
-		return match_prefix_any(matcher, text)
-	case MATCHER_KIND_SUFFIX_ANY:
-		return match_suffix_any(matcher, text)
-	}
-	return false
-}
-
-func match_single(matcher *Matcher, text string) (matched bool) {
-	first, width := utf8.DecodeRuneInString(text)
-	if len(text) > width {
-		return false
-	}
-	return slices.Index(matcher.Separators, first) == -1
-}
-
-func match_range(matcher *Matcher, text string) (matched bool) {
-	first, width := utf8.DecodeRuneInString(text)
-	if len(text) > width {
-		return false
-	}
-	in_range := first >= matcher.Low && first <= matcher.High
-	return in_range == !matcher.Negated
-}
-
-func match_list(matcher *Matcher, text string) (matched bool) {
-	first, width := utf8.DecodeRuneInString(text)
-	if len(text) > width {
-		return false
-	}
-	in_list := slices.Index(matcher.Runes, first) != -1
-	return in_list == !matcher.Negated
-}
-
-func match_max(matcher *Matcher, text string) (matched bool) {
-	count := 0
-	for range text {
-		count++
-		if count > matcher.Limit {
-			return false
-		}
-	}
-	return true
-}
-
-func match_min(matcher *Matcher, text string) (matched bool) {
-	count := 0
-	for range text {
-		count++
-		if count >= matcher.Limit {
-			return true
-		}
-	}
-	return false
-}
-
-func match_any_of(matcher *Matcher, text string) (matched bool) {
-	for child_index := range matcher.Children {
-		if matcher_matches(&matcher.Children[child_index], text) {
-			return true
-		}
-	}
-	return false
-}
-
-func match_every_of(matcher *Matcher, text string) (matched bool) {
-	for child_index := range matcher.Children {
-		if !matcher_matches(&matcher.Children[child_index], text) {
-			return false
-		}
-	}
-	return true
-}
-
-func match_prefix_any(matcher *Matcher, text string) (matched bool) {
-	if !strings.HasPrefix(text, matcher.Prefix) {
-		return false
-	}
-	remainder := text[len(matcher.Prefix):]
-	return Index_Any_Runes(remainder, matcher.Separators) == -1
-}
-
-func match_suffix_any(matcher *Matcher, text string) (matched bool) {
-	if !strings.HasSuffix(text, matcher.Suffix) {
-		return false
-	}
-	remainder := text[:len(text)-len(matcher.Suffix)]
-	return Index_Any_Runes(remainder, matcher.Separators) == -1
-}
-
-// Slides a window across text, at each position matching Value and testing the
-// left remainder against the left matcher, then the right remainders against
-// the right matcher.
-func match_btree(matcher *Matcher, text string) (matched bool) {
-	text_size := len(text)
-	start, limit := btree_offset_limit(matcher, text_size)
-	for start < limit {
-		value_start, segments := Index(matcher.Value, text[start:limit])
-		if value_start == -1 {
-			return false
-		}
-		left_text := text[:start+value_start]
-		left_matched := left_text == ""
-		if matcher.Left != nil {
-			left_matched = matcher_matches(matcher.Left, left_text)
-		}
-		if left_matched {
-			if match_btree_right(matcher, text, start+value_start, segments) {
-				return true
-			}
-		}
-		_, step := utf8.DecodeRuneInString(text[start+value_start:])
-		start += value_start + step
-	}
-	return false
-}
-
-// Tries the right matcher against each segment Value reported, longest first, so
-// the greediest split is preferred; base is the byte offset where Value's match
-// begins.
-func match_btree_right(matcher *Matcher, text string, base int, segments []int) (matched bool) {
-	text_size := len(text)
-	for segment_index := len(segments) - 1; segment_index >= 0; segment_index-- {
-		segment := segments[segment_index]
-		right_text := ""
-		if text_size > base+segment {
-			right_text = text[base+segment:]
-		}
-		right_matched := right_text == ""
-		if matcher.Right != nil {
-			right_matched = matcher_matches(matcher.Right, right_text)
-		}
-		if right_matched {
-			return true
-		}
-	}
-	return false
-}
-
-// Trims the window Value is searched in, using the cached total width and the
-// two side widths so an input too short to hold all three parts is rejected
-// before any search.
-func btree_offset_limit(matcher *Matcher, text_size int) (offset int, limit int) {
-	total_width := matcher.Rune_Width
-	if total_width != RUNE_WIDTH_VARIABLE {
-		if total_width > text_size {
-			return 0, 0
-		}
-	}
-	left_width := btree_child_rune_width(matcher.Left)
-	right_width := btree_child_rune_width(matcher.Right)
-	if left_width >= 0 {
-		offset = left_width
-	}
-	limit = text_size
-	if right_width >= 0 {
-		limit = text_size - right_width
-	}
-	return offset, limit
-}
-
-// Index reports the first offset in text at which matcher could match, together
-// with the segment lengths of the possible matches there, or (-1, nil) when
-// matcher cannot match anywhere.
-func Index(matcher *Matcher, text string) (offset int, segments []int) {
-	switch matcher.Kind {
-	case MATCHER_KIND_ANY:
-		return index_any(matcher, text)
-	case MATCHER_KIND_SUPER:
-		return index_super(matcher, text)
-	case MATCHER_KIND_SINGLE:
-		return index_single(matcher, text)
-	case MATCHER_KIND_EMPTY:
-		return 0, []int{0}
-	case MATCHER_KIND_TEXT:
-		return index_text(matcher, text)
-	case MATCHER_KIND_MAX:
-		return index_max(matcher, text)
-	case MATCHER_KIND_MIN:
-		return index_min(matcher, text)
-	case MATCHER_KIND_PREFIX:
-		return index_prefix(matcher, text)
-	case MATCHER_KIND_SUFFIX:
-		return index_suffix(matcher, text)
-	case MATCHER_KIND_PREFIX_SUFFIX:
-		return index_prefix_suffix(matcher, text)
-	case MATCHER_KIND_CONTAINS:
-		return index_contains(matcher, text)
-	case MATCHER_KIND_RANGE:
-		return index_range(matcher, text)
-	case MATCHER_KIND_LIST:
-		return index_list(matcher, text)
-	case MATCHER_KIND_ROW:
-		return index_row(matcher, text)
-	case MATCHER_KIND_ANY_OF:
-		return index_any_of(matcher, text)
-	case MATCHER_KIND_EVERY_OF:
-		return index_every_of(matcher, text)
-	case MATCHER_KIND_BTREE:
-		return -1, nil
-	case MATCHER_KIND_PREFIX_ANY:
-		return index_prefix_any(matcher, text)
-	case MATCHER_KIND_SUFFIX_ANY:
-		return index_suffix_any(matcher, text)
-	}
-	return -1, nil
-}
-
-func index_any(matcher *Matcher, text string) (offset int, segments []int) {
-	found := Index_Any_Runes(text, matcher.Separators)
-	if found == 0 {
-		return 0, []int{0}
-	}
-	if found > 0 {
-		text = text[:found]
-	}
-	segments = make([]int, 0, len(text)+1)
-	for byte_offset := range text {
-		segments = append(segments, byte_offset)
-	}
-	segments = append(segments, len(text))
-	return 0, segments
-}
-
-func index_super(matcher *Matcher, text string) (offset int, segments []int) {
-	segments = make([]int, 0, len(text)+1)
-	for byte_offset := range text {
-		segments = append(segments, byte_offset)
-	}
-	segments = append(segments, len(text))
-	return 0, segments
-}
-
-func index_single(matcher *Matcher, text string) (offset int, segments []int) {
-	for byte_offset, first := range text {
-		if slices.Index(matcher.Separators, first) == -1 {
-			return byte_offset, []int{utf8.RuneLen(first)}
-		}
-	}
-	return -1, nil
-}
-
-func index_text(matcher *Matcher, text string) (offset int, segments []int) {
-	offset = strings.Index(text, matcher.Literal)
-	if offset == -1 {
-		return -1, nil
-	}
-	return offset, matcher.Segments
-}
-
-func index_max(matcher *Matcher, text string) (offset int, segments []int) {
-	segments = make([]int, 0, matcher.Limit+1)
-	segments = append(segments, 0)
-	count := 0
-	for byte_offset, first := range text {
-		count++
-		if count > matcher.Limit {
-			break
-		}
-		segments = append(segments, byte_offset+utf8.RuneLen(first))
-	}
-	return 0, segments
-}
-
-func index_min(matcher *Matcher, text string) (offset int, segments []int) {
-	endpoint_count := len(text) - matcher.Limit + 1
-	if endpoint_count <= 0 {
-		return -1, nil
-	}
-	segments = make([]int, 0, endpoint_count)
-	count := 0
-	for byte_offset, first := range text {
-		count++
-		if count >= matcher.Limit {
-			segments = append(segments, byte_offset+utf8.RuneLen(first))
-		}
-	}
-	if len(segments) == 0 {
-		return -1, nil
-	}
-	return 0, segments
-}
-
-func index_prefix(matcher *Matcher, text string) (offset int, segments []int) {
-	offset = strings.Index(text, matcher.Prefix)
-	if offset == -1 {
-		return -1, nil
-	}
-	prefix_size := len(matcher.Prefix)
-	remainder := ""
-	if len(text) > offset+prefix_size {
-		remainder = text[offset+prefix_size:]
-	}
-	segments = make([]int, 0, len(remainder)+1)
-	segments = append(segments, prefix_size)
-	for byte_offset, first := range remainder {
-		segments = append(segments, prefix_size+byte_offset+utf8.RuneLen(first))
-	}
-	return offset, segments
-}
-
-func index_suffix(matcher *Matcher, text string) (offset int, segments []int) {
-	offset = strings.Index(text, matcher.Suffix)
-	if offset == -1 {
-		return -1, nil
-	}
-	return 0, []int{offset + len(matcher.Suffix)}
-}
-
-// Reports one match starting at the prefix, whose segment endpoints are every
-// suffix occurrence within the tail, in ascending order.
-func index_prefix_suffix(matcher *Matcher, text string) (offset int, segments []int) {
-	prefix_offset := strings.Index(text, matcher.Prefix)
-	if prefix_offset == -1 {
-		return -1, nil
-	}
-	suffix_size := len(matcher.Suffix)
-	if suffix_size <= 0 {
-		return prefix_offset, []int{len(text) - prefix_offset}
-	}
-	if len(text)-prefix_offset <= 0 {
-		return -1, nil
-	}
-	segments = make([]int, 0, len(text)-prefix_offset)
-	remainder := text[prefix_offset:]
-	suffix_offset := strings.LastIndex(remainder, matcher.Suffix)
-	for suffix_offset != -1 {
-		segments = append(segments, suffix_offset+suffix_size)
-		remainder = remainder[:suffix_offset]
-		suffix_offset = strings.LastIndex(remainder, matcher.Suffix)
-	}
-	if len(segments) == 0 {
-		return -1, nil
-	}
-	reverse_segments(segments)
-	return prefix_offset, segments
-}
-
-func index_contains(matcher *Matcher, text string) (offset int, segments []int) {
-	needle_offset := strings.Index(text, matcher.Needle)
-	start := 0
-	if !matcher.Negated {
-		if needle_offset == -1 {
-			return -1, nil
-		}
-		start = needle_offset + len(matcher.Needle)
-		if len(text) <= start {
-			return 0, []int{start}
-		}
-		text = text[start:]
-	} else if needle_offset != -1 {
-		text = text[:needle_offset]
-	}
-	segments = make([]int, 0, len(text)+1)
-	for byte_offset := range text {
-		segments = append(segments, start+byte_offset)
-	}
-	segments = append(segments, start+len(text))
-	return 0, segments
-}
-
-func index_range(matcher *Matcher, text string) (offset int, segments []int) {
-	for byte_offset, first := range text {
-		if matcher.Negated != (first >= matcher.Low && first <= matcher.High) {
-			return byte_offset, []int{utf8.RuneLen(first)}
-		}
-	}
-	return -1, nil
-}
-
-func index_list(matcher *Matcher, text string) (offset int, segments []int) {
-	for byte_offset, first := range text {
-		if matcher.Negated == (slices.Index(matcher.Runes, first) == -1) {
-			return byte_offset, []int{utf8.RuneLen(first)}
-		}
-	}
-	return -1, nil
-}
-
-func index_row(matcher *Matcher, text string) (offset int, segments []int) {
-	for byte_offset := range text {
-		if len(text[byte_offset:]) < matcher.Rune_Width {
-			break
-		}
-		if row_match_all(matcher, text[byte_offset:]) {
-			return byte_offset, matcher.Segments
-		}
-	}
-	return -1, nil
-}
-
-// Keeps the left-most child match; ties at one offset merge their segment lists
-// so every possible match length survives.
-func index_any_of(matcher *Matcher, text string) (offset int, segments []int) {
-	offset = -1
-	segments = make([]int, 0, len(text))
-	for child_index := range matcher.Children {
-		child_offset, child_segments := Index(&matcher.Children[child_index], text)
-		if child_offset == -1 {
-			continue
-		}
-		// A first match, or one that starts earlier, replaces the best so far;
-		// the two clauses are split because the linter bans compound ifs.
-		adopt := offset == -1
-		if !adopt {
-			adopt = child_offset < offset
-		}
-		if adopt {
-			offset = child_offset
-			segments = append(segments[:0], child_segments...)
-			continue
-		}
-		if child_offset > offset {
-			continue
-		}
-		segments = append_merge(
-			&Append_Merge_Input{Target: segments, Source: child_segments})
-	}
-	if offset == -1 {
-		return -1, nil
-	}
-	return offset, segments
-}
-
-// Walks the children left to right, keeping only the segment endpoints on which
-// every child so far can agree; an empty agreement set means the conjunction
-// cannot match.
-func index_every_of(matcher *Matcher, text string) (offset int, segments []int) {
-	match_start := 0
-	accumulated := 0
-	next := make([]int, 0, len(text))
-	current := make([]int, 0, len(text))
-	remainder := text
-	for position := range matcher.Children {
-		child_offset, child_segments := Index(&matcher.Children[position], remainder)
-		if child_offset == -1 {
-			return -1, nil
-		}
-		if position == 0 {
-			current = append(current, child_segments...)
-		} else {
-			next = next[:0]
-			delta := match_start - (child_offset + accumulated)
-			for _, base := range current {
-				for _, candidate := range child_segments {
-					if base+delta == candidate {
-						next = append(next, candidate)
-					}
+		high := low
+		if cursor+Pattern_Position(utf8.CHARACTER_SIZE_MINIMUM) < size {
+			if source[cursor] == '-' {
+				if source[cursor+utf8.CHARACTER_SIZE_MINIMUM] != ']' {
+					cursor++
+					high, class_end, status = class_character(
+						Class_Pattern_Source(source),
+						Class_Character_Index(cursor),
+					)
+					cursor = Pattern_Position(class_end)
 				}
 			}
-			if len(next) == 0 {
-				return -1, nil
+		}
+		if status != STATUS_OK {
+			return Nonzero_Pattern_Position(cursor), status
+		}
+		if high < low {
+			return Nonzero_Pattern_Position(cursor), STATUS_SYNTAX_INVALID
+		}
+		range_append(workspace, low, high)
+		range_count++
+	}
+	class := Node_Class{range_index, range_count}
+	if negated {
+		class[NODE_CLASS_NEGATED] = uint16(CONTROL_TRUE)
+	}
+	return Nonzero_Pattern_Position(cursor),
+		class_append(workspace, parent, class)
+}
+
+func class_append(
+	workspace *Compile_Workspace,
+	parent Container_Node_Reference,
+	class Node_Class,
+) (status Syntax_Status) {
+	defer func() { Syntax_Status_Invariants(status, "class_append.status") }()
+	Compile_Workspace_Invariants(workspace, "class_append.workspace")
+	Container_Node_Reference_Invariants(parent, "class_append.parent")
+	Node_Class_Invariants(class, "class_append.class")
+	node, create_status := node_create(workspace, NODE_CLASS)
+	if create_status != STATUS_OK {
+		return create_status
+	}
+	workspace.Nodes[int(node)-utf8.CHARACTER_SIZE_MINIMUM].Class = class
+	node_append_child(
+		workspace, Child_Parent_Reference(parent), Child_Node_Reference(node),
+	)
+	return STATUS_OK
+}
+
+func class_character(
+	source Class_Pattern_Source,
+	position_value Class_Character_Index,
+) (
+	character utf8.Decoded_Character,
+	position Class_Character_End,
+	status Syntax_Status,
+) {
+	defer func() {
+		utf8.Decoded_Character_Invariants(character, "class_character.character")
+		Class_Character_End_Invariants(position, "class_character.position")
+		Syntax_Status_Invariants(status, "class_character.status")
+	}()
+	Class_Pattern_Source_Invariants(source, "class_character.source")
+	Class_Character_Index_Invariants(
+		position_value, "class_character.position_value",
+	)
+	position_index := Pattern_Position(position_value)
+	if source[position_index] == '\\' {
+		position_index++
+		if position_index == Pattern_Position(len(source)) {
+			return utf8.Decoded_Character(utf8.DECODED_CHARACTER_MINIMUM),
+				Class_Character_End(position_index), STATUS_SYNTAX_INVALID
+		}
+	}
+	character, size := utf8.Decode_Character(utf8.Bytes(source[position_index:]))
+	return character, Class_Character_End(position_index + Pattern_Position(size)),
+		STATUS_OK
+}
+
+func atom_append(
+	workspace_state *Compile_Workspace,
+	parent Container_Node_Reference,
+	kind Atom_Kind,
+	character utf8.Decoded_Character,
+) (status Syntax_Status) {
+	defer func() { Syntax_Status_Invariants(status, "atom_append.status") }()
+	Compile_Workspace_Invariants(workspace_state, "atom_append.workspace_state")
+	Container_Node_Reference_Invariants(parent, "atom_append.parent")
+	Atom_Kind_Invariants(kind, "atom_append.kind")
+	utf8.Decoded_Character_Invariants(character, "atom_append.character")
+	workspace := (*Compile_Workspace)(workspace_state)
+	node, create_status := node_create(workspace, Node_Kind(kind))
+	if create_status != STATUS_OK {
+		return create_status
+	}
+	workspace.Nodes[int(node)-utf8.CHARACTER_SIZE_MINIMUM].Character[NODE_CHARACTER_FIELD] =
+		rune(character)
+	node_append_child(
+		workspace, Child_Parent_Reference(parent), Child_Node_Reference(node),
+	)
+	return STATUS_OK
+}
+
+func node_create(
+	workspace_state *Compile_Workspace,
+	kind Node_Kind,
+) (reference Node_Reference, status Syntax_Status) {
+	defer func() {
+		Node_Reference_Invariants(reference, "node_create.reference")
+		Syntax_Status_Invariants(status, "node_create.status")
+	}()
+	Compile_Workspace_Invariants(workspace_state, "node_create.workspace_state")
+	Node_Kind_Invariants(kind, "node_create.kind")
+	workspace := (*Compile_Workspace)(workspace_state)
+	count := workspace.Control[COMPILE_CONTROL_NODE_COUNT]
+	if int(count) == len(workspace.Nodes) {
+		return NODE_NONE, STATUS_SYNTAX_INVALID
+	}
+	workspace.Nodes[count] = Node{Kind: kind}
+	count++
+	workspace.Control[COMPILE_CONTROL_NODE_COUNT] = count
+	return Node_Reference(count), STATUS_OK
+}
+
+func node_append_child(
+	workspace_state *Compile_Workspace,
+	parent Child_Parent_Reference,
+	child Child_Node_Reference,
+) {
+	Compile_Workspace_Invariants(workspace_state, "node_append_child.workspace_state")
+	Child_Parent_Reference_Invariants(parent, "node_append_child.parent")
+	Child_Node_Reference_Invariants(child, "node_append_child.child")
+	workspace := (*Compile_Workspace)(workspace_state)
+	parent_node := &workspace.Nodes[int(parent)-utf8.CHARACTER_SIZE_MINIMUM]
+	last := parent_node.Links.Last_Child
+	if last == Last_Child_Reference(NODE_NONE) {
+		parent_node.Links.First_Child = First_Child_Reference(child)
+	} else {
+		workspace.Nodes[int(last)-utf8.CHARACTER_SIZE_MINIMUM].
+			Links.Next_Sibling = Next_Sibling_Reference(child)
+		workspace.Nodes[int(child)-utf8.CHARACTER_SIZE_MINIMUM].
+			Links.Previous_Sibling = Previous_Sibling_Reference(last)
+	}
+	parent_node.Links.Last_Child = Last_Child_Reference(child)
+}
+
+func range_append(
+	workspace_state *Compile_Workspace,
+	low utf8.Decoded_Character,
+	high utf8.Decoded_Character,
+) {
+	Compile_Workspace_Invariants(workspace_state, "range_append.workspace_state")
+	utf8.Decoded_Character_Invariants(low, "range_append.low")
+	utf8.Decoded_Character_Invariants(high, "range_append.high")
+	workspace := (*Compile_Workspace)(workspace_state)
+	count := workspace.Control[COMPILE_CONTROL_RANGE_COUNT]
+	invariant.Always(
+		int(count) < len(workspace.Ranges),
+		"One class shell leaves one formula-derived range slot per source byte.",
+	)
+	workspace.Ranges[count] = Class_Range{
+		Low:  Class_Low(low),
+		High: Class_High(high),
+	}
+	workspace.Control[COMPILE_CONTROL_RANGE_COUNT] = count + utf8.CHARACTER_SIZE_MINIMUM
+}
+
+func pattern_compile(
+	workspace_state *Compile_Workspace,
+	root Root_Node_Reference,
+) (start Instruction_PC) {
+	defer func() {
+		Instruction_PC_Invariants(start, "pattern_compile.start")
+	}()
+	Compile_Workspace_Invariants(workspace_state, "pattern_compile.workspace_state")
+	Root_Node_Reference_Invariants(root, "pattern_compile.root")
+	workspace := (*Compile_Workspace)(workspace_state)
+	workspace.Control[COMPILE_CONTROL_INSTRUCTION_COUNT] = bytes.SLICE_SIZE_MINIMUM
+	match := instruction_emit(workspace, Instruction{
+		Kind: Instruction_Kind_Storage{INSTRUCTION_MATCH},
+	})
+	depth := Compile_Depth(utf8.CHARACTER_SIZE_MINIMUM)
+	result := match
+	workspace.Compile_Frames[bytes.SLICE_SIZE_MINIMUM] = Compile_Frame{
+		References: Compile_References{COMPILE_REFERENCE_NODE: Node_Reference(root)},
+		Targets: Compile_Targets{
+			COMPILE_TARGET_CONTINUATION: match,
+		},
+		Control: Compile_Frame_Control{
+			COMPILE_FRAME_STAGE: COMPILE_STAGE_ENTER,
+		},
+	}
+	for depth != PATTERN_DEPTH_MINIMUM {
+		frame := &workspace.Compile_Frames[depth-utf8.CHARACTER_SIZE_MINIMUM]
+		switch frame.Control[COMPILE_FRAME_STAGE] {
+		case COMPILE_STAGE_ENTER:
+			updated, next := compile_enter(
+				workspace, frame, Nonzero_Compile_Depth(depth),
+				Instruction_Continuation(result),
+			)
+			depth, result = Compile_Depth(updated), next
+		case COMPILE_STAGE_SEQUENCE:
+			level := Sequence_Compile_Level(
+				(depth - Compile_Depth(COMPILE_DEPTH_NONZERO_MINIMUM)) /
+					Compile_Depth(len("{}")),
+			)
+			updated, next := compile_sequence(workspace, frame, level, result)
+			depth = Compile_Depth(updated * Sequence_Updated_Level(len("{}")))
+			result = next
+		case COMPILE_STAGE_SEQUENCE_RETURN:
+			compile_sequence_return(workspace, frame, result)
+		case COMPILE_STAGE_ALTERNATIVE:
+			level := Alternative_Compile_Level(depth / Compile_Depth(len("{}")))
+			updated, next := compile_alternative(
+				workspace, frame, level, Alternative_Result_PC(result),
+			)
+			depth = Compile_Depth(
+				updated*Alternative_Updated_Level(len("{}")) +
+					Alternative_Updated_Level(COMPILE_DEPTH_NONZERO_MINIMUM),
+			)
+			result = Instruction_PC(next)
+		case COMPILE_STAGE_ALTERNATIVE_RETURN:
+			compile_alternative_return(
+				workspace, frame, Alternative_Result_PC(result),
+			)
+		}
+	}
+	return result
+}
+
+func compile_enter(
+	workspace_state *Compile_Workspace,
+	frame_state *Compile_Frame,
+	depth Nonzero_Compile_Depth,
+	result Instruction_Continuation,
+) (
+	updated_depth Nonzero_Compile_Depth,
+	updated_result Instruction_PC,
+) {
+	defer func() {
+		Nonzero_Compile_Depth_Invariants(updated_depth, "compile_enter.updated_depth")
+		Instruction_PC_Invariants(updated_result, "compile_enter.updated_result")
+	}()
+	Compile_Workspace_Invariants(workspace_state, "compile_enter.workspace_state")
+	Compile_Frame_Invariants(*frame_state, "compile_enter.frame_state")
+	Nonzero_Compile_Depth_Invariants(depth, "compile_enter.depth")
+	Instruction_Continuation_Invariants(result, "compile_enter.result")
+	workspace := (*Compile_Workspace)(workspace_state)
+	frame := (*Compile_Frame)(frame_state)
+	updated_result = Instruction_PC(result)
+	reference := frame.References[COMPILE_REFERENCE_NODE]
+	invariant.Always(reference != NODE_NONE, "Compiler frame references one syntax node.")
+	invariant.Always(
+		int(reference) <= int(workspace.Control[COMPILE_CONTROL_NODE_COUNT]),
+		"Compiler frame reference stays inside parsed syntax.",
+	)
+	node := workspace.Nodes[int(reference)-utf8.CHARACTER_SIZE_MINIMUM]
+	switch node.Kind {
+	case NODE_SEQUENCE:
+		frame.References[COMPILE_REFERENCE_CHILD] =
+			Node_Reference(node.Links.Last_Child)
+		frame.Targets[COMPILE_TARGET_ACCUMULATED] =
+			frame.Targets[COMPILE_TARGET_CONTINUATION]
+		frame.Control[COMPILE_FRAME_STAGE] = COMPILE_STAGE_SEQUENCE
+	case NODE_ALTERNATIVE:
+		frame.References[COMPILE_REFERENCE_CHILD] =
+			Node_Reference(node.Links.Last_Child)
+		frame.Control[COMPILE_FRAME_FIRST] = CONTROL_TRUE
+		frame.Control[COMPILE_FRAME_STAGE] = COMPILE_STAGE_ALTERNATIVE
+	default:
+		updated_result = Instruction_PC(instruction_from_node(
+			workspace,
+			Leaf_Node{
+				Kind: Leaf_Kind(node.Kind), Character: node.Character,
+				Class: node.Class,
+			},
+			Instruction_Continuation(frame.Targets[COMPILE_TARGET_CONTINUATION]),
+		))
+		depth--
+	}
+	return depth, updated_result
+}
+
+func compile_sequence(
+	workspace_state *Compile_Workspace,
+	frame_state *Compile_Frame,
+	depth Sequence_Compile_Level,
+	result Instruction_PC,
+) (
+	updated_depth Sequence_Updated_Level,
+	updated_result Instruction_PC,
+) {
+	defer func() {
+		Sequence_Updated_Level_Invariants(
+			updated_depth, "compile_sequence.updated_depth",
+		)
+		Instruction_PC_Invariants(updated_result, "compile_sequence.updated_result")
+	}()
+	Compile_Workspace_Invariants(workspace_state, "compile_sequence.workspace_state")
+	Compile_Frame_Invariants(*frame_state, "compile_sequence.frame_state")
+	Sequence_Compile_Level_Invariants(depth, "compile_sequence.depth")
+	Instruction_PC_Invariants(result, "compile_sequence.result")
+	workspace := (*Compile_Workspace)(workspace_state)
+	frame := (*Compile_Frame)(frame_state)
+	child := frame.References[COMPILE_REFERENCE_CHILD]
+	if child == NODE_NONE {
+		return Sequence_Updated_Level(depth),
+			frame.Targets[COMPILE_TARGET_ACCUMULATED]
+	}
+	frame.Control[COMPILE_FRAME_STAGE] = COMPILE_STAGE_SEQUENCE_RETURN
+	raw_depth := Push_Compile_Depth(
+		depth*Sequence_Compile_Level(len("{}")) +
+			Sequence_Compile_Level(COMPILE_DEPTH_NONZERO_MINIMUM),
+	)
+	pushed := compile_push(
+		workspace,
+		Child_Node_Reference(child),
+		Instruction_Continuation(frame.Targets[COMPILE_TARGET_ACCUMULATED]),
+		raw_depth,
+	)
+	return Sequence_Updated_Level(pushed / Pushed_Compile_Depth(len("{}"))), result
+}
+
+func compile_sequence_return(
+	workspace_state *Compile_Workspace,
+	frame_state *Compile_Frame,
+	result Instruction_PC,
+) {
+	Compile_Workspace_Invariants(
+		workspace_state, "compile_sequence_return.workspace_state",
+	)
+	Compile_Frame_Invariants(*frame_state, "compile_sequence_return.frame_state")
+	Instruction_PC_Invariants(result, "compile_sequence_return.result")
+	workspace := (*Compile_Workspace)(workspace_state)
+	frame := (*Compile_Frame)(frame_state)
+	child := frame.References[COMPILE_REFERENCE_CHILD]
+	frame.Targets[COMPILE_TARGET_ACCUMULATED] = result
+	frame.References[COMPILE_REFERENCE_CHILD] =
+		Node_Reference(workspace.Nodes[int(child)-utf8.CHARACTER_SIZE_MINIMUM].
+			Links.Previous_Sibling)
+	frame.Control[COMPILE_FRAME_STAGE] = COMPILE_STAGE_SEQUENCE
+}
+
+func compile_alternative(
+	workspace_state *Compile_Workspace,
+	frame_state *Compile_Frame,
+	depth Alternative_Compile_Level,
+	result Alternative_Result_PC,
+) (
+	updated_depth Alternative_Updated_Level,
+	updated_result Alternative_Updated_PC,
+) {
+	defer func() {
+		Alternative_Updated_Level_Invariants(
+			updated_depth, "compile_alternative.updated_depth",
+		)
+		Alternative_Updated_PC_Invariants(
+			updated_result, "compile_alternative.updated_result",
+		)
+	}()
+	Compile_Workspace_Invariants(workspace_state, "compile_alternative.workspace_state")
+	Compile_Frame_Invariants(*frame_state, "compile_alternative.frame_state")
+	Alternative_Compile_Level_Invariants(depth, "compile_alternative.depth")
+	Alternative_Result_PC_Invariants(result, "compile_alternative.result")
+	workspace := (*Compile_Workspace)(workspace_state)
+	frame := (*Compile_Frame)(frame_state)
+	child := frame.References[COMPILE_REFERENCE_CHILD]
+	if child == NODE_NONE {
+		invariant.Always(
+			frame.Control[COMPILE_FRAME_FIRST] != CONTROL_TRUE,
+			"Parsed alternative retains at least one sequence branch.",
+		)
+		return Alternative_Updated_Level(depth - utf8.CHARACTER_SIZE_MINIMUM),
+			Alternative_Updated_PC(frame.Targets[COMPILE_TARGET_ACCUMULATED])
+	}
+	frame.Control[COMPILE_FRAME_STAGE] = COMPILE_STAGE_ALTERNATIVE_RETURN
+	raw_depth := Push_Compile_Depth(depth * Alternative_Compile_Level(len("{}")))
+	pushed := compile_push(
+		workspace,
+		Child_Node_Reference(child),
+		Instruction_Continuation(frame.Targets[COMPILE_TARGET_CONTINUATION]),
+		raw_depth,
+	)
+	return Alternative_Updated_Level(
+		(pushed - Pushed_Compile_Depth(COMPILE_DEPTH_NONZERO_MINIMUM)) /
+			Pushed_Compile_Depth(len("{}")),
+	), Alternative_Updated_PC(result)
+}
+
+func compile_alternative_return(
+	workspace_state *Compile_Workspace,
+	frame_state *Compile_Frame,
+	result Alternative_Result_PC,
+) {
+	Compile_Workspace_Invariants(
+		workspace_state, "compile_alternative_return.workspace_state",
+	)
+	Compile_Frame_Invariants(
+		*frame_state, "compile_alternative_return.frame_state",
+	)
+	Alternative_Result_PC_Invariants(result, "compile_alternative_return.result")
+	workspace := (*Compile_Workspace)(workspace_state)
+	frame := (*Compile_Frame)(frame_state)
+	if frame.Control[COMPILE_FRAME_FIRST] == CONTROL_TRUE {
+		frame.Targets[COMPILE_TARGET_ACCUMULATED] = Instruction_PC(result)
+		frame.Control[COMPILE_FRAME_FIRST] = CONTROL_FALSE
+	} else {
+		accumulated := frame.Targets[COMPILE_TARGET_ACCUMULATED]
+		instruction := Instruction{
+			Kind: Instruction_Kind_Storage{INSTRUCTION_SPLIT},
+			Targets: Instruction_Targets{
+				INSTRUCTION_TARGET_NEXT:   Instruction_PC(result),
+				INSTRUCTION_TARGET_BRANCH: accumulated,
+			},
+		}
+		split := instruction_emit(workspace, instruction)
+		frame.Targets[COMPILE_TARGET_ACCUMULATED] = split
+	}
+	child := frame.References[COMPILE_REFERENCE_CHILD]
+	frame.References[COMPILE_REFERENCE_CHILD] =
+		Node_Reference(workspace.Nodes[int(child)-utf8.CHARACTER_SIZE_MINIMUM].
+			Links.Previous_Sibling)
+	frame.Control[COMPILE_FRAME_STAGE] = COMPILE_STAGE_ALTERNATIVE
+}
+
+func compile_push(
+	workspace_state *Compile_Workspace,
+	node Child_Node_Reference,
+	continuation Instruction_Continuation,
+	depth Push_Compile_Depth,
+) (updated_depth Pushed_Compile_Depth) {
+	defer func() {
+		Pushed_Compile_Depth_Invariants(updated_depth, "compile_push.updated_depth")
+	}()
+	Compile_Workspace_Invariants(workspace_state, "compile_push.workspace_state")
+	Child_Node_Reference_Invariants(node, "compile_push.node")
+	Instruction_Continuation_Invariants(continuation, "compile_push.continuation")
+	Push_Compile_Depth_Invariants(depth, "compile_push.depth")
+	workspace := (*Compile_Workspace)(workspace_state)
+	invariant.Always(
+		depth < Push_Compile_Depth(len(workspace.Compile_Frames)),
+		"Parsed syntax depth fits formula-derived compiler stack.",
+	)
+	workspace.Compile_Frames[depth] = Compile_Frame{
+		References: Compile_References{COMPILE_REFERENCE_NODE: Node_Reference(node)},
+		Targets: Compile_Targets{
+			COMPILE_TARGET_CONTINUATION: Instruction_PC(continuation),
+		},
+		Control: Compile_Frame_Control{
+			COMPILE_FRAME_STAGE: COMPILE_STAGE_ENTER,
+		},
+	}
+	return Pushed_Compile_Depth(depth + utf8.CHARACTER_SIZE_MINIMUM)
+}
+
+func instruction_from_node(
+	workspace_state *Compile_Workspace,
+	node Leaf_Node,
+	continuation Instruction_Continuation,
+) (result Emitted_Instruction_PC) {
+	defer func() {
+		Emitted_Instruction_PC_Invariants(result, "instruction_from_node.result")
+	}()
+	Compile_Workspace_Invariants(
+		workspace_state, "instruction_from_node.workspace_state",
+	)
+	Leaf_Node_Invariants(node, "instruction_from_node.node")
+	Instruction_Continuation_Invariants(
+		continuation, "instruction_from_node.continuation",
+	)
+	workspace := (*Compile_Workspace)(workspace_state)
+	instruction := Instruction{
+		Targets: Instruction_Targets{
+			INSTRUCTION_TARGET_NEXT: Instruction_PC(continuation),
+		},
+	}
+	switch node.Kind {
+	case Leaf_Kind(NODE_LITERAL):
+		instruction.Kind[INSTRUCTION_KIND_FIELD] = INSTRUCTION_LITERAL
+		instruction.Character[INSTRUCTION_CHARACTER_FIELD] =
+			node.Character[NODE_CHARACTER_FIELD]
+	case Leaf_Kind(NODE_STAR):
+		instruction.Kind[INSTRUCTION_KIND_FIELD] = INSTRUCTION_STAR
+	case Leaf_Kind(NODE_SUPER_STAR):
+		instruction.Kind[INSTRUCTION_KIND_FIELD] = INSTRUCTION_SUPER_STAR
+	case Leaf_Kind(NODE_SINGLE):
+		instruction.Kind[INSTRUCTION_KIND_FIELD] = INSTRUCTION_SINGLE
+	case Leaf_Kind(NODE_CLASS):
+		instruction.Kind[INSTRUCTION_KIND_FIELD] = INSTRUCTION_CLASS
+		instruction.Class = Instruction_Class_Storage{
+			INSTRUCTION_CLASS_RANGE_INDEX: node.Class[NODE_CLASS_RANGE_INDEX],
+			INSTRUCTION_CLASS_RANGE_COUNT: node.Class[NODE_CLASS_RANGE_COUNT],
+			INSTRUCTION_CLASS_NEGATED:     node.Class[NODE_CLASS_NEGATED],
+		}
+	}
+	return Emitted_Instruction_PC(instruction_emit(workspace, instruction))
+}
+
+func instruction_emit(
+	workspace_state *Compile_Workspace,
+	instruction Instruction,
+) (result Instruction_PC) {
+	defer func() {
+		Instruction_PC_Invariants(result, "instruction_emit.result")
+	}()
+	Compile_Workspace_Invariants(workspace_state, "instruction_emit.workspace_state")
+	Instruction_Invariants(instruction, "instruction_emit.instruction")
+	workspace := (*Compile_Workspace)(workspace_state)
+	count := workspace.Control[COMPILE_CONTROL_INSTRUCTION_COUNT]
+	invariant.Always(
+		int(count) < len(workspace.Instruction_Kinds),
+		"One pattern byte cannot emit more than one instruction.",
+	)
+	workspace.Instruction_Kinds[count] = instruction.Kind[INSTRUCTION_KIND_FIELD]
+	workspace.Instruction_Characters[count] =
+		instruction.Character[INSTRUCTION_CHARACTER_FIELD]
+	workspace.Instruction_Next_Targets[count] =
+		instruction.Targets[INSTRUCTION_TARGET_NEXT]
+	workspace.Instruction_Branch_Targets[count] =
+		instruction.Targets[INSTRUCTION_TARGET_BRANCH]
+	workspace.Instruction_Class_Indexes[count] =
+		instruction.Class[INSTRUCTION_CLASS_RANGE_INDEX]
+	workspace.Instruction_Class_Counts[count] =
+		instruction.Class[INSTRUCTION_CLASS_RANGE_COUNT]
+	workspace.Instruction_Class_Negations[count] =
+		instruction.Class[INSTRUCTION_CLASS_NEGATED]
+	workspace.Control[COMPILE_CONTROL_INSTRUCTION_COUNT] = count + utf8.CHARACTER_SIZE_MINIMUM
+	return Instruction_PC(count)
+}
+
+func instruction_load(
+	workspace_state *Compile_Workspace,
+	pc Instruction_PC,
+) (instruction Instruction) {
+	defer func() { Instruction_Invariants(instruction, "instruction_load.instruction") }()
+	Compile_Workspace_Invariants(workspace_state, "instruction_load.workspace_state")
+	Instruction_PC_Invariants(pc, "instruction_load.pc")
+	workspace := (*Compile_Workspace)(workspace_state)
+	return Instruction{
+		Kind: Instruction_Kind_Storage{workspace.Instruction_Kinds[pc]},
+		Character: Instruction_Character_Storage{
+			workspace.Instruction_Characters[pc],
+		},
+		Targets: Instruction_Targets{
+			INSTRUCTION_TARGET_NEXT:   workspace.Instruction_Next_Targets[pc],
+			INSTRUCTION_TARGET_BRANCH: workspace.Instruction_Branch_Targets[pc],
+		},
+		Class: Instruction_Class_Storage{
+			INSTRUCTION_CLASS_RANGE_INDEX: workspace.Instruction_Class_Indexes[pc],
+			INSTRUCTION_CLASS_RANGE_COUNT: workspace.Instruction_Class_Counts[pc],
+			INSTRUCTION_CLASS_NEGATED:     workspace.Instruction_Class_Negations[pc],
+		},
+	}
+}
+
+func pattern_validate(pattern Pattern) (status Pattern_Status) {
+	defer func() { Pattern_Status_Invariants(status, "pattern_validate.status") }()
+	Pattern_Invariants(pattern, "pattern_validate.pattern")
+	workspace := pattern.Workspace[PATTERN_WORKSPACE_FIELD]
+	if workspace == nil {
+		return STATUS_PATTERN_INVALID
+	}
+	instruction_count := int(
+		pattern.Control[PATTERN_CONTROL_INSTRUCTION_COUNT],
+	)
+	separator_count := int(pattern.Control[PATTERN_CONTROL_SEPARATOR_COUNT])
+	start := int(pattern.Control[PATTERN_CONTROL_START])
+	if instruction_count < utf8.CHARACTER_SIZE_MINIMUM {
+		return STATUS_PATTERN_INVALID
+	}
+	if INSTRUCTION_COUNT_MAXIMUM < instruction_count {
+		return STATUS_PATTERN_INVALID
+	}
+	if instruction_count <= start {
+		return STATUS_PATTERN_INVALID
+	}
+	if SEPARATOR_COUNT_MAXIMUM < separator_count {
+		return STATUS_PATTERN_INVALID
+	}
+	if int(workspace.Control[COMPILE_CONTROL_INSTRUCTION_COUNT]) !=
+		instruction_count {
+		return STATUS_PATTERN_INVALID
+	}
+	if int(workspace.Control[COMPILE_CONTROL_SEPARATOR_COUNT]) !=
+		separator_count {
+		return STATUS_PATTERN_INVALID
+	}
+	range_count := int(workspace.Control[COMPILE_CONTROL_RANGE_COUNT])
+	if CLASS_RANGE_COUNT_MAXIMUM < range_count {
+		return STATUS_PATTERN_INVALID
+	}
+	if workspace.Instruction_Kinds[INSTRUCTION_PC_MINIMUM] != INSTRUCTION_MATCH {
+		return STATUS_PATTERN_INVALID
+	}
+	return pattern_storage_validate(
+		workspace, Instruction_Count(instruction_count),
+		Class_Range_Count(range_count), Separator_Count(separator_count),
+	)
+}
+
+func pattern_storage_validate(
+	workspace_state *Compile_Workspace,
+	instruction_count Instruction_Count,
+	range_count Class_Range_Count,
+	separator_count Separator_Count,
+) (status Pattern_Status) {
+	defer func() {
+		Pattern_Status_Invariants(status, "pattern_storage_validate.status")
+	}()
+	Compile_Workspace_Invariants(
+		workspace_state, "pattern_storage_validate.workspace_state",
+	)
+	Instruction_Count_Invariants(
+		instruction_count, "pattern_storage_validate.instruction_count",
+	)
+	Class_Range_Count_Invariants(
+		range_count, "pattern_storage_validate.range_count",
+	)
+	Separator_Count_Invariants(
+		separator_count, "pattern_storage_validate.separator_count",
+	)
+	workspace := (*Compile_Workspace)(workspace_state)
+	for index := INSTRUCTION_PC_MINIMUM; index < int(instruction_count); index++ {
+		instruction := instruction_load(workspace, Instruction_PC(index))
+		status = instruction_validate(instruction, instruction_count, range_count)
+		if status != STATUS_OK {
+			return status
+		}
+	}
+	for index := bytes.SLICE_SIZE_MINIMUM; index < int(range_count); index++ {
+		low := rune(workspace.Ranges[index].Low)
+		high := rune(workspace.Ranges[index].High)
+		if !bool(utf8.Valid_Character(utf8.Character(low))) {
+			return STATUS_PATTERN_INVALID
+		}
+		if !bool(utf8.Valid_Character(utf8.Character(high))) {
+			return STATUS_PATTERN_INVALID
+		}
+		if high < low {
+			return STATUS_PATTERN_INVALID
+		}
+	}
+	for index := SEPARATOR_COUNT_MINIMUM; index < int(separator_count); index++ {
+		if !bool(utf8.Valid_Character(
+			utf8.Character(workspace.Separators[index]),
+		)) {
+			return STATUS_PATTERN_INVALID
+		}
+	}
+	return STATUS_OK
+}
+
+func instruction_validate(
+	instruction Instruction,
+	instruction_count Instruction_Count,
+	range_count Class_Range_Count,
+) (status Pattern_Status) {
+	defer func() {
+		Pattern_Status_Invariants(status, "instruction_validate.status")
+	}()
+	Instruction_Invariants(instruction, "instruction_validate.instruction")
+	Instruction_Count_Invariants(instruction_count, "instruction_validate.count")
+	Class_Range_Count_Invariants(range_count, "instruction_validate.range_count")
+	kind := instruction.Kind[INSTRUCTION_KIND_FIELD]
+	if kind < INSTRUCTION_MATCH {
+		return STATUS_PATTERN_INVALID
+	}
+	if INSTRUCTION_SPLIT < kind {
+		return STATUS_PATTERN_INVALID
+	}
+	switch kind {
+	case INSTRUCTION_MATCH:
+		return STATUS_OK
+	case INSTRUCTION_SPLIT:
+		if int(instruction.Targets[INSTRUCTION_TARGET_NEXT]) >=
+			int(instruction_count) {
+			return STATUS_PATTERN_INVALID
+		}
+		if int(instruction.Targets[INSTRUCTION_TARGET_BRANCH]) >=
+			int(instruction_count) {
+			return STATUS_PATTERN_INVALID
+		}
+	default:
+		if int(instruction.Targets[INSTRUCTION_TARGET_NEXT]) >=
+			int(instruction_count) {
+			return STATUS_PATTERN_INVALID
+		}
+	}
+	if kind == INSTRUCTION_LITERAL {
+		if !bool(utf8.Valid_Character(utf8.Character(
+			instruction.Character[INSTRUCTION_CHARACTER_FIELD],
+		))) {
+			return STATUS_PATTERN_INVALID
+		}
+	}
+	if kind == INSTRUCTION_CLASS {
+		class_index := int(instruction.Class[INSTRUCTION_CLASS_RANGE_INDEX])
+		class_count := int(instruction.Class[INSTRUCTION_CLASS_RANGE_COUNT])
+		if class_count < utf8.CHARACTER_SIZE_MINIMUM {
+			return STATUS_PATTERN_INVALID
+		}
+		if int(range_count) < class_index+class_count {
+			return STATUS_PATTERN_INVALID
+		}
+		negated := instruction.Class[INSTRUCTION_CLASS_NEGATED]
+		switch negated {
+		case uint16(CONTROL_FALSE), uint16(CONTROL_TRUE):
+		default:
+			return STATUS_PATTERN_INVALID
+		}
+	}
+	return STATUS_OK
+}
+
+func state_consume(
+	pattern Pattern,
+	workspace_state *Match_Workspace,
+	current Active_Instruction_States,
+	next Instruction_State_Storage,
+	character utf8.Decoded_Character,
+	generation Consume_Generation,
+) (next_count State_Count) {
+	defer func() {
+		State_Count_Invariants(next_count, "state_consume.next_count")
+	}()
+	Pattern_Invariants(pattern, "state_consume.pattern")
+	Match_Workspace_Invariants(workspace_state, "state_consume.workspace_state")
+	Active_Instruction_States_Invariants(current, "state_consume.current")
+	Instruction_State_Storage_Invariants(next, "state_consume.next")
+	utf8.Decoded_Character_Invariants(character, "state_consume.character")
+	Consume_Generation_Invariants(generation, "state_consume.generation")
+	workspace := (*Match_Workspace)(workspace_state)
+	compiled := pattern.Workspace[PATTERN_WORKSPACE_FIELD]
+	instruction_count := int(
+		pattern.Control[PATTERN_CONTROL_INSTRUCTION_COUNT],
+	)
+	separator := separator_contains(pattern, character)
+	for index := range current {
+		pc := current[index]
+		invariant.Always(
+			int(pc) < instruction_count,
+			"Validated active state references one compiled instruction.",
+		)
+		instruction := instruction_load(compiled, pc)
+		consume := Contains(false)
+		switch instruction.Kind[INSTRUCTION_KIND_FIELD] {
+		case INSTRUCTION_LITERAL:
+			literal := instruction.Character[INSTRUCTION_CHARACTER_FIELD]
+			consume = Contains(literal == rune(character))
+		case INSTRUCTION_STAR:
+			consume = !separator
+		case INSTRUCTION_SUPER_STAR:
+			consume = true
+		case INSTRUCTION_SINGLE:
+			consume = !separator
+		case INSTRUCTION_CLASS:
+			if !separator {
+				consume = class_contains(compiled, instruction, character)
 			}
-			current = append(current[:0], next...)
 		}
-		match_start = child_offset + accumulated
-		remainder = text[match_start:]
-		accumulated += child_offset
-	}
-	return match_start, current
-}
-
-func index_prefix_any(matcher *Matcher, text string) (offset int, segments []int) {
-	offset = strings.Index(text, matcher.Prefix)
-	if offset == -1 {
-		return -1, nil
-	}
-	prefix_size := len(matcher.Prefix)
-	remainder := text[offset+prefix_size:]
-	separator_offset := Index_Any_Runes(remainder, matcher.Separators)
-	if separator_offset > -1 {
-		remainder = remainder[:separator_offset]
-	}
-	segments = make([]int, 0, len(remainder)+1)
-	segments = append(segments, prefix_size)
-	for byte_offset, first := range remainder {
-		segments = append(segments, prefix_size+byte_offset+utf8.RuneLen(first))
-	}
-	return offset, segments
-}
-
-func index_suffix_any(matcher *Matcher, text string) (offset int, segments []int) {
-	suffix_offset := strings.Index(text, matcher.Suffix)
-	if suffix_offset == -1 {
-		return -1, nil
-	}
-	offset = Last_Index_Any_Runes(text[:suffix_offset], matcher.Separators) + 1
-	return offset, []int{suffix_offset + len(matcher.Suffix) - offset}
-}
-
-// Rune_Width reports the fixed number of runes matcher consumes, or
-// RUNE_WIDTH_VARIABLE when that count is not fixed. It is the width the
-// composers use to pre-trim search windows (upstream Matcher.Len).
-func Rune_Width(matcher Matcher) (width int) {
-	switch matcher.Kind {
-	case MATCHER_KIND_ANY, MATCHER_KIND_SUPER, MATCHER_KIND_MAX, MATCHER_KIND_MIN,
-		MATCHER_KIND_PREFIX, MATCHER_KIND_SUFFIX, MATCHER_KIND_PREFIX_SUFFIX,
-		MATCHER_KIND_CONTAINS, MATCHER_KIND_PREFIX_ANY, MATCHER_KIND_SUFFIX_ANY:
-		return RUNE_WIDTH_VARIABLE
-	case MATCHER_KIND_EMPTY:
-		return RUNE_WIDTH_ZERO
-	case MATCHER_KIND_SINGLE, MATCHER_KIND_RANGE, MATCHER_KIND_LIST:
-		return RUNE_WIDTH_ONE
-	case MATCHER_KIND_TEXT, MATCHER_KIND_ROW, MATCHER_KIND_BTREE:
-		return matcher.Rune_Width
-	case MATCHER_KIND_ANY_OF:
-		return rune_width_any_of(matcher)
-	case MATCHER_KIND_EVERY_OF:
-		return rune_width_every_of(matcher)
-	}
-	return RUNE_WIDTH_VARIABLE
-}
-
-// Fixed only when every child shares one width; a single variable-width child,
-// or any disagreement, makes the union variable. The leading-variable reset
-// mirrors upstream AnyOf.Len exactly.
-func rune_width_any_of(matcher Matcher) (width int) {
-	width = RUNE_WIDTH_VARIABLE
-	for _, child := range matcher.Children {
-		child_width := Rune_Width(child)
-		switch {
-		case width == RUNE_WIDTH_VARIABLE:
-			width = child_width
-		case child_width == RUNE_WIDTH_VARIABLE:
-			return RUNE_WIDTH_VARIABLE
-		case width != child_width:
-			return RUNE_WIDTH_VARIABLE
-		}
-	}
-	return width
-}
-
-// Preserves upstream EveryOf.Len byte for byte: the width only accumulates once
-// it is already positive, so a non-empty conjunction always reports variable
-// and an empty one reports zero.
-func rune_width_every_of(matcher Matcher) (width int) {
-	for _, child := range matcher.Children {
-		child_width := Rune_Width(child)
-		if width > 0 {
-			width += child_width
-		} else {
-			return RUNE_WIDTH_VARIABLE
-		}
-	}
-	return width
-}
-
-func btree_total_rune_width(matcher Matcher) (width int) {
-	value_width := Rune_Width(*matcher.Value)
-	left_width := btree_child_rune_width(matcher.Left)
-	right_width := btree_child_rune_width(matcher.Right)
-	if value_width == RUNE_WIDTH_VARIABLE {
-		return RUNE_WIDTH_VARIABLE
-	}
-	if left_width == RUNE_WIDTH_VARIABLE {
-		return RUNE_WIDTH_VARIABLE
-	}
-	if right_width == RUNE_WIDTH_VARIABLE {
-		return RUNE_WIDTH_VARIABLE
-	}
-	return left_width + value_width + right_width
-}
-
-// Treats an absent side as zero-width, matching the way upstream left a nil
-// child's cached width at its zero value.
-func btree_child_rune_width(child *Matcher) (width int) {
-	if child == nil {
-		return RUNE_WIDTH_ZERO
-	}
-	return child.Rune_Width
-}
-
-// Hands each child in turn the next slice of text as wide as the child's rune
-// width, failing on the first child that mismatches or runs out of text.
-func row_match_all(matcher *Matcher, text string) (matched bool) {
-	start := 0
-	for child_index := range matcher.Children {
-		child := &matcher.Children[child_index]
-		child_width := child.Rune_Width
-		rune_count := 0
-		last_rune_start := 0
-		for byte_offset := range text[start:] {
-			last_rune_start = byte_offset
-			rune_count++
-			if rune_count == child_width {
-				break
-			}
-		}
-		if rune_count < child_width {
-			return false
-		}
-		if !matcher_matches(child, text[start:start+last_rune_start+1]) {
-			return false
-		}
-		start += last_rune_start + 1
-	}
-	return true
-}
-
-func row_rune_width_ok(matcher *Matcher, text string) (ok bool) {
-	rune_count := 0
-	for range text {
-		rune_count++
-		if rune_count > matcher.Rune_Width {
-			return false
-		}
-	}
-	return matcher.Rune_Width == rune_count
-}
-
-// Append_Merge_Input pairs the two already-sorted, duplicate-free segment lists
-// a merge folds together; the input struct exists because two []int parameters
-// are swappable at the call site.
-type Append_Merge_Input struct {
-	// Target is the first sorted, unique list, and the slice whose backing
-	// array the merge reuses.
-	Target []int
-	// Source is the second sorted, unique list.
-	Source []int
-}
-
-// Merges two sorted, unique int slices into one sorted, unique slice, reusing
-// Target's backing array as upstream appendMerge did.
-func append_merge(input *Append_Merge_Input) (merged []int) {
-	target_count := len(input.Target)
-	source_count := len(input.Source)
-	output := make([]int, 0, target_count+source_count)
-	x := 0
-	y := 0
-	for x < target_count || y < source_count {
-		if x >= target_count {
-			output = append(output, input.Source[y:]...)
-			break
-		}
-		if y >= source_count {
-			output = append(output, input.Target[x:]...)
-			break
-		}
-		target_value := input.Target[x]
-		source_value := input.Source[y]
-		switch {
-		case target_value == source_value:
-			output = append(output, target_value)
-			x++
-			y++
-		case target_value < source_value:
-			output = append(output, target_value)
-			x++
-		case source_value < target_value:
-			output = append(output, source_value)
-			y++
-		}
-	}
-	merged = append(input.Target[:0], output...)
-	return merged
-}
-
-// Reverses the slice in place with a two-pointer swap.
-func reverse_segments(segments []int) {
-	left := 0
-	right := len(segments) - 1
-	for left < right {
-		segments[left], segments[right] = segments[right], segments[left]
-		left++
-		right--
-	}
-}
-
-// String renders matcher as the angle-bracket tree upstream used for debugging;
-// it satisfies fmt.Stringer, which is why it survives as a method.
-func (matcher Matcher) String() (text string) {
-	switch matcher.Kind {
-	case MATCHER_KIND_ANY:
-		return fmt.Sprintf("<any:![%s]>", string(matcher.Separators))
-	case MATCHER_KIND_SUPER:
-		return "<super>"
-	case MATCHER_KIND_SINGLE:
-		return fmt.Sprintf("<single:![%s]>", string(matcher.Separators))
-	case MATCHER_KIND_EMPTY:
-		return "<nothing>"
-	case MATCHER_KIND_TEXT:
-		return fmt.Sprintf("<text:`%v`>", matcher.Literal)
-	case MATCHER_KIND_MAX:
-		return fmt.Sprintf("<max:%d>", matcher.Limit)
-	case MATCHER_KIND_MIN:
-		return fmt.Sprintf("<min:%d>", matcher.Limit)
-	case MATCHER_KIND_PREFIX:
-		return fmt.Sprintf("<prefix:%s>", matcher.Prefix)
-	case MATCHER_KIND_SUFFIX:
-		return fmt.Sprintf("<suffix:%s>", matcher.Suffix)
-	case MATCHER_KIND_PREFIX_SUFFIX:
-		return fmt.Sprintf("<prefix_suffix:[%s,%s]>", matcher.Prefix, matcher.Suffix)
-	case MATCHER_KIND_CONTAINS:
-		return string_contains(matcher)
-	case MATCHER_KIND_RANGE:
-		return string_range(matcher)
-	case MATCHER_KIND_LIST:
-		return string_list(matcher)
-	case MATCHER_KIND_ROW:
-		return fmt.Sprintf(
-			"<row_%d:[%s]>", matcher.Rune_Width, string_children(matcher.Children))
-	case MATCHER_KIND_ANY_OF:
-		return fmt.Sprintf("<any_of:[%s]>", string_children(matcher.Children))
-	case MATCHER_KIND_EVERY_OF:
-		return fmt.Sprintf("<every_of:[%s]>", string_children(matcher.Children))
-	case MATCHER_KIND_BTREE:
-		return string_btree(matcher)
-	case MATCHER_KIND_PREFIX_ANY:
-		return fmt.Sprintf(
-			"<prefix_any:%s![%s]>", matcher.Prefix, string(matcher.Separators))
-	case MATCHER_KIND_SUFFIX_ANY:
-		return fmt.Sprintf(
-			"<suffix_any:![%s]%s>", string(matcher.Separators), matcher.Suffix)
-	}
-	return ""
-}
-
-func string_contains(matcher Matcher) (text string) {
-	negation := ""
-	if matcher.Negated {
-		negation = "!"
-	}
-	return fmt.Sprintf("<contains:%s[%s]>", negation, matcher.Needle)
-}
-
-func string_range(matcher Matcher) (text string) {
-	negation := ""
-	if matcher.Negated {
-		negation = "!"
-	}
-	return fmt.Sprintf("<range:%s[%s,%s]>", negation, string(matcher.Low), string(matcher.High))
-}
-
-func string_list(matcher Matcher) (text string) {
-	negation := ""
-	if matcher.Negated {
-		negation = "!"
-	}
-	return fmt.Sprintf("<list:%s[%s]>", negation, string(matcher.Runes))
-}
-
-func string_children(children []Matcher) (text string) {
-	rendered := make([]string, 0, len(children))
-	for _, child := range children {
-		rendered = append(rendered, child.String())
-	}
-	return strings.Join(rendered, ",")
-}
-
-func string_btree(matcher Matcher) (text string) {
-	left := "<nil>"
-	if matcher.Left != nil {
-		left = matcher.Left.String()
-	}
-	right := "<nil>"
-	if matcher.Right != nil {
-		right = matcher.Right.String()
-	}
-	return fmt.Sprintf("<btree:[%s<-%s->%s]>", left, matcher.Value.String(), right)
-}
-
-// The rune-set searches below are a dependency-injected port of the util/runes and util/strings
-// helpers from github.com/gobwas/glob (MIT, Sergey Kamardin); see
-// LICENSE.mit.kamardin.
-//
-// Only the two set searches the standard library lacks survive the port. The
-// glob matchers bound a wildcard at the first SEPARATOR they meet, and a
-// separator set is ordered by priority, so they need the first rune of the set
-// (in set order) that occurs — not the left-most matching position that
-// strings.IndexAny / strings.LastIndexAny report. The remaining upstream helpers
-// (Equal, IndexRune, and the rest) were exact re-implementations of slices.Equal
-// and slices.Index, so callers use those directly instead.
-
-// Index_Any_Runes returns the byte offset in text of the first occurrence of the
-// first rune in set — walking set in order — that appears, or -1 when none of the
-// set's runes occur.
-func Index_Any_Runes(text string, set []rune) (offset int) {
-	for _, member := range set {
-		offset = strings.IndexRune(text, member)
-		if offset != -1 {
-			return offset
-		}
-	}
-	return -1
-}
-
-// Last_Index_Any_Runes returns the byte offset in text of the last occurrence of
-// the first rune in set — walking set in order — that appears, or -1 when none of
-// the set's runes occur.
-func Last_Index_Any_Runes(text string, set []rune) (offset int) {
-	for _, member := range set {
-		offset = strings.LastIndex(text, string(member))
-		if offset != -1 {
-			return offset
-		}
-	}
-	return -1
-}
-
-// The rest of this file restores the upstream github.com/gobwas/glob/util/runes
-// helpers verbatim in behavior. They operate on []rune (rune-indexed), unlike the
-// two string helpers above, and back the ported runes tests and benchmarks. Each
-// helper whose two operands share the []rune type takes a keyed *_Input so a call
-// site cannot silently transpose them.
-
-// Index_Rune returns the rune index of the first occurrence of needle in source,
-// or -1 when needle does not occur. Ports upstream runes.IndexRune.
-func Index_Rune(source []rune, needle rune) (index int) {
-	for source_index, candidate := range source {
-		if candidate == needle {
-			return source_index
-		}
-	}
-	return -1
-}
-
-// Index_Last_Rune returns the rune index of the last occurrence of needle in
-// source, or -1 when needle does not occur. Ports upstream runes.IndexLastRune.
-func Index_Last_Rune(source []rune, needle rune) (index int) {
-	for source_index := len(source) - 1; source_index >= 0; source_index-- {
-		if source[source_index] == needle {
-			return source_index
-		}
-	}
-	return -1
-}
-
-// Equal_Input pairs the two rune slices whose element-wise equality is tested.
-type Equal_Input struct {
-	// Left is one of the two slices compared; equality is symmetric in the two.
-	Left []rune
-	// Right is the other slice compared.
-	Right []rune
-}
-
-// Equal reports whether Left and Right hold the same runes in the same order.
-// Ports upstream runes.Equal.
-func Equal(input *Equal_Input) (equal bool) {
-	if len(input.Left) != len(input.Right) {
-		return false
-	}
-	for index := 0; index < len(input.Left); index++ {
-		if input.Left[index] != input.Right[index] {
-			return false
-		}
-	}
-	return true
-}
-
-// Index_Runes_Input pairs the rune slice searched with the subsequence sought.
-type Index_Runes_Input struct {
-	// Source is the rune slice searched.
-	Source []rune
-	// Needle is the contiguous rune subsequence sought within Source.
-	Needle []rune
-}
-
-// Index_Runes returns the rune index of the first occurrence of Needle within
-// Source, or -1 when Needle does not occur. Ports upstream runes.Index; the
-// _Runes suffix keeps it distinct from the matcher Index this package already
-// exports.
-func Index_Runes(input *Index_Runes_Input) (index int) {
-	source := input.Source
-	needle := input.Needle
-	source_count := len(source)
-	needle_count := len(needle)
-	switch {
-	case needle_count == 0:
-		return 0
-	case needle_count == 1:
-		return Index_Rune(source, needle[0])
-	case needle_count == source_count:
-		if Equal(&Equal_Input{Left: source, Right: needle}) {
-			return 0
-		}
-		return -1
-	case needle_count > source_count:
-		return -1
-	}
-	for start := 0; start < source_count && source_count-start >= needle_count; start++ {
-		matched := true
-		for element_index := 0; element_index < needle_count; element_index++ {
-			if source[start+element_index] != needle[element_index] {
-				matched = false
-				break
-			}
-		}
-		if matched {
-			return start
-		}
-	}
-	return -1
-}
-
-// Last_Index_Input pairs the rune slice searched with the subsequence sought
-// from the right.
-type Last_Index_Input struct {
-	// Source is the rune slice searched.
-	Source []rune
-	// Needle is the contiguous rune subsequence sought within Source.
-	Needle []rune
-}
-
-// Last_Index returns the rune index of the last occurrence of Needle within
-// Source, or -1 when Needle does not occur. An empty Needle reports the length of
-// Source. Ports upstream runes.LastIndex.
-func Last_Index(input *Last_Index_Input) (index int) {
-	source := input.Source
-	needle := input.Needle
-	source_count := len(source)
-	needle_count := len(needle)
-	switch {
-	case needle_count == 0:
-		if source_count == 0 {
-			return 0
-		}
-		return source_count
-	case needle_count == 1:
-		return Index_Last_Rune(source, needle[0])
-	case needle_count == source_count:
-		if Equal(&Equal_Input{Left: source, Right: needle}) {
-			return 0
-		}
-		return -1
-	case needle_count > source_count:
-		return -1
-	}
-	// Scan candidate windows right-to-left. window_start is the offset of the
-	// leftmost rune of the needle-width window ending at start; computing it once
-	// keeps the inner compare a forward walk (upstream folded the same offset into
-	// each subscript as i-(ln-y-1), which is identical to window_start+element).
-	for start := source_count - 1; start >= 0 && start >= needle_count; start-- {
-		window_start := start - needle_count + 1
-		matched := true
-		for element_index := 0; element_index < needle_count; element_index++ {
-			if source[window_start+element_index] != needle[element_index] {
-				matched = false
-				break
-			}
-		}
-		if matched {
-			return window_start
-		}
-	}
-	return -1
-}
-
-// Index_Any_Input pairs the rune slice searched with the set of runes sought.
-type Index_Any_Input struct {
-	// Source is the rune slice searched.
-	Source []rune
-	// Characters is the set of runes any one of which ends the search.
-	Characters []rune
-}
-
-// Index_Any returns the rune index of the first rune in Source that is also in
-// Characters, or -1 when none is present. Ports upstream runes.IndexAny.
-func Index_Any(input *Index_Any_Input) (index int) {
-	if len(input.Characters) == 0 {
-		return -1
-	}
-	for source_index, candidate := range input.Source {
-		for _, wanted := range input.Characters {
-			if candidate == wanted {
-				return source_index
-			}
-		}
-	}
-	return -1
-}
-
-// Contains_Input pairs the rune slice searched with the subsequence whose
-// presence is tested.
-type Contains_Input struct {
-	// Source is the rune slice searched.
-	Source []rune
-	// Needle is the contiguous rune subsequence whose presence is tested.
-	Needle []rune
-}
-
-// Contains reports whether Needle occurs within Source. Ports upstream
-// runes.Contains.
-func Contains(input *Contains_Input) (contained bool) {
-	return Index_Runes(&Index_Runes_Input{Source: input.Source, Needle: input.Needle}) >= 0
-}
-
-// Max returns the greatest rune in source, or 0 when source is empty. Ports
-// upstream runes.Max.
-func Max(source []rune) (maximum rune) {
-	for _, candidate := range source {
-		if candidate > maximum {
-			maximum = candidate
-		}
-	}
-	return maximum
-}
-
-// Min returns the least rune in source, or -1 when source is empty. Ports
-// upstream runes.Min.
-func Min(source []rune) (minimum rune) {
-	minimum = rune(-1)
-	for _, candidate := range source {
-		if minimum == -1 {
-			minimum = candidate
+		if !consume {
 			continue
 		}
-		if candidate < minimum {
-			minimum = candidate
+		target := instruction.Targets[INSTRUCTION_TARGET_NEXT]
+		if instruction.Kind[INSTRUCTION_KIND_FIELD] == INSTRUCTION_STAR {
+			target = pc
+		}
+		if instruction.Kind[INSTRUCTION_KIND_FIELD] == INSTRUCTION_SUPER_STAR {
+			target = pc
+		}
+		next_count = State_Count(state_add(
+			pattern, workspace, next, Append_State_Count(next_count),
+			target, Closure_Generation(generation),
+		))
+	}
+	return next_count
+}
+
+func state_add(
+	pattern Pattern,
+	workspace_state *Match_Workspace,
+	states Instruction_State_Storage,
+	state_count_value Append_State_Count,
+	start Instruction_PC,
+	generation Closure_Generation,
+) (state_count Nonempty_State_Count) {
+	defer func() {
+		Nonempty_State_Count_Invariants(state_count, "state_add.state_count")
+	}()
+	Pattern_Invariants(pattern, "state_add.pattern")
+	Match_Workspace_Invariants(workspace_state, "state_add.workspace_state")
+	Instruction_State_Storage_Invariants(states, "state_add.states")
+	Append_State_Count_Invariants(state_count_value, "state_add.state_count_value")
+	Instruction_PC_Invariants(start, "state_add.start")
+	Closure_Generation_Invariants(generation, "state_add.generation")
+	workspace := (*Match_Workspace)(workspace_state)
+	active_count := State_Count(state_count_value)
+	compiled := pattern.Workspace[PATTERN_WORKSPACE_FIELD]
+	instruction_count := int(
+		pattern.Control[PATTERN_CONTROL_INSTRUCTION_COUNT],
+	)
+	closure := Instruction_State_Storage(workspace.Closure[:])
+	closure_count := Closure_Count(bytes.SLICE_SIZE_MINIMUM)
+	closure_count = state_enqueue(
+		workspace, closure, Closure_Append_Count(closure_count), start, generation,
+		Instruction_Count(instruction_count),
+	)
+	for closure_count != bytes.SLICE_SIZE_MINIMUM {
+		closure_count--
+		pc := closure[closure_count]
+		instruction := instruction_load(compiled, pc)
+		switch instruction.Kind[INSTRUCTION_KIND_FIELD] {
+		case INSTRUCTION_SPLIT:
+			closure_count = state_enqueue(
+				workspace, closure, Closure_Append_Count(closure_count),
+				instruction.Targets[INSTRUCTION_TARGET_NEXT], generation,
+				Instruction_Count(instruction_count),
+			)
+			closure_count = state_enqueue(
+				workspace, closure, Closure_Append_Count(closure_count),
+				instruction.Targets[INSTRUCTION_TARGET_BRANCH], generation,
+				Instruction_Count(instruction_count),
+			)
+		case INSTRUCTION_STAR, INSTRUCTION_SUPER_STAR:
+			active_count = State_Count(state_append(
+				states, Append_State_Count(active_count), pc,
+			))
+			closure_count = state_enqueue(
+				workspace, closure, Closure_Append_Count(closure_count),
+				instruction.Targets[INSTRUCTION_TARGET_NEXT], generation,
+				Instruction_Count(instruction_count),
+			)
+		default:
+			active_count = State_Count(state_append(
+				states, Append_State_Count(active_count), pc,
+			))
 		}
 	}
-	return minimum
+	return Nonempty_State_Count(active_count)
 }
 
-// Has_Prefix_Input pairs a rune slice with the leading run tested against it.
-type Has_Prefix_Input struct {
-	// Source is the rune slice tested.
-	Source []rune
-	// Prefix is the leading run Source must begin with.
-	Prefix []rune
-}
-
-// Has_Prefix reports whether Source begins with Prefix. Ports upstream
-// runes.HasPrefix.
-func Has_Prefix(input *Has_Prefix_Input) (has bool) {
-	if len(input.Source) < len(input.Prefix) {
-		return false
+func state_enqueue(
+	workspace_state *Match_Workspace,
+	closure Instruction_State_Storage,
+	closure_count_value Closure_Append_Count,
+	pc Instruction_PC,
+	generation Closure_Generation,
+	instruction_count Instruction_Count,
+) (closure_count Closure_Count) {
+	defer func() {
+		Closure_Count_Invariants(closure_count, "state_enqueue.closure_count")
+	}()
+	Match_Workspace_Invariants(workspace_state, "state_enqueue.workspace_state")
+	Instruction_State_Storage_Invariants(closure, "state_enqueue.closure")
+	Closure_Append_Count_Invariants(
+		closure_count_value, "state_enqueue.closure_count_value",
+	)
+	Instruction_PC_Invariants(pc, "state_enqueue.pc")
+	Closure_Generation_Invariants(generation, "state_enqueue.generation")
+	Instruction_Count_Invariants(instruction_count, "state_enqueue.instruction_count")
+	workspace := (*Match_Workspace)(workspace_state)
+	closure_count = Closure_Count(closure_count_value)
+	invariant.Always(
+		int(pc) < int(instruction_count),
+		"Validated closure edge references one compiled instruction.",
+	)
+	if workspace.Seen[pc] == State_Generation(generation) {
+		return closure_count
 	}
-	head := input.Source[0:len(input.Prefix)]
-	return Equal(&Equal_Input{Left: head, Right: input.Prefix})
+	invariant.Always(
+		closure_count < Closure_Count(len(closure)),
+		"One closure generation cannot contain duplicate instructions.",
+	)
+	workspace.Seen[pc] = State_Generation(generation)
+	closure[closure_count] = pc
+	return closure_count + Closure_Count(utf8.CHARACTER_SIZE_MINIMUM)
 }
 
-// Has_Suffix_Input pairs a rune slice with the trailing run tested against it.
-type Has_Suffix_Input struct {
-	// Source is the rune slice tested.
-	Source []rune
-	// Suffix is the trailing run Source must end with.
-	Suffix []rune
+func state_append(
+	states Instruction_State_Storage,
+	state_count_value Append_State_Count,
+	pc Instruction_PC,
+) (state_count Nonempty_State_Count) {
+	defer func() {
+		Nonempty_State_Count_Invariants(state_count, "state_append.state_count")
+	}()
+	Instruction_State_Storage_Invariants(states, "state_append.states")
+	Append_State_Count_Invariants(state_count_value, "state_append.state_count_value")
+	Instruction_PC_Invariants(pc, "state_append.pc")
+	state_count = Nonempty_State_Count(state_count_value)
+	invariant.Always(
+		state_count < Nonempty_State_Count(len(states)),
+		"One active generation cannot contain duplicate instructions.",
+	)
+	states[state_count] = pc
+	return state_count + Nonempty_State_Count(utf8.CHARACTER_SIZE_MINIMUM)
 }
 
-// Has_Suffix reports whether Source ends with Suffix. Ports upstream
-// runes.HasSuffix.
-func Has_Suffix(input *Has_Suffix_Input) (has bool) {
-	if len(input.Source) < len(input.Suffix) {
-		return false
+func separator_contains(
+	pattern Pattern,
+	character utf8.Decoded_Character,
+) (contains Contains) {
+	defer func() { Contains_Invariants(contains, "separator_contains.contains") }()
+	Pattern_Invariants(pattern, "separator_contains.pattern")
+	utf8.Decoded_Character_Invariants(character, "separator_contains.character")
+	workspace := pattern.Workspace[PATTERN_WORKSPACE_FIELD]
+	count := int(pattern.Control[PATTERN_CONTROL_SEPARATOR_COUNT])
+	for index := bytes.SLICE_SIZE_MINIMUM; index < count; index++ {
+		if rune(workspace.Separators[index]) == rune(character) {
+			return true
+		}
 	}
-	tail := input.Source[len(input.Source)-len(input.Suffix):]
-	return Equal(&Equal_Input{Left: tail, Right: input.Suffix})
+	return false
+}
+
+func class_contains(
+	workspace_state *Compile_Workspace,
+	instruction Instruction,
+	character utf8.Decoded_Character,
+) (contains Contains) {
+	defer func() { Contains_Invariants(contains, "class_contains.contains") }()
+	Compile_Workspace_Invariants(workspace_state, "class_contains.workspace_state")
+	Instruction_Invariants(instruction, "class_contains.instruction")
+	utf8.Decoded_Character_Invariants(character, "class_contains.character")
+	workspace := (*Compile_Workspace)(workspace_state)
+	index := int(instruction.Class[INSTRUCTION_CLASS_RANGE_INDEX])
+	count := int(instruction.Class[INSTRUCTION_CLASS_RANGE_COUNT])
+	matched := false
+	for range_index := index; range_index < index+count; range_index++ {
+		range_value := workspace.Ranges[range_index]
+		if rune(range_value.Low) <= rune(character) {
+			if rune(character) <= rune(range_value.High) {
+				matched = true
+				break
+			}
+		}
+	}
+	if instruction.Class[INSTRUCTION_CLASS_NEGATED] == uint16(CONTROL_TRUE) {
+		matched = !matched
+	}
+	return Contains(matched)
 }

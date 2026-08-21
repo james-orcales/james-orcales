@@ -1,45 +1,37 @@
 
-# Compile Builds A Matcher
+# Compile
 
-Compile turns a pattern into a Pattern whose Match reports whether a string
-satisfies the pattern; a plain pattern matches only itself.
+Compile validates one bounded pattern and emits one immutable NFA into caller workspace.
 
-# Wildcards Match Runs
+# Wildcards
 
-With no separators `*`, `**`, and `?` all range over any characters — `*` and
-`**` over any run, `?` over exactly one.
+`*` consumes any run outside separators, `**` consumes any run, and `?` consumes one decoded
+character outside separators.
 
-# Separators Bound Wildcards
+# Separators
 
-Given a separator rune, `*` and `?` refuse to cross it, while `**` still spans it,
-so path-like patterns segment on the separator.
+Caller separators bound `*` and `?` without changing literal or `**` matching.
 
-# Character Classes Match Sets
+# Classes
 
-A `[...]` class matches one member or one character in a `lo-hi` range, and a
-leading `!` negates the class.
+Character classes contain decoded members and inclusive ranges. Leading `!` negates membership.
 
-# Alternatives Match Any Branch
+# Alternatives
 
-A `{a,b,c}` group matches when the surrounding pattern matches with any one branch
-substituted in.
+Brace groups select one branch. Explicit compiler and matcher stacks bound nesting without
+recursion.
 
-# Escaping Matches Literally
+# Escape
 
-A backslash before a metacharacter matches that character literally, so `\*`
-matches a single asterisk.
+Backslash quotes one metacharacter. Quote_Meta_Into stages complete escaped output in caller
+destination.
 
-# Must Compile Panics On Bad Pattern
+# Bounds
 
-Must_Compile returns the Pattern for a valid pattern and panics for one Compile
-would reject.
+Pattern, text, separators, syntax nodes, NFA instructions, active states, and nesting have
+formula-derived limits. Hostile input returns scalar status before unsafe access.
 
-# Quote Meta Escapes Metacharacters
+# Allocation
 
-Quote_Meta backslash-escapes every metacharacter, so compiling its result matches
-the original text literally.
-
-# Deep Nesting Is Rejected
-
-A pattern whose `{...}` nesting exceeds PATTERN_DEPTH_MAX is rejected with an
-error rather than overflowing the stack.
+Compile, Match, and Quote_Meta_Into allocate zero heap bytes. Caller owns compile and match
+workspaces.
