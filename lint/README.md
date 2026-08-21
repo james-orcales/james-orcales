@@ -222,6 +222,10 @@ Instrumentation packages are always exempt from assertion mandate. Their exact
 `instrumentation_packages` entry must not be repeated in
 `opt_out_assertion_mandate_packages`; broader assertion opt-out globs may cover them.
 
+Composition packages remain under assertion mandate, but need no `TestMain` calling
+`aver.Run_Test_Main`. Their tests enforce assertions without registering coverage obligations,
+because ambient sources cannot supply deterministic coverage. Pure library suites still register.
+
 ## Resolving diagnostics
 
 ### `The stdlib import … is impure` / `The stdlib call … is impure`

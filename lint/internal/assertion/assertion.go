@@ -2759,13 +2759,9 @@ func function_form(requirement Helper_Requirement) (form string) {
 	return helper_identity_name(requirement.Expected) + "(" + requirement.Subject + ", ...)"
 }
 
-// Flags every non-exempt, non-main package whose test binary fails to wire the
-// invariant coverage recorder. aver.Run_Test_Main is the canonical TestMain
-// body; without it a package's mandated _Invariants bundles run but their
-// Sometimes axes and Always reachability are never verified — the discipline
-// silently evaporates. Package-level because the TestMain may live in any of the
-// directory's test files, so the whole directory is judged together. Shares the
-// type-invariant rule's opt-out.
+// Pure shared libraries need coverage witnesses as well as enforced assertions. TestMain can
+// live in any test file, so registration is checked once per directory. Composition keeps
+// assertion mandates but cannot promise deterministic witnesses from ambient state.
 func check_recorder_test_main(
 	parsed_files []Parsed_File, components *Component_Index, exemptions *Exemptions,
 ) (diags []Diagnostic) {
@@ -2785,6 +2781,10 @@ func check_recorder_test_main(
 			continue
 		}
 		if !components.Components[component_index_number].Is_Shared_Library {
+			continue
+		}
+		// Ambient state cannot promise deterministic coverage witnesses.
+		if source.Is_Composition_Tier(Parsed_File{Path: group.Any_Path}, components) {
 			continue
 		}
 		diags = append(diags, recorder_group_diagnostics(group)...)

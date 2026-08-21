@@ -3081,6 +3081,46 @@ func Test_Recorder_Registration_Wired_Passes(t *testing.T) {
 	}
 }
 
+// Composition keeps assertion duties but has no deterministic coverage contract.
+func Test_Recorder_Registration_Composition(t *testing.T) {
+	t.Parallel()
+	for _, directory := range []string{
+		"pkg/foo/default", "pkg/foo/v2/default", "pkg/foo/host",
+	} {
+		for _, test_source := range []string{
+			"",
+			"package foo_test\n",
+			"package foo_test\nimport \"testing\"\n" +
+				"func TestMain(m *testing.M) { m.Run() }\n",
+		} {
+			files := map[string][]byte{
+				"pkg/foo/foo.go": []byte("package foo\n"),
+				directory + "/foo.go": []byte("package foo\n" +
+					"type Widget int\n"),
+			}
+			if test_source != "" {
+				files[directory+"/foo_test.go"] = []byte(test_source)
+			}
+			diags := recorder_self_diagnostics(t, files, nil)
+			for _, diag := range diags {
+				if strings.Contains(diag.Position.Filename, directory+"/") {
+					if strings.Contains(diag.Message, "Run_Test_Main") {
+						t.Fatalf("registration required: %s", diag.Message)
+					}
+				}
+			}
+			if !specification_diagnosed(diags, "Declare Widget_Invariants") {
+				t.Fatal("composition type lost assertion mandate")
+			}
+			if !specification_diagnosed(diags,
+				"The directory pkg/foo has no TestMain that calls "+
+					"aver.Run_Test_Main") {
+				t.Fatal("pure library lost recorder mandate")
+			}
+		}
+	}
+}
+
 // Test_Recorder_Registration_Main_Exempt verifies a main package, which holds no
 // testable invariant logic, is exempt even without tests.
 func Test_Recorder_Registration_Main_Exempt(t *testing.T) {

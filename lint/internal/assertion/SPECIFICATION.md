@@ -126,9 +126,9 @@ when both subjects have the same type and require the same helper.
 
 ### Recorder Registration
 
-A non-exempt shared-library package's TestMain body is exactly `aver.Run_Test_Main(m)`. Thus,
-the suite registers the coverage recorder. A binary component uses its simulation. Any other body,
-or no TestMain, is banned.
+A non-exempt pure shared-library package's TestMain body is exactly `aver.Run_Test_Main(m)`.
+Composition packages keep assertion mandates but need no TestMain or coverage registration:
+ambient sources cannot supply deterministic coverage. A binary component uses its simulation.
 
 ### Raw Types
 
