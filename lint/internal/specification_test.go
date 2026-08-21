@@ -585,6 +585,12 @@ func Test_Source_And_Test_Bans_Banned_Imports(t *testing.T) {
 	specification_banned_import_boundaries(t)
 }
 
+// Test_Source_And_Test_Bans_Aver_Imports verifies aver's subtree imports any stdlib package.
+func Test_Source_And_Test_Bans_Aver_Imports(t *testing.T) {
+	t.Parallel()
+	specification_aver_imports_all_stdlib(t)
+}
+
 // Test_Source_And_Test_Bans_Import_Aliases reserves aliases for package-name collisions.
 func Test_Source_And_Test_Bans_Import_Aliases(t *testing.T) {
 	t.Parallel()
@@ -2336,6 +2342,43 @@ func specification_os_import_boundary(t *testing.T) {
 	specification_process_gateway_boundary(t)
 }
 
+// Every shared port depends on aver, so aver cannot route through any of them without an import
+// cycle. Each stdlib gate thus stops at aver's subtree, process and signal gateways included.
+func specification_aver_imports_all_stdlib(t *testing.T) {
+	t.Helper()
+	for _, import_path := range []string{
+		"bufio", "bytes", "context", "crypto/rand", "crypto/sha256", "crypto/tls", "flag",
+		"io", "math/rand", "net/http", "os", "os/exec", "os/signal", "os/user", "runtime",
+		"strconv", "strings", "sync", "sync/atomic", "syscall", "time",
+	} {
+		for _, filename := range []string{
+			"shared/sim/aver/rule.go",
+			"shared/sim/aver/default/rule.go",
+		} {
+			files := map[string][]byte{
+				filename: []byte(
+					"package aver\n\nimport \"" + import_path + "\"\n"),
+			}
+			for _, diagnostic := range specification_self_diagnostics(t, files) {
+				flagged := diagnostic.Name == "stdlib-time"
+				if strings.Contains(diagnostic.Message, "\""+import_path+"\"") {
+					flagged = true
+				}
+				if flagged {
+					t.Errorf("%q must allow %q: %s",
+						filename, import_path, diagnostic.Message)
+				}
+			}
+		}
+	}
+	named_like := map[string][]byte{
+		"shared/sim/average/rule.go": []byte("package average\n\nimport \"syscall\"\n"),
+	}
+	if !specification_flags(t, named_like, "Banned import") {
+		t.Fatal("directory merely named like aver must stay banned")
+	}
+}
+
 // Process bindings reach the rest of the tree only through injection, so no exemption the
 // wider ban grants — main, tests, invariant, shared/os — may widen who imports them.
 func specification_process_gateway_boundary(t *testing.T) {
@@ -2358,7 +2401,6 @@ func specification_process_gateway_boundary(t *testing.T) {
 		for _, filename := range []string{
 			"shared/os/rule.go",
 			"shared/os/default_extra/rule.go",
-			"shared/sim/aver/rule.go",
 			"shared/sim/time/rule.go",
 			"shared/sim/io/default/rule.go",
 			"pkg/shared/os/default/rule.go",
@@ -2390,7 +2432,6 @@ func specification_signal_gateway_boundary(t *testing.T) {
 		}
 	}
 	for _, filename := range []string{
-		"shared/sim/aver/rule.go",
 		"shared/sim/nbio/rule.go",
 		"shared/os/rule.go",
 		"shared/os/default/rule.go",

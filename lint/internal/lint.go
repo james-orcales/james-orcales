@@ -5342,16 +5342,12 @@ func check_no_banned_stdlib_import(
 	file_set *token.FileSet, file *ast.File, _ []byte,
 ) (diags []Diagnostic) {
 	directory := ""
-	invariant_directory := false
 	token_file := file_set.File(file.Pos())
 	if token_file != nil {
 		directory = path.Dir(path.Clean(token_file.Name()))
-		if directory == "shared/sim/aver" {
-			invariant_directory = true
-		}
-		if strings.Has_Prefix(directory, "shared/sim/aver/") {
-			invariant_directory = true
-		}
+	}
+	if directory_within(directory, AVER_DIRECTORY) {
+		return nil
 	}
 	for _, import_specification := range file.Imports {
 		import_path, err := unquote_literal(import_specification.Path.Value)
@@ -5365,21 +5361,15 @@ func check_no_banned_stdlib_import(
 		// Signal registration mutates process-global notifier state, so only the tier
 		// that drains the notifier owns it: os/signal delivers on a channel no kernel
 		// poll wakes for, thus the loop backend has to read that channel between polls.
-		// Invariant's cycle exemption cannot widen ownership.
 		if import_path == "os/signal" {
 			if directory_within(directory, SIGNAL_GATEWAY_DIRECTORY) {
 				continue
 			}
 		} else if process_binding_import(import_path) {
-			// Process bindings have exactly three owners; invariant's cycle exemption
-			// cannot widen them.
 			if directory_within_process_gateway(directory) {
 				continue
 			}
 		} else {
-			if invariant_directory {
-				continue
-			}
 			// Simulation backend implements shared OS boundary, so replacement needs
 			// family it wraps.
 			if family == "os" {
@@ -5415,6 +5405,16 @@ func directory_within_process_gateway(directory string) (within bool) {
 		}
 	}
 	return false
+}
+
+// AVER_DIRECTORY roots the assertion library. Every shared port depends on aver, so routing
+// aver back through any port closes an import cycle; aver thus imports stdlib directly, and
+// every stdlib import gate stops at this subtree.
+const AVER_DIRECTORY = "shared/sim/aver"
+
+// Reports whether a file sits in aver's subtree.
+func file_within_aver(file_path string) (within bool) {
+	return directory_within(path.Dir(path.Clean(file_path)), AVER_DIRECTORY)
 }
 
 // SIGNAL_GATEWAY_DIRECTORY is the loop backend, which owns signal registration because it
@@ -9145,8 +9145,12 @@ func check_no_impure_stdlib_per_file(
 		"See lint/README.md for the resolutions."
 	const CALL_MESSAGE = "The stdlib call %s.%s is impure. " +
 		"See lint/README.md for the resolutions."
+	aver := file_within_aver(file_set.File(file.Pos()).Name())
 	for _, implementation := range file.Imports {
 		path := strings.Trim(implementation.Path.Value, `"`)
+		if aver {
+			continue
+		}
 		if !is_impure_hard_import(path) {
 			continue
 		}
@@ -10022,9 +10026,13 @@ func check_deterministic_imports(
 	instrumentation []string,
 ) (diags []Diagnostic) {
 
+	aver := file_within_aver(file_set.File(file.Pos()).Name())
 	for _, implementation := range file.Imports {
 		import_path := strings.Trim(implementation.Path.Value, `"`)
 		if is_nondeterministic_import(import_path) {
+			if aver {
+				continue
+			}
 			diags = append(diags, Diagnostic{
 				Position: file_set.Position(implementation.Pos()),
 				Name:     "deterministic",
@@ -10125,6 +10133,9 @@ func check_time_import_gateway(
 			continue
 		}
 		if path.Dir(pf.Path) == gateway {
+			continue
+		}
+		if file_within_aver(pf.Path) {
 			continue
 		}
 		for _, implementation := range pf.File.Imports {
@@ -10315,7 +10326,9 @@ func check_io_gateway(
 		if source.Path_Matches_Glob(pf.Path, syscall_gateways) {
 			exempt_import = "syscall"
 		}
-		diags = append(diags, io_gateway_import_diagnostics(pf, exempt_import)...)
+		if !file_within_aver(pf.Path) {
+			diags = append(diags, io_gateway_import_diagnostics(pf, exempt_import)...)
+		}
 		diags = append(diags, io_gateway_call_diagnostics(pf)...)
 	}
 	return diags

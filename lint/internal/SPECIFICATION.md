@@ -181,14 +181,19 @@ a library is being imported solely for it's global side-effects, an implicit con
 
 ### Banned Imports
 
-Outside `shared/sim/aver/**`, banned stdlib families are archive, bytes, compress, container,
-encoding, flag, io, math, os, rand, slices, strconv, strings, unicode, and uuid. Exact shared
-counterparts under crypto, database, go, hash, net, path, sort, and text are also banned.
+Banned stdlib families are archive, bytes, compress, container, encoding, flag, io, math, os,
+rand, slices, strconv, strings, unicode, and uuid. Exact shared counterparts under crypto,
+database, go, hash, net, path, sort, and text are also banned.
+
+### Aver Imports
+
+`shared/sim/aver/**` imports any stdlib package; every shared port depends on aver, so a port
+closes an import cycle. No stdlib import rule holds there, gateways and determinism included.
 
 ### Process Gateways
 
 Only `shared/os/default`, `shared/sim/nbio/default`, and `shared/sim/time/default` import `os` or
-`syscall`. No other file may, package main, tests, and `shared/sim/aver/**` included.
+`syscall`. No other file may outside `shared/sim/aver/**`, package main and tests included.
 
 ### Import Aliases
 
