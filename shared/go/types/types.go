@@ -1490,8 +1490,8 @@ func find_name(subject Module_Handle, owner Package_Index) (symbol Symbol_Index)
 	current := subject.Buckets[subject.Counts[COUNT_BUCKET]]
 	for current != SYMBOL_ABSENT {
 		matches := subject.Symbols[current].Owner == owner
-		held := string(subject.Symbols[current].Name)
-		if held != string(subject.Names.Value) {
+		// Compare in place: a named string copy of a long name would allocate.
+		if string(subject.Symbols[current].Name) != string(subject.Names.Value) {
 			matches = false
 		}
 		if matches {
@@ -2443,8 +2443,7 @@ func resolve_name(subject Module_Handle, tree ast.Parse_State_Handle) {
 	}
 	for slot := range int(subject.Counts[COUNT_PARAMETER]) {
 		parameter := subject.Parameters[slot]
-		held := string(subject.Symbols[parameter].Name)
-		if held == string(subject.Names.Value) {
+		if string(subject.Symbols[parameter].Name) == string(subject.Names.Value) {
 			subject.Counts[COUNT_RESULT] = Count(subject.Symbols[parameter].Type)
 			return
 		}
@@ -2505,8 +2504,7 @@ func resolve_qualifier(subject Module_Handle, tree ast.Parse_State_Handle) (ok B
 		if subject.Symbols[symbol].Kind != SYMBOL_IMPORT {
 			continue
 		}
-		held := string(subject.Symbols[symbol].Name)
-		if held != string(subject.Names.Value) {
+		if string(subject.Symbols[symbol].Name) != string(subject.Names.Value) {
 			continue
 		}
 		if subject.Symbols[symbol].Target == Target_Package(PACKAGE_UNIVERSE) {
@@ -4122,8 +4120,7 @@ func package_qualifier(subject Module_Handle) (yes Boolean) {
 		if subject.Symbols[symbol].Kind != SYMBOL_IMPORT {
 			continue
 		}
-		held := string(subject.Symbols[symbol].Name)
-		if held != string(subject.Names.Bound) {
+		if string(subject.Symbols[symbol].Name) != string(subject.Names.Bound) {
 			continue
 		}
 		subject.Counts[COUNT_TARGET] = Count(subject.Symbols[symbol].Target)
@@ -4177,8 +4174,7 @@ func read_chain(subject Module_Handle) {
 	current := Member_Index(subject.Counts[COUNT_CHAIN])
 	for current != MEMBER_ABSENT {
 		symbol := Symbol_Index(subject.Members[current].Symbol)
-		held := string(subject.Symbols[symbol].Name)
-		if held == string(subject.Names.Value) {
+		if string(subject.Symbols[symbol].Name) == string(subject.Names.Value) {
 			subject.Counts[COUNT_RESULT] = Count(subject.Members[current].Type)
 			return
 		}
