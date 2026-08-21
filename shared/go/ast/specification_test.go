@@ -129,11 +129,6 @@ func Test_Refused_Syntax_Constant_Case(t *testing.T) {
 	test_constant_case(t)
 }
 
-// Test_Refused_Syntax_Naked_Returns binds the Naked Returns leaf before fixture declarations.
-func Test_Refused_Syntax_Naked_Returns(t *testing.T) {
-	test_naked_returns(t)
-}
-
 // Test_Refused_Syntax_Bare_Loops binds the Bare Loops leaf before fixture declarations.
 func Test_Refused_Syntax_Bare_Loops(t *testing.T) {
 	test_bare_loops(t)
@@ -252,7 +247,7 @@ const TEST_NODE_SIZE = 20
 
 const TEST_TOKEN_SIZE = 12
 
-const TEST_STATE_SIZE = 4197248
+const TEST_STATE_SIZE = 4197244
 
 type allocation_fixture struct {
 	Root  ast.Root
@@ -425,6 +420,14 @@ func test_statements(t *testing.T) {
 	accepts(t, state, statement_source(body, "c <- 1"), []ast.Node_Kind{ast.NODE_SEND})
 	accepts(t, state, statement_source(body, "return a"), []ast.Node_Kind{ast.NODE_RETURN})
 	accepts(t, state, statement_source(body, "return"), []ast.Node_Kind{ast.NODE_RETURN})
+	// A return that names no value parses wherever it stands, because the canonical form
+	// writes the values the signature names and a parse that refused one writes nothing.
+	accepts(t, state, TEST_HEAD+"func f() (a A) {\nreturn\n}\n",
+		[]ast.Node_Kind{ast.NODE_RETURN})
+	accepts(t, state, TEST_HEAD+"func f() (a A, b B) {\nif c {\nreturn\n}\nreturn a, b\n}\n",
+		[]ast.Node_Kind{ast.NODE_RETURN})
+	accepts(t, state, TEST_HEAD+"func f() {\ng(func() (a A) {\nreturn\n})\n}\n",
+		[]ast.Node_Kind{ast.NODE_FUNCTION_LITERAL})
 	accepts(t, state, statement_source(body, "if a {\nb()\n} else {\nc()\n}"),
 		[]ast.Node_Kind{ast.NODE_IF})
 	accepts(t, state, statement_source(body, "if a := f(); a {\nb()\n} else if c {\n}"),
@@ -622,30 +625,6 @@ func test_constant_case(t *testing.T) {
 	refuses(t, state, TEST_HEAD+"func f() {\nconst bad = 1\n_ = bad\n}\n", uppercase)
 	accepts(t, state, TEST_HEAD+"var bufferSize = 1\n",
 		[]ast.Node_Kind{ast.NODE_VARIABLE})
-}
-
-func test_naked_returns(t *testing.T) {
-	state := new(ast.Parse_State)
-	naked := ast.FAILURE_NAKED_RETURN
-	for _, one := range []string{
-		"func f() (a A) {\nreturn\n}\n",
-		"func f() A {\nreturn\n}\n",
-		"func f() (a A, b B) {\nreturn\n}\n",
-		"func f() (a A) {\nif b {\nreturn\n}\nreturn a\n}\n",
-		"func f() {\ng(func() (a A) {\nreturn\n})\n}\n",
-		"func (s *S) M() (a A) {\nreturn\n}\n",
-		"func f() (a A) {\nreturn // done\n}\n",
-	} {
-		refuses(t, state, TEST_HEAD+one, naked)
-	}
-	accepts(t, state, TEST_HEAD+"func f() {\nreturn\n}\n",
-		[]ast.Node_Kind{ast.NODE_RETURN})
-	accepts(t, state, TEST_HEAD+"func f() (a A) {\nreturn a\n}\n",
-		[]ast.Node_Kind{ast.NODE_RESULT})
-	accepts(t, state, TEST_HEAD+"func f() {\nif a {\nreturn\n}\nb()\n}\n",
-		[]ast.Node_Kind{ast.NODE_RETURN})
-	accepts(t, state, TEST_HEAD+"func f() (a A) {\ng(func() {\nreturn\n})\nreturn a\n}\n",
-		[]ast.Node_Kind{ast.NODE_FUNCTION_LITERAL})
 }
 
 func test_bare_loops(t *testing.T) {

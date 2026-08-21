@@ -132,12 +132,6 @@ A constant name that is no uppercase word, or run of uppercase words joined by s
 underscores, fails with FAILURE_CONSTANT_CASE. The rule binds a constant at any scope, and a
 variable name answers to none of it.
 
-### Naked Returns
-
-A return that names no value fails with FAILURE_NAKED_RETURN when its function declares a result.
-A function that declares none owes nothing, thus a bare return there parses, and a function
-literal answers for its own signature and never for the one around it.
-
 ### Bare Loops
 
 A for that no clause constrains fails with FAILURE_BARE_LOOP: a bare for, a three-clause for

@@ -85,7 +85,7 @@ const FLAG_PLAIN_BRACE = 1
 const FLAG_TYPE_ASSERTION = 2
 
 // FLAG_COUNT is the slot count of the flag array.
-const FLAG_COUNT = 4
+const FLAG_COUNT = 3
 
 // PRECEDENCE_NONE marks a token that binds no binary expression.
 const PRECEDENCE_NONE Precedence = 0
@@ -170,30 +170,27 @@ const FAILURE_BLANK_IMPORT Failure_Code = 9
 // FAILURE_CONSTANT_CASE marks a constant name that is no run of uppercase words.
 const FAILURE_CONSTANT_CASE Failure_Code = 10
 
-// FAILURE_NAKED_RETURN marks a return that names none of the values its function declares.
-const FAILURE_NAKED_RETURN Failure_Code = 11
-
 // FAILURE_BARE_LOOP marks a for that no clause constrains, which runs forever.
-const FAILURE_BARE_LOOP Failure_Code = 12
+const FAILURE_BARE_LOOP Failure_Code = 11
 
 // FAILURE_UNNAMED_RESULT marks a signature result that carries no name.
-const FAILURE_UNNAMED_RESULT Failure_Code = 13
+const FAILURE_UNNAMED_RESULT Failure_Code = 12
 
 // FAILURE_TYPE_ALIAS marks a type declaration bound by the assignment sign, which gives one
 // type a second name instead of declaring a type of its own.
-const FAILURE_TYPE_ALIAS Failure_Code = 14
+const FAILURE_TYPE_ALIAS Failure_Code = 13
 
 // FAILURE_PACKAGE_CLAUSE marks a file that opens with anything but the package keyword.
-const FAILURE_PACKAGE_CLAUSE Failure_Code = 15
+const FAILURE_PACKAGE_CLAUSE Failure_Code = 14
 
 // FAILURE_TOKEN_COUNT marks a source holding more tokens than one run admits.
-const FAILURE_TOKEN_COUNT Failure_Code = 16
+const FAILURE_TOKEN_COUNT Failure_Code = 15
 
 // FAILURE_NODE_COUNT marks a source holding more syntax than the arena admits.
-const FAILURE_NODE_COUNT Failure_Code = 17
+const FAILURE_NODE_COUNT Failure_Code = 16
 
 // FAILURE_NESTING_DEPTH marks a source nesting deeper than one parse admits.
-const FAILURE_NESTING_DEPTH Failure_Code = 18
+const FAILURE_NESTING_DEPTH Failure_Code = 17
 
 // FAILURE_CODE_MINIMUM is the clean parse, the smallest code.
 const FAILURE_CODE_MINIMUM = uint8(FAILURE_NONE)
@@ -479,10 +476,6 @@ const GROUP_KIND_PARAMETER = uint8(NODE_PARAMETER)
 
 // GROUP_KIND_RESULT is the kind of a name a signature sends back.
 const GROUP_KIND_RESULT = uint8(NODE_RESULT)
-
-// FLAG_RESULTS holds whether the open function declares a result, which is what says whether a
-// bare return names everything it owes.
-const FLAG_RESULTS = 3
 
 // VALUE_KIND_CONSTANT is the kind of a const declaration.
 const VALUE_KIND_CONSTANT = uint8(NODE_CONSTANT)
@@ -861,7 +854,6 @@ func reset(subject *Parse_State) {
 	subject.Earlier_Children[0] = INDEX_ABSENT
 	subject.Flags[FLAG_FAILED] = false
 	subject.Flags[FLAG_PLAIN_BRACE] = false
-	subject.Flags[FLAG_RESULTS] = false
 	subject.Nodes[INDEX_ABSENT] = Node{
 		Kind:        NODE_ERROR,
 		Token:       0,
@@ -1344,12 +1336,9 @@ func parse_function_declaration(subject *Parse_State) {
 		parse_type_parameters(subject)
 	}
 	parse_signature(subject)
-	results := subject.Flags[FLAG_RESULTS]
-	subject.Flags[FLAG_RESULTS] = signature_returns(subject)
 	if at(subject) == token.KIND_BRACE_LEFT {
 		parse_block(subject)
 	}
-	subject.Flags[FLAG_RESULTS] = results
 	close_node(subject)
 	end_line(subject)
 	return
@@ -1864,20 +1853,9 @@ func parse_label(subject *Parse_State) {
 // Parses one return statement and its results.
 func parse_return(subject *Parse_State) {
 	Parse_State_Invariants(subject, "parse_return.subject")
+	// A return that names no value parses and holds no child, because the canonical form
+	// writes the values the signature names and a parse that refused one writes nothing.
 	open_node(subject, NODE_RETURN)
-	naked := false
-	switch after(subject) {
-	case token.KIND_SEMICOLON, token.KIND_BRACE_RIGHT, token.KIND_END_OF_FILE,
-		token.KIND_COMMENT:
-		naked = true
-	}
-	if naked {
-		if bool(subject.Flags[FLAG_RESULTS]) {
-			reject(subject, Reject_Cause(FAILURE_NAKED_RETURN))
-			close_node(subject)
-			return
-		}
-	}
 	advance(subject)
 	switch at(subject) {
 	case token.KIND_SEMICOLON, token.KIND_BRACE_RIGHT, token.KIND_END_OF_FILE,
@@ -2352,15 +2330,12 @@ func parse_function_literal(subject *Parse_State) {
 	open_node(subject, NODE_FUNCTION_LITERAL)
 	advance(subject)
 	parse_signature(subject)
-	results := subject.Flags[FLAG_RESULTS]
-	subject.Flags[FLAG_RESULTS] = signature_returns(subject)
 	if at(subject) == token.KIND_BRACE_LEFT {
 		plain := subject.Flags[FLAG_PLAIN_BRACE]
 		subject.Flags[FLAG_PLAIN_BRACE] = false
 		parse_block(subject)
 		subject.Flags[FLAG_PLAIN_BRACE] = plain
 	}
-	subject.Flags[FLAG_RESULTS] = results
 	close_node(subject)
 	return
 }
@@ -2615,8 +2590,6 @@ func Failure_Message(code Failure_Code) (text Message) {
 		return "Call the package by name; a blank import hides an effect."
 	case FAILURE_CONSTANT_CASE:
 		return "Spell the constant name in SCREAMING_SNAKE_CASE."
-	case FAILURE_NAKED_RETURN:
-		return "Name the values this return sends back."
 	case FAILURE_BARE_LOOP:
 		return "Give the loop a condition, a range, or a post clause."
 	case FAILURE_UNNAMED_RESULT:
@@ -2938,29 +2911,6 @@ func name_constant_case(subject *Parse_State, source token.Source) {
 
 // Reports whether the open function declares a result. A bare return names everything it owes
 // only when nothing is owed, thus this is what tells a naked return from a plain one.
-func signature_returns(subject *Parse_State) (yes Boolean) {
-	defer func() { Boolean_Invariants(yes, "signature_returns.yes") }()
-	Parse_State_Invariants(subject, "signature_returns.subject")
-	depth := subject.Node_Cursors[CURSOR_DEPTH]
-	if depth == 0 {
-		return false
-	}
-	if int(depth) > DEPTH_MAXIMUM {
-		return false
-	}
-	child := Index(subject.Nodes[subject.Parents[depth-1]].First_Child)
-	for range TOKEN_COUNT_MAXIMUM {
-		if child == INDEX_ABSENT {
-			return false
-		}
-		if subject.Nodes[child].Kind == NODE_RESULT {
-			return true
-		}
-		child = Index(subject.Nodes[child].Next)
-	}
-	return false
-}
-
 // Names a loop that no clause constrains: a bare for, a three-clause for with every clause
 // empty, and a for whose only condition is the true literal. A source that means to run forever
 // says so with a range, which is a form of its own and reads as the assertion it is.
