@@ -10,6 +10,11 @@ The signed limits INTEGER_8_MINIMUM through INTEGER_64_MAXIMUM and the unsigned 
 WORD_8_MINIMUM through WORD_64_MAXIMUM give the bounds of each machine width. Every
 package above names these rather than repeating them.
 
+# Decimal Digit Bound
+
+DECIMAL_DIGIT_BINARY_LOGARITHM_SCALE and DECIMAL_DIGIT_BINARY_LOGARITHM_CEILING provide one
+fixed-point upper bound for log10(2). Binary-width packages reuse it to derive decimal widths.
+
 # Byte Units
 
 KILOBYTE_BYTES through EXABYTE_BYTES give the SI decimal byte units as powers of 1000.

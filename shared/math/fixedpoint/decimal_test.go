@@ -17,7 +17,7 @@ func Test_Decimal_Text(t *testing.T) {
 	t.Parallel()
 	for _, one := range []struct {
 		Value Unsigned_Value
-		Want  Decimal_Digits
+		Want  string
 	}{
 		{Value: 0, Want: "0"},
 		{Value: 1, Want: "1"},
@@ -26,9 +26,12 @@ func Test_Decimal_Text(t *testing.T) {
 		{Value: 10, Want: "10"},
 		{Value: 18446744073709551615, Want: LARGEST_UNSIGNED_TEXT},
 	} {
-		got := decimal_text(one.Value)
+		var storage [DECIMAL_TEXT_SIZE_MAXIMUM]byte
+		count := decimal_digit_count(one.Value)
+		decimal_into(storage[:count], one.Value)
+		got := string(storage[:count])
 		if got != one.Want {
-			t.Fatalf("decimal_text(%d) = %q, want %q", one.Value, got, one.Want)
+			t.Fatalf("decimal_into(%d) = %q, want %q", one.Value, got, one.Want)
 		}
 	}
 }
@@ -71,10 +74,13 @@ func Test_Decimal_Value(t *testing.T) {
 func Test_Decimal_Round_Trip(t *testing.T) {
 	t.Parallel()
 	for _, value := range []Unsigned_Value{0, 1, 2, 9, 10, 9223372036854775807} {
-		text := decimal_text(value)
+		var storage [DECIMAL_TEXT_SIZE_MAXIMUM]byte
+		count := decimal_digit_count(value)
+		decimal_into(storage[:count], value)
+		text := string(storage[:count])
 		returned, valid := decimal_value(Decimal_Text(text))
 		if !valid {
-			t.Fatalf("decimal_value rejected the text decimal_text wrote for %d", value)
+			t.Fatalf("decimal_value rejected the text decimal_into wrote for %d", value)
 		}
 		if Unsigned_Value(returned) != value {
 			t.Fatalf("the round trip of %d gave %d", value, returned)

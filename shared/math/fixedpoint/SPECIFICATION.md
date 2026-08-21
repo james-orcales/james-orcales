@@ -29,10 +29,14 @@ the angle to one period and uses Bhaskara's rational approximation.
 
 # Format
 
-Format renders a value as Text with zero to six fractional digits. It rounds the
-dropped remainder half away from zero.
+Into_Text writes a value into caller storage with zero to six fractional digits. It rounds
+dropped remainder half away from zero. Short storage stays unchanged.
 
 # Serialization
 
-A Number marshals to and from JSON as a bare decimal number, so a struct of Numbers
-serializes the way the float it replaced once did.
+Into_JSON writes one Number as a bare decimal into caller storage. From_JSON reads one bounded
+bare decimal. Both return scalar results, so serialization owns no hidden storage.
+
+# Allocation
+
+Every operation performs zero heap allocation. Text operations write caller storage.

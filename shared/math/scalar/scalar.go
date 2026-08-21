@@ -7,7 +7,7 @@
 package scalar
 
 import (
-	invariant "local/james-orcales/shared/invariant/default"
+	"local/james-orcales/shared/invariant/default"
 	"local/james-orcales/shared/math/bits"
 	"local/james-orcales/shared/math/fixedpoint"
 )

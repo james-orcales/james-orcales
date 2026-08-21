@@ -7,9 +7,7 @@
 package fixedpoint
 
 import (
-	"errors"
-
-	invariant "local/james-orcales/shared/invariant/default"
+	"local/james-orcales/shared/invariant/default"
 	"local/james-orcales/shared/math/bits"
 )
 
@@ -67,37 +65,56 @@ func Decimal_Value_Invariants(value Decimal_Value, namespace invariant.Namespace
 		Ensure()
 }
 
-// Decimal_Digits is the text one unsigned value renders to.
-type Decimal_Digits string
+// Decimal_Digit_Count keeps internal rendering within widest unsigned value.
+type Decimal_Digit_Count int
 
-// Decimal_Digits_Invariants bounds rendered digits. A zero renders as one digit and the
-// largest unsigned value as twenty, thus the text is never empty.
+// Decimal_Digit_Count_Invariants makes each digit walk bounded by unsigned storage width.
+func Decimal_Digit_Count_Invariants(value Decimal_Digit_Count, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Range_Int(int(value), DECIMAL_DIGITS_SIZE_MINIMUM, DECIMAL_TEXT_SIZE_MAXIMUM).
+		Ensure()
+}
+
+// Decimal_Digits keeps internal output separate from broader public caller storage.
+type Decimal_Digits []byte
+
+// Decimal_Digits_Invariants prevents internal writer from exceeding unsigned decimal width.
 func Decimal_Digits_Invariants(value Decimal_Digits, namespace invariant.Namespace) {
 	invariant.Tree(value, namespace).
 		Range_Int(len(value), DECIMAL_DIGITS_SIZE_MINIMUM, DECIMAL_TEXT_SIZE_MAXIMUM).
 		Ensure()
 }
 
-// Parse_Error reports text that is not a decimal number.
-var Parse_Error = errors.New("fixedpoint: the text is not a decimal number")
-
-// Renders an unsigned value as decimal text. This package sits beneath the shared strconv,
-// which reaches back here for its own fixed-point forms, thus the digits are written here.
-func decimal_text(value Unsigned_Value) (text Decimal_Digits) {
-	defer func() { Decimal_Digits_Invariants(text, "decimal_text.text") }()
-	Unsigned_Value_Invariants(value, "decimal_text.value")
+// Counts decimal digits before caller output is touched.
+func decimal_digit_count(value Unsigned_Value) (count Decimal_Digit_Count) {
+	defer func() {
+		Decimal_Digit_Count_Invariants(count, "decimal_digit_count.count")
+	}()
+	Unsigned_Value_Invariants(value, "decimal_digit_count.value")
 	if value == 0 {
-		return "0"
+		return DECIMAL_DIGITS_SIZE_MINIMUM
 	}
-	digits := [DECIMAL_TEXT_SIZE_MAXIMUM]byte{}
-	end_count := len(digits)
 	residue := uint64(value)
 	for residue > 0 {
-		end_count--
-		digits[end_count] = byte('0' + residue%DECIMAL_BASE)
+		count++
 		residue /= DECIMAL_BASE
 	}
-	return Decimal_Digits(digits[end_count:])
+	return count
+}
+
+// Writes one unsigned value after caller proved exact room exists.
+func decimal_into(destination Decimal_Digits, value Unsigned_Value) {
+	Decimal_Digits_Invariants(destination, "decimal_into.destination")
+	Unsigned_Value_Invariants(value, "decimal_into.value")
+	if value == 0 {
+		destination[0] = '0'
+		return
+	}
+	residue := uint64(value)
+	for index := len(destination) - 1; index >= 0; index-- {
+		destination[index] = byte('0' + residue%DECIMAL_BASE)
+		residue /= DECIMAL_BASE
+	}
 }
 
 // Reads decimal text into a signed value, reporting whether every byte was a digit. A
@@ -149,11 +166,39 @@ const DIGIT_COUNT_MINIMUM = 0
 // DIGIT_COUNT_MAXIMUM prevents an int64 power of ten from overflowing.
 const DIGIT_COUNT_MAXIMUM = 6
 
-// TEXT_SIZE_MINIMUM is one decimal digit.
-const TEXT_SIZE_MINIMUM = 1
+// SIGN_BYTE_COUNT_MAXIMUM is room for one negative sign.
+const SIGN_BYTE_COUNT_MAXIMUM = 1
 
-// TEXT_SIZE_MAXIMUM holds a sign, an integer part, a point, and six fraction digits.
-const TEXT_SIZE_MAXIMUM = 21
+// DECIMAL_POINT_BYTE_COUNT is room for one decimal separator.
+const DECIMAL_POINT_BYTE_COUNT = 1
+
+// WHOLE_BIT_COUNT_MAXIMUM removes fixed fraction from signed storage magnitude width.
+const WHOLE_BIT_COUNT_MAXIMUM = bits.BIT_COUNT_64_MAXIMUM - FRACTIONAL_BITS
+
+// WHOLE_DECIMAL_DIGIT_COUNT_MAXIMUM converts highest whole bit position to decimal width.
+const WHOLE_DECIMAL_DIGIT_COUNT_MAXIMUM = (WHOLE_BIT_COUNT_MAXIMUM-1)*
+	bits.DECIMAL_DIGIT_BINARY_LOGARITHM_CEILING/
+	bits.DECIMAL_DIGIT_BINARY_LOGARITHM_SCALE + 1
+
+// TEXT_SIZE_MINIMUM admits no output when caller storage is short.
+const TEXT_SIZE_MINIMUM = 0
+
+// TEXT_SIZE_MAXIMUM holds each decimal integer digit, sign, point, and requested fraction.
+const TEXT_SIZE_MAXIMUM = SIGN_BYTE_COUNT_MAXIMUM + WHOLE_DECIMAL_DIGIT_COUNT_MAXIMUM +
+	DECIMAL_POINT_BYTE_COUNT + DIGIT_COUNT_MAXIMUM
+
+// JSON_TEXT_SIZE_MINIMUM is shortest bare JSON decimal.
+const JSON_TEXT_SIZE_MINIMUM = DECIMAL_DIGITS_SIZE_MINIMUM
+
+// JSON_TEXT_SIZE_MAXIMUM holds sign, integer digits, point, and parsed fraction digits.
+const JSON_TEXT_SIZE_MAXIMUM = SIGN_BYTE_COUNT_MAXIMUM + DECIMAL_TEXT_SIZE_MAXIMUM +
+	DECIMAL_POINT_BYTE_COUNT + FRACTION_DIGITS_MAXIMUM
+
+// JSON_TEXT_UNVALIDATED_SIZE_MINIMUM admits empty hostile input.
+const JSON_TEXT_UNVALIDATED_SIZE_MINIMUM = 0
+
+// JSON_TEXT_UNVALIDATED_SIZE_MAXIMUM admits one oversized hostile input for rejection.
+const JSON_TEXT_UNVALIDATED_SIZE_MAXIMUM = JSON_TEXT_SIZE_MAXIMUM + 1
 
 // WHOLE_INTEGER_MINIMUM is the smallest integer that fixed-point storage can lift.
 const WHOLE_INTEGER_MINIMUM int64 = -8796093022208
@@ -414,14 +459,63 @@ func Boolean_Invariants(value Boolean, namespace invariant.Namespace) {
 		Ensure()
 }
 
-// Text is decimal text.
+// Text_Unvalidated admits empty and one-byte-oversized hostile input for graceful rejection.
+type Text_Unvalidated string
+
+// Text_Unvalidated_Invariants caps work before syntax scanning.
+func Text_Unvalidated_Invariants(value Text_Unvalidated, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Range_Int(
+			len(value), JSON_TEXT_UNVALIDATED_SIZE_MINIMUM,
+			JSON_TEXT_UNVALIDATED_SIZE_MAXIMUM,
+		).
+		Ensure()
+}
+
+// Text is bounded bare JSON text.
 type Text string
 
-// Text_Invariants bounds a formatted fixed-point number.
+// Text_Invariants makes syntax work proportional only to package bound.
 func Text_Invariants(value Text, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Range_Int(len(value), JSON_TEXT_SIZE_MINIMUM, JSON_TEXT_SIZE_MAXIMUM).
+		Ensure()
+}
+
+// Digits lets caller placement own variable-length decimal output.
+type Digits []byte
+
+// Digits_Invariants prevents caller storage from expanding package work bound.
+func Digits_Invariants(value Digits, namespace invariant.Namespace) {
 	invariant.Tree(value, namespace).
 		Range_Int(len(value), TEXT_SIZE_MINIMUM, TEXT_SIZE_MAXIMUM).
 		Ensure()
+}
+
+// Text_Count keeps output result scalar instead of returning owned text.
+type Text_Count int
+
+// Text_Count_Invariants binds output count to caller storage bound.
+func Text_Count_Invariants(value Text_Count, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Range_Int(int(value), TEXT_SIZE_MINIMUM, TEXT_SIZE_MAXIMUM).
+		Ensure()
+}
+
+// Text_Validate centralizes hostile size rejection before syntax scanning.
+func Text_Validate(value Text_Unvalidated) (text Text, ok Boolean) {
+	defer func() {
+		Text_Invariants(text, "text_validate.text")
+		Boolean_Invariants(ok, "text_validate.ok")
+	}()
+	Text_Unvalidated_Invariants(value, "text_validate.value")
+	if len(value) < JSON_TEXT_SIZE_MINIMUM {
+		return "0", false
+	}
+	if len(value) > JSON_TEXT_SIZE_MAXIMUM {
+		return "0", false
+	}
+	return Text(value), true
 }
 
 // From_Integer lifts a whole number into fixed-point.
@@ -646,10 +740,10 @@ func Sine_Turns(turns Number) (sine Sine) {
 	return Sine(magnitude)
 }
 
-// Format renders a value as decimal text with a set number of fractional digits, the
-// dropped remainder rounded half away from zero.
-func Format(value Number, digits Digit_Count) (text Text) {
-	defer func() { Text_Invariants(text, "format.text") }()
+// Into_Text checks exact room before write so short caller storage stays unchanged.
+func Into_Text(destination Digits, value Number, digits Digit_Count) (count Text_Count) {
+	defer func() { Text_Count_Invariants(count, "into_text.count") }()
+	Digits_Invariants(destination, "into_text.destination")
 	Number_Invariants(value, "format.value")
 	Digit_Count_Invariants(digits, "format.digits")
 	negative := value < 0
@@ -672,100 +766,152 @@ func Format(value Number, digits Digit_Count) (text Text) {
 		negative = false
 	}
 	unsigned_power := uint64(power)
-	text = Text(decimal_text(Unsigned_Value(scaled / unsigned_power)))
+	whole := Unsigned_Value(scaled / unsigned_power)
+	whole_count := decimal_digit_count(whole)
+	required := int(whole_count)
 	if digits > 0 {
-		fraction := string(decimal_text(Unsigned_Value(scaled % unsigned_power)))
-		for len(fraction) < int(digits) {
-			fraction = "0" + fraction
-		}
-		text += Text("." + fraction)
+		required += DECIMAL_POINT_BYTE_COUNT + int(digits)
 	}
 	if negative {
-		return Text("-" + text)
+		required += SIGN_BYTE_COUNT_MAXIMUM
 	}
-	return text
+	if len(destination) < required {
+		return TEXT_SIZE_MINIMUM
+	}
+	index := 0
+	if negative {
+		destination[index] = '-'
+		index += SIGN_BYTE_COUNT_MAXIMUM
+	}
+	decimal_into(Decimal_Digits(destination[index:index+int(whole_count)]), whole)
+	index += int(whole_count)
+	if digits > 0 {
+		destination[index] = '.'
+		index += DECIMAL_POINT_BYTE_COUNT
+		fraction := scaled % unsigned_power
+		fraction_destination := destination[index : index+int(digits)]
+		fraction_index := len(fraction_destination) - 1
+		for ; fraction_index >= 0; fraction_index-- {
+			fraction_destination[fraction_index] = byte('0' + fraction%DECIMAL_BASE)
+			fraction /= DECIMAL_BASE
+		}
+	}
+	return Text_Count(required)
 }
 
-// MarshalJSON renders a Number as a bare JSON decimal — an integer when whole, else the
-// fraction to six places with trailing zeros trimmed. Rounding at six places hides the
-// sub-microscale binary remainder, so ordinary values still read as clean decimals.
-func (number Number) MarshalJSON() (data []byte, err error) {
-	if Is_Integer(number) {
-		whole := int64(Whole(number))
-		if whole < 0 {
-			return []byte("-" + decimal_text(Unsigned_Value(-whole))), nil
-		}
-		return []byte(decimal_text(Unsigned_Value(whole))), nil
+// Into_JSON stages bounded text locally so trimming never exposes partial caller output.
+func Into_JSON(destination Digits, value Number) (count Text_Count) {
+	defer func() { Text_Count_Invariants(count, "into_json.count") }()
+	Digits_Invariants(destination, "into_json.destination")
+	Number_Invariants(value, "into_json.value")
+	var storage [TEXT_SIZE_MAXIMUM]byte
+	digits := Digit_Count(DIGIT_COUNT_MAXIMUM)
+	if bool(Is_Integer(value)) {
+		digits = DIGIT_COUNT_MINIMUM
 	}
-	text := Format(number, 6)
-	end_count := len(text)
-	for end_count > 0 {
-		if text[end_count-1] != '0' {
-			break
-		}
-		end_count--
-	}
-	if end_count > 0 {
-		if text[end_count-1] == '.' {
+	written := Into_Text(storage[:], value, digits)
+	end_count := int(written)
+	if digits > DIGIT_COUNT_MINIMUM {
+		for end_count > TEXT_SIZE_MINIMUM {
+			if storage[end_count-1] != '0' {
+				break
+			}
 			end_count--
 		}
+		if end_count > TEXT_SIZE_MINIMUM {
+			if storage[end_count-1] == '.' {
+				end_count--
+			}
+		}
 	}
-	return []byte(text[:end_count]), nil
+	if len(destination) < end_count {
+		return TEXT_SIZE_MINIMUM
+	}
+	copy(destination, storage[:end_count])
+	return Text_Count(end_count)
 }
 
-// UnmarshalJSON parses a JSON decimal number into a Number, rounding the fraction onto the
-// fixed-point grid.
-func (number *Number) UnmarshalJSON(data []byte) (err error) {
-	text := string(data)
+// From_JSON returns scalar validity so malformed text owns no diagnostic allocation.
+func From_JSON(value Text_Unvalidated) (number Number, ok Boolean) {
+	defer func() {
+		Number_Invariants(number, "from_json.number")
+		Boolean_Invariants(ok, "from_json.ok")
+	}()
+	Text_Unvalidated_Invariants(value, "from_json.value")
+	validated, bounded := Text_Validate(value)
+	if !bool(bounded) {
+		return 0, false
+	}
+	return from_json_text(validated)
+}
+
+// Keeps size validation outside syntax cases so hostile rejection stays one bounded step.
+func from_json_text(value Text) (number Number, ok Boolean) {
+	defer func() {
+		Number_Invariants(number, "from_json_text.number")
+		Boolean_Invariants(ok, "from_json_text.ok")
+	}()
+	Text_Invariants(value, "from_json_text.value")
+	text := string(value)
 	negative := false
-	// A leading sign and a decimal point are single bytes, so the two scans below replace
-	// a text package this one sits beneath: shared/strings reaches io, which reaches time,
-	// which reaches back here.
-	if len(text) > 0 {
-		if text[0] == '-' {
-			negative = true
-			text = text[1:]
+	if text[0] == '-' {
+		negative = true
+		text = text[SIGN_BYTE_COUNT_MAXIMUM:]
+		if len(text) == 0 {
+			return 0, false
 		}
 	}
 	whole_text := text
 	fraction_text := ""
-	point_offset := -1
 	for index := 0; index < len(text); index++ {
 		if text[index] == '.' {
-			point_offset = index
+			whole_text = text[:index]
+			fraction_text = text[index+DECIMAL_POINT_BYTE_COUNT:]
 			break
 		}
 	}
-	if point_offset >= 0 {
-		whole_text = text[:point_offset]
-		fraction_text = text[point_offset+1:]
-	}
 	if len(whole_text) > DECIMAL_TEXT_SIZE_MAXIMUM {
-		return Parse_Error
+		return 0, false
 	}
 	whole_part, whole_ok := decimal_value(Decimal_Text(whole_text))
-	if !whole_ok {
-		return Parse_Error
+	if !bool(whole_ok) {
+		return 0, false
 	}
-	digits := fraction_text
-	if len(digits) > FRACTION_DIGITS_MAXIMUM {
-		digits = digits[:FRACTION_DIGITS_MAXIMUM]
-	}
-	units := int64(0)
-	if digits != "" {
-		parsed, parsed_ok := decimal_value(Decimal_Text(digits))
-		if parsed_ok {
-			power := int64(1)
-			for index := 0; index < len(digits); index++ {
-				power *= DECIMAL_BASE
-			}
-			units = (int64(parsed)<<FRACTIONAL_BITS + power/2) / power
+	point_present := len(whole_text) != len(text)
+	if point_present {
+		if fraction_text == "" {
+			return 0, false
+		}
+		if len(fraction_text) > FRACTION_DIGITS_MAXIMUM {
+			return 0, false
 		}
 	}
-	value := int64(whole_part)*SCALE + units
-	if negative {
-		value = -value
+	fraction_units := uint64(0)
+	if fraction_text != "" {
+		parsed, parsed_ok := decimal_value(Decimal_Text(fraction_text))
+		if !bool(parsed_ok) {
+			return 0, false
+		}
+		power := uint64(1)
+		for index := 0; index < len(fraction_text); index++ {
+			power *= DECIMAL_BASE
+		}
+		fraction_units = (uint64(parsed)*SCALE + power/2) / power
 	}
-	*number = Number(value)
-	return nil
+	magnitude_maximum := uint64(bits.INTEGER_64_MAXIMUM)
+	if negative {
+		magnitude_maximum++
+	}
+	if uint64(whole_part) > magnitude_maximum/SCALE {
+		return 0, false
+	}
+	whole_units := uint64(whole_part) * SCALE
+	if fraction_units > magnitude_maximum-whole_units {
+		return 0, false
+	}
+	units := whole_units + fraction_units
+	if negative {
+		return Number(-int64(units)), true
+	}
+	return Number(units), true
 }

@@ -3,7 +3,7 @@ package bits_test
 import (
 	"testing"
 
-	invariant "local/james-orcales/shared/invariant/default"
+	"local/james-orcales/shared/invariant/default"
 	"local/james-orcales/shared/math/bits"
 	"local/james-orcales/shared/testify"
 )

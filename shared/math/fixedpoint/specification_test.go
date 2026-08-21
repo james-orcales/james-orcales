@@ -1,7 +1,6 @@
 package fixedpoint_test
 
 import (
-	"encoding/json"
 	"testing"
 
 	"local/james-orcales/shared/math/bits"
@@ -164,6 +163,7 @@ func Test_Sine(t *testing.T) {
 func Test_Format(t *testing.T) {
 	t.Parallel()
 	integer := number_from_integer
+	var storage [fixedpoint.TEXT_SIZE_MAXIMUM]byte
 	cases := []format_case{
 		{Value: integer(5), Digits: 2, Want: "5.00"},
 		{Value: integer(1) / 2, Digits: 2, Want: "0.50"},
@@ -173,31 +173,98 @@ func Test_Format(t *testing.T) {
 		{Value: integer(3) / 2, Digits: 0, Want: "2"},
 	}
 	for _, one := range cases {
-		testify.Equal_Values(t, one.Want, fixedpoint.Format(one.Value, one.Digits),
+		count := fixedpoint.Into_Text(storage[:], one.Value, one.Digits)
+		actual := fixedpoint.Text(storage[:count])
+		testify.Equal_Values(t, one.Want, actual,
 			"Format of %d to %d digits", one.Value, one.Digits)
 	}
+	short := [...]byte{'x'}
+	testify.Zero(t, fixedpoint.Into_Text(short[:], integer(5), 2),
+		"short output returns no text")
+	testify.Equal_Values(t, [...]byte{'x'}, short,
+		"short output stays unchanged")
 }
 
-// Test_Serialization verifies a Number round-trips through JSON as a bare decimal.
+// Test_Serialization verifies caller storage preserves a Number as a bare JSON decimal.
 func Test_Serialization(t *testing.T) {
 	t.Parallel()
 	integer := number_from_integer
-	encoded, err := json.Marshal(holder{Value: integer(5) / 2})
-	testify.No_Error(t, err, "Marshal")
-	testify.Equal_Values(t, `{"Value":2.5}`, string(encoded),
-		"Marshal(2.5) = %s, want {\"Value\":2.5}", encoded)
+	var encoded [fixedpoint.TEXT_SIZE_MAXIMUM]byte
+	count := fixedpoint.Into_JSON(encoded[:], integer(5)/2)
+	testify.Equal_Values(t, `2.5`, string(encoded[:count]),
+		"Into_JSON(2.5) = %s, want 2.5", encoded[:count])
 
-	whole, err := json.Marshal(holder{Value: integer(3)})
-	testify.No_Error(t, err, "Marshal")
-	testify.Equal_Values(t, `{"Value":3}`, string(whole),
-		"Marshal(3.0) = %s, want {\"Value\":3}", whole)
+	count = fixedpoint.Into_JSON(encoded[:], integer(3))
+	testify.Equal_Values(t, `3`, string(encoded[:count]),
+		"Into_JSON(3.0) = %s, want 3", encoded[:count])
 
-	var decoded holder
-	err = json.Unmarshal([]byte(`{"Value":2.5}`), &decoded)
-	testify.No_Error(t, err, "Unmarshal")
-	testify.Equal_Values(t, integer(5)/2, decoded.Value,
-		"Unmarshal(2.5) = %d, want %d", decoded.Value, integer(5)/2)
+	decoded, ok := fixedpoint.From_JSON(`2.5`)
+	testify.True(t, bool(ok), "From_JSON accepts 2.5")
+	testify.Equal_Values(t, integer(5)/2, decoded,
+		"From_JSON(2.5) = %d, want %d", decoded, integer(5)/2)
+	_, ok = fixedpoint.From_JSON(`no`)
+	testify.False(t, bool(ok), "From_JSON rejects non-decimal text")
 
+}
+
+// Test_Allocation proves each operation keeps all result storage with its caller.
+func Test_Allocation(t *testing.T) {
+	fixture := allocation_fixture{}
+	one := number_from_integer(1)
+	two := number_from_integer(2)
+	checks := [...]struct {
+		Name string
+		Call func()
+	}{
+		{Name: "From_Integer", Call: func() {
+			fixture.Integer = fixedpoint.From_Integer(1)
+		}},
+		{Name: "From_Ratio", Call: func() {
+			fixture.Number = fixedpoint.From_Ratio(1, 2)
+		}},
+		{Name: "Whole", Call: func() { fixture.Whole = fixedpoint.Whole(one) }},
+		{Name: "Is_Integer", Call: func() { fixture.Boolean = fixedpoint.Is_Integer(one) }},
+		{Name: "Multiply", Call: func() {
+			fixture.Number = fixedpoint.Multiply(
+				fixedpoint.Multiplicand(one), fixedpoint.Multiplier(two))
+		}},
+		{Name: "Divide", Call: func() {
+			fixture.Number = fixedpoint.Divide(
+				fixedpoint.Dividend(one), fixedpoint.Divisor(two))
+		}},
+		{Name: "Apply", Call: func() {
+			fixture.Number = fixedpoint.Apply(one, fixedpoint.Ratio(two))
+		}},
+		{Name: "Square_Root", Call: func() {
+			fixture.Number_Root = fixedpoint.Square_Root(one)
+		}},
+		{Name: "Square_Root_Scaled", Call: func() {
+			fixture.Scaled_Root = fixedpoint.Square_Root_Scaled(1)
+		}},
+		{Name: "Integer_Root", Call: func() {
+			fixture.Root = fixedpoint.Integer_Root(0, 1)
+		}},
+		{Name: "Sine_Turns", Call: func() {
+			fixture.Sine = fixedpoint.Sine_Turns(one)
+		}},
+		{Name: "Into_Text", Call: func() {
+			fixture.Count = fixedpoint.Into_Text(fixture.Storage[:], two, 2)
+		}},
+		{Name: "Into_JSON", Call: func() {
+			fixture.Count = fixedpoint.Into_JSON(fixture.Storage[:], two)
+		}},
+		{Name: "From_JSON", Call: func() {
+			fixture.Number, fixture.Boolean = fixedpoint.From_JSON(`2.5`)
+		}},
+		{Name: "Text_Validate", Call: func() {
+			fixture.Text, fixture.Boolean = fixedpoint.Text_Validate(`2.5`)
+		}},
+	}
+	for _, check := range checks {
+		t.Run(check.Name, func(t *testing.T) {
+			testify.Zero_Allocation(t, check.Call)
+		})
+	}
 }
 
 // Test_Invariant_Domains verifies the special values of each admitted scalar domain.
@@ -208,12 +275,6 @@ func Test_Invariant_Domains(t *testing.T) {
 	verify_format_domains()
 }
 
-// Wraps a Number so the JSON test exercises the marshaler through a struct field.
-type holder struct {
-	// Value is the wrapped fixed-point number.
-	Value fixedpoint.Number
-}
-
 // One Format expectation for the table in Test_Format.
 type format_case struct {
 	// Value is the fixed-point input.
@@ -222,6 +283,21 @@ type format_case struct {
 	Digits fixedpoint.Digit_Count
 	// Want is the expected rendering.
 	Want fixedpoint.Text
+}
+
+// Allocation_fixture keeps measured results alive outside each callback.
+type allocation_fixture struct {
+	Boolean     fixedpoint.Boolean
+	Count       fixedpoint.Text_Count
+	Integer     fixedpoint.Integer_Number
+	Number      fixedpoint.Number
+	Number_Root fixedpoint.Number_Root
+	Root        fixedpoint.Root_Integer
+	Scaled_Root fixedpoint.Scaled_Root
+	Sine        fixedpoint.Sine
+	Storage     [fixedpoint.TEXT_SIZE_MAXIMUM]byte
+	Text        fixedpoint.Text
+	Whole       fixedpoint.Whole_Integer
 }
 
 // Returns the fixedpoint root of one 64-bit radicand.
@@ -254,7 +330,9 @@ func verify_number_domains() {
 		fixedpoint.Multiply(0, fixedpoint.Multiplier(number))
 		fixedpoint.Divide(fixedpoint.Dividend(number), fixedpoint.Divisor(fixedpoint.SCALE))
 		fixedpoint.Divide(0, fixedpoint.Divisor(number))
-		fixedpoint.Format(number, 0)
+		var storage [fixedpoint.TEXT_SIZE_MAXIMUM]byte
+		fixedpoint.Into_Text(storage[:], number, 0)
+		fixedpoint.Into_JSON(storage[:], number)
 		fixedpoint.Is_Integer(number)
 		fixedpoint.Sine_Turns(number)
 		fixedpoint.Square_Root(number)
@@ -307,11 +385,42 @@ func verify_integer_domains() {
 
 // Exercises each precision boundary and each special formatted text size.
 func verify_format_domains() {
-	fixedpoint.Format(0, 0)
-	fixedpoint.Format(number_from_integer(10), 0)
-	fixedpoint.Format(0, 1)
-	fixedpoint.Format(0, 2)
-	fixedpoint.Format(fixedpoint.Number(bits.INTEGER_64_MINIMUM), 6)
+	var storage [fixedpoint.TEXT_SIZE_MAXIMUM]byte
+	fixedpoint.Into_Text(storage[:0], 0, 0)
+	fixedpoint.Into_Text(storage[:2], number_from_integer(10), 0)
+	fixedpoint.Into_Text(storage[:], 0, 0)
+	fixedpoint.Into_Text(storage[:], number_from_integer(10), 0)
+	fixedpoint.Into_Text(storage[:], 0, 1)
+	fixedpoint.Into_Text(storage[:], 0, 2)
+	fixedpoint.Into_Text(storage[:], fixedpoint.Number(bits.INTEGER_64_MINIMUM), 6)
+	fixedpoint.Into_JSON(storage[:0], 0)
+	fixedpoint.Into_JSON(storage[:1], 0)
+	fixedpoint.Into_JSON(storage[:2], number_from_integer(10))
+	fixedpoint.Into_JSON(storage[:], fixedpoint.Number(bits.INTEGER_64_MINIMUM+1))
+	json_values := [...]fixedpoint.Text_Unvalidated{
+		`-8796093022208`,
+		`8796093022207.999999046`,
+		`0`,
+		`0.000000954`,
+		`0.000001907`,
+		`-0.000000954`,
+	}
+	for _, value := range json_values {
+		fixedpoint.From_JSON(value)
+	}
+	var text [fixedpoint.JSON_TEXT_UNVALIDATED_SIZE_MAXIMUM]byte
+	for index := range text {
+		text[index] = '0'
+	}
+	fixedpoint.Text_Validate("")
+	fixedpoint.Text_Validate("0")
+	fixedpoint.Text_Validate(
+		fixedpoint.Text_Unvalidated(string(text[:fixedpoint.JSON_TEXT_SIZE_MAXIMUM])))
+	fixedpoint.Text_Validate(fixedpoint.Text_Unvalidated(string(text[:])))
+	fixedpoint.From_JSON("")
+	fixedpoint.From_JSON(
+		fixedpoint.Text_Unvalidated(string(text[:fixedpoint.JSON_TEXT_SIZE_MAXIMUM])))
+	fixedpoint.From_JSON(fixedpoint.Text_Unvalidated(string(text[:])))
 }
 
 // Verifies that the divide-free root satisfies its defining property across large,

@@ -73,6 +73,17 @@ func Test_Integer_Limits(t *testing.T) {
 
 }
 
+// Test_Decimal_Digit_Bound verifies shared fixed-point ceiling stays above scaled log10(2).
+func Test_Decimal_Digit_Bound(t *testing.T) {
+	t.Parallel()
+	testify.Equal_Values(t,
+		1<<bits.DECIMAL_DIGIT_BINARY_LOGARITHM_SHIFT,
+		bits.DECIMAL_DIGIT_BINARY_LOGARITHM_SCALE,
+		"decimal binary-logarithm scale follows its precision")
+	testify.Equal_Values(t, 1233, bits.DECIMAL_DIGIT_BINARY_LOGARITHM_CEILING,
+		"scale-12 ceiling remains least integer above scaled log10(2)")
+}
+
 // Test_Byte_Units verifies that decimal units use powers of 1000 and that IEC units use
 // powers of 1024. The two ladders must stay separate because the same prefix magnitude
 // names different byte counts.

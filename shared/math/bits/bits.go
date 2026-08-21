@@ -6,7 +6,7 @@
 package bits
 
 import (
-	invariant "local/james-orcales/shared/invariant/default"
+	"local/james-orcales/shared/invariant/default"
 )
 
 // WORD_SIZE is the bit width of a machine word. This repository builds for 64-bit targets
@@ -105,6 +105,15 @@ const INTEGER_MAXIMUM int = int(INTEGER_64_MAXIMUM)
 
 // INTEGER_MINIMUM is the smallest signed machine integer.
 const INTEGER_MINIMUM int = int(INTEGER_64_MINIMUM)
+
+// DECIMAL_DIGIT_BINARY_LOGARITHM_SHIFT selects proven fixed-point log10(2) precision.
+const DECIMAL_DIGIT_BINARY_LOGARITHM_SHIFT = 12
+
+// DECIMAL_DIGIT_BINARY_LOGARITHM_SCALE derives denominator from selected precision.
+const DECIMAL_DIGIT_BINARY_LOGARITHM_SCALE = 1 << DECIMAL_DIGIT_BINARY_LOGARITHM_SHIFT
+
+// DECIMAL_DIGIT_BINARY_LOGARITHM_CEILING is least scale-12 integer above log10(2).
+const DECIMAL_DIGIT_BINARY_LOGARITHM_CEILING = 1233
 
 // KILOBYTE_BYTES uses the SI base because the kilo prefix specifies 1000 bytes.
 const KILOBYTE_BYTES = 10 * 10 * 10
