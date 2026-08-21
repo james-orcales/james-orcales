@@ -172,7 +172,6 @@ func test_binary_operations(t *testing.T) {
 	binary_number_cases(t)
 	binary_pair_cases(t)
 	binary_bit_cases(t)
-	binary_truth_cases(t)
 	binary_text_cases(t)
 }
 
@@ -261,31 +260,6 @@ func binary_bit_cases(t *testing.T) {
 	testify.Equal(t, constant.KIND_UNKNOWN, constant.Kind_Of(constant.Binary_Operation(
 		constant.Make_Int_64(1), constant.BINARY_REMAINDER, constant.Make_Int_64(0))),
 		"a remainder over zero folds unknown")
-}
-
-func binary_truth_cases(t *testing.T) {
-	for _, one := range []struct {
-		Left      constant.Boolean
-		Operation constant.Binary
-		Right     constant.Boolean
-		Want      string
-	}{
-		{true, constant.BINARY_LOGICAL_AND, true, "true"},
-		{true, constant.BINARY_LOGICAL_AND, false, "false"},
-		{false, constant.BINARY_LOGICAL_OR, true, "true"},
-		{false, constant.BINARY_LOGICAL_OR, false, "false"},
-	} {
-		testify.Equal(t, one.Want, text_of(constant.Binary_Operation(
-			constant.Make_Boolean(one.Left), one.Operation,
-			constant.Make_Boolean(one.Right))),
-			"the truth operation %d folds", one.Operation)
-	}
-	testify.Equal(t, constant.KIND_UNKNOWN, constant.Kind_Of(constant.Binary_Operation(
-		constant.Make_Int_64(1), constant.BINARY_LOGICAL_AND, constant.Make_Boolean(true))),
-		"a join of a number and a truth folds unknown")
-	testify.Equal(t, constant.KIND_UNKNOWN, constant.Kind_Of(constant.Binary_Operation(
-		constant.Make_Boolean(true), constant.BINARY_LOGICAL_AND, constant.Make_Int_64(1))),
-		"a join of a truth and a number folds unknown")
 }
 
 func binary_text_cases(t *testing.T) {

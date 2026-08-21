@@ -78,17 +78,11 @@ const BINARY_EXCLUSIVE_OR Binary = 7
 // BINARY_AND_NOT clears the bits of one whole number that stand in another.
 const BINARY_AND_NOT Binary = 8
 
-// BINARY_LOGICAL_AND meets two truths.
-const BINARY_LOGICAL_AND Binary = 9
-
-// BINARY_LOGICAL_OR joins two truths.
-const BINARY_LOGICAL_OR Binary = 10
-
 // BINARY_MINIMUM is the first binary operation.
 const BINARY_MINIMUM = uint8(BINARY_ADD)
 
 // BINARY_MAXIMUM is the final binary operation.
-const BINARY_MAXIMUM = uint8(BINARY_LOGICAL_OR)
+const BINARY_MAXIMUM = uint8(BINARY_AND_NOT)
 
 // SHIFT_UP moves the bits of a whole number toward the sign.
 const SHIFT_UP Shift_Operation = 0
@@ -229,17 +223,6 @@ const NUMBER_MULTIPLY = Number_Binary(BINARY_MULTIPLY)
 
 // NUMBER_QUOTIENT names the quotient of two numbers.
 const NUMBER_QUOTIENT = Number_Binary(BINARY_QUOTIENT)
-
-// Truth_Binary names an operation two truths admit. It wears a type of its own, because a body
-// that joins two truths never meets the operations a number answers to.
-type Truth_Binary uint8
-
-// Truth_Binary_Invariants states both operations two truths admit.
-func Truth_Binary_Invariants(value Truth_Binary, namespace invariant.Namespace) {
-	invariant.Tree(value, namespace).
-		Enum_Uint8(uint8(value), uint8(BINARY_LOGICAL_AND), uint8(BINARY_LOGICAL_OR)).
-		Ensure()
-}
 
 // Whole_Binary names an operation two whole numbers alone admit.
 type Whole_Binary uint8
@@ -609,8 +592,6 @@ func Binary_Operation(left Value, operation Binary, right Value) (result Value) 
 	Binary_Invariants(operation, "binary_operation.operation")
 	Value_Invariants(right, "binary_operation.right")
 	switch operation {
-	case BINARY_LOGICAL_AND, BINARY_LOGICAL_OR:
-		return truth_operation(left, Truth_Binary(operation), right)
 	case BINARY_AND, BINARY_OR, BINARY_EXCLUSIVE_OR, BINARY_AND_NOT, BINARY_REMAINDER:
 		return whole_operation(left, Whole_Binary(operation), right)
 	}
@@ -620,24 +601,6 @@ func Binary_Operation(left Value, operation Binary, right Value) (result Value) 
 		}
 	}
 	return number_operation(left, Number_Binary(operation), right)
-}
-
-// Joins or meets two truths.
-func truth_operation(left Value, operation Truth_Binary, right Value) (result Value) {
-	defer func() { Value_Invariants(result, "truth_operation.result") }()
-	Value_Invariants(left, "truth_operation.left")
-	Truth_Binary_Invariants(operation, "truth_operation.operation")
-	Value_Invariants(right, "truth_operation.right")
-	if Kind_Of(left) != KIND_BOOLEAN {
-		return Make_Unknown()
-	}
-	if Kind_Of(right) != KIND_BOOLEAN {
-		return Make_Unknown()
-	}
-	if operation == Truth_Binary(BINARY_LOGICAL_AND) {
-		return Make_Boolean(truth_of(left) && truth_of(right))
-	}
-	return Make_Boolean(truth_of(left) || truth_of(right))
 }
 
 // Joins two string values. The result views no source of its own, thus it folds to an unknown

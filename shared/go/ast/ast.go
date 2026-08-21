@@ -90,20 +90,14 @@ const FLAG_COUNT = 3
 // PRECEDENCE_NONE marks a token that binds no binary expression.
 const PRECEDENCE_NONE Precedence = 0
 
-// PRECEDENCE_OR is the level of the conditional-or operator.
-const PRECEDENCE_OR Precedence = 1
-
-// PRECEDENCE_AND is the level of the conditional-and operator.
-const PRECEDENCE_AND Precedence = 2
-
-// PRECEDENCE_COMPARISON is the level of the six comparison operators.
-const PRECEDENCE_COMPARISON Precedence = 3
+// PRECEDENCE_COMPARISON is the level of the four comparison operators this dialect states.
+const PRECEDENCE_COMPARISON Precedence = 1
 
 // PRECEDENCE_ADDITION is the level of addition, subtraction, and the two or operators.
-const PRECEDENCE_ADDITION Precedence = 4
+const PRECEDENCE_ADDITION Precedence = 2
 
 // PRECEDENCE_MULTIPLICATION is the level of the products, the shifts, and the two and operators.
-const PRECEDENCE_MULTIPLICATION Precedence = 5
+const PRECEDENCE_MULTIPLICATION Precedence = 3
 
 // PRECEDENCE_MINIMUM binds no binary expression.
 const PRECEDENCE_MINIMUM = int(PRECEDENCE_NONE)
@@ -156,9 +150,10 @@ const FAILURE_IOTA Failure_Code = 5
 // FAILURE_PRIVATE_FIELD marks a struct field name that opens with a lowercase letter.
 const FAILURE_PRIVATE_FIELD Failure_Code = 6
 
-// FAILURE_COMPOUND_PREDICATE marks an if condition joined by a conditional and or a
-// conditional or, which is nested ifs written flat.
-const FAILURE_COMPOUND_PREDICATE Failure_Code = 7
+// FAILURE_REFUSED_SIGN marks a sign this dialect states no form for: the conditional and and the
+// conditional or, which are nested ifs written flat, and the two order signs that hold equality,
+// which a strict comparison states.
+const FAILURE_REFUSED_SIGN Failure_Code = 7
 
 // FAILURE_DOT_IMPORT marks an import that binds no name, which spills a package into the file.
 const FAILURE_DOT_IMPORT Failure_Code = 8
@@ -702,10 +697,13 @@ func Suffix_Kind_Invariants(value Suffix_Kind, namespace invariant.Namespace) {
 // Precedence is the binding level of a binary operator.
 type Precedence int
 
-// Precedence_Invariants admits the level of a token that binds nothing.
+// Precedence_Invariants admits the level of a token that binds nothing and the three levels this
+// dialect states.
 func Precedence_Invariants(value Precedence, namespace invariant.Namespace) {
 	invariant.Tree(value, namespace).
-		Range_Int(int(value), PRECEDENCE_MINIMUM, PRECEDENCE_MAXIMUM).
+		Enum_4_Int(
+			int(value), int(PRECEDENCE_NONE), int(PRECEDENCE_COMPARISON),
+			int(PRECEDENCE_ADDITION), int(PRECEDENCE_MULTIPLICATION)).
 		Ensure()
 }
 
@@ -1915,7 +1913,6 @@ func parse_if(subject *Parse_State) {
 		parse_clause(subject)
 	}
 	subject.Flags[FLAG_PLAIN_BRACE] = plain
-	refuse_compound_predicate(subject)
 	parse_block(subject)
 	if bool(accept(subject, token.KIND_ELSE)) {
 		if at(subject) == token.KIND_IF {
@@ -2182,6 +2179,12 @@ func parse_binary(subject *Parse_State, level Precedence) {
 	}
 	parse_unary(subject)
 	for range TOKEN_COUNT_MAXIMUM {
+		// A sign this dialect states no form for fails where it stands, thus every
+		// form that holds an operation answers for it and none of them reads it.
+		if bool(refuses_sign(subject)) {
+			reject(subject, Reject_Cause(FAILURE_REFUSED_SIGN))
+			return
+		}
 		next := binary_precedence(at(subject))
 		if bool(failed(subject)) {
 			return
@@ -2197,17 +2200,26 @@ func parse_binary(subject *Parse_State, level Precedence) {
 	return
 }
 
+// Reports whether the token the cursor stands on states a sign this dialect refuses: the two signs
+// that join conditions, which are nested ifs written flat, and the two order signs that hold
+// equality, which a strict comparison states.
+func refuses_sign(subject *Parse_State) (yes Boolean) {
+	defer func() { Boolean_Invariants(yes, "refuses_sign.yes") }()
+	Parse_State_Invariants(subject, "refuses_sign.subject")
+	switch at(subject) {
+	case token.KIND_LOGICAL_AND, token.KIND_LOGICAL_OR, token.KIND_LESS_EQUAL,
+		token.KIND_GREATER_EQUAL:
+		return true
+	}
+	return false
+}
+
 // Reports the level at which this operator binds, or PRECEDENCE_NONE when it binds nothing.
 func binary_precedence(kind token.Kind) (level Precedence) {
 	defer func() { Precedence_Invariants(level, "binary_precedence.level") }()
 	token.Kind_Invariants(kind, "binary_precedence.kind")
 	switch kind {
-	case token.KIND_LOGICAL_OR:
-		return PRECEDENCE_OR
-	case token.KIND_LOGICAL_AND:
-		return PRECEDENCE_AND
-	case token.KIND_EQUAL, token.KIND_NOT_EQUAL, token.KIND_LESS, token.KIND_LESS_EQUAL,
-		token.KIND_GREATER, token.KIND_GREATER_EQUAL:
+	case token.KIND_EQUAL, token.KIND_NOT_EQUAL, token.KIND_LESS, token.KIND_GREATER:
 		return PRECEDENCE_COMPARISON
 	case token.KIND_PLUS, token.KIND_MINUS, token.KIND_OR, token.KIND_EXCLUSIVE_OR:
 		return PRECEDENCE_ADDITION
@@ -2582,8 +2594,8 @@ func Failure_Message(code Failure_Code) (text Message) {
 		return "Spell the value out; iota ties it to declaration order."
 	case FAILURE_PRIVATE_FIELD:
 		return "Begin the struct field name with a capital letter."
-	case FAILURE_COMPOUND_PREDICATE:
-		return "Split the condition into nested if statements."
+	case FAILURE_REFUSED_SIGN:
+		return "Write nested if statements, or a strict comparison."
 	case FAILURE_DOT_IMPORT:
 		return "Name the package; a dot import hides where a name came from."
 	case FAILURE_BLANK_IMPORT:
@@ -2774,41 +2786,6 @@ func closes_field(subject *Parse_State) (yes Boolean) {
 		position++
 	}
 	return false
-}
-
-// Refuses a condition joined by a conditional and or a conditional or. An if reads one term, thus
-// a joined condition is nested ifs written flat. The walk strips a grouping first, because the
-// same condition inside parentheses reads the same way.
-func refuse_compound_predicate(subject *Parse_State) {
-	Parse_State_Invariants(subject, "refuse_compound_predicate.subject")
-	depth := subject.Node_Cursors[CURSOR_DEPTH]
-	if depth == 0 {
-		return
-	}
-	if int(depth) > DEPTH_MAXIMUM {
-		return
-	}
-	walk := Index(subject.Nodes[subject.Last_Children[depth-1]].First_Child)
-	for range EMBEDDED_WALK_MAXIMUM {
-		if walk == INDEX_ABSENT {
-			return
-		}
-		if subject.Nodes[walk].Kind != NODE_PARENTHESIS {
-			break
-		}
-		walk = Index(subject.Nodes[walk].First_Child)
-	}
-	if walk == INDEX_ABSENT {
-		return
-	}
-	if subject.Nodes[walk].Kind != NODE_BINARY {
-		return
-	}
-	switch subject.Tokens[subject.Nodes[walk].Token].Kind {
-	case token.KIND_LOGICAL_AND, token.KIND_LOGICAL_OR:
-		fail(subject, Cause(FAILURE_COMPOUND_PREDICATE))
-		subject.Token_Cursors[CURSOR_FAILURE] = subject.Nodes[walk].Token
-	}
 }
 
 // Names an import bound to the blank name. The name reads from the source, which no parse step

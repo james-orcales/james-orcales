@@ -108,10 +108,10 @@ func Test_Refused_Syntax_Private_Fields(t *testing.T) {
 	test_private_fields(t)
 }
 
-// Test_Refused_Syntax_Compound_Predicates binds the Compound Predicates leaf before
+// Test_Refused_Syntax_Refused_Signs binds the Refused Signs leaf before
 // fixture declarations.
-func Test_Refused_Syntax_Compound_Predicates(t *testing.T) {
-	test_compound_predicates(t)
+func Test_Refused_Syntax_Refused_Signs(t *testing.T) {
+	test_refused_signs(t)
 }
 
 // Test_Refused_Syntax_Dot_Imports binds the Dot Imports leaf before fixture declarations.
@@ -471,8 +471,7 @@ func test_expressions(t *testing.T) {
 		[]ast.Node_Kind{ast.NODE_FUNCTION_LITERAL})
 	accepts(t, state, TEST_HEAD+"var a = make([]T, SIZE)\n",
 		[]ast.Node_Kind{ast.NODE_SLICE_TYPE})
-	accepts(t, state, TEST_HEAD+"var a = b || c && d == e\n",
-		[]ast.Node_Kind{ast.NODE_BINARY})
+	accepts(t, state, TEST_HEAD+"var a = b == c\n", []ast.Node_Kind{ast.NODE_BINARY})
 	accepts(t, state, TEST_HEAD+"var a = b | c ^ d << e &^ f\n",
 		[]ast.Node_Kind{ast.NODE_BINARY})
 }
@@ -566,25 +565,29 @@ func test_private_fields(t *testing.T) {
 		[]ast.Node_Kind{ast.NODE_FIELD_NAME})
 }
 
-func test_compound_predicates(t *testing.T) {
+func test_refused_signs(t *testing.T) {
 	state := new(ast.Parse_State)
-	compound := ast.FAILURE_COMPOUND_PREDICATE
+	refused := ast.FAILURE_REFUSED_SIGN
 	body := TEST_HEAD + "func f() {\n"
-	refuses(t, state, statement_source(body, "if a && b {\nc()\n}"), compound)
-	refuses(t, state, statement_source(body, "if a || b {\nc()\n}"), compound)
-	refuses(t, state, statement_source(body, "if (a && b) {\nc()\n}"), compound)
-	refuses(t, state, statement_source(body, "if a {\n} else if b || c {\n}"), compound)
-	refuses(t, state, statement_source(body, "if x := f(); a && b {\n}"), compound)
+	refuses(t, state, statement_source(body, "if a && b {\nc()\n}"), refused)
+	refuses(t, state, statement_source(body, "if a || b {\nc()\n}"), refused)
+	refuses(t, state, statement_source(body, "if (a && b) {\nc()\n}"), refused)
+	refuses(t, state, statement_source(body, "if a {\n} else if b || c {\n}"), refused)
+	refuses(t, state, statement_source(body, "if x := f(); a && b {\n}"), refused)
+	refuses(t, state, statement_source(body, "held = a && b"), refused)
+	refuses(t, state, statement_source(body, "held = a || b"), refused)
+	refuses(t, state, statement_source(body, "held = a <= b"), refused)
+	refuses(t, state, statement_source(body, "held = a >= b"), refused)
+	refuses(t, state, statement_source(body, "if f(a && b) {\nc()\n}"), refused)
+	refuses(t, state, statement_source(body, "for a && b {\nc()\n}"), refused)
+	refuses(t, state, statement_source(body, "switch {\ncase a <= b:\nc()\n}"), refused)
+	refuses(t, state, TEST_HEAD+"const HELD = 1 <= 2\n", refused)
 	accepts(t, state, statement_source(body, "if a {\nif b {\nc()\n}\n}"),
 		[]ast.Node_Kind{ast.NODE_IF})
-	accepts(t, state, statement_source(body, "if f(a && b) {\nc()\n}"),
-		[]ast.Node_Kind{ast.NODE_CALL})
-	accepts(t, state, statement_source(body, "if a == (b && c) {\nd()\n}"),
-		[]ast.Node_Kind{ast.NODE_PARENTHESIS})
-	accepts(t, state, statement_source(body, "for a && b {\nc()\n}"),
-		[]ast.Node_Kind{ast.NODE_FOR})
-	accepts(t, state, statement_source(body, "switch {\ncase a && b:\nc()\n}"),
-		[]ast.Node_Kind{ast.NODE_SWITCH})
+	accepts(t, state, statement_source(body, "held = a < b"), []ast.Node_Kind{ast.NODE_BINARY})
+	accepts(t, state, statement_source(body, "held = a > b"), []ast.Node_Kind{ast.NODE_BINARY})
+	accepts(t, state, statement_source(body, "held = a & b"), []ast.Node_Kind{ast.NODE_BINARY})
+	accepts(t, state, statement_source(body, "held = a | b"), []ast.Node_Kind{ast.NODE_BINARY})
 }
 
 func test_dot_imports(t *testing.T) {

@@ -386,13 +386,14 @@ func test_width_forms(t *testing.T) {
 				"\tfifth_value int,\n) (held bool) {\n\treturn held\n}\n",
 		},
 		{
-			Source: "package one\n\nfunc Fold() (held bool) {\n\theld = " +
-				"first_value && second_value && third_value && fourth_value " +
-				"&& fifth_value && sixth_value\n\treturn held\n}\n",
-			Form: "package one\n\nfunc Fold() (held bool) {\n\theld = " +
-				"first_value &&\n\t\tsecond_value &&\n\t\tthird_value &&\n" +
-				"\t\tfourth_value &&\n\t\tfifth_value &&\n\t\tsixth_value\n" +
-				"\treturn held\n}\n",
+			Source: "package one\n\nfunc Fold() (sum int) {\n\tsum = " +
+				"first_value + second_value + third_value + fourth_value " +
+				"+ fifth_value + sixth_value + seventh_value\n" +
+				"\treturn sum\n}\n",
+			Form: "package one\n\nfunc Fold() (sum int) {\n\tsum = " +
+				"first_value +\n\t\tsecond_value +\n\t\tthird_value +\n" +
+				"\t\tfourth_value +\n\t\tfifth_value +\n\t\tsixth_value +\n" +
+				"\t\tseventh_value\n\treturn sum\n}\n",
 		},
 		{
 			Source: "package one\n\nfunc Fold() (first_value bool, second_value " +
@@ -510,8 +511,8 @@ func test_spacing(t *testing.T) {
 	// rather than the letters a name spells.
 	round_trip(t, "package one\n\nconst TEXT = `\x00\x01\x02\xff`\n")
 	for _, one := range []string{
-		"\tsum = one || two\n",
-		"\tsum = one && two\n",
+		"\tsum = one | two\n",
+		"\tsum = one & two\n",
 		"\tsum = one & ^two\n",
 		"\tsum = one / *pointer\n",
 		"\tsum = one + +two\n",
@@ -832,7 +833,7 @@ func wide_tail() (source string) {
 		"\t_ = empty\n\tdeep := map[string]Pair{\n" +
 		"\t\t\"one\": {\n\t\t\tLeft:  1,\n\t\t\tRight: \"one\",\n" +
 		"\t\t},\n\t\t\"two\": {Left: 2, Right: \"two\"},\n" +
-		"\t}\n\t_ = deep\n\theld = held ||\n\t\tone > two\n" +
+		"\t}\n\t_ = deep\n\theld = one <\n\t\ttwo\n" +
 		"\tblock := Wrapper{}\n\n\t_ = block\n\treturn held\n" +
 		"}\n\n// Plain states one constraint of a single term.\n" +
 		"type Plain interface {\n\tint\n}\n\n// Close states the forms th" +

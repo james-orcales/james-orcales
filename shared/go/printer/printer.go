@@ -3496,31 +3496,38 @@ func emit_token_at(subject *Printer, tree *ast.Parse_State) {
 // LEVEL_MINIMUM names a token that binds no values, which is a token that is no operation sign.
 const LEVEL_MINIMUM = 0
 
-// LEVEL_SIGN_MAXIMUM names the tightest binding a sign of an operation states.
-const LEVEL_SIGN_MAXIMUM = 5
+// LEVEL_COMPARISON names the binding of the four signs that compare two values.
+const LEVEL_COMPARISON = 1
+
+// LEVEL_ADDITION names the binding of addition, subtraction, and the two or signs.
+const LEVEL_ADDITION = 2
+
+// LEVEL_SIGN_MAXIMUM names the tightest binding a sign of an operation states, which is the
+// binding of the products, the shifts, and the two and signs.
+const LEVEL_SIGN_MAXIMUM = 3
 
 // LEVEL_MAXIMUM is the tightest binding a sign of an operation states.
 const LEVEL_MAXIMUM = LEVEL_SIGN_MAXIMUM
 
 // CUT_MINIMUM is the loosest binding a form closes its signs up at.
-const CUT_MINIMUM = 4
+const CUT_MINIMUM = 2
 
 // CUT_MIDDLE closes up the signs that bind tightest and spaces every looser one, which is what a
 // form that mixes the two levels the canonical form spaces by states.
-const CUT_MIDDLE = 5
+const CUT_MIDDLE = 3
 
 // CUT_MAXIMUM stands above every sign, which is the cut a form that spaces every sign it holds
 // states, and no sign binds that tightly.
-const CUT_MAXIMUM = 6
+const CUT_MAXIMUM = 4
 
 // CLASH_NONE names an operation no reading of which runs two signs together.
 const CLASH_NONE = 0
 
 // CLASH_LOOSE names a clash the looser of the two spaced levels settles.
-const CLASH_LOOSE = 4
+const CLASH_LOOSE = 2
 
 // CLASH_TIGHT names a clash only the tighter of the two spaced levels settles.
-const CLASH_TIGHT = 5
+const CLASH_TIGHT = 3
 
 // Clash names the level a sign must space at to stand apart from the sign of the value behind it.
 type Clash uint8
@@ -3545,10 +3552,12 @@ func Cut_Invariants(value Cut, namespace invariant.Namespace) {
 // Level names how tightly one sign binds the values it stands between.
 type Level uint8
 
-// Level_Invariants states every binding one sign of an operation holds.
+// Level_Invariants states the binding of a token that binds nothing and the three bindings the
+// signs of this dialect hold.
 func Level_Invariants(value Level, namespace invariant.Namespace) {
 	invariant.Tree(value, namespace).
-		Range_Uint8(uint8(value), LEVEL_MINIMUM, LEVEL_MAXIMUM).
+		Enum_4_Uint8(uint8(value), LEVEL_MINIMUM, LEVEL_COMPARISON, LEVEL_ADDITION,
+			LEVEL_SIGN_MAXIMUM).
 		Ensure()
 }
 
@@ -3575,18 +3584,13 @@ func precedence(subject *Printer) (level Level) {
 	switch subject.Signs[SIGN_HELD] {
 	case token.KIND_STAR, token.KIND_SLASH, token.KIND_PERCENT, token.KIND_SHIFT_LEFT,
 		token.KIND_SHIFT_RIGHT, token.KIND_AND, token.KIND_AND_NOT:
-		return 5
+		return LEVEL_SIGN_MAXIMUM
 	case token.KIND_PLUS, token.KIND_MINUS, token.KIND_OR, token.KIND_EXCLUSIVE_OR:
-		return 4
-	case token.KIND_EQUAL, token.KIND_NOT_EQUAL, token.KIND_LESS, token.KIND_LESS_EQUAL,
-		token.KIND_GREATER, token.KIND_GREATER_EQUAL:
-		return 3
-	case token.KIND_LOGICAL_AND:
-		return 2
-	case token.KIND_LOGICAL_OR:
-		return 1
+		return LEVEL_ADDITION
+	case token.KIND_EQUAL, token.KIND_NOT_EQUAL, token.KIND_LESS, token.KIND_GREATER:
+		return LEVEL_COMPARISON
 	}
-	return 0
+	return LEVEL_MINIMUM
 }
 
 // Reads the sign of the operation the walk stands on.
@@ -3604,7 +3608,7 @@ func binary_spaced(subject *Printer, tree *ast.Parse_State) (yes Boolean) {
 	defer func() { Boolean_Invariants(yes, "binary_spaced.yes") }()
 	Printer_Invariants(subject, "binary_spaced.subject")
 	ast.Parse_State_Invariants(tree, "binary_spaced.tree")
-	four, five, clash := binary_levels(subject, tree)
+	adds, multiplies, clash := binary_levels(subject, tree)
 	// A sign that would read as another sign against the value behind it takes spaces
 	// however deep it stands, thus the clash sets the cut on its own.
 	cut := Cut(CUT_MINIMUM)
@@ -3612,7 +3616,7 @@ func binary_spaced(subject *Printer, tree *ast.Parse_State) (yes Boolean) {
 		cut = Cut(clash) + 1
 	}
 	if clash == 0 {
-		cut = plain_cut(subject, four, five)
+		cut = plain_cut(subject, adds, multiplies)
 	}
 	binary_kind(subject, tree)
 	return Boolean(Cut(precedence(subject)) < cut)
@@ -3621,18 +3625,18 @@ func binary_spaced(subject *Printer, tree *ast.Parse_State) (yes Boolean) {
 // Names the level at and above which the signs of one operation close up. An operation that mixes
 // the two levels the canonical form spaces by states the tighter of them, and one that holds a
 // single level spaces every sign a statement states on its own.
-func plain_cut(subject *Printer, four Boolean, five Boolean) (cut Cut) {
+func plain_cut(subject *Printer, adds Boolean, multiplies Boolean) (cut Cut) {
 	defer func() { Cut_Invariants(cut, "plain_cut.cut") }()
 	Printer_Invariants(subject, "plain_cut.subject")
-	Boolean_Invariants(four, "plain_cut.four")
-	Boolean_Invariants(five, "plain_cut.five")
+	Boolean_Invariants(adds, "plain_cut.adds")
+	Boolean_Invariants(multiplies, "plain_cut.multiplies")
 	plain := subject.Counts[COUNT_NEST] == 1
-	if bool(four) {
-		if bool(five) {
+	if bool(adds) {
+		if bool(multiplies) {
 			if plain {
-				return 5
+				return CUT_MIDDLE
 			}
-			return 4
+			return CUT_MINIMUM
 		}
 	}
 	if plain {
@@ -3650,28 +3654,28 @@ func clash_level(subject *Printer) (level Clash) {
 	unary := subject.Signs[SIGN_HELD]
 	if operation == token.KIND_SLASH {
 		if unary == token.KIND_STAR {
-			return 5
+			return CLASH_TIGHT
 		}
 	}
 	if operation == token.KIND_AND {
 		if unary == token.KIND_AND {
-			return 5
+			return CLASH_TIGHT
 		}
 		if unary == token.KIND_EXCLUSIVE_OR {
-			return 5
+			return CLASH_TIGHT
 		}
 	}
 	if operation == token.KIND_PLUS {
 		if unary == token.KIND_PLUS {
-			return 4
+			return CLASH_LOOSE
 		}
 	}
 	if operation == token.KIND_MINUS {
 		if unary == token.KIND_MINUS {
-			return 4
+			return CLASH_LOOSE
 		}
 	}
-	return 0
+	return CLASH_NONE
 }
 
 // Reports which of the two levels the canonical form spaces by stand inside the operation the
@@ -3679,10 +3683,10 @@ func clash_level(subject *Printer) (level Clash) {
 // it and never reads the levels it holds.
 func binary_levels(
 	subject *Printer, tree *ast.Parse_State,
-) (four Boolean, five Boolean, clash Clash) {
+) (adds Boolean, multiplies Boolean, clash Clash) {
 	defer func() {
-		Boolean_Invariants(four, "binary_levels.four")
-		Boolean_Invariants(five, "binary_levels.five")
+		Boolean_Invariants(adds, "binary_levels.adds")
+		Boolean_Invariants(multiplies, "binary_levels.multiplies")
 		Clash_Invariants(clash, "binary_levels.clash")
 	}()
 	Printer_Invariants(subject, "binary_levels.subject")
@@ -3690,22 +3694,22 @@ func binary_levels(
 	binary_kind(subject, tree)
 	operation := subject.Signs[SIGN_HELD]
 	level := precedence(subject)
-	four = Boolean(level == 4)
-	five = Boolean(level == 5)
+	adds = Boolean(level == LEVEL_ADDITION)
+	multiplies = Boolean(level == LEVEL_SIGN_MAXIMUM)
 	if !bool(descend_quiet(subject, tree)) {
-		return four, five, clash
+		return adds, multiplies, clash
 	}
 	if bool(reads_levels(subject, tree, level, false)) {
 		left, right, held := binary_levels(subject, tree)
-		four = four || left
-		five = five || right
+		adds = adds || left
+		multiplies = multiplies || right
 		clash = max(clash, held)
 	}
 	if bool(advance_quiet(subject, tree)) {
 		if bool(reads_levels(subject, tree, level, true)) {
 			left, right, held := binary_levels(subject, tree)
-			four = four || left
-			five = five || right
+			adds = adds || left
+			multiplies = multiplies || right
 			clash = max(clash, held)
 		}
 		if node_kind(subject, tree) == ast.NODE_UNARY {
@@ -3715,7 +3719,7 @@ func binary_levels(
 		}
 	}
 	ascend(subject)
-	return four, five, clash
+	return adds, multiplies, clash
 }
 
 // Reports whether the value the walk stands on states an operation the form above it spaces as

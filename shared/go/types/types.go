@@ -3478,9 +3478,7 @@ func fold_binary(subject *Module, body *Body, tree *ast.Parse_State) {
 	ascend(subject)
 	take_wider(subject)
 	switch operator {
-	case token.KIND_EQUAL, token.KIND_NOT_EQUAL, token.KIND_LESS, token.KIND_LESS_EQUAL,
-		token.KIND_GREATER, token.KIND_GREATER_EQUAL, token.KIND_LOGICAL_AND,
-		token.KIND_LOGICAL_OR:
+	case token.KIND_EQUAL, token.KIND_NOT_EQUAL, token.KIND_LESS, token.KIND_GREATER:
 		subject.Counts[COUNT_RESULT] = Count(TYPE_UNTYPED_BOOLEAN)
 	}
 }

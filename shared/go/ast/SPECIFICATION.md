@@ -110,11 +110,11 @@ A struct field name that opens with a lowercase letter fails with FAILURE_PRIVAT
 embedded type names the field it embeds. A field name is a node of its own, thus a caller tells
 it from the type behind it.
 
-### Compound Predicates
+### Refused Signs
 
-An if condition joined by a conditional and or a conditional or fails with
-FAILURE_COMPOUND_PREDICATE, and a grouping around it changes nothing. A for, a switch, and an
-assignment each read a joined term as they always did.
+The conditional and, the conditional or, the less-or-equal, and the greater-or-equal each fail
+with FAILURE_REFUSED_SIGN wherever they stand. Nested ifs state what a joined condition states,
+and a strict comparison states what an order sign with equality states.
 
 ### Dot Imports
 
