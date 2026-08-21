@@ -180,6 +180,9 @@ func Test_Invariant_Domains(t *testing.T) {
 	if int(count) != zlib.BYTE_COUNT_MAXIMUM {
 		t.Fatalf("maximum Huffman decode = (%d, %d)", count, status)
 	}
+	dynamic_maximum := test_zlib_fixed_zeros_dynamic(zlib.BYTE_COUNT_MAXIMUM)
+	count, status = zlib.Decode_Into(maximum_destination, dynamic_maximum)
+	assert_zlib_domain_result(t, count, status)
 
 	for _, prefix := range [][]byte{{'a'}, {'a', 'b'}} {
 		for _, suffix := range [][]byte{fixed[:], dynamic[:]} {
@@ -215,6 +218,15 @@ func Test_Invariant_Reader_Domains(t *testing.T) {
 	}
 	fixed := test_zlib_fixed_prefix(1, 3)
 	observed_count, observed_status = zlib.Decode_Into(maximum_destination, fixed)
+	assert_zlib_domain_result(t, observed_count, observed_status)
+	one_bit := test_zlib_fixed_prefix(2, 3)
+	observed_count, observed_status = zlib.Decode_Into(maximum_destination, one_bit)
+	assert_zlib_domain_result(t, observed_count, observed_status)
+	maximum_bits := test_zlib_fixed_prefix(4, 3)
+	maximum_bits[len(maximum_bits)-9] = 0xfe
+	observed_count, observed_status = zlib.Decode_Into(
+		maximum_destination, maximum_bits,
+	)
 	assert_zlib_domain_result(t, observed_count, observed_status)
 
 	for _, total_size := range []int{6, 7, 8, zlib.BYTE_COUNT_MAXIMUM} {
@@ -262,39 +274,39 @@ const TEST_ZLIB_DYNAMIC_SIZE = 35
 const TEST_ZLIB_EMPTY_SIZE = 8
 const TEST_ZLIB_VARIANT_OUTPUT_SIZE = 64
 
-func test_zlib_compressed() (compressed [TEST_ZLIB_COMPRESSED_SIZE]byte) {
-	return [TEST_ZLIB_COMPRESSED_SIZE]byte{
+func test_zlib_compressed() (compressed []byte) {
+	return []byte{
 		120, 156, 203, 72, 205, 201, 201, 87, 72, 202, 47, 205, 75, 73, 77,
 		81, 168, 202, 201, 76, 82, 40, 207, 47, 202, 73, 225, 2, 0, 123, 233,
 		9, 57,
 	}
 }
 
-func test_zlib_stored() (compressed [TEST_ZLIB_STORED_SIZE]byte) {
-	return [TEST_ZLIB_STORED_SIZE]byte{
+func test_zlib_stored() (compressed []byte) {
+	return []byte{
 		120, 1, 1, 20, 0, 235, 255, 115, 116, 111, 114, 101, 100, 32, 98, 108,
 		111, 99, 107, 32, 112, 97, 121, 108, 111, 97, 100, 82, 62, 7, 199,
 	}
 }
 
-func test_zlib_fixed() (compressed [TEST_ZLIB_FIXED_SIZE]byte) {
-	return [TEST_ZLIB_FIXED_SIZE]byte{
+func test_zlib_fixed() (compressed []byte) {
+	return []byte{
 		120, 1, 75, 203, 172, 72, 77, 81, 200, 40, 77, 75, 203, 77, 204, 83,
 		40, 72, 172, 204, 201, 79, 76, 81, 72, 195, 38, 10, 0, 103, 86, 16,
 		95,
 	}
 }
 
-func test_zlib_dynamic() (compressed [TEST_ZLIB_DYNAMIC_SIZE]byte) {
-	return [TEST_ZLIB_DYNAMIC_SIZE]byte{
+func test_zlib_dynamic() (compressed []byte) {
+	return []byte{
 		120, 1, 5, 193, 7, 1, 0, 0, 12, 2, 160, 172, 234, 60, 253, 19,
 		12, 0, 128, 36, 37, 233, 238, 206, 182, 147, 164, 109, 183, 237, 1,
 		204, 200, 12, 145,
 	}
 }
 
-func test_zlib_empty() (compressed [TEST_ZLIB_EMPTY_SIZE]byte) {
-	return [TEST_ZLIB_EMPTY_SIZE]byte{120, 156, 3, 0, 0, 0, 0, 1}
+func test_zlib_empty() (compressed []byte) {
+	return []byte{120, 156, 3, 0, 0, 0, 0, 1}
 }
 
 func assert_zlib_decode(t *testing.T, compressed []byte, want string) {
@@ -330,6 +342,14 @@ func test_zlib_prefix(prefix []byte, suffix []byte) (compressed []byte) {
 }
 
 func test_zlib_fixed_zeros(count int) (compressed []byte) {
+	return test_zlib_fixed_zeros_block(count, 3)
+}
+
+func test_zlib_fixed_zeros_dynamic(count int) (compressed []byte) {
+	return test_zlib_fixed_zeros_block(count, 5)
+}
+
+func test_zlib_fixed_zeros_block(count int, block_kind uint32) (compressed []byte) {
 	compressed = make([]byte, 0, count/100+16)
 	compressed = append(compressed, 120, 1)
 	bits := uint64(0)
@@ -363,11 +383,13 @@ func test_zlib_fixed_zeros(count int) (compressed []byte) {
 		compressed, bits, bit_count, 256,
 	)
 	compressed, bits, bit_count = test_zlib_append_bits(
-		compressed, bits, bit_count, 3, 3,
+		compressed, bits, bit_count, block_kind, 3,
 	)
-	compressed, bits, bit_count = test_zlib_append_fixed_symbol(
-		compressed, bits, bit_count, 256,
-	)
+	if block_kind == 3 {
+		compressed, bits, bit_count = test_zlib_append_fixed_symbol(
+			compressed, bits, bit_count, 256,
+		)
+	}
 	if bit_count > 0 {
 		compressed = append(compressed, byte(bits))
 	}

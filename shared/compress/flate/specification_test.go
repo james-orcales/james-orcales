@@ -35,8 +35,7 @@ func Test_Raw_DEFLATE(t *testing.T) {
 	)
 
 	var destination [TEST_OUTPUT_SIZE]byte
-	var workspace_storage test_workspace
-	workspace := test_workspace_value(&workspace_storage)
+	workspace := test_workspace_value()
 	for _, level := range []flate.Level{
 		flate.HUFFMAN_ONLY,
 		flate.DEFAULT_COMPRESSION,
@@ -83,8 +82,7 @@ func Test_Compression_Levels(t *testing.T) {
 	}
 
 	var destination [TEST_OUTPUT_SIZE]byte
-	var workspace_storage test_workspace
-	workspace := test_workspace_value(&workspace_storage)
+	workspace := test_workspace_value()
 	for _, level := range []flate.Level_Unvalidated{
 		flate.HUFFMAN_ONLY - 1,
 		flate.BEST_COMPRESSION + 1,
@@ -118,8 +116,7 @@ func Test_Bounds(t *testing.T) {
 	)
 	testify.Equal(t, len(short), int(count), "short decode count = %d", count)
 
-	var workspace_storage test_workspace
-	workspace := test_workspace_value(&workspace_storage)
+	workspace := test_workspace_value()
 	encoded_count, encode_status := flate.Encode_Into(
 		short[:], workspace, []byte(TEST_CONTENT), flate.BEST_SPEED,
 	)
@@ -157,8 +154,7 @@ func Test_Dictionaries(t *testing.T) {
 	)
 
 	var encoded [TEST_OUTPUT_SIZE]byte
-	var workspace_storage test_workspace
-	workspace := test_workspace_value(&workspace_storage)
+	workspace := test_workspace_value()
 	encoded_count, encode_status := flate.Encode_Dictionary_Into(
 		encoded[:], workspace, source, dictionary, flate.BEST_COMPRESSION,
 	)
@@ -343,8 +339,7 @@ func Test_Invariant_Domains(t *testing.T) {
 		flate.Decode_Into(maximum_bytes[:size], fixed[:])
 		flate.Decode_Prefix_Into(maximum_bytes[:size], fixed[:])
 		flate.Decode_Prefix_Into(nil, maximum_bytes[:size])
-		var workspace_storage test_workspace
-		workspace := test_workspace_value(&workspace_storage)
+		workspace := test_workspace_value()
 		flate.Encode_Into(
 			maximum_bytes[:size], workspace, maximum_bytes[:size],
 			flate.HUFFMAN_ONLY,
@@ -572,8 +567,7 @@ func Test_History_Domains(t *testing.T) {
 
 // Test_Result_Domains proves operation-specific status and count domains.
 func Test_Result_Domains(t *testing.T) {
-	var workspace_storage test_workspace
-	workspace := test_workspace_value(&workspace_storage)
+	workspace := test_workspace_value()
 	var short [TEST_COUNT_DOMAIN_SIZE]byte
 	for _, size := range []int{TEST_DOMAIN_SECOND, TEST_DOMAIN_THIRD} {
 		count, status := flate.Encode_Into(
@@ -639,8 +633,7 @@ func Test_Result_Domains(t *testing.T) {
 func Test_Maximum_Encode(t *testing.T) {
 	source := make([]byte, flate.BYTE_COUNT_MAXIMUM)
 	destination := make([]byte, flate.BYTE_COUNT_MAXIMUM)
-	var workspace_storage test_workspace
-	workspace := test_workspace_value(&workspace_storage)
+	workspace := test_workspace_value()
 	count, status := flate.Encode_Into(
 		destination, workspace, source, flate.NO_COMPRESSION,
 	)
@@ -666,8 +659,7 @@ func Test_Maximum_Encode(t *testing.T) {
 // Test_Encode_Input_Domains drives large source and dictionary through real encoders.
 func Test_Encode_Input_Domains(t *testing.T) {
 	source := make([]byte, flate.BYTE_COUNT_MAXIMUM)
-	var workspace_storage test_workspace
-	workspace := test_workspace_value(&workspace_storage)
+	workspace := test_workspace_value()
 	for _, level := range []flate.Level_Unvalidated{
 		flate.HUFFMAN_ONLY, flate.BEST_SPEED,
 	} {
@@ -882,8 +874,7 @@ func verify_prefix_allocation(t *testing.T) {
 func verify_encode_allocation(t *testing.T) {
 	t.Helper()
 	var encoded [TEST_OUTPUT_SIZE]byte
-	var workspace_storage test_workspace
-	workspace := test_workspace_value(&workspace_storage)
+	workspace := test_workspace_value()
 	dictionary := []byte("common bounded dictionary prefix and repeated phrase")
 	var observed_count flate.Count
 	var observed_encode_status flate.Encode_Status
@@ -992,30 +983,24 @@ const TEST_MAXIMUM_STORED_BLOCK_COUNT = (flate.BYTE_COUNT_MAXIMUM +
 const TEST_MAXIMUM_STORED_PAYLOAD_SIZE = flate.BYTE_COUNT_MAXIMUM -
 	TEST_MAXIMUM_STORED_BLOCK_COUNT*TEST_STORED_WIRE_OVERHEAD
 
-type test_workspace struct {
-	Heads    [flate.HASH_COUNT]int32
-	Previous [flate.WINDOW_SIZE]int32
-}
-
-func test_workspace_value(
-	storage *test_workspace,
-) (workspace flate.Workspace_Unvalidated) {
+func test_workspace_value() (workspace flate.Workspace_Unvalidated) {
 	return flate.Workspace_Unvalidated{
-		Heads: storage.Heads[:], Previous: storage.Previous[:],
+		Heads:    make([]int32, flate.HASH_COUNT),
+		Previous: make([]int32, flate.WINDOW_SIZE),
 	}
 }
 
-func test_stored() (compressed [TEST_STORED_SIZE]byte) {
-	return [TEST_STORED_SIZE]byte{
+func test_stored() (compressed []byte) {
+	return []byte{
 		1, 20, 0, 235, 255, 115, 116, 111, 114, 101, 100, 32, 98, 108, 111,
 		99, 107, 32, 112, 97, 121, 108, 111, 97, 100,
 	}
 }
 
-func test_empty_stored() (compressed [TEST_STORED_WIRE_OVERHEAD]byte) {
+func test_empty_stored() (compressed []byte) {
 	size := uint16(bits.WORD_16_MINIMUM)
 	inverse := ^size
-	return [TEST_STORED_WIRE_OVERHEAD]byte{
+	return []byte{
 		flate.BLOCK_KIND_STORED<<flate.FINAL_BIT_COUNT | flate.FINAL_BLOCK_BIT_VALUE,
 		byte(size),
 		byte(size >> bits.BIT_COUNT_8_MAXIMUM),
@@ -1024,15 +1009,15 @@ func test_empty_stored() (compressed [TEST_STORED_WIRE_OVERHEAD]byte) {
 	}
 }
 
-func test_fixed() (compressed [TEST_FIXED_SIZE]byte) {
-	return [TEST_FIXED_SIZE]byte{
+func test_fixed() (compressed []byte) {
+	return []byte{
 		75, 203, 172, 72, 77, 81, 200, 40, 77, 75, 203, 77, 204, 83, 40, 72,
 		172, 204, 201, 79, 76, 81, 72, 195, 38, 10, 0,
 	}
 }
 
-func test_dynamic() (compressed [TEST_DYNAMIC_SIZE]byte) {
-	return [TEST_DYNAMIC_SIZE]byte{
+func test_dynamic() (compressed []byte) {
+	return []byte{
 		5, 193, 7, 1, 0, 0, 12, 2, 160, 172, 234, 60, 253, 19, 12, 0, 128,
 		36, 37, 233, 238, 206, 182, 147, 164, 109, 183, 237, 1,
 	}
@@ -1051,8 +1036,8 @@ func verify_decode(t *testing.T, compressed []byte, want string) {
 	)
 }
 
-func test_dictionary_stream() (compressed [TEST_DICTIONARY_COMPRESSED_SIZE]byte) {
-	return [TEST_DICTIONARY_COMPRESSED_SIZE]byte{67, 227, 162, 75, 3, 0}
+func test_dictionary_stream() (compressed []byte) {
+	return []byte{67, 227, 162, 75, 3, 0}
 }
 
 func test_dictionary_repeat() (compressed []byte) {

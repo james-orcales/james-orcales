@@ -500,19 +500,6 @@ func Header_String_Source_Invariants(
 		Ensure()
 }
 
-// Trailer_Destination prevents checksum writes outside fixed suffix.
-type Trailer_Destination []byte
-
-// Trailer_Destination_Invariants fixes complete trailer storage.
-func Trailer_Destination_Invariants(
-	value Trailer_Destination, namespace aver.Namespace,
-) {
-	aver.Always(
-		len(value) == TRAILER_SIZE,
-		"Trailer storage retains checksum and decoded size words.",
-	)
-}
-
 // Level_Unvalidated retains hostile scalar without interface conversion.
 type Level_Unvalidated int8
 
@@ -992,17 +979,14 @@ func Encode_Into(
 			STATUS_OUTPUT_TOO_SMALL
 	}
 	trailer_position := int(header_size) + int(payload_count)
-	trailer := Trailer_Destination(
-		destination[trailer_position : trailer_position+TRAILER_SIZE],
-	)
-	Trailer_Destination_Invariants(trailer, "Encode_Into.trailer")
 	binary.Put_Uint_32(
-		binary.Bytes(trailer[:4]),
+		binary.Bytes(destination[trailer_position:trailer_position+4]),
 		binary.Word_32(crc32.ChecksumIEEE(source_unvalidated)),
 		binary.LITTLE_ENDIAN,
 	)
 	binary.Put_Uint_32(
-		binary.Bytes(trailer[4:8]), binary.Word_32(len(source_unvalidated)),
+		binary.Bytes(destination[trailer_position+4:trailer_position+TRAILER_SIZE]),
+		binary.Word_32(len(source_unvalidated)),
 		binary.LITTLE_ENDIAN,
 	)
 	return Encoded_Count(trailer_position + TRAILER_SIZE), STATUS_OK

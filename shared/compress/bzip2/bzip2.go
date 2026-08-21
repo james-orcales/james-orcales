@@ -27,6 +27,15 @@ const HUFFMAN_TREE_COUNT_MAXIMUM = 6
 // HUFFMAN_CODE_SIZE_MAXIMUM bounds one bzip2 canonical code.
 const HUFFMAN_CODE_SIZE_MAXIMUM = 20
 
+// HUFFMAN_COUNT_SIZE includes zero-width symbol bucket.
+const HUFFMAN_COUNT_SIZE = HUFFMAN_CODE_SIZE_MAXIMUM + 1
+
+// HUFFMAN_DECODER_SIZE combines one tree's count and symbol regions.
+const HUFFMAN_DECODER_SIZE = HUFFMAN_COUNT_SIZE + SYMBOL_COUNT_MAXIMUM
+
+// HUFFMAN_STORAGE_SIZE reserves one decoder region per possible tree.
+const HUFFMAN_STORAGE_SIZE = HUFFMAN_TREE_COUNT_MAXIMUM * HUFFMAN_DECODER_SIZE
+
 // SELECTOR_GROUP_SIZE fixes symbols decoded per tree selector.
 const SELECTOR_GROUP_SIZE = 50
 
@@ -122,9 +131,6 @@ const BIT_COUNT_MINIMUM = 0
 
 // BIT_COUNT_MAXIMUM is the widest bit remainder.
 const BIT_COUNT_MAXIMUM = 7
-
-// CHECKSUM_SIZE is CRC-32 storage width.
-const CHECKSUM_SIZE = 4
 
 // BLOCK_SOURCE_SIZE_MAXIMUM follows the wrapper, marker, and block checksum.
 const BLOCK_SOURCE_SIZE_MAXIMUM = BYTE_COUNT_MAXIMUM - 14
@@ -488,25 +494,119 @@ func Bit_Count_Invariants(value Bit_Count, namespace aver.Namespace) {
 		Ensure()
 }
 
-// Checksum is one CRC-32 value in network byte order.
-type Checksum [CHECKSUM_SIZE]byte
+// First_Selector_Tree separates first position from later invariant axes.
+type First_Selector_Tree int
 
-// Checksum_Invariants fixes CRC-32 storage width.
-func Checksum_Invariants(value Checksum, namespace aver.Namespace) {
-	aver.Always(
-		len(value) == CHECKSUM_SIZE,
-		"A CRC checksum occupies exactly four bytes.",
-	)
+// First_Selector_Tree_Invariants bounds first position.
+func First_Selector_Tree_Invariants(value First_Selector_Tree, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Int(int(value), TREE_INDEX_MINIMUM, TREE_INDEX_MAXIMUM).
+		Ensure()
 }
 
-// Selector_Order is one move-to-front tree order.
-type Selector_Order []byte
+// Second_Selector_Tree separates second position from later invariant axes.
+type Second_Selector_Tree int
 
-// Selector_Order_Invariants bounds one tree order.
-func Selector_Order_Invariants(value Selector_Order, namespace aver.Namespace) {
+// Second_Selector_Tree_Invariants bounds second position.
+func Second_Selector_Tree_Invariants(value Second_Selector_Tree, namespace aver.Namespace) {
 	aver.Tree(value, namespace).
-		Range_Int(len(value), TREE_COUNT_MINIMUM, HUFFMAN_TREE_COUNT_MAXIMUM).
+		Range_Int(int(value), TREE_INDEX_MINIMUM, TREE_INDEX_MAXIMUM).
 		Ensure()
+}
+
+// Third_Selector_Tree separates third position from later invariant axes.
+type Third_Selector_Tree int
+
+// Third_Selector_Tree_Invariants bounds third position.
+func Third_Selector_Tree_Invariants(value Third_Selector_Tree, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Int(int(value), TREE_INDEX_MINIMUM, TREE_INDEX_MAXIMUM).
+		Ensure()
+}
+
+// Fourth_Selector_Tree separates fourth position from later invariant axes.
+type Fourth_Selector_Tree int
+
+// Fourth_Selector_Tree_Invariants bounds fourth position.
+func Fourth_Selector_Tree_Invariants(value Fourth_Selector_Tree, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Int(int(value), TREE_INDEX_MINIMUM, TREE_INDEX_MAXIMUM).
+		Ensure()
+}
+
+// Fifth_Selector_Tree separates fifth position from later invariant axes.
+type Fifth_Selector_Tree int
+
+// Fifth_Selector_Tree_Invariants bounds fifth position.
+func Fifth_Selector_Tree_Invariants(value Fifth_Selector_Tree, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Int(int(value), TREE_INDEX_MINIMUM, TREE_INDEX_MAXIMUM).
+		Ensure()
+}
+
+// Sixth_Selector_Tree separates sixth position from earlier invariant axes.
+type Sixth_Selector_Tree int
+
+// Sixth_Selector_Tree_Invariants bounds sixth position.
+func Sixth_Selector_Tree_Invariants(value Sixth_Selector_Tree, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Int(int(value), TREE_INDEX_MINIMUM, TREE_INDEX_MAXIMUM).
+		Ensure()
+}
+
+// Selector_Order uses fields because tree count never exceeds six.
+type Selector_Order struct {
+	// First anchors move-to-front head.
+	First First_Selector_Tree
+	// Second receives previous head after one-position selection.
+	Second Second_Selector_Tree
+	// Third receives previous second position after deeper selection.
+	Third Third_Selector_Tree
+	// Fourth receives previous third position after deeper selection.
+	Fourth Fourth_Selector_Tree
+	// Fifth receives previous fourth position after deeper selection.
+	Fifth Fifth_Selector_Tree
+	// Sixth keeps final possible tree without slice indexing.
+	Sixth Sixth_Selector_Tree
+}
+
+// Selector_Order_Invariants bounds every fixed selector position.
+func Selector_Order_Invariants(value Selector_Order, namespace aver.Namespace) {
+	First_Selector_Tree_Invariants(value.First, namespace)
+	Second_Selector_Tree_Invariants(value.Second, namespace)
+	Third_Selector_Tree_Invariants(value.Third, namespace)
+	Fourth_Selector_Tree_Invariants(value.Fourth, namespace)
+	Fifth_Selector_Tree_Invariants(value.Fifth, namespace)
+	Sixth_Selector_Tree_Invariants(value.Sixth, namespace)
+}
+
+// Selector_Position cannot address beyond six fixed selector fields.
+type Selector_Position uint8
+
+// Selector_Position_Invariants bounds one fixed selector field.
+func Selector_Position_Invariants(value Selector_Position, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Uint8(uint8(value), TREE_INDEX_MINIMUM, TREE_INDEX_MAXIMUM).
+		Ensure()
+}
+
+// Selector_Order_Handle keeps in-place move-to-front updates nonnil.
+type Selector_Order_Handle *Selector_Order
+
+// Selector_Order_Handle_Invariants bounds every fixed selector position.
+func Selector_Order_Handle_Invariants(
+	value Selector_Order_Handle, namespace aver.Namespace,
+) {
+	aver.Always(value != nil, "Bzip2 selector order exists.")
+	aver.Tree(value, namespace).
+		Range_Int(int(value.First), TREE_INDEX_MINIMUM, TREE_INDEX_MAXIMUM).
+		Range_Int(int(value.Second), TREE_INDEX_MINIMUM, TREE_INDEX_MAXIMUM).
+		Range_Int(int(value.Third), TREE_INDEX_MINIMUM, TREE_INDEX_MAXIMUM).
+		Range_Int(int(value.Fourth), TREE_INDEX_MINIMUM, TREE_INDEX_MAXIMUM).
+		Range_Int(int(value.Fifth), TREE_INDEX_MINIMUM, TREE_INDEX_MAXIMUM).
+		Range_Int(int(value.Sixth), TREE_INDEX_MINIMUM, TREE_INDEX_MAXIMUM).
+		Ensure()
+	Selector_Order_Invariants(*value, namespace)
 }
 
 // Move_Order is one move-to-front alphabet.
@@ -540,6 +640,17 @@ func Character_Counts_Invariants(value Character_Counts, namespace aver.Namespac
 	)
 }
 
+// Checksum_Table borrows fixed CRC lookup storage from emission stack frame.
+type Checksum_Table []uint32
+
+// Checksum_Table_Invariants fixes one entry per possible byte.
+func Checksum_Table_Invariants(value Checksum_Table, _ aver.Namespace) {
+	aver.Always(
+		len(value) == BYTE_VALUE_COUNT,
+		"Bzip2 checksum table has one entry per byte.",
+	)
+}
+
 // Bit_Reader holds bounded input cursor.
 type Bit_Reader struct {
 	// Source remains caller-owned compressed bytes.
@@ -557,6 +668,19 @@ func Bit_Reader_Invariants(value Bit_Reader, namespace aver.Namespace) {
 	Bit_Count_Invariants(value.Bits_Count, namespace)
 }
 
+// Bit_Reader_Handle keeps cursor mutations on nonnil caller-owned state.
+type Bit_Reader_Handle *Bit_Reader
+
+// Bit_Reader_Handle_Invariants bounds mutable cursor state without copying it.
+func Bit_Reader_Handle_Invariants(value Bit_Reader_Handle, namespace aver.Namespace) {
+	aver.Always(value != nil, "Bzip2 bit reader handle exists.")
+	aver.Tree(value, namespace).
+		Range_Int(len(value.Source), BYTE_COUNT_MINIMUM, BIT_SOURCE_SIZE_MAXIMUM).
+		Range_Uint64(uint64(value.Bits), BIT_BUFFER_MINIMUM, BIT_BUFFER_MAXIMUM).
+		Range_Uint(uint(value.Bits_Count), BIT_COUNT_MINIMUM, BIT_COUNT_MAXIMUM).
+		Ensure()
+}
+
 // Block_Compressed is encoded input after a block marker and checksum.
 type Block_Compressed []byte
 
@@ -567,7 +691,7 @@ func Block_Compressed_Invariants(value Block_Compressed, namespace aver.Namespac
 		Ensure()
 }
 
-// Symbol_Reader is reader state after the fixed block prefix.
+// Symbol_Reader marks reader state after fixed block prefix.
 type Symbol_Reader Bit_Reader
 
 // Symbol_Reader_Invariants bounds symbol-bitmap entry state.
@@ -578,11 +702,30 @@ func Symbol_Reader_Invariants(value Symbol_Reader, namespace aver.Namespace) {
 		Ensure()
 	aver.Always(
 		value.Bits_Count == SYMBOL_BIT_COUNT,
-		"The fixed block prefix leaves seven unread bits.",
+		"A symbol reader retains seven bits after fixed block prefix.",
 	)
 }
 
-// Tree_Reader is reader state after one nonempty symbol bitmap.
+// Symbol_Reader_Handle keeps symbol parsing on nonnil caller-owned state.
+type Symbol_Reader_Handle *Symbol_Reader
+
+// Symbol_Reader_Handle_Invariants bounds symbol-bitmap entry state.
+func Symbol_Reader_Handle_Invariants(
+	value Symbol_Reader_Handle, namespace aver.Namespace,
+) {
+	aver.Always(value != nil, "Bzip2 symbol reader exists.")
+	aver.Tree(value, namespace).
+		Range_Int(len(value.Source), BYTE_COUNT_MINIMUM, SYMBOL_SOURCE_SIZE_MAXIMUM).
+		Range_Uint64(uint64(value.Bits), BIT_BUFFER_MINIMUM, BIT_BUFFER_MAXIMUM).
+		Ensure()
+	aver.Always(
+		value.Bits_Count == SYMBOL_BIT_COUNT,
+		"The fixed block prefix leaves seven unread bits.",
+	)
+	Symbol_Reader_Invariants(*value, namespace)
+}
+
+// Tree_Reader marks reader state after symbol bitmap.
 type Tree_Reader Bit_Reader
 
 // Tree_Reader_Invariants bounds tree-header entry state.
@@ -593,8 +736,25 @@ func Tree_Reader_Invariants(value Tree_Reader, namespace aver.Namespace) {
 		Ensure()
 	aver.Always(
 		value.Bits_Count == SYMBOL_BIT_COUNT,
+		"A tree reader retains seven bits after complete symbol bitmap.",
+	)
+}
+
+// Tree_Reader_Handle keeps tree-header parsing on nonnil caller-owned state.
+type Tree_Reader_Handle *Tree_Reader
+
+// Tree_Reader_Handle_Invariants bounds tree-header entry state.
+func Tree_Reader_Handle_Invariants(value Tree_Reader_Handle, namespace aver.Namespace) {
+	aver.Always(value != nil, "Bzip2 tree reader exists.")
+	aver.Tree(value, namespace).
+		Range_Int(len(value.Source), BYTE_COUNT_MINIMUM, TREE_SOURCE_SIZE_MAXIMUM).
+		Range_Uint64(uint64(value.Bits), BIT_BUFFER_MINIMUM, BIT_BUFFER_MAXIMUM).
+		Ensure()
+	aver.Always(
+		value.Bits_Count == SYMBOL_BIT_COUNT,
 		"Every complete symbol bitmap leaves seven unread bits.",
 	)
+	Tree_Reader_Invariants(*value, namespace)
 }
 
 // Selector_List_Reader is reader state before selector unary codes.
@@ -616,7 +776,27 @@ func Selector_List_Reader_Invariants(
 	)
 }
 
-// Selector_Reader is reader state while consuming selector unary codes.
+// Selector_List_Reader_Handle keeps selector-list mutations nonnil.
+type Selector_List_Reader_Handle *Selector_List_Reader
+
+// Selector_List_Reader_Handle_Invariants bounds mutable selector-list state.
+func Selector_List_Reader_Handle_Invariants(
+	value Selector_List_Reader_Handle, namespace aver.Namespace,
+) {
+	aver.Always(value != nil, "Bzip2 selector list reader handle exists.")
+	aver.Tree(value, namespace).
+		Range_Int(len(value.Source), BYTE_COUNT_MINIMUM, SELECTOR_SOURCE_SIZE_MAXIMUM).
+		Range_Uint64(
+			uint64(value.Bits), BIT_BUFFER_MINIMUM, SELECTOR_BIT_BUFFER_MAXIMUM,
+		).
+		Ensure()
+	aver.Always(
+		value.Bits_Count == SELECTOR_BIT_COUNT,
+		"Mutable selector list reader starts with five unread bits.",
+	)
+}
+
+// Selector_Reader marks reader state while consuming unary codes.
 type Selector_Reader Bit_Reader
 
 // Selector_Reader_Invariants bounds one selector-code boundary.
@@ -628,7 +808,23 @@ func Selector_Reader_Invariants(value Selector_Reader, namespace aver.Namespace)
 		Ensure()
 }
 
-// Decoder_Reader is reader state while constructing canonical trees.
+// Selector_Reader_Handle keeps unary-code parsing on nonnil caller-owned state.
+type Selector_Reader_Handle *Selector_Reader
+
+// Selector_Reader_Handle_Invariants bounds one selector-code boundary.
+func Selector_Reader_Handle_Invariants(
+	value Selector_Reader_Handle, namespace aver.Namespace,
+) {
+	aver.Always(value != nil, "Bzip2 selector reader exists.")
+	aver.Tree(value, namespace).
+		Range_Int(len(value.Source), BYTE_COUNT_MINIMUM, SELECTOR_SOURCE_SIZE_MAXIMUM).
+		Range_Uint64(uint64(value.Bits), BIT_BUFFER_MINIMUM, BIT_BUFFER_MAXIMUM).
+		Range_Uint(uint(value.Bits_Count), BIT_COUNT_MINIMUM, BIT_COUNT_MAXIMUM).
+		Ensure()
+	Selector_Reader_Invariants(*value, namespace)
+}
+
+// Decoder_Reader marks reader state while constructing canonical trees.
 type Decoder_Reader Bit_Reader
 
 // Decoder_Reader_Invariants bounds tree-construction state.
@@ -640,7 +836,23 @@ func Decoder_Reader_Invariants(value Decoder_Reader, namespace aver.Namespace) {
 		Ensure()
 }
 
-// Payload_Reader is reader state while decoding block symbols.
+// Decoder_Reader_Handle keeps tree parsing on nonnil caller-owned state.
+type Decoder_Reader_Handle *Decoder_Reader
+
+// Decoder_Reader_Handle_Invariants bounds tree-construction state.
+func Decoder_Reader_Handle_Invariants(
+	value Decoder_Reader_Handle, namespace aver.Namespace,
+) {
+	aver.Always(value != nil, "Bzip2 decoder reader exists.")
+	aver.Tree(value, namespace).
+		Range_Int(len(value.Source), BYTE_COUNT_MINIMUM, SELECTOR_SOURCE_SIZE_MAXIMUM).
+		Range_Uint64(uint64(value.Bits), BIT_BUFFER_MINIMUM, BIT_BUFFER_MAXIMUM).
+		Range_Uint(uint(value.Bits_Count), BIT_COUNT_MINIMUM, BIT_COUNT_MAXIMUM).
+		Ensure()
+	Decoder_Reader_Invariants(*value, namespace)
+}
+
+// Payload_Reader marks reader state while decoding block symbols.
 type Payload_Reader Bit_Reader
 
 // Payload_Reader_Invariants bounds compressed payload state.
@@ -652,7 +864,23 @@ func Payload_Reader_Invariants(value Payload_Reader, namespace aver.Namespace) {
 		Ensure()
 }
 
-// Trailer_Reader is reader state after the final marker.
+// Payload_Reader_Handle keeps block parsing on nonnil caller-owned state.
+type Payload_Reader_Handle *Payload_Reader
+
+// Payload_Reader_Handle_Invariants bounds compressed payload state.
+func Payload_Reader_Handle_Invariants(
+	value Payload_Reader_Handle, namespace aver.Namespace,
+) {
+	aver.Always(value != nil, "Bzip2 payload reader exists.")
+	aver.Tree(value, namespace).
+		Range_Int(len(value.Source), BYTE_COUNT_MINIMUM, PAYLOAD_SOURCE_SIZE_MAXIMUM).
+		Range_Uint64(uint64(value.Bits), BIT_BUFFER_MINIMUM, BIT_BUFFER_MAXIMUM).
+		Range_Uint(uint(value.Bits_Count), BIT_COUNT_MINIMUM, BIT_COUNT_MAXIMUM).
+		Ensure()
+	Payload_Reader_Invariants(*value, namespace)
+}
+
+// Trailer_Reader marks reader state after final marker.
 type Trailer_Reader Bit_Reader
 
 // Trailer_Reader_Invariants bounds stream-checksum state.
@@ -662,6 +890,22 @@ func Trailer_Reader_Invariants(value Trailer_Reader, namespace aver.Namespace) {
 		Range_Uint64(uint64(value.Bits), BIT_BUFFER_MINIMUM, BIT_BUFFER_MAXIMUM).
 		Range_Uint(uint(value.Bits_Count), BIT_COUNT_MINIMUM, BIT_COUNT_MAXIMUM).
 		Ensure()
+}
+
+// Trailer_Reader_Handle keeps checksum parsing on nonnil caller-owned state.
+type Trailer_Reader_Handle *Trailer_Reader
+
+// Trailer_Reader_Handle_Invariants bounds stream-checksum state.
+func Trailer_Reader_Handle_Invariants(
+	value Trailer_Reader_Handle, namespace aver.Namespace,
+) {
+	aver.Always(value != nil, "Bzip2 trailer reader exists.")
+	aver.Tree(value, namespace).
+		Range_Int(len(value.Source), BYTE_COUNT_MINIMUM, TRAILER_SOURCE_SIZE_MAXIMUM).
+		Range_Uint64(uint64(value.Bits), BIT_BUFFER_MINIMUM, BIT_BUFFER_MAXIMUM).
+		Range_Uint(uint(value.Bits_Count), BIT_COUNT_MINIMUM, BIT_COUNT_MAXIMUM).
+		Ensure()
+	Trailer_Reader_Invariants(*value, namespace)
 }
 
 // Remainder_Reader is reader state after one decoded block.
@@ -678,42 +922,111 @@ func Remainder_Reader_Invariants(value Remainder_Reader, namespace aver.Namespac
 		Ensure()
 }
 
-// Huffman_Decoder holds canonical code tables in fixed storage.
-type Huffman_Decoder struct {
-	// Counts groups canonical symbols by bit count.
-	Counts [HUFFMAN_CODE_SIZE_MAXIMUM + 1]uint16
-	// Symbols stores canonical order without owned slices.
-	Symbols [SYMBOL_COUNT_MAXIMUM]uint16
+// Huffman_Counts borrows canonical count storage from block stack frame.
+type Huffman_Counts []uint16
+
+// Huffman_Counts_Invariants fixes canonical count table width.
+func Huffman_Counts_Invariants(value Huffman_Counts, _ aver.Namespace) {
+	aver.Always(
+		len(value) == HUFFMAN_COUNT_SIZE,
+		"Bzip2 Huffman count storage has one slot per code size.",
+	)
 }
 
-// Huffman_Decoder_Invariants bounds the fixed canonical tables.
-func Huffman_Decoder_Invariants(
-	value *Huffman_Decoder, namespace aver.Namespace,
-) {
+// Huffman_Symbols borrows canonical symbol storage from block stack frame.
+type Huffman_Symbols []uint16
+
+// Huffman_Symbols_Invariants fixes canonical symbol table width.
+func Huffman_Symbols_Invariants(value Huffman_Symbols, _ aver.Namespace) {
+	aver.Always(
+		len(value) == SYMBOL_COUNT_MAXIMUM,
+		"Bzip2 Huffman symbol storage fits largest alphabet.",
+	)
+}
+
+// Huffman_Decoder holds canonical code tables in bounded borrowed storage.
+type Huffman_Decoder struct {
+	// Counts groups canonical symbols by bit count.
+	Counts Huffman_Counts
+	// Symbols stores canonical order without owned storage.
+	Symbols Huffman_Symbols
+}
+
+// Huffman_Decoder_Invariants composes bounded canonical tables.
+func Huffman_Decoder_Invariants(value Huffman_Decoder, namespace aver.Namespace) {
+	Huffman_Counts_Invariants(value.Counts, namespace)
+	Huffman_Symbols_Invariants(value.Symbols, namespace)
 	aver.Always(
 		value.Counts[0] <= SYMBOL_COUNT_MAXIMUM,
 		"A Huffman decoder counts no more symbols than its fixed table holds.",
 	)
 }
 
-// Block_State holds bounded scratch arrays outside decode control flow.
-type Block_State struct {
-	// Character_Count supports inverse BWT.
-	Character_Count [BYTE_VALUE_COUNT]uint32
-	// Trees holds all selector targets.
-	Trees [HUFFMAN_TREE_COUNT_MAXIMUM]Huffman_Decoder
-	// Symbols holds present byte alphabet in move-to-front order.
-	Symbols [BYTE_VALUE_COUNT]byte
-	// Code_Sizes reconstructs one canonical tree at time.
-	Code_Sizes [SYMBOL_COUNT_MAXIMUM]uint8
+// Huffman_Storage flattens six decoder tables into one bounded stack region.
+type Huffman_Storage []uint16
+
+// Huffman_Storage_Invariants fixes storage for every possible decoder.
+func Huffman_Storage_Invariants(value Huffman_Storage, _ aver.Namespace) {
+	aver.Always(
+		len(value) == HUFFMAN_STORAGE_SIZE,
+		"Bzip2 Huffman storage fits every possible tree.",
+	)
 }
 
-// Block_State_Invariants bounds fixed block scratch storage.
-func Block_State_Invariants(value *Block_State, namespace aver.Namespace) {
+// Block_Symbols borrows full byte-alphabet storage.
+type Block_Symbols []byte
+
+// Block_Symbols_Invariants fixes move-to-front alphabet capacity.
+func Block_Symbols_Invariants(value Block_Symbols, _ aver.Namespace) {
 	aver.Always(
-		len(value.Symbols) == BYTE_VALUE_COUNT,
-		"Block scratch has one symbol slot for every byte.",
+		len(value) == BYTE_VALUE_COUNT,
+		"Bzip2 block storage fits every byte symbol.",
 	)
+}
+
+// Block_Code_Sizes borrows largest Huffman alphabet storage.
+type Block_Code_Sizes []uint8
+
+// Block_Code_Sizes_Invariants fixes temporary code-size capacity.
+func Block_Code_Sizes_Invariants(value Block_Code_Sizes, _ aver.Namespace) {
+	aver.Always(
+		len(value) == SYMBOL_COUNT_MAXIMUM,
+		"Bzip2 block storage fits every code size.",
+	)
+}
+
+// Block_State groups borrowed scratch so decode paths cannot grow it.
+type Block_State struct {
+	// Character_Count supports inverse BWT.
+	Character_Count Character_Counts
+	// Trees holds all selector targets.
+	Trees Huffman_Storage
+	// Symbols holds present byte alphabet in move-to-front order.
+	Symbols Block_Symbols
+	// Code_Sizes reconstructs one canonical tree at time.
+	Code_Sizes Block_Code_Sizes
+}
+
+// Block_State_Invariants composes every borrowed scratch region.
+func Block_State_Invariants(value Block_State, namespace aver.Namespace) {
+	Character_Counts_Invariants(value.Character_Count, namespace)
+	Huffman_Storage_Invariants(value.Trees, namespace)
+	Block_Symbols_Invariants(value.Symbols, namespace)
+	Block_Code_Sizes_Invariants(value.Code_Sizes, namespace)
+}
+
+func huffman_decoder(
+	value Huffman_Storage, index Tree_Index,
+) (decoder Huffman_Decoder) {
+	defer func() { Huffman_Decoder_Invariants(decoder, "huffman_decoder.decoder") }()
+	Huffman_Storage_Invariants(value, "huffman_decoder.value")
+	Tree_Index_Invariants(index, "huffman_decoder.index")
+	start := int(index) * HUFFMAN_DECODER_SIZE
+	symbol_start := start + HUFFMAN_COUNT_SIZE
+	return Huffman_Decoder{
+		Counts:  Huffman_Counts(value[start:symbol_start]),
+		Symbols: Huffman_Symbols(value[symbol_start : start+HUFFMAN_DECODER_SIZE]),
+	}
 }
 
 // Tree_Selection owns mutable selector progress.
@@ -727,10 +1040,32 @@ type Tree_Selection struct {
 }
 
 // Tree_Selection_Invariants composes selector progress.
-func Tree_Selection_Invariants(value *Tree_Selection, namespace aver.Namespace) {
+func Tree_Selection_Invariants(value Tree_Selection, namespace aver.Namespace) {
 	Selector_Index_Invariants(value.Selector_Index, namespace)
 	Group_Count_Invariants(value.Decoded_Count, namespace)
 	Tree_Index_Invariants(value.Current_Tree, namespace)
+}
+
+// Tree_Selection_Handle keeps selector progress mutations nonnil.
+type Tree_Selection_Handle *Tree_Selection
+
+// Tree_Selection_Handle_Invariants bounds mutable selector progress.
+func Tree_Selection_Handle_Invariants(
+	value Tree_Selection_Handle, namespace aver.Namespace,
+) {
+	aver.Always(value != nil, "Bzip2 tree selection exists.")
+	aver.Tree(value, namespace).
+		Range_Int(
+			int(value.Selector_Index), SELECTOR_INDEX_MINIMUM, SELECTOR_COUNT_MAXIMUM,
+		).
+		Range_Int(
+			int(value.Decoded_Count), GROUP_COUNT_MINIMUM, SELECTOR_GROUP_SIZE,
+		).
+		Range_Uint8(
+			uint8(value.Current_Tree), TREE_INDEX_MINIMUM, TREE_INDEX_MAXIMUM,
+		).
+		Ensure()
+	Tree_Selection_Invariants(*value, namespace)
 }
 
 // Decode_Into requires transform storage because inverse BWT needs one uint32 per block byte.
@@ -752,13 +1087,15 @@ func Decode_Into(
 	reader := Bit_Reader{Source: Bit_Source(compressed[4:])}
 	var file_checksum uint32
 	for more := true; more; {
-		marker, present := bit_reader_read(&reader, 48)
+		marker, present := bit_reader_read(Bit_Reader_Handle(&reader), 48)
 		if !present {
 			return count, STATUS_INPUT_INVALID
 		}
 		switch marker {
 		case BLOCK_MAGIC:
-			want_block_checksum, checksum_present := bit_reader_read(&reader, 32)
+			want_block_checksum, checksum_present := bit_reader_read(
+				Bit_Reader_Handle(&reader), 32,
+			)
 			if !checksum_present {
 				return count, STATUS_INPUT_INVALID
 			}
@@ -773,7 +1110,7 @@ func Decode_Into(
 				return count, STATUS_INPUT_INVALID
 			}
 			reader = Bit_Reader(remainder)
-			var block_checksum Checksum
+			var block_checksum uint32
 			var emit_status Emit_Status
 			count, block_checksum, emit_status = emit_block(
 				destination, count, Block(transform[:block_count]), first,
@@ -781,19 +1118,12 @@ func Decode_Into(
 			if emit_status != EMIT_STATUS_OK {
 				return count, Status(emit_status)
 			}
-			want_checksum := Checksum{
-				byte(want_block_checksum >> 24), byte(want_block_checksum >> 16),
-				byte(want_block_checksum >> 8), byte(want_block_checksum),
-			}
-			if block_checksum != want_checksum {
+			if block_checksum != uint32(want_block_checksum) {
 				return count, STATUS_INPUT_INVALID
 			}
 		case FINAL_MAGIC:
-			checksum := Checksum{
-				byte(file_checksum >> 24), byte(file_checksum >> 16),
-				byte(file_checksum >> 8), byte(file_checksum),
-			}
-			if !decode_trailer((*Trailer_Reader)(&reader), checksum) {
+			trailer := Trailer_Reader_Handle((*Trailer_Reader)(&reader))
+			if !decode_trailer(trailer, file_checksum) {
 				return count, STATUS_INPUT_INVALID
 			}
 			return count, STATUS_OK
@@ -839,21 +1169,18 @@ func decode_header(
 }
 
 func decode_trailer(
-	reader *Trailer_Reader,
-	file_checksum Checksum,
+	reader Trailer_Reader_Handle,
+	file_checksum uint32,
 ) (valid Boolean) {
 	defer func() { Boolean_Invariants(valid, "decode_trailer.valid") }()
-	Trailer_Reader_Invariants(*reader, "decode_trailer.reader")
-	Checksum_Invariants(file_checksum, "decode_trailer.file_checksum")
-	want_file_checksum, checksum_present := bit_reader_read((*Bit_Reader)(reader), 32)
+	Trailer_Reader_Handle_Invariants(reader, "decode_trailer.reader")
+	want_file_checksum, checksum_present := bit_reader_read(
+		Bit_Reader_Handle((*Bit_Reader)((*Trailer_Reader)(reader))), 32,
+	)
 	if !checksum_present {
 		return false
 	}
-	want_checksum := Checksum{
-		byte(want_file_checksum >> 24), byte(want_file_checksum >> 16),
-		byte(want_file_checksum >> 8), byte(want_file_checksum),
-	}
-	if file_checksum != want_checksum {
+	if file_checksum != uint32(want_file_checksum) {
 		return false
 	}
 	reader.Bits_Count -= reader.Bits_Count % 8
@@ -881,34 +1208,45 @@ func decode_block(
 	Block_Storage_Invariants(transform, "decode_block.transform")
 	Block_Limit_Invariants(block_item_count_maximum, "decode_block.block_item_count_maximum")
 	reader := Bit_Reader{Source: Bit_Source(compressed)}
-	randomized, available := bit_reader_read(&reader, 1)
+	randomized, available := bit_reader_read(Bit_Reader_Handle(&reader), 1)
 	if !available {
 		return 0, 0, remainder, false
 	}
 	if randomized != 0 {
 		return 0, 0, remainder, false
 	}
-	original_position, available := bit_reader_read(&reader, 24)
+	original_position, available := bit_reader_read(Bit_Reader_Handle(&reader), 24)
 	if !available {
 		return 0, 0, remainder, false
 	}
-	var state Block_State
-	symbol_count, symbols_valid := block_symbols((*Symbol_Reader)(&reader), &state)
+	var character_count_storage [BYTE_VALUE_COUNT]uint32
+	var tree_storage [HUFFMAN_STORAGE_SIZE]uint16
+	var symbol_storage [BYTE_VALUE_COUNT]byte
+	var code_size_storage [SYMBOL_COUNT_MAXIMUM]uint8
+	state := Block_State{
+		Character_Count: Character_Counts(character_count_storage[:]),
+		Trees:           Huffman_Storage(tree_storage[:]),
+		Symbols:         Block_Symbols(symbol_storage[:]),
+		Code_Sizes:      Block_Code_Sizes(code_size_storage[:]),
+	}
+	symbol_count, symbols_valid := block_symbols(
+		Symbol_Reader_Handle((*Symbol_Reader)(&reader)), state,
+	)
 	if !symbols_valid {
 		return 0, 0, remainder, false
 	}
 	tree_count, selector_count, selector_reader, trees_valid := block_trees(
-		(*Tree_Reader)(&reader), &state, symbol_count,
+		Tree_Reader_Handle((*Tree_Reader)(&reader)), state, symbol_count,
 	)
 	if !trees_valid {
 		return 0, 0, remainder, false
 	}
 	block_count, valid = block_payload(
-		(*Payload_Reader)(&reader),
-		&selector_reader,
+		Payload_Reader_Handle((*Payload_Reader)(&reader)),
+		Selector_List_Reader_Handle(&selector_reader),
 		transform,
 		block_item_count_maximum,
-		&state,
+		state,
 		symbol_count,
 		tree_count,
 		selector_count,
@@ -921,22 +1259,22 @@ func decode_block(
 	}
 	first = inverse_transform(
 		Block(transform[:block_count]), First_Position(original_position),
-		state.Character_Count[:],
+		state.Character_Count,
 	)
 	return block_count, first, Remainder_Reader(reader), true
 }
 
 func block_symbols(
-	reader *Symbol_Reader, state *Block_State,
+	reader Symbol_Reader_Handle, state Block_State,
 ) (count Symbol_Count, valid Boolean) {
 	defer func() {
 		Symbol_Count_Invariants(count, "block_symbols.count")
 		Boolean_Invariants(valid, "block_symbols.valid")
 	}()
-	Symbol_Reader_Invariants(*reader, "block_symbols.reader")
+	Symbol_Reader_Handle_Invariants(reader, "block_symbols.reader")
 	Block_State_Invariants(state, "block_symbols.state")
 	count = SYMBOL_COUNT_MINIMUM
-	base_reader := (*Bit_Reader)(reader)
+	base_reader := Bit_Reader_Handle((*Bit_Reader)((*Symbol_Reader)(reader)))
 	used_bitmap, available := bit_reader_read(base_reader, 16)
 	if !available {
 		return SYMBOL_COUNT_MINIMUM, false
@@ -964,8 +1302,8 @@ func block_symbols(
 }
 
 func block_trees(
-	reader *Tree_Reader,
-	state *Block_State,
+	reader Tree_Reader_Handle,
+	state Block_State,
 	symbol_count Symbol_Count,
 ) (
 	tree_count Tree_Count, selector_count Selector_Count,
@@ -977,13 +1315,13 @@ func block_trees(
 		Selector_List_Reader_Invariants(selector_reader, "block_trees.selector_reader")
 		Boolean_Invariants(valid, "block_trees.valid")
 	}()
-	Tree_Reader_Invariants(*reader, "block_trees.reader")
+	Tree_Reader_Handle_Invariants(reader, "block_trees.reader")
 	Block_State_Invariants(state, "block_trees.state")
 	Symbol_Count_Invariants(symbol_count, "block_trees.symbol_count")
 	tree_count = TREE_COUNT_MINIMUM
 	selector_count = SELECTOR_COUNT_MINIMUM
 	selector_reader.Bits_Count = SELECTOR_BIT_COUNT
-	base_reader := (*Bit_Reader)(reader)
+	base_reader := Bit_Reader_Handle((*Bit_Reader)((*Tree_Reader)(reader)))
 	tree_count_value, available := bit_reader_read(base_reader, 3)
 	if !available {
 		return tree_count, selector_count, selector_reader, false
@@ -1004,11 +1342,15 @@ func block_trees(
 	}
 	selector_count = Selector_Count(selector_count_value)
 	selector_reader = Selector_List_Reader(*reader)
-	if !selectors_skip((*Selector_List_Reader)(reader), tree_count, selector_count) {
+	if !selectors_skip(
+		Selector_List_Reader_Handle((*Selector_List_Reader)((*Tree_Reader)(reader))),
+		tree_count, selector_count,
+	) {
 		return tree_count, selector_count, selector_reader, false
 	}
 	if !block_tree_decoders(
-		(*Decoder_Reader)(reader), state, tree_count, Alphabet_Count(symbol_count+2),
+		Decoder_Reader_Handle((*Decoder_Reader)((*Tree_Reader)(reader))), state,
+		tree_count, Alphabet_Count(symbol_count+2),
 	) {
 		return tree_count, selector_count, selector_reader, false
 	}
@@ -1016,17 +1358,21 @@ func block_trees(
 }
 
 func selectors_skip(
-	reader *Selector_List_Reader, tree_count Tree_Count, selector_count Selector_Count,
+	reader Selector_List_Reader_Handle,
+	tree_count Tree_Count,
+	selector_count Selector_Count,
 ) (valid Boolean) {
 	defer func() { Boolean_Invariants(valid, "selectors_skip.valid") }()
-	Selector_List_Reader_Invariants(*reader, "selectors_skip.reader")
+	Selector_List_Reader_Handle_Invariants(reader, "selectors_skip.reader")
 	Tree_Count_Invariants(tree_count, "selectors_skip.tree_count")
 	Selector_Count_Invariants(selector_count, "selectors_skip.selector_count")
-	var selector_order [HUFFMAN_TREE_COUNT_MAXIMUM]byte
-	move_to_front_range(selector_order[:tree_count])
+	selector_order := Selector_Order{
+		First: 0, Second: 1, Third: 2, Fourth: 3, Fifth: 4, Sixth: 5,
+	}
 	for selector_index := 0; selector_index < int(selector_count); selector_index++ {
 		_, selector_present := selector_read(
-			(*Selector_Reader)(reader), selector_order[:tree_count],
+			Selector_Reader_Handle((*Selector_Reader)((*Selector_List_Reader)(reader))),
+			Selector_Order_Handle(&selector_order), tree_count,
 		)
 		if !selector_present {
 			return false
@@ -1036,17 +1382,17 @@ func selectors_skip(
 }
 
 func block_tree_decoders(
-	reader *Decoder_Reader,
-	state *Block_State,
+	reader Decoder_Reader_Handle,
+	state Block_State,
 	tree_count Tree_Count,
 	alphabet_count Alphabet_Count,
 ) (valid Boolean) {
 	defer func() { Boolean_Invariants(valid, "block_tree_decoders.valid") }()
-	Decoder_Reader_Invariants(*reader, "block_tree_decoders.reader")
+	Decoder_Reader_Handle_Invariants(reader, "block_tree_decoders.reader")
 	Block_State_Invariants(state, "block_tree_decoders.state")
 	Tree_Count_Invariants(tree_count, "block_tree_decoders.tree_count")
 	Alphabet_Count_Invariants(alphabet_count, "block_tree_decoders.alphabet_count")
-	base_reader := (*Bit_Reader)(reader)
+	base_reader := Bit_Reader_Handle((*Bit_Reader)((*Decoder_Reader)(reader)))
 	for tree_index := 0; tree_index < int(tree_count); tree_index++ {
 		code_size_value, code_size_present := bit_reader_read(base_reader, 5)
 		if !code_size_present {
@@ -1081,52 +1427,58 @@ func block_tree_decoders(
 			}
 			state.Code_Sizes[symbol_index] = uint8(code_size)
 		}
-		if !huffman_build(&state.Trees[tree_index], state.Code_Sizes[:alphabet_count]) {
+		decoder := huffman_decoder(state.Trees, Tree_Index(tree_index))
+		if !huffman_build(
+			decoder, Code_Sizes(state.Code_Sizes[:alphabet_count]),
+		) {
 			return false
 		}
 	}
 	return true
 }
 
-func block_payload(reader *Payload_Reader, selectors *Selector_List_Reader, transform Block_Storage,
-	block_item_count_maximum Block_Limit, state *Block_State,
+func block_payload(
+	reader Payload_Reader_Handle, selectors Selector_List_Reader_Handle,
+	transform Block_Storage, block_item_count_maximum Block_Limit, state Block_State,
 	symbol_count Symbol_Count, tree_count Tree_Count, selector_count Selector_Count,
 ) (block_count Block_Count, valid Boolean) {
 	defer func() {
 		Block_Count_Invariants(block_count, "block_payload.block_count")
 		Boolean_Invariants(valid, "block_payload.valid")
 	}()
-	Payload_Reader_Invariants(*reader, "block_payload.reader")
-	Selector_List_Reader_Invariants(*selectors, "block_payload.selector_reader")
+	Payload_Reader_Handle_Invariants(reader, "block_payload.reader")
+	Selector_List_Reader_Handle_Invariants(selectors, "block_payload.selector_reader")
 	Block_Storage_Invariants(transform, "block_payload.transform")
 	Block_Limit_Invariants(block_item_count_maximum, "block_payload.block_item_count_maximum")
 	Block_State_Invariants(state, "block_payload.state")
 	Symbol_Count_Invariants(symbol_count, "block_payload.symbol_count")
 	Tree_Count_Invariants(tree_count, "block_payload.tree_count")
 	Selector_Count_Invariants(selector_count, "block_payload.selector_count")
-	var selector_order [HUFFMAN_TREE_COUNT_MAXIMUM]byte
-	move_to_front_range(selector_order[:tree_count])
+	selector_order := Selector_Order{
+		First: 0, Second: 1, Third: 2, Fourth: 3, Fifth: 4, Sixth: 5,
+	}
 	var symbol_order [BYTE_VALUE_COUNT]byte
 	copy(symbol_order[:symbol_count], state.Symbols[:symbol_count])
 	selection := Tree_Selection{Decoded_Count: SELECTOR_GROUP_SIZE}
-	repeat := Repeat_Count(0)
-	repeat_power := 0
-	clear(state.Character_Count[:])
-	selection_reader := (*Selector_Reader)(selectors)
+	repeat, repeat_power := Repeat_Count(0), 0
+	clear(state.Character_Count)
+	selector_list := (*Selector_List_Reader)(selectors)
+	selection_reader := Selector_Reader_Handle((*Selector_Reader)(selector_list))
 	for more := true; more; {
-		if !block_tree_select(selection_reader, selector_order[:tree_count],
-			selector_count, &selection) {
+		if !block_tree_select(
+			selection_reader, Selector_Order_Handle(&selector_order), tree_count,
+			selector_count, Tree_Selection_Handle(&selection),
+		) {
 			return 0, false
 		}
-		symbol, symbol_present := huffman_read(reader, &state.Trees[selection.Current_Tree])
+		decoder := huffman_decoder(state.Trees, selection.Current_Tree)
+		symbol, symbol_present := huffman_read(reader, decoder)
 		if !symbol_present {
 			return 0, false
 		}
 		selection.Decoded_Count++
 		if symbol < 2 {
-			if repeat == 0 {
-				repeat_power = 1
-			}
+			repeat_power = max(repeat_power, 1)
 			repeat += Repeat_Count(repeat_power << symbol)
 			repeat_power <<= 1
 			if repeat > REPEAT_COUNT_MAXIMUM {
@@ -1134,16 +1486,14 @@ func block_payload(reader *Payload_Reader, selectors *Selector_List_Reader, tran
 			}
 			continue
 		}
-		if repeat > 0 {
-			block_count, valid = block_repeat(
-				transform, block_count, block_item_count_maximum,
-				repeat, Byte_Value(symbol_order[0]), state.Character_Count[:],
-			)
-			if !valid {
-				return 0, false
-			}
-			repeat = 0
+		block_count, valid = block_repeat(
+			transform, block_count, block_item_count_maximum,
+			repeat, Byte_Value(symbol_order[0]), state.Character_Count,
+		)
+		if !valid {
+			return 0, false
 		}
+		repeat, repeat_power = 0, 0
 		if int(symbol) == int(symbol_count)+1 {
 			return block_count, true
 		}
@@ -1163,23 +1513,25 @@ func block_payload(reader *Payload_Reader, selectors *Selector_List_Reader, tran
 }
 
 func block_tree_select(
-	selector_reader *Selector_Reader,
-	selector_order Selector_Order,
+	selector_reader Selector_Reader_Handle,
+	selector_order Selector_Order_Handle,
+	tree_count Tree_Count,
 	selector_count Selector_Count,
-	selection *Tree_Selection,
+	selection Tree_Selection_Handle,
 ) (valid Boolean) {
 	defer func() { Boolean_Invariants(valid, "block_tree_select.valid") }()
-	Selector_Reader_Invariants(*selector_reader, "block_tree_select.selector_reader")
-	Selector_Order_Invariants(selector_order, "block_tree_select.selector_order")
+	Selector_Reader_Handle_Invariants(selector_reader, "block_tree_select.selector_reader")
+	Selector_Order_Handle_Invariants(selector_order, "block_tree_select.selector_order")
+	Tree_Count_Invariants(tree_count, "block_tree_select.tree_count")
 	Selector_Count_Invariants(selector_count, "block_tree_select.selector_count")
-	Tree_Selection_Invariants(selection, "block_tree_select.selection")
+	Tree_Selection_Handle_Invariants(selection, "block_tree_select.selection")
 	if selection.Decoded_Count != SELECTOR_GROUP_SIZE {
 		return true
 	}
 	if selection.Selector_Index == Selector_Index(selector_count) {
 		return false
 	}
-	selected, selector_present := selector_read(selector_reader, selector_order)
+	selected, selector_present := selector_read(selector_reader, selector_order, tree_count)
 	if !selector_present {
 		return false
 	}
@@ -1224,10 +1576,9 @@ func emit_block(
 	count Count,
 	transform Block,
 	position First_Position,
-) (next_count Count, checksum Checksum, status Emit_Status) {
+) (next_count Count, checksum uint32, status Emit_Status) {
 	defer func() {
 		Count_Invariants(next_count, "emit_block.next_count")
-		Checksum_Invariants(checksum, "emit_block.checksum")
 		Emit_Status_Invariants(status, "emit_block.status")
 	}()
 	Destination_Invariants(destination, "emit_block.destination")
@@ -1236,10 +1587,9 @@ func emit_block(
 	First_Position_Invariants(position, "emit_block.position")
 	last := -1
 	equal_count := 0
-	checksum_word := ^(uint32(checksum[0])<<24 |
-		uint32(checksum[1])<<16 | uint32(checksum[2])<<8 | uint32(checksum[3]))
+	checksum_word := ^uint32(0)
 	var checksum_table [BYTE_VALUE_COUNT]uint32
-	checksum_table_fill(&checksum_table)
+	checksum_table_fill(Checksum_Table(checksum_table[:]))
 	status = EMIT_STATUS_OK
 emission:
 	for used_index := 0; used_index < len(transform); used_index++ {
@@ -1280,15 +1630,11 @@ emission:
 		checksum_index := byte(checksum_word>>24) ^ value
 		checksum_word = checksum_table[checksum_index] ^ checksum_word<<8
 	}
-	checksum_word = ^checksum_word
-	checksum = Checksum{
-		byte(checksum_word >> 24), byte(checksum_word >> 16),
-		byte(checksum_word >> 8), byte(checksum_word),
-	}
-	return count, checksum, status
+	return count, ^checksum_word, status
 }
 
-func checksum_table_fill(destination *[BYTE_VALUE_COUNT]uint32) {
+func checksum_table_fill(destination Checksum_Table) {
+	Checksum_Table_Invariants(destination, "checksum_table_fill.destination")
 	const POLYNOMIAL = 0x04c11db7
 	for value := range BYTE_VALUE_COUNT {
 		table_value := uint32(value) << 24
@@ -1304,34 +1650,67 @@ func checksum_table_fill(destination *[BYTE_VALUE_COUNT]uint32) {
 }
 
 func selector_read(
-	reader *Selector_Reader, order Selector_Order,
+	reader Selector_Reader_Handle, order Selector_Order_Handle, tree_count Tree_Count,
 ) (tree Tree_Index, present Boolean) {
 	defer func() {
 		Tree_Index_Invariants(tree, "selector_read.tree")
 		Boolean_Invariants(present, "selector_read.present")
 	}()
-	Selector_Reader_Invariants(*reader, "selector_read.reader")
-	Selector_Order_Invariants(order, "selector_read.order")
-	base_reader := (*Bit_Reader)(reader)
-	position := Position(0)
-	for int(position) < len(order) {
+	Selector_Reader_Handle_Invariants(reader, "selector_read.reader")
+	Selector_Order_Handle_Invariants(order, "selector_read.order")
+	Tree_Count_Invariants(tree_count, "selector_read.tree_count")
+	base_reader := Bit_Reader_Handle((*Bit_Reader)((*Selector_Reader)(reader)))
+	position := Selector_Position(0)
+	for int(position) < int(tree_count) {
 		continued, available := bit_reader_read(base_reader, 1)
 		if !available {
 			return 0, false
 		}
 		if continued == 0 {
-			return Tree_Index(move_to_front_decode(Move_Order(order), position)), true
+			return selector_order_decode(order, position), true
 		}
 		position++
 	}
 	return 0, false
 }
 
-func move_to_front_range(order Selector_Order) {
-	Selector_Order_Invariants(order, "move_to_front_range.order")
-	for index := range order {
-		order[index] = byte(index)
+func selector_order_decode(
+	order Selector_Order_Handle, position Selector_Position,
+) (tree Tree_Index) {
+	defer func() { Tree_Index_Invariants(tree, "selector_order_decode.tree") }()
+	Selector_Order_Handle_Invariants(order, "selector_order_decode.order")
+	Selector_Position_Invariants(position, "selector_order_decode.position")
+	switch position {
+	case 0:
+		tree = Tree_Index(order.First)
+	case 1:
+		tree = Tree_Index(order.Second)
+		order.Second = Second_Selector_Tree(order.First)
+	case 2:
+		tree = Tree_Index(order.Third)
+		order.Third = Third_Selector_Tree(order.Second)
+		order.Second = Second_Selector_Tree(order.First)
+	case 3:
+		tree = Tree_Index(order.Fourth)
+		order.Fourth = Fourth_Selector_Tree(order.Third)
+		order.Third = Third_Selector_Tree(order.Second)
+		order.Second = Second_Selector_Tree(order.First)
+	case 4:
+		tree = Tree_Index(order.Fifth)
+		order.Fifth = Fifth_Selector_Tree(order.Fourth)
+		order.Fourth = Fourth_Selector_Tree(order.Third)
+		order.Third = Third_Selector_Tree(order.Second)
+		order.Second = Second_Selector_Tree(order.First)
+	case 5:
+		tree = Tree_Index(order.Sixth)
+		order.Sixth = Sixth_Selector_Tree(order.Fifth)
+		order.Fifth = Fifth_Selector_Tree(order.Fourth)
+		order.Fourth = Fourth_Selector_Tree(order.Third)
+		order.Third = Third_Selector_Tree(order.Second)
+		order.Second = Second_Selector_Tree(order.First)
 	}
+	order.First = First_Selector_Tree(tree)
+	return tree
 }
 
 func move_to_front_decode(
@@ -1347,13 +1726,13 @@ func move_to_front_decode(
 }
 
 func huffman_build(
-	decoder *Huffman_Decoder, sizes Code_Sizes,
+	decoder Huffman_Decoder, sizes Code_Sizes,
 ) (valid Boolean) {
 	defer func() { Boolean_Invariants(valid, "huffman_build.valid") }()
 	Huffman_Decoder_Invariants(decoder, "huffman_build.decoder")
 	Code_Sizes_Invariants(sizes, "huffman_build.sizes")
-	clear(decoder.Counts[:])
-	clear(decoder.Symbols[:])
+	clear(decoder.Counts)
+	clear(decoder.Symbols)
 	maximum := 0
 	for _, size := range sizes {
 		if size == 0 {
@@ -1377,7 +1756,7 @@ func huffman_build(
 	if space != 0 {
 		return false
 	}
-	var offsets [HUFFMAN_CODE_SIZE_MAXIMUM + 1]uint16
+	var offsets [HUFFMAN_COUNT_SIZE]uint16
 	for size_index := 1; size_index < HUFFMAN_CODE_SIZE_MAXIMUM; size_index++ {
 		offsets[size_index+1] = offsets[size_index] + decoder.Counts[size_index]
 	}
@@ -1390,16 +1769,16 @@ func huffman_build(
 }
 
 func huffman_read(
-	reader *Payload_Reader,
-	decoder *Huffman_Decoder,
+	reader Payload_Reader_Handle,
+	decoder Huffman_Decoder,
 ) (symbol Huffman_Symbol, present Boolean) {
 	defer func() {
 		Huffman_Symbol_Invariants(symbol, "huffman_read.symbol")
 		Boolean_Invariants(present, "huffman_read.present")
 	}()
-	Payload_Reader_Invariants(*reader, "huffman_read.reader")
+	Payload_Reader_Handle_Invariants(reader, "huffman_read.reader")
 	Huffman_Decoder_Invariants(decoder, "huffman_read.decoder")
-	base_reader := (*Bit_Reader)(reader)
+	base_reader := Bit_Reader_Handle((*Bit_Reader)((*Payload_Reader)(reader)))
 	var code uint32
 	var first uint32
 	var symbol_index uint32
@@ -1445,13 +1824,13 @@ func inverse_transform(
 }
 
 func bit_reader_read(
-	reader *Bit_Reader, count Bit_Read_Count,
+	reader Bit_Reader_Handle, count Bit_Read_Count,
 ) (value Bit_Value, available Boolean) {
 	defer func() {
 		Bit_Value_Invariants(value, "bit_reader_read.value")
 		Boolean_Invariants(available, "bit_reader_read.available")
 	}()
-	Bit_Reader_Invariants(*reader, "bit_reader_read.reader")
+	Bit_Reader_Handle_Invariants(reader, "bit_reader_read.reader")
 	Bit_Read_Count_Invariants(count, "bit_reader_read.count")
 	for reader.Bits_Count < Bit_Count(count) {
 		if len(reader.Source) == 0 {

@@ -166,15 +166,15 @@ func Test_Bit_Primitive_Domains(t *testing.T) {
 	for _, test_case := range cases {
 		var encoded [INVARIANT_BIT_STORAGE_COUNT]byte
 		writer := Bit_Writer{Destination: encoded[:]}
-		bit_writer_write_bits(&writer, test_case.Value, test_case.Count)
-		bit_writer_finish(&writer)
+		bit_writer_write_bits(Bit_Writer_Handle(&writer), test_case.Value, test_case.Count)
+		bit_writer_finish(Bit_Writer_Handle(&writer))
 		testify.Not_Equal(
 			t, WRITER_STATE_EXHAUSTED, writer.State,
 			"write %d bits failed", test_case.Count,
 		)
 
 		reader := Bit_Reader{Source: encoded[:writer.Position]}
-		value, available := bit_reader_read(&reader, test_case.Count)
+		value, available := bit_reader_read(Bit_Reader_Handle(&reader), test_case.Count)
 		testify.True(t, bool(available), "read %d bits unavailable", test_case.Count)
 		testify.Equal(
 			t, test_case.Value, value,
@@ -196,7 +196,7 @@ func Test_Bit_Primitive_Domains(t *testing.T) {
 	} {
 		var encoded [INVARIANT_BYTE_STORAGE_COUNT]byte
 		writer := Bit_Writer{Destination: encoded[:]}
-		bit_writer_write_byte(&writer, value)
+		bit_writer_write_byte(Bit_Writer_Handle(&writer), value)
 		testify.Not_Equal(
 			t, WRITER_STATE_EXHAUSTED, writer.State, "byte write %d failed", value,
 		)
@@ -211,14 +211,14 @@ func Test_Bit_Primitive_Domains(t *testing.T) {
 		Bits_Count:  Pending_Bit_Count(PENDING_BIT_COUNT_MAXIMUM),
 		State:       WRITER_STATE_EXHAUSTED,
 	}
-	bit_writer_write_bits(&writer, 0, 0)
+	bit_writer_write_bits(Bit_Writer_Handle(&writer), 0, 0)
 	reader := Bit_Reader{
 		Source:     maximum_storage,
 		Position:   BYTE_COUNT_MAXIMUM,
 		Bits:       Pending_Bits(PENDING_BITS_MAXIMUM),
 		Bits_Count: Pending_Bit_Count(PENDING_BIT_COUNT_MAXIMUM),
 	}
-	_, available := bit_reader_read(&reader, 0)
+	_, available := bit_reader_read(Bit_Reader_Handle(&reader), 0)
 	testify.True(t, bool(available), "maximum reader state unavailable")
 }
 
@@ -257,29 +257,30 @@ func Test_Writer_State_Domains(t *testing.T) {
 		operation_count := INVARIANT_WRITER_OPERATION_COUNT
 		for operation_index := 0; operation_index < operation_count; operation_index++ {
 			writer := state
+			writer_handle := Bit_Writer_Handle(&writer)
 			switch operation_index {
 			case INVARIANT_WRITER_ENCODE_STORED:
-				encode_stored(&writer, nil)
+				encode_stored(writer_handle, nil)
 			case INVARIANT_WRITER_STORED_BLOCK:
-				stored_block(&writer, nil, true)
+				stored_block(writer_handle, nil, true)
 			case INVARIANT_WRITER_ENCODE_LITERALS:
-				encode_literals(&writer, nil)
+				encode_literals(writer_handle, nil)
 			case INVARIANT_WRITER_ENCODE_FIXED:
-				encode_fixed(&writer, &workspace, nil, nil, BEST_SPEED)
+				encode_fixed(writer_handle, workspace, nil, nil, BEST_SPEED)
 			case INVARIANT_WRITER_FIXED_SYMBOL:
-				write_fixed_symbol(&writer, Fixed_Symbol(SYMBOL_MINIMUM))
+				write_fixed_symbol(writer_handle, Fixed_Symbol(SYMBOL_MINIMUM))
 			case INVARIANT_WRITER_FIXED_DISTANCE:
 				write_fixed_distance(
-					&writer, Distance_Symbol(DISTANCE_SYMBOL_MINIMUM),
+					writer_handle, Distance_Symbol(DISTANCE_SYMBOL_MINIMUM),
 				)
 			case INVARIANT_WRITER_ALIGN:
-				bit_writer_align(&writer)
+				bit_writer_align(writer_handle)
 			case INVARIANT_WRITER_FINISH:
-				bit_writer_finish(&writer)
+				bit_writer_finish(writer_handle)
 			case INVARIANT_WRITER_BYTE:
-				bit_writer_write_byte(&writer, Byte_Value(BYTE_VALUE_MINIMUM))
+				bit_writer_write_byte(writer_handle, Byte_Value(BYTE_VALUE_MINIMUM))
 			case INVARIANT_WRITER_BYTES:
-				bit_writer_write_bytes(&writer, nil)
+				bit_writer_write_bytes(writer_handle, nil)
 			}
 			testify.Less_Or_Equal(
 				t,
@@ -329,7 +330,7 @@ func Test_Fast_Writer_State_Domains(t *testing.T) {
 	var heads [HASH_COUNT]int32
 	for state_index, state := range states {
 		writer := state
-		encode_fixed_best_speed(&writer, heads[:], sources[state_index])
+		encode_fixed_best_speed(Bit_Writer_Handle(&writer), heads[:], sources[state_index])
 		testify.Less_Or_Equal(
 			t,
 			&testify.Less_Or_Equal_Input[int]{
@@ -340,7 +341,8 @@ func Test_Fast_Writer_State_Domains(t *testing.T) {
 
 		writer = state
 		write_fixed_match(
-			&writer, match_sizes[state_index], distance_sizes[state_index],
+			Bit_Writer_Handle(&writer), match_sizes[state_index],
+			distance_sizes[state_index],
 		)
 		testify.Less_Or_Equal(
 			t,
@@ -378,39 +380,40 @@ func Test_Reader_State_Domains(t *testing.T) {
 		operation_count := INVARIANT_READER_OPERATION_COUNT
 		for operation_index := 0; operation_index < operation_count; operation_index++ {
 			reader := state
-			var decoder Huffman_Decoder
+			decoder := test_huffman_decoder()
+			reader_handle := Bit_Reader_Handle(&reader)
 			count, status := Count(0), Block_Status(STATUS_INPUT_INVALID)
 			valid := Boolean(false)
 			switch operation_index {
 			case INVARIANT_READER_ALIGN:
-				bit_reader_align(&reader)
+				bit_reader_align(reader_handle)
 			case INVARIANT_READER_BLOCK:
 				count, status = decode_block(
-					&reader, nil, nil, 0, BLOCK_KIND_RESERVED,
+					reader_handle, nil, nil, 0, BLOCK_KIND_RESERVED,
 				)
 			case INVARIANT_READER_STORED:
-				count, status = decode_stored(&reader, nil, 0)
+				count, status = decode_stored(reader_handle, nil, 0)
 			case INVARIANT_READER_CODE_SIZES:
 				valid = dynamic_code_sizes(
-					&reader, code_sizes[:], ENCODED_CODE_COUNT_MINIMUM,
+					reader_handle, code_sizes[:], ENCODED_CODE_COUNT_MINIMUM,
 				)
 			case INVARIANT_READER_DECODERS:
-				valid = dynamic_decoders(&reader, &decoder, &decoder)
+				valid = dynamic_decoders(reader_handle, decoder, decoder)
 			case INVARIANT_READER_SIZES:
-				valid = dynamic_sizes(&reader, &decoder, dynamic_storage[:])
+				valid = dynamic_sizes(reader_handle, decoder, dynamic_storage[:])
 			case INVARIANT_READER_HUFFMAN:
 				fixed_reader := reader
-				decode_fixed(&fixed_reader, nil, nil, 0)
+				decode_fixed(Bit_Reader_Handle(&fixed_reader), nil, nil, 0)
 				count, status = decode_huffman(
-					&reader, nil, nil, 0, &decoder, &decoder, false,
+					reader_handle, nil, nil, 0, decoder, decoder,
 				)
 			case INVARIANT_READER_MATCH:
 				count, status = decode_match(
-					&reader, nil, nil, 0, MATCH_SYMBOL_MINIMUM, &decoder,
+					reader_handle, nil, nil, 0, MATCH_SYMBOL_MINIMUM, decoder,
 				)
 			case INVARIANT_READER_REPEAT:
 				next, next_valid := repeated_size(
-					&reader, dynamic_storage[:], 0, BIT_COUNT_MAXIMUM,
+					reader_handle, dynamic_storage[:], 0, BIT_COUNT_MAXIMUM,
 				)
 				count, valid = Count(next), next_valid
 			}
@@ -424,7 +427,10 @@ func Test_Fixed_Reader_State_Domains(t *testing.T) {
 	maximum := make([]byte, BYTE_COUNT_MAXIMUM)
 	for state_index, state := range fixed_match_test_states(maximum) {
 		decoded_cursor, decoded_match := state.Cursor, state.Match
-		fixed_match_read(state.Source, &decoded_cursor, state.Symbol, &decoded_match)
+		fixed_match_read(
+			state.Source, Fixed_Bit_Cursor_Handle(&decoded_cursor), state.Symbol,
+			Fixed_Match_Handle(&decoded_match),
+		)
 		decoded_position := int(decoded_cursor.Position)
 		testify.Less_Or_Equal(
 			t,
@@ -435,7 +441,9 @@ func Test_Fixed_Reader_State_Domains(t *testing.T) {
 		)
 
 		reader := Bit_Reader{Source: state.Source, Position: state.Cursor.Position}
-		bit_reader_store_raw(&reader, &state.Cursor)
+		bit_reader_store_raw(
+			Bit_Reader_Handle(&reader), Fixed_Bit_Cursor_Handle(&state.Cursor),
+		)
 		testify.Less_Or_Equal(
 			t,
 			&testify.Less_Or_Equal_Input[int]{
@@ -465,8 +473,8 @@ type fixed_match_test_state struct {
 // Covers minimum, interior, and maximum fixed-match state through real operations.
 func fixed_match_test_states(
 	maximum Bit_Storage,
-) (states [INVARIANT_FIXED_MATCH_STATE_COUNT]fixed_match_test_state) {
-	return [...]fixed_match_test_state{
+) (states []fixed_match_test_state) {
+	return []fixed_match_test_state{
 		{
 			Symbol: MATCH_SYMBOL_MINIMUM,
 			Match: Fixed_Match{
@@ -569,7 +577,7 @@ func Test_Code_Domains(t *testing.T) {
 		INVARIANT_DOMAIN_THIRD,
 		LITERAL_SYMBOL_MAXIMUM,
 	} {
-		write_fixed_symbol(&writer, symbol)
+		write_fixed_symbol(Bit_Writer_Handle(&writer), symbol)
 	}
 	for _, symbol := range []Distance_Symbol{
 		INVARIANT_DOMAIN_MINIMUM,
@@ -577,7 +585,7 @@ func Test_Code_Domains(t *testing.T) {
 		INVARIANT_DOMAIN_THIRD,
 		DISTANCE_SYMBOL_COUNT - 1,
 	} {
-		write_fixed_distance(&writer, symbol)
+		write_fixed_distance(Bit_Writer_Handle(&writer), symbol)
 	}
 }
 
@@ -593,8 +601,8 @@ func Test_Huffman_Domains(t *testing.T) {
 		{[]uint8{2, 2}, false},
 		{test_maximum_code_sizes(), true},
 	} {
-		var decoder Huffman_Decoder
-		valid := huffman_build(&decoder, Code_Sizes(test_case.Sizes))
+		decoder := test_huffman_decoder()
+		valid := huffman_build(decoder, Code_Sizes(test_case.Sizes))
 		testify.Equal(
 			t, test_case.Valid, valid,
 			"Huffman sizes %v validity = %t", test_case.Sizes, valid,
@@ -607,13 +615,13 @@ func Test_Huffman_Read_Domains(t *testing.T) {
 	for _, wanted := range []int{INVARIANT_DOMAIN_THIRD, SYMBOL_MAXIMUM} {
 		var sizes [FIXED_LITERAL_COUNT]uint8
 		sizes[wanted] = 1
-		var decoder Huffman_Decoder
+		decoder := test_huffman_decoder()
 		testify.Equal(
-			t, Boolean(true), huffman_build(&decoder, Code_Sizes(sizes[:wanted+1])),
+			t, Boolean(true), huffman_build(decoder, Code_Sizes(sizes[:wanted+1])),
 			"Huffman symbol %d build failed", wanted,
 		)
 		reader := Bit_Reader{Source: []byte{0}}
-		symbol, available := huffman_read(&reader, &decoder)
+		symbol, available := huffman_read(Bit_Reader_Handle(&reader), decoder)
 		testify.True(t, bool(available), "Huffman symbol %d unavailable", wanted)
 		testify.Equal(
 			t, wanted, int(symbol),
@@ -627,10 +635,10 @@ func Test_Huffman_Read_Domains(t *testing.T) {
 		{2, 2, 2, 2},
 		test_maximum_code_sizes(),
 	} {
-		var decoder Huffman_Decoder
+		decoder := test_huffman_decoder()
 		if len(sizes) > 0 {
 			testify.Equal(
-				t, Boolean(true), huffman_build(&decoder, sizes),
+				t, Boolean(true), huffman_build(decoder, sizes),
 				"Huffman read sizes %v build failed", sizes,
 			)
 		}
@@ -639,7 +647,7 @@ func Test_Huffman_Read_Domains(t *testing.T) {
 			source = make([]byte, INVARIANT_BIT_STORAGE_COUNT)
 		}
 		reader := Bit_Reader{Source: source}
-		symbol, available := huffman_read(&reader, &decoder)
+		symbol, available := huffman_read(Bit_Reader_Handle(&reader), decoder)
 		if len(sizes) == 0 {
 			testify.False(t, bool(available), "empty Huffman alphabet decoded a symbol")
 			continue
@@ -651,8 +659,8 @@ func Test_Huffman_Read_Domains(t *testing.T) {
 	reader := Bit_Reader{
 		Source: maximum_source, Position: BYTE_COUNT_MAXIMUM,
 	}
-	var decoder Huffman_Decoder
-	symbol, available := huffman_read(&reader, &decoder)
+	decoder := test_huffman_decoder()
+	symbol, available := huffman_read(Bit_Reader_Handle(&reader), decoder)
 	testify.False(
 		t, bool(available),
 		"empty Huffman alphabet decoded at final source position",
@@ -662,56 +670,43 @@ func Test_Huffman_Read_Domains(t *testing.T) {
 
 // Test_Huffman_State_Domains drives each decoder argument through real reads.
 func Test_Huffman_State_Domains(t *testing.T) {
-	var fixed_sizes [FIXED_LITERAL_COUNT]uint8
-	for index := 0; index <= FIXED_LITERAL_FIRST_MAXIMUM; index++ {
-		fixed_sizes[index] = FIXED_CODE_SIZE
-	}
-	for index := FIXED_LITERAL_SECOND_MINIMUM; index <= FIXED_LITERAL_SECOND_MAXIMUM; index++ {
-		fixed_sizes[index] = FIXED_SECOND_CODE_SIZE
-	}
-	for index := FIXED_LITERAL_THIRD_MINIMUM; index <= FIXED_LITERAL_THIRD_MAXIMUM; index++ {
-		fixed_sizes[index] = FIXED_THIRD_CODE_SIZE
-	}
-	for index := FIXED_LITERAL_FOURTH_MINIMUM; index < len(fixed_sizes); index++ {
-		fixed_sizes[index] = FIXED_CODE_SIZE
-	}
-
 	for _, sizes := range []Code_Sizes{
 		{0},
 		{1},
 		{1, 1},
 		{2, 2, 2, 2},
 		test_maximum_code_sizes(),
-		fixed_sizes[:],
+		test_fixed_code_sizes(),
 	} {
-		var decoder Huffman_Decoder
+		decoder := test_huffman_decoder()
 		testify.Equal(
-			t, Boolean(true), huffman_build(&decoder, sizes),
+			t, Boolean(true), huffman_build(decoder, sizes),
 			"Huffman state sizes %v build failed", sizes,
 		)
 		testify.Equal(
-			t, Boolean(true), huffman_build(&decoder, sizes),
+			t, Boolean(true), huffman_build(decoder, sizes),
 			"Huffman state sizes %v rebuild failed", sizes,
 		)
-		literal_decoder := decoder
-		distance_decoder := decoder
+		literal_decoder := test_huffman_decoder()
+		distance_decoder := test_huffman_decoder()
 		reader := Bit_Reader{}
-		valid := dynamic_decoders(&reader, &literal_decoder, &distance_decoder)
+		reader_handle := Bit_Reader_Handle(&reader)
+		valid := dynamic_decoders(reader_handle, literal_decoder, distance_decoder)
 		testify.Equal(
 			t, Boolean(false), valid,
 			"dynamic state sizes %v decoded absent input", sizes,
 		)
 
 		var dynamic_storage [DYNAMIC_SIZES_MINIMUM]uint8
-		valid = dynamic_sizes(&reader, &decoder, dynamic_storage[:])
+		valid = dynamic_sizes(reader_handle, decoder, dynamic_storage[:])
 		testify.Equal(
 			t, Boolean(false), valid,
 			"Huffman state sizes %v decoded absent input", sizes,
 		)
 
 		count, status := decode_huffman(
-			&reader,
-			nil, nil, 0, &decoder, &decoder, false,
+			reader_handle,
+			nil, nil, 0, decoder, decoder,
 		)
 		testify.Zero(t, count, "Huffman state sizes %v wrote %d bytes", sizes, count)
 		testify.Equal(
@@ -720,13 +715,47 @@ func Test_Huffman_State_Domains(t *testing.T) {
 		)
 
 		count, status = decode_match(
-			&reader,
-			nil, nil, 0, MATCH_SYMBOL_MINIMUM, &decoder,
+			reader_handle,
+			nil, nil, 0, MATCH_SYMBOL_MINIMUM, decoder,
 		)
 		testify.Zero(t, count, "Huffman match sizes %v wrote %d bytes", sizes, count)
 		testify.Equal(
 			t, Block_Status(STATUS_INPUT_INVALID), status,
 			"Huffman match sizes %v status = %d", sizes, status,
+		)
+	}
+	verify_decode_huffman_state_domains(t)
+}
+
+func verify_decode_huffman_state_domains(t *testing.T) {
+	t.Helper()
+	maximum_destination := make([]byte, BYTE_COUNT_MAXIMUM)
+	maximum_history := make([]byte, HISTORY_SIZE_MAXIMUM)
+	for _, test_case := range []struct {
+		Destination Destination
+		History     History
+		Count       Count
+	}{
+		{
+			make([]byte, INVARIANT_DOMAIN_SECOND),
+			make([]byte, INVARIANT_DOMAIN_SECOND), INVARIANT_DOMAIN_SECOND,
+		},
+		{
+			make([]byte, INVARIANT_DOMAIN_THIRD),
+			make([]byte, INVARIANT_DOMAIN_THIRD), INVARIANT_DOMAIN_THIRD,
+		},
+		{maximum_destination, maximum_history, BYTE_COUNT_MAXIMUM},
+	} {
+		reader := Bit_Reader{}
+		decoder := test_huffman_decoder()
+		count, status := decode_huffman(
+			Bit_Reader_Handle(&reader), test_case.Destination, test_case.History,
+			test_case.Count, decoder, decoder,
+		)
+		testify.Equal(t, test_case.Count, count, "empty Huffman input changed count")
+		testify.Equal(
+			t, Block_Status(STATUS_INPUT_INVALID), status,
+			"empty Huffman input status = %d", status,
 		)
 	}
 }
@@ -784,7 +813,7 @@ func Test_History_Position_Domains(t *testing.T) {
 	hash := sequence_hash(history, source, second)
 	workspace.Heads[hash] = int32(candidate + 1)
 	match := match_search(
-		&workspace, history, source, second, BEST_COMPRESSION,
+		workspace, history, source, second, BEST_COMPRESSION,
 	)
 	testify.Equal(t, Boolean(true), match.Present, "final match absent")
 	testify.Equal(
@@ -794,7 +823,7 @@ func Test_History_Position_Domains(t *testing.T) {
 		t, Match_Size(MATCH_SIZE_MINIMUM), match.Size,
 		"final match size = %d", match.Size,
 	)
-	workspace_insert(&workspace, history, source, second)
+	workspace_insert(workspace, history, source, second)
 	testify.Equal(
 		t, int32(second+1), workspace.Heads[hash], "final workspace insertion failed",
 	)
@@ -818,7 +847,7 @@ func verify_small_match_positions(t *testing.T, workspace *Workspace) {
 		hash := sequence_hash(nil, small_source[:], later)
 		workspace.Heads[hash] = int32(wanted + 1)
 		match := match_search(
-			workspace, nil, small_source[:], later, BEST_SPEED,
+			*workspace, nil, small_source[:], later, BEST_SPEED,
 		)
 		testify.Equal(
 			t, Boolean(true), match.Present, "match position %d absent", wanted,
@@ -924,26 +953,28 @@ func Test_Match_Copy_Domains(t *testing.T) {
 	var compressed [INVARIANT_CODE_STORAGE_COUNT]byte
 	writer := Bit_Writer{Destination: compressed[:]}
 	bit_writer_write_bits(
-		&writer,
+		Bit_Writer_Handle(&writer),
 		Bit_Value(BLOCK_KIND_FIXED<<FINAL_BIT_COUNT|FINAL_BLOCK_BIT_VALUE),
 		BLOCK_HEADER_BIT_COUNT,
 	)
-	write_fixed_symbol(&writer, MATCH_SYMBOL_MINIMUM)
-	bit_writer_write_bits(&writer, 0, FIXED_DISTANCE_BIT_COUNT)
-	write_fixed_symbol(&writer, LITERAL_SYMBOL_END)
-	bit_writer_finish(&writer)
+	write_fixed_symbol(Bit_Writer_Handle(&writer), MATCH_SYMBOL_MINIMUM)
+	bit_writer_write_bits(Bit_Writer_Handle(&writer), 0, FIXED_DISTANCE_BIT_COUNT)
+	write_fixed_symbol(Bit_Writer_Handle(&writer), LITERAL_SYMBOL_END)
+	bit_writer_finish(Bit_Writer_Handle(&writer))
 	reader := Bit_Reader{Source: compressed[:writer.Position]}
-	final, available := bit_reader_read(&reader, FINAL_BIT_COUNT)
+	final, available := bit_reader_read(Bit_Reader_Handle(&reader), FINAL_BIT_COUNT)
 	testify.True(t, bool(available), "final match block header unavailable")
 	testify.Equal(
 		t, Bit_Value(FINAL_BLOCK_BIT_VALUE), final,
 		"final match block bit = %d", final,
 	)
-	block_kind, available := bit_reader_read(&reader, BLOCK_KIND_BIT_COUNT)
+	block_kind, available := bit_reader_read(
+		Bit_Reader_Handle(&reader), BLOCK_KIND_BIT_COUNT,
+	)
 	testify.True(t, bool(available), "match block kind unavailable")
 	destination := make([]byte, BYTE_COUNT_MAXIMUM)
 	count, status := decode_block(
-		&reader, destination, History{'x'}, BYTE_COUNT_MAXIMUM,
+		Bit_Reader_Handle(&reader), destination, History{'x'}, BYTE_COUNT_MAXIMUM,
 		Block_Kind(block_kind),
 	)
 	testify.Equal(t, Count(BYTE_COUNT_MAXIMUM), count, "maximum match count = %d", count)
@@ -995,9 +1026,9 @@ func Test_Fast_Match_Copy_Domains(t *testing.T) {
 func Test_Decode_Match_Domains(t *testing.T) {
 	var distance_sizes [DISTANCE_SYMBOL_COUNT]uint8
 	distance_sizes[DISTANCE_SYMBOL_MINIMUM] = FINAL_BIT_COUNT
-	var distance_decoder Huffman_Decoder
+	distance_decoder := test_huffman_decoder()
 	testify.Equal(
-		t, Boolean(true), huffman_build(&distance_decoder, distance_sizes[:]),
+		t, Boolean(true), huffman_build(distance_decoder, distance_sizes[:]),
 		"distance decoder build failed",
 	)
 	maximum_destination := make([]byte, BYTE_COUNT_MAXIMUM)
@@ -1037,7 +1068,7 @@ func Test_Decode_Match_Domains(t *testing.T) {
 		},
 	} {
 		verify_decode_match_case(
-			t, &distance_decoder, test_case.Destination, test_case.Dictionary,
+			t, distance_decoder, test_case.Destination, test_case.Dictionary,
 			test_case.Count, test_case.Symbol, test_case.Next_Count, test_case.Status,
 		)
 	}
@@ -1045,7 +1076,7 @@ func Test_Decode_Match_Domains(t *testing.T) {
 
 func verify_decode_match_case(
 	t *testing.T,
-	distance_decoder *Huffman_Decoder,
+	distance_decoder Huffman_Decoder,
 	destination Destination,
 	dictionary History,
 	initial_count Count,
@@ -1056,7 +1087,8 @@ func verify_decode_match_case(
 	t.Helper()
 	reader := Bit_Reader{Source: []byte{byte(BIT_VALUE_MINIMUM)}}
 	count, status := decode_match(
-		&reader, destination, dictionary, initial_count, symbol, distance_decoder,
+		Bit_Reader_Handle(&reader), destination, dictionary,
+		initial_count, symbol, distance_decoder,
 	)
 	testify.Equal(
 		t, expected_count, count,
@@ -1077,7 +1109,7 @@ func Test_Dynamic_Position_Domains(t *testing.T) {
 		DYNAMIC_POSITION_MAXIMUM,
 	} {
 		reader := Bit_Reader{}
-		next, valid := repeated_size(&reader, sizes, position, 17)
+		next, valid := repeated_size(Bit_Reader_Handle(&reader), sizes, position, 17)
 		testify.Equal(t, Boolean(false), valid, "repeat position %d valid", position)
 		testify.Equal(
 			t, Dynamic_Cursor(position), next,
@@ -1086,7 +1118,7 @@ func Test_Dynamic_Position_Domains(t *testing.T) {
 	}
 	reader := Bit_Reader{Source: []byte{0}}
 	next, valid := repeated_size(
-		&reader, sizes,
+		Bit_Reader_Handle(&reader), sizes,
 		DYNAMIC_POSITION_MAXIMUM-(REPEAT_ZERO_SHORT_BASE-1),
 		REPEAT_SYMBOL_MIDDLE,
 	)
@@ -1110,4 +1142,30 @@ func test_maximum_code_sizes() (sizes []uint8) {
 		sizes = append(sizes, size)
 	}
 	return append(sizes, CODE_SIZE_MAXIMUM, CODE_SIZE_MAXIMUM)
+}
+
+func test_fixed_code_sizes() (sizes Code_Sizes) {
+	var storage [FIXED_LITERAL_COUNT]uint8
+	for index := 0; index <= FIXED_LITERAL_FIRST_MAXIMUM; index++ {
+		storage[index] = FIXED_CODE_SIZE
+	}
+	for index := FIXED_LITERAL_SECOND_MINIMUM; index <= FIXED_LITERAL_SECOND_MAXIMUM; index++ {
+		storage[index] = FIXED_SECOND_CODE_SIZE
+	}
+	for index := FIXED_LITERAL_THIRD_MINIMUM; index <= FIXED_LITERAL_THIRD_MAXIMUM; index++ {
+		storage[index] = FIXED_THIRD_CODE_SIZE
+	}
+	for index := FIXED_LITERAL_FOURTH_MINIMUM; index < len(storage); index++ {
+		storage[index] = FIXED_CODE_SIZE
+	}
+	return storage[:]
+}
+
+func test_huffman_decoder() (decoder Huffman_Decoder) {
+	return Huffman_Decoder{
+		Counts:         make(Huffman_Counts, HUFFMAN_COUNT_SIZE),
+		Symbols:        make(Huffman_Symbols, FIXED_LITERAL_COUNT),
+		Lookup_Symbols: make(Huffman_Lookup_Symbols, HUFFMAN_LOOKUP_COUNT),
+		Lookup_Sizes:   make(Huffman_Lookup_Sizes, HUFFMAN_LOOKUP_COUNT),
+	}
 }

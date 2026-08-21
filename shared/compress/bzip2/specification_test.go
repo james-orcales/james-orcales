@@ -16,7 +16,7 @@ func Test_Bounded_Decompression(t *testing.T) {
 		destination[:], transform[:], compressed[:],
 	)
 	if status != bzip2.STATUS_OK {
-		t.Fatalf("Decode_Into status = %d, want STATUS_OK", status)
+		t.Fatalf("Decode_Into = (%d, %d), want STATUS_OK", count, status)
 	}
 	if int(count) != len(destination) {
 		t.Fatalf("Decode_Into count = %d, want %d", count, len(destination))
@@ -191,8 +191,8 @@ const TEST_BZIP2_TWO_SIZE = 37
 const TEST_BZIP2_BYTES_SIZE = 42
 const TEST_BZIP2_MAXIMUM_SIZE = 79
 
-func test_bzip2_compressed() (compressed [TEST_BZIP2_COMPRESSED_SIZE]byte) {
-	return [TEST_BZIP2_COMPRESSED_SIZE]byte{
+func test_bzip2_compressed() (compressed []byte) {
+	return []byte{
 		66, 90, 104, 57, 49, 65, 89, 38, 83, 89, 172, 2, 115, 97, 0, 0,
 		6, 89, 128, 0, 16, 64, 0, 16, 0, 22, 101, 210, 144, 32, 0, 34,
 		38, 141, 52, 61, 6, 161, 76, 0, 19, 70, 10, 209, 180, 29, 135, 30,
@@ -201,8 +201,8 @@ func test_bzip2_compressed() (compressed [TEST_BZIP2_COMPRESSED_SIZE]byte) {
 	}
 }
 
-func test_bzip2_runs() (compressed [TEST_BZIP2_RUNS_SIZE]byte) {
-	return [TEST_BZIP2_RUNS_SIZE]byte{
+func test_bzip2_runs() (compressed []byte) {
+	return []byte{
 		66, 90, 104, 57, 49, 65, 89, 38, 83, 89, 150, 112, 152, 11, 0, 0,
 		1, 132, 1, 190, 0, 0, 128, 0, 8, 32, 0, 84, 67, 0, 38, 170,
 		140, 201, 172, 254, 159, 10, 13, 237, 72, 50, 164, 27, 82, 12, 187,
@@ -210,38 +210,38 @@ func test_bzip2_runs() (compressed [TEST_BZIP2_RUNS_SIZE]byte) {
 	}
 }
 
-func test_bzip2_empty() (compressed [TEST_BZIP2_EMPTY_SIZE]byte) {
-	return [TEST_BZIP2_EMPTY_SIZE]byte{
+func test_bzip2_empty() (compressed []byte) {
+	return []byte{
 		66, 90, 104, 57, 23, 114, 69, 56, 80, 144, 0, 0, 0, 0,
 	}
 }
 
-func test_bzip2_one() (compressed [TEST_BZIP2_ONE_SIZE]byte) {
-	return [TEST_BZIP2_ONE_SIZE]byte{
+func test_bzip2_one() (compressed []byte) {
+	return []byte{
 		66, 90, 104, 57, 49, 65, 89, 38, 83, 89, 177, 247, 64, 75, 0, 0,
 		0, 64, 0, 64, 0, 32, 0, 33, 24, 70, 130, 238, 72, 167, 10, 18,
 		22, 62, 232, 9, 96,
 	}
 }
 
-func test_bzip2_two() (compressed [TEST_BZIP2_TWO_SIZE]byte) {
-	return [TEST_BZIP2_TWO_SIZE]byte{
+func test_bzip2_two() (compressed []byte) {
+	return []byte{
 		66, 90, 104, 57, 49, 65, 89, 38, 83, 89, 255, 72, 155, 130, 0, 0,
 		0, 192, 0, 64, 0, 32, 0, 33, 24, 70, 194, 238, 72, 167, 10, 18,
 		31, 233, 19, 112, 64,
 	}
 }
 
-func test_bzip2_bytes() (compressed [TEST_BZIP2_BYTES_SIZE]byte) {
-	return [TEST_BZIP2_BYTES_SIZE]byte{
+func test_bzip2_bytes() (compressed []byte) {
+	return []byte{
 		66, 90, 104, 57, 49, 65, 89, 38, 83, 89, 40, 38, 80, 184, 0, 0,
 		0, 64, 0, 240, 0, 0, 0, 160, 0, 33, 154, 104, 51, 77, 19, 60,
 		93, 201, 20, 225, 66, 64, 160, 153, 66, 224,
 	}
 }
 
-func test_bzip2_maximum() (compressed [TEST_BZIP2_MAXIMUM_SIZE]byte) {
-	return [TEST_BZIP2_MAXIMUM_SIZE]byte{
+func test_bzip2_maximum() (compressed []byte) {
+	return []byte{
 		66, 90, 104, 57, 49, 65, 89, 38, 83, 89, 14, 9, 226, 223, 1, 95,
 		142, 64, 0, 192, 0, 0, 8, 32, 0, 48, 128, 77, 70, 66, 160, 37,
 		169, 10, 128, 151, 49, 65, 89, 38, 83, 89, 188, 4, 181, 195, 0, 162,

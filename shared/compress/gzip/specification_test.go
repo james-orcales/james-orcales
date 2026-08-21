@@ -925,9 +925,9 @@ func test_encode_allocation(t *testing.T) {
 func test_decode_allocation(t *testing.T) {
 	t.Helper()
 	compressed := test_hello_compressed()
-	bad_checksum := compressed
+	bad_checksum := append([]byte(nil), compressed...)
 	bad_checksum[len(bad_checksum)-8] ^= 1
-	bad_header := compressed
+	bad_header := append([]byte(nil), compressed...)
 	bad_header[0] = 0
 	minimal := [TEST_FIXED_HEADER_SIZE]byte{0x1f, 0x8b, 0x08}
 	var aliased [TEST_DESTINATION_SIZE]byte
@@ -1024,19 +1024,19 @@ func test_corrupt_input(t *testing.T) {
 	var destination [TEST_DESTINATION_SIZE]byte
 	var name [gzip.HEADER_TEXT_SIZE_MAXIMUM]byte
 	storage := gzip.Header_Storage_Unvalidated{Name: name[:]}
-	bad_magic := compressed
+	bad_magic := append([]byte(nil), compressed...)
 	bad_magic[0] = 0
 	_, _, status := gzip.Decode_Into(destination[:], storage, bad_magic[:])
 	testify.Equal_Values(t, gzip.STATUS_HEADER_INVALID, status, "bad magic")
-	bad_method := compressed
+	bad_method := append([]byte(nil), compressed...)
 	bad_method[2] = 7
 	_, _, status = gzip.Decode_Into(destination[:], storage, bad_method[:])
 	testify.Equal_Values(t, gzip.STATUS_HEADER_INVALID, status, "bad method")
-	bad_checksum := compressed
+	bad_checksum := append([]byte(nil), compressed...)
 	bad_checksum[len(bad_checksum)-8] ^= 1
 	_, _, status = gzip.Decode_Into(destination[:], storage, bad_checksum[:])
 	testify.Equal_Values(t, gzip.STATUS_CHECKSUM_INVALID, status, "bad checksum")
-	bad_size := compressed
+	bad_size := append([]byte(nil), compressed...)
 	bad_size[len(bad_size)-4] ^= 1
 	_, _, status = gzip.Decode_Into(destination[:], storage, bad_size[:])
 	testify.Equal_Values(t, gzip.STATUS_CHECKSUM_INVALID, status, "bad size")
@@ -1084,7 +1084,7 @@ func test_input_mutations(t *testing.T) {
 	var name [gzip.HEADER_TEXT_SIZE_MAXIMUM]byte
 	storage := gzip.Header_Storage_Unvalidated{Name: name[:]}
 	for index := range compressed {
-		candidate := compressed
+		candidate := append([]byte(nil), compressed...)
 		for value_index := 0; value_index < 256; value_index++ {
 			candidate[index] = byte(value_index)
 			count, _, status := gzip.Decode_Into(
@@ -1122,20 +1122,26 @@ const TEST_STORED_BLOCK_COUNT = 1024
 const TEST_FLAG_HEADER_CHECKSUM = 1 << 1
 
 type test_workspace struct {
-	Heads    [gzip.HASH_POSITIONS_COUNT]int32
-	Previous [gzip.HISTORY_POSITIONS_COUNT]int32
+	Heads    []int32
+	Previous []int32
 }
 
 func test_workspace_value(
 	storage *test_workspace,
 ) (workspace gzip.Workspace_Unvalidated) {
+	if storage.Heads == nil {
+		storage.Heads = make([]int32, gzip.HASH_POSITIONS_COUNT)
+	}
+	if storage.Previous == nil {
+		storage.Previous = make([]int32, gzip.HISTORY_POSITIONS_COUNT)
+	}
 	return gzip.Workspace_Unvalidated{
-		Heads: storage.Heads[:], Previous: storage.Previous[:],
+		Heads: storage.Heads, Previous: storage.Previous,
 	}
 }
 
-func test_hello_compressed() (compressed [TEST_HELLO_COMPRESSED_SIZE]byte) {
-	return [TEST_HELLO_COMPRESSED_SIZE]byte{
+func test_hello_compressed() (compressed []byte) {
+	return []byte{
 		0x1f, 0x8b, 0x08, 0x08, 0xc8, 0x58, 0x13, 0x4a,
 		0x00, 0x03, 0x68, 0x65, 0x6c, 0x6c, 0x6f, 0x2e,
 		0x74, 0x78, 0x74, 0x00, 0xcb, 0x48, 0xcd, 0xc9,

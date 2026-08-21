@@ -5,7 +5,7 @@ import "testing"
 // Test_Bit_And_Table_Boundaries protects bit and canonical-table edges.
 func Test_Bit_And_Table_Boundaries(t *testing.T) {
 	reader := Bit_Reader{Bits: BIT_BUFFER_MAXIMUM, Bits_Count: BIT_COUNT_MAXIMUM}
-	value, available := bit_reader_read(&reader, 2)
+	value, available := bit_reader_read(Bit_Reader_Handle(&reader), 2)
 	if !available {
 		t.Fatal("two-bit read is unavailable")
 	}
@@ -13,7 +13,7 @@ func Test_Bit_And_Table_Boundaries(t *testing.T) {
 		t.Fatalf("two-bit read = (%d, %t)", value, available)
 	}
 	reader = Bit_Reader{Source: Bit_Source{255, 255, 255, 255, 255, 255}}
-	value, available = bit_reader_read(&reader, BIT_READ_COUNT_MAXIMUM)
+	value, available = bit_reader_read(Bit_Reader_Handle(&reader), BIT_READ_COUNT_MAXIMUM)
 	if !available {
 		t.Fatal("maximum bit read is unavailable")
 	}
@@ -21,20 +21,27 @@ func Test_Bit_And_Table_Boundaries(t *testing.T) {
 		t.Fatalf("maximum bit read = (%d, %t)", value, available)
 	}
 
-	var decoder Huffman_Decoder
+	decoder := test_huffman_decoder()
 	sizes := make(Code_Sizes, SYMBOL_COUNT_MAXIMUM)
-	if huffman_build(&decoder, sizes) {
+	if huffman_build(decoder, sizes) {
 		t.Fatal("zero-width maximum alphabet is invalid")
 	}
 	decoder.Counts[1] = 1
 	decoder.Symbols[0] = POSITION_MAXIMUM + 2
 	symbol_reader := Payload_Reader{Bits_Count: 1}
-	symbol, present := huffman_read(&symbol_reader, &decoder)
+	symbol, present := huffman_read(Payload_Reader_Handle(&symbol_reader), decoder)
 	if !present {
 		t.Fatal("maximum symbol is absent")
 	}
 	if symbol != POSITION_MAXIMUM+2 {
 		t.Fatalf("maximum symbol read = (%d, %t)", symbol, present)
+	}
+	state := test_block_state()
+	for index := TREE_INDEX_MINIMUM; index <= TREE_INDEX_MAXIMUM; index++ {
+		decoder = huffman_decoder(state.Trees, Tree_Index(index))
+		if len(decoder.Counts) != HUFFMAN_COUNT_SIZE {
+			t.Fatalf("decoder %d count storage = %d", index, len(decoder.Counts))
+		}
 	}
 }
 
@@ -42,8 +49,8 @@ func Test_Bit_And_Table_Boundaries(t *testing.T) {
 func Test_Symbol_And_Tree_Boundaries(t *testing.T) {
 	for _, bits := range []Bit_Buffer{0, 1, 2, BIT_BUFFER_MAXIMUM} {
 		reader := Symbol_Reader{Bits: bits, Bits_Count: SYMBOL_BIT_COUNT}
-		var state Block_State
-		_, valid := block_symbols(&reader, &state)
+		state := test_block_state()
+		_, valid := block_symbols(Symbol_Reader_Handle(&reader), state)
 		if valid {
 			t.Fatalf("truncated symbol bitmap with bits %d is valid", bits)
 		}
@@ -52,8 +59,8 @@ func Test_Symbol_And_Tree_Boundaries(t *testing.T) {
 		Source: Bit_Source(test_bytes(34, 255)),
 		Bits:   BIT_BUFFER_MAXIMUM, Bits_Count: SYMBOL_BIT_COUNT,
 	}
-	var state Block_State
-	count, valid := block_symbols(&reader, &state)
+	state := test_block_state()
+	count, valid := block_symbols(Symbol_Reader_Handle(&reader), state)
 	if !valid {
 		t.Fatal("full symbol bitmap is invalid")
 	}
@@ -63,7 +70,7 @@ func Test_Symbol_And_Tree_Boundaries(t *testing.T) {
 
 	for _, bits := range []Bit_Buffer{0, 1, 2, BIT_BUFFER_MAXIMUM} {
 		tree_reader := Tree_Reader{Bits: bits, Bits_Count: SYMBOL_BIT_COUNT}
-		_, _, _, tree_valid := block_trees(&tree_reader, &state, 1)
+		_, _, _, tree_valid := block_trees(Tree_Reader_Handle(&tree_reader), state, 1)
 		if tree_valid {
 			t.Fatalf("truncated tree header with bits %d is valid", bits)
 		}
@@ -72,7 +79,7 @@ func Test_Symbol_And_Tree_Boundaries(t *testing.T) {
 		Source: Bit_Source{255, 255}, Bits: 111, Bits_Count: SYMBOL_BIT_COUNT,
 	}
 	tree_count, selector_count, selectors, tree_valid := block_trees(
-		&tree_reader, &state, 1,
+		Tree_Reader_Handle(&tree_reader), state, 1,
 	)
 	if tree_valid {
 		t.Fatal("truncated maximum tree header is valid")
@@ -88,15 +95,19 @@ func Test_Symbol_And_Tree_Boundaries(t *testing.T) {
 			tree_count, selector_count, selectors.Bits, tree_valid)
 	}
 	tree_reader = Tree_Reader{Bits_Count: SYMBOL_BIT_COUNT}
-	block_trees(&tree_reader, &state, BYTE_VALUE_COUNT)
+	block_trees(Tree_Reader_Handle(&tree_reader), state, BYTE_VALUE_COUNT)
 }
 
 // Test_Selector_Boundaries protects unary selector and move-to-front edges.
 func Test_Selector_Boundaries(t *testing.T) {
-	var order [HUFFMAN_TREE_COUNT_MAXIMUM]byte
-	move_to_front_range(order[:])
+	order := Selector_Order{
+		First: 0, Second: 1, Third: 2, Fourth: 3, Fifth: 4, Sixth: 5,
+	}
 	reader := Selector_Reader{Bits: 62, Bits_Count: 6}
-	tree, present := selector_read(&reader, order[:])
+	tree, present := selector_read(
+		Selector_Reader_Handle(&reader), Selector_Order_Handle(&order),
+		HUFFMAN_TREE_COUNT_MAXIMUM,
+	)
 	if !present {
 		t.Fatal("maximum selector is absent")
 	}
@@ -110,18 +121,32 @@ func Test_Selector_Boundaries(t *testing.T) {
 		{Bits: BIT_BUFFER_MAXIMUM, Bits_Count: BIT_COUNT_MAXIMUM},
 	}
 	for index := range selector_read_cases {
-		selector_read(&selector_read_cases[index], order[:2])
+		selector_read(
+			Selector_Reader_Handle(&selector_read_cases[index]),
+			Selector_Order_Handle(&order), TREE_COUNT_MINIMUM,
+		)
 	}
-	move_to_front_range(order[:])
+	order = Selector_Order{First: 0, Second: 1, Third: 2, Fourth: 3, Fifth: 4, Sixth: 5}
 	reader = Selector_Reader{Bits: 6, Bits_Count: 3}
-	tree, present = selector_read(&reader, order[:])
+	tree, present = selector_read(
+		Selector_Reader_Handle(&reader), Selector_Order_Handle(&order),
+		HUFFMAN_TREE_COUNT_MAXIMUM,
+	)
 	if !present {
 		t.Fatal("two-position selector is absent")
 	}
 	if tree != 2 {
 		t.Fatalf("two-position selector = %d", tree)
 	}
+	test_tree_selection_bounds(t)
+	test_move_to_front_edges(t)
+}
 
+func test_tree_selection_bounds(t *testing.T) {
+	t.Helper()
+	order := Selector_Order{
+		First: 0, Second: 1, Third: 2, Fourth: 3, Fifth: 4, Sixth: 5,
+	}
 	selection := Tree_Selection{
 		Selector_Index: SELECTOR_COUNT_MAXIMUM,
 		Decoded_Count:  GROUP_COUNT_MINIMUM,
@@ -133,7 +158,9 @@ func Test_Selector_Boundaries(t *testing.T) {
 			Bits:   Bit_Buffer(size), Bits_Count: Bit_Count(size),
 		}
 		if !block_tree_select(
-			&candidate, order[:], SELECTOR_COUNT_MAXIMUM, &selection,
+			Selector_Reader_Handle(&candidate), Selector_Order_Handle(&order),
+			HUFFMAN_TREE_COUNT_MAXIMUM, SELECTOR_COUNT_MAXIMUM,
+			Tree_Selection_Handle(&selection),
 		) {
 			t.Fatalf("unused selector state %d is invalid", size)
 		}
@@ -143,20 +170,50 @@ func Test_Selector_Boundaries(t *testing.T) {
 		Bits: BIT_BUFFER_MAXIMUM, Bits_Count: BIT_COUNT_MAXIMUM,
 	}
 	if !block_tree_select(
-		&maximum_reader, order[:], SELECTOR_COUNT_MAXIMUM, &selection,
+		Selector_Reader_Handle(&maximum_reader), Selector_Order_Handle(&order),
+		HUFFMAN_TREE_COUNT_MAXIMUM, SELECTOR_COUNT_MAXIMUM,
+		Tree_Selection_Handle(&selection),
 	) {
 		t.Fatal("unused maximum selector reader is invalid")
 	}
 	selection.Decoded_Count = SELECTOR_GROUP_SIZE
-	reader = Selector_Reader{}
-	if block_tree_select(&reader, order[:], SELECTOR_COUNT_MAXIMUM, &selection) {
+	reader := Selector_Reader{}
+	if block_tree_select(
+		Selector_Reader_Handle(&reader), Selector_Order_Handle(&order),
+		HUFFMAN_TREE_COUNT_MAXIMUM, SELECTOR_COUNT_MAXIMUM,
+		Tree_Selection_Handle(&selection),
+	) {
 		t.Fatal("exhausted maximum selector list is valid")
 	}
 	selectors := Selector_List_Reader{Bits: 31, Bits_Count: SELECTOR_BIT_COUNT}
-	if selectors_skip(&selectors, HUFFMAN_TREE_COUNT_MAXIMUM, SELECTOR_COUNT_MAXIMUM) {
+	if selectors_skip(
+		Selector_List_Reader_Handle(&selectors),
+		HUFFMAN_TREE_COUNT_MAXIMUM, SELECTOR_COUNT_MAXIMUM,
+	) {
 		t.Fatal("truncated maximum selector list is valid")
 	}
-	test_move_to_front_edges(t)
+	test_selector_order_members(t)
+}
+
+func test_selector_order_members(t *testing.T) {
+	t.Helper()
+	for member := TREE_INDEX_MINIMUM; member <= TREE_INDEX_MAXIMUM; member++ {
+		bound := Tree_Index(member)
+		bounded_order := Selector_Order{
+			First: First_Selector_Tree(bound), Second: Second_Selector_Tree(bound),
+			Third: Third_Selector_Tree(bound), Fourth: Fourth_Selector_Tree(bound),
+			Fifth: Fifth_Selector_Tree(bound), Sixth: Sixth_Selector_Tree(bound),
+		}
+		bounded_reader := Selector_Reader{Bits_Count: 1}
+		bounded_selection := Tree_Selection{Decoded_Count: SELECTOR_GROUP_SIZE}
+		if !block_tree_select(
+			Selector_Reader_Handle(&bounded_reader),
+			Selector_Order_Handle(&bounded_order), HUFFMAN_TREE_COUNT_MAXIMUM,
+			SELECTOR_COUNT_MINIMUM, Tree_Selection_Handle(&bounded_selection),
+		) {
+			t.Fatalf("selector order bound %d is invalid", bound)
+		}
+	}
 }
 
 func test_move_to_front_edges(t *testing.T) {
@@ -202,14 +259,15 @@ func Test_Block_Boundaries(t *testing.T) {
 	}
 	test_block_remainder_edges(t, storage)
 
-	var state Block_State
-	if !huffman_build(&state.Trees[0], Code_Sizes{1, 2, 2}) {
+	state := test_block_state()
+	if !huffman_build(huffman_decoder(state.Trees, 0), Code_Sizes{1, 2, 2}) {
 		t.Fatal("three-symbol payload table is invalid")
 	}
 	payload := Payload_Reader{Source: Bit_Source(test_repeat_payload(TRANSFORM_COUNT_MAXIMUM))}
 	selectors := Selector_List_Reader{Bits_Count: SELECTOR_BIT_COUNT}
 	count, valid = block_payload(
-		&payload, &selectors, storage, TRANSFORM_COUNT_MAXIMUM, &state,
+		Payload_Reader_Handle(&payload), Selector_List_Reader_Handle(&selectors),
+		storage, TRANSFORM_COUNT_MAXIMUM, state,
 		1, TREE_COUNT_MINIMUM, SELECTOR_COUNT_MINIMUM,
 	)
 	if !valid {
@@ -226,7 +284,7 @@ func Test_Block_Boundaries(t *testing.T) {
 
 func test_block_payload_edges(t *testing.T, storage Block_Storage) {
 	t.Helper()
-	var state Block_State
+	state := test_block_state()
 	readers := []Payload_Reader{
 		{},
 		{Bits: 2, Bits_Count: 2},
@@ -239,7 +297,9 @@ func test_block_payload_edges(t *testing.T, storage Block_Storage) {
 	}
 	for index := range readers {
 		_, valid := block_payload(
-			&readers[index], &selectors[index], storage, BLOCK_SIZE_UNIT, &state,
+			Payload_Reader_Handle(&readers[index]),
+			Selector_List_Reader_Handle(&selectors[index]),
+			storage, BLOCK_SIZE_UNIT, state,
 			BYTE_VALUE_COUNT, HUFFMAN_TREE_COUNT_MAXIMUM, SELECTOR_COUNT_MAXIMUM,
 		)
 		if valid {
@@ -254,7 +314,7 @@ func test_block_payload_edges(t *testing.T, storage Block_Storage) {
 	}
 	for index := range decoder_readers {
 		if block_tree_decoders(
-			&decoder_readers[index], &state,
+			Decoder_Reader_Handle(&decoder_readers[index]), state,
 			HUFFMAN_TREE_COUNT_MAXIMUM, SYMBOL_COUNT_MAXIMUM,
 		) {
 			t.Fatalf("invalid decoder edge %d is valid", index)
@@ -293,7 +353,7 @@ func test_block_remainder_edges(t *testing.T, storage Block_Storage) {
 		{Bits: BIT_BUFFER_MAXIMUM, Bits_Count: BIT_COUNT_MAXIMUM},
 	}
 	for index := range trailer_readers {
-		if decode_trailer(&trailer_readers[index], Checksum{}) {
+		if decode_trailer(Trailer_Reader_Handle(&trailer_readers[index]), 0) {
 			t.Fatalf("truncated trailer edge %d is valid", index)
 		}
 	}
@@ -488,4 +548,20 @@ func test_bytes(size int, value byte) (bytes []byte) {
 		bytes[index] = value
 	}
 	return bytes
+}
+
+func test_huffman_decoder() (decoder Huffman_Decoder) {
+	return Huffman_Decoder{
+		Counts:  make(Huffman_Counts, HUFFMAN_COUNT_SIZE),
+		Symbols: make(Huffman_Symbols, SYMBOL_COUNT_MAXIMUM),
+	}
+}
+
+func test_block_state() (state Block_State) {
+	return Block_State{
+		Character_Count: make(Character_Counts, BYTE_VALUE_COUNT),
+		Trees:           make(Huffman_Storage, HUFFMAN_STORAGE_SIZE),
+		Symbols:         make(Block_Symbols, BYTE_VALUE_COUNT),
+		Code_Sizes:      make(Block_Code_Sizes, SYMBOL_COUNT_MAXIMUM),
+	}
 }
