@@ -382,10 +382,33 @@ func Snapshot_Is_Equal(snapshot Snapshot, actual string) (equal bool) {
 		defer s.Edits_Mu.Unlock()
 		return snapper_is_equal_edit(s, snapshot, actual, is_equal)
 	} else if !is_equal {
-		d := myers.New(myers.New_Input{Old: snapshot.Expected_Output, New: actual})
 		fmt.Fprintf(s.Output, "Snapshot mismatch %s:%d  (%s)\n",
 			snapshot.File_Path, snapshot.Line, MISMATCH_LEGEND)
-		for line := range strings.SplitSeq(myers.Differ_Line_Diff(d), "\n") {
+		if len(snapshot.Expected_Output) > myers.TEXT_SIZE_MAXIMUM {
+			return false
+		}
+		if len(actual) > myers.TEXT_SIZE_MAXIMUM {
+			return false
+		}
+		workspace := myers.Workspace{
+			Old_Runes: make(myers.Old_Rune_Storage, len(snapshot.Expected_Output)+1),
+			New_Runes: make(myers.New_Rune_Storage, len(actual)+1),
+			Matrix: make(
+				myers.Matrix_Storage,
+				(len(snapshot.Expected_Output)+2)*(len(actual)+2),
+			),
+		}
+		output := make(myers.Line_Output, myers.LINE_DIFF_SIZE_MAXIMUM)
+		count, status := myers.Line_Diff_Into(myers.Line_Diff_Input{
+			Output:    output,
+			Workspace: &workspace,
+			Old:       myers.Line_Old_Text_Unvalidated(snapshot.Expected_Output),
+			New:       myers.Line_New_Text_Unvalidated(actual),
+		})
+		if status != myers.STATUS_OK {
+			return false
+		}
+		for line := range strings.SplitSeq(string(output[:count]), "\n") {
 			if len(line) == 0 {
 				continue
 			}
