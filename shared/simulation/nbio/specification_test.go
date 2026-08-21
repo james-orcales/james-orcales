@@ -539,6 +539,21 @@ func Test_Sim_Deinit(t *testing.T) {
 	nbio.IO_Deinit(loop)
 }
 
+// Test_Sim_Halves verify IO carry one backend pointer per half and nothing above them: flat
+// operations read the storage half, thus the constructor hand out halves that agree, and
+// Close on a sim descriptor land on the same backend that opened it.
+func Test_Sim_Halves(t *testing.T) {
+	loop, driver, _ := sim_loop(0)
+	testify.Not_Nil(t, loop.Storage.State)
+	testify.Equal(t, loop.Network.State, loop.Storage.State)
+	file, create_err := sim_create(t, loop, driver, "/halves")
+	if !testify.No_Error(t, create_err) {
+		return
+	}
+	sim_close(t, loop, driver, file)
+	testify.False(t, sim_descriptor_open(loop))
+}
+
 // Test_File_Mode_Portable verify platform-word conversion round trip every representable kind
 // across every non-kind bit, and verify unsupported kind nibble decode to no kind at all.
 func Test_File_Mode_Portable(t *testing.T) {

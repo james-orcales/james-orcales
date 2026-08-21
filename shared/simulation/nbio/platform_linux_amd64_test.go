@@ -17,7 +17,7 @@ func Test_Simulated_Statx_Heap_Allocation(t *testing.T) {
 		sim_allocation_reset(&harness)
 		result = nbio.Statx{}
 		nbio.Platform_Statx(
-			harness.Loop.Platform_IO,
+			harness.Loop,
 			&harness.Completion,
 			nbio.DIRECTORY_CURRENT,
 			"/",

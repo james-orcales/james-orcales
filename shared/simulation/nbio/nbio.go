@@ -10,7 +10,7 @@ import (
 
 	"local/james-orcales/shared/invariant/default"
 	"local/james-orcales/shared/math/bits"
-	"local/james-orcales/shared/random/prng"
+	"local/james-orcales/shared/prng"
 	"local/james-orcales/shared/simulation/time"
 )
 
@@ -33,14 +33,14 @@ import (
 // time package driver contract.
 type IO struct {
 	Platform_IO
-	// State stays caller-owned because captured backend state allocates every surface closure.
-	State unsafe.Pointer
 	// Network is every transfer whose endpoint is socket.
 	Network Network
 	// Storage is every transfer whose endpoint is file or directory.
 	Storage Storage
 	// Close release descriptor of file. Callback fire once it is closed. It sit here, not on
-	// one half: close(2) name descriptor, and both half hand descriptors out.
+	// one half: close(2) name descriptor, and both half hand descriptors out. No state of own:
+	// halves carry the backend pointer because each is handed out alone, and IO_Invariants
+	// hold them equal, thus flat operations read Storage and a third copy buy nothing.
 	Close_Procedure func(
 		state unsafe.Pointer, completion *time.Completion, file File,
 		callback time.Callback,
@@ -68,17 +68,25 @@ type IO struct {
 	)
 }
 
+// IO_Invariants hold both halves on one backend. Flat operations read Storage.State, so two
+// backends composed into one IO would close on one and leak on the other; fail here instead.
+func IO_Invariants(loop IO, _ invariant.Namespace) {
+	invariant.Always(loop.Storage.State != nil, "An IO storage half has a backend.")
+	invariant.Always(loop.Network.State == loop.Storage.State,
+		"An IO carries one backend across both halves.")
+}
+
 // IO_Close keeps backend state explicit because bound method state would allocate.
 func IO_Close(
 	loop IO,
 	completion *time.Completion, file File, callback time.Callback,
 ) {
-	loop.Close_Procedure(loop.State, completion, file, callback)
+	loop.Close_Procedure(loop.Storage.State, completion, file, callback)
 }
 
 // IO_Deinit keeps leak validation on backend that owns descriptor records.
 func IO_Deinit(loop IO) {
-	loop.Deinit_Procedure(loop.State)
+	loop.Deinit_Procedure(loop.Storage.State)
 }
 
 // IO_Watch_Signal keeps backend state explicit so operation needs no captured environment.
@@ -86,7 +94,7 @@ func IO_Watch_Signal(
 	loop IO, completion *time.Completion, signal Signal, deadline time.Duration,
 	callback Signal_Callback,
 ) {
-	loop.Watch_Signal(loop.State, completion, signal, deadline, callback)
+	loop.Watch_Signal(loop.Storage.State, completion, signal, deadline, callback)
 }
 
 // IO_Spawn keeps backend state explicit so operation needs no captured environment.
@@ -94,7 +102,7 @@ func IO_Spawn(
 	loop IO, completion *time.Completion, request Process_Request, deadline time.Duration,
 	callback Process_Callback,
 ) {
-	loop.Spawn(loop.State, completion, request, deadline, callback)
+	loop.Spawn(loop.Storage.State, completion, request, deadline, callback)
 }
 
 // Signal identifies an operating-system signal in backend-independent form, so the
@@ -938,12 +946,6 @@ type UDP_Options struct {
 	Linger_Timeout time.Duration
 }
 
-// Listen_Options are options applied after bind of caller-owned socket.
-type Listen_Options struct {
-	// Backlog is requested completed-connection queue size.
-	Backlog uint32
-}
-
 // Shutdown_How select which connected-socket direction shutdown disable.
 type Shutdown_How int
 
@@ -1632,7 +1634,6 @@ func New_Simulated_IO(
 		Parent: -1,
 	}
 	sim_generate(state)
-	loop.State = unsafe.Pointer(state)
 	sim_wire_network(state, &loop.Network)
 	sim_wire_storage(state, &loop.Storage)
 	sim_wire_platform(state, &loop)
@@ -1640,6 +1641,7 @@ func New_Simulated_IO(
 	loop.Deinit_Procedure = sim_deinit_procedure
 	loop.Watch_Signal = sim_watch_signal_procedure
 	loop.Spawn = sim_spawn_procedure
+	IO_Invariants(loop, "new_simulated_io.loop")
 	return loop
 }
 

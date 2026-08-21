@@ -167,13 +167,13 @@ func New_Operating_System_IO(
 		Spawn_Memory:     memory.Spawns,
 	}
 	platform_memory_set(&state.Platform, memory.Platform_Operations)
-	loop.State = unsafe.Pointer(state)
 	operating_system_wire_file(state, &loop.Storage)
 	operating_system_wire_timer(state, &pump)
 	operating_system_wire_socket(state, &loop.Network)
 	operating_system_wire_close(&loop)
 	operating_system_wire_effects(state, &loop)
 	operating_system_wire_platform(state, &loop)
+	nbio.IO_Invariants(loop, "new_operating_system_io.loop")
 	time.Timeline_Invariants(pump, "new_operating_system_io.pump")
 	return loop, pump, operating_system_to_driver(state), nil
 }
@@ -922,7 +922,6 @@ func operating_system_storage_read_link(
 func operating_system_wire_timer(state *Operating_System, pump *time.Timeline) {
 	pump.State = unsafe.Pointer(state)
 	pump.Submit = operating_system_timeline_submit
-	pump.Timeout = operating_system_timeline_timeout
 	pump.Open_Event = operating_system_timeline_open_event
 	pump.Event_Listen = operating_system_timeline_event_listen
 	pump.Event_Trigger = operating_system_timeline_event_trigger
@@ -936,16 +935,6 @@ func operating_system_timeline_submit(
 	system := (*Operating_System)(state)
 	operating_system_submit(completion)
 	operating_system_timeout(system, system.Host, completion, delay, callback)
-}
-
-func operating_system_timeline_timeout(
-	state unsafe.Pointer, completion *time.Completion, duration time.Duration,
-	callback time.Callback,
-) {
-	invariant.Always(duration > 0, "A timeout duration is positive.")
-	system := (*Operating_System)(state)
-	operating_system_submit(completion)
-	operating_system_timeout(system, system.Host, completion, duration, callback)
 }
 
 func operating_system_timeline_open_event(

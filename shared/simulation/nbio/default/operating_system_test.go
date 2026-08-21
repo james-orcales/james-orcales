@@ -92,6 +92,9 @@ func operating_system_memory_view(
 }
 
 type operating_system_clock_state struct {
+	// Origin is the wall-clock read at construction. Monotonic reads subtract it, thus the
+	// fixture report uptime-shaped values inside MONOTONIC_MOMENT_MAXIMUM, not epoch seconds.
+	Origin  int64
 	Maximum atomic.Int64
 }
 
@@ -102,7 +105,7 @@ type clock_value struct {
 
 // A local host clock keeps these backend tests independent of another backend package.
 func new_operating_system_clock() (clock time.Clock) {
-	state := &operating_system_clock_state{}
+	state := &operating_system_clock_state{Origin: operating_system_clock_read()}
 	return time.Clock{
 		State:         unsafe.Pointer(state),
 		Now_Monotonic: operating_system_clock_now_monotonic,
@@ -120,8 +123,9 @@ func operating_system_clock_read() (nanoseconds int64) {
 }
 
 func operating_system_clock_now_monotonic(state unsafe.Pointer) (moment time.Monotonic_Moment) {
-	maximum := &(*operating_system_clock_state)(state).Maximum
-	current := operating_system_clock_read()
+	clock := (*operating_system_clock_state)(state)
+	maximum := &clock.Maximum
+	current := operating_system_clock_read() - clock.Origin
 	previous := maximum.Load()
 	if current <= previous {
 		return time.Monotonic_Moment(previous)

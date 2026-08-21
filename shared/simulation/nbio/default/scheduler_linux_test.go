@@ -73,7 +73,7 @@ func Test_Operating_System_IO_Statx(t *testing.T) {
 	statted := false
 	var statx_completion time.Completion
 	nbio.Platform_Statx(
-		loop.Platform_IO, &statx_completion, nbio.DIRECTORY_CURRENT, path, 0,
+		loop, &statx_completion, nbio.DIRECTORY_CURRENT, path, 0,
 		nbio.STATX_BASIC_STATS, &status,
 		func(completed *time.Completion) {
 			testify.No_Error(t, completed.Error)
@@ -97,7 +97,7 @@ func Test_Operating_System_Statx_Heap_Allocation(t *testing.T) {
 	testify.Zero_Allocation(t, func() {
 		harness.Called = false
 		nbio.Platform_Statx(
-			loop.Platform_IO, &harness.Completion, nbio.DIRECTORY_CURRENT, path, 0,
+			loop, &harness.Completion, nbio.DIRECTORY_CURRENT, path, 0,
 			nbio.STATX_BASIC_STATS, &harness.Result, platform_statx_allocation_callback,
 		)
 		_, harness.Error = time.Driver_Run_Until(driver, REAL_DEADLINE, harness.Done)

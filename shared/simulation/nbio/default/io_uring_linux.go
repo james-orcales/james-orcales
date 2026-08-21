@@ -75,8 +75,7 @@ func process_watch_ready(spawn *Spawn) (err error) {
 }
 
 // Wire Linux IORING_OP_STATX, one operation absent from Darwin surface.
-func operating_system_wire_platform(state *Operating_System, loop *nbio.IO) {
-	loop.Platform_IO.State = unsafe.Pointer(state)
+func operating_system_wire_platform(_ *Operating_System, loop *nbio.IO) {
 	loop.Statx_Procedure = operating_system_statx
 }
 

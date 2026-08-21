@@ -76,10 +76,9 @@ type Statx struct {
 	Reserved [STATX_RESERVED_VALUES]uint64
 }
 
-// Platform_IO is Linux-only surface.
+// Platform_IO is Linux-only surface. It carry no state of own: statx is a path operation, and
+// the Storage half already hold the backend it run on.
 type Platform_IO struct {
-	// State remains caller-owned while static Statx procedure borrows it.
-	State unsafe.Pointer
 	// Statx asynchronously fill result from Linux IORING_OP_STATX.
 	Statx_Procedure func(
 		state unsafe.Pointer, completion *time.Completion, directory File, file_path string,
@@ -89,18 +88,17 @@ type Platform_IO struct {
 
 // Platform_Statx preserves callback-last submit shape while state remains explicit.
 func Platform_Statx(
-	platform Platform_IO,
+	loop IO,
 	completion *time.Completion, directory File, file_path string,
 	flags uint32, mask uint32, result *Statx, callback time.Callback,
 ) {
-	platform.Statx_Procedure(
-		platform.State, completion, directory, file_path, flags, mask, result, callback,
+	loop.Statx_Procedure(
+		loop.Storage.State, completion, directory, file_path, flags, mask, result, callback,
 	)
 }
 
 // Wire Linux simulator statx counterpart over its deterministic in-memory filesystem.
-func sim_wire_platform(state *Sim, loop *IO) {
-	loop.Platform_IO.State = unsafe.Pointer(state)
+func sim_wire_platform(_ *Sim, loop *IO) {
 	loop.Statx_Procedure = sim_statx
 }
 

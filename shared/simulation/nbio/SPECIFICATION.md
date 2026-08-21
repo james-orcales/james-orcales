@@ -112,6 +112,12 @@ pipe cleanup to one second, and returns partial output; simulator captures none.
 Deinit assert every descriptor run open is closed. Run that still hold one panic. Surface own
 leak check, thus caller need no census.
 
+### Halves
+
+IO carry one backend pointer per half, Network and Storage, and none above them. Close, Deinit,
+Watch_Signal, Spawn, and platform operations read the Storage half. IO_Invariants assert both
+halves name one backend, thus a surface composed over two backends fail at construction.
+
 # File Mode
 
 File_Mode is portable permission and entry-kind metadata. Layout follows Go io/fs.FileMode.
