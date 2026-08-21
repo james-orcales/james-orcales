@@ -23,6 +23,32 @@ const FRACTION_TAIL_SIZE_MINIMUM = 2
 // COMMENT_TAIL_SIZE_MINIMUM counts both bytes of the shortest comment opener.
 const COMMENT_TAIL_SIZE_MINIMUM = 2
 
+// LINE_COUNT_MAXIMUM caps the lines one index holds. A source of this many lines spends fewer
+// than eight bytes on each of them, thus every file a reader writes fits and a generated wall of
+// line feeds is refused rather than read past the array.
+const LINE_COUNT_MAXIMUM = 131072
+
+// LINE_COUNT_MINIMUM is the line count of no source at all.
+const LINE_COUNT_MINIMUM = 0
+
+// LINE_MINIMUM is the first line, because a diagnostic counts lines from one.
+const LINE_MINIMUM = 1
+
+// LINE_MAXIMUM is the final line one index holds.
+const LINE_MAXIMUM = LINE_COUNT_MAXIMUM
+
+// COLUMN_MINIMUM is the first column, because a diagnostic counts columns from one.
+const COLUMN_MINIMUM = 1
+
+// COLUMN_MAXIMUM is the column one byte past the widest line a source holds.
+const COLUMN_MAXIMUM = SOURCE_SIZE_MAXIMUM + 1
+
+// LINE_SLOT holds how many lines the index read.
+const LINE_SLOT = 0
+
+// LINE_SLOT_COUNT is the counter count one index holds.
+const LINE_SLOT_COUNT = 1
+
 // OFFSET_MINIMUM is the first byte of a source.
 const OFFSET_MINIMUM = 0
 
@@ -627,6 +653,103 @@ func Token_Invariants(value Token, namespace invariant.Namespace) {
 	Blank_Count_Invariants(value.Blanks, namespace)
 }
 
+// Line is the line one offset stands on, counted from one.
+type Line int32
+
+// Line_Invariants states every line one index names.
+func Line_Invariants(value Line, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Range_Int32(int32(value), LINE_MINIMUM, LINE_MAXIMUM).
+		Ensure()
+}
+
+// Column is the byte one offset stands at inside its line, counted from one. A tab counts as one
+// byte, because a diagnostic names the byte a reader's editor counts to.
+type Column int32
+
+// Column_Invariants states every column one line holds.
+func Column_Invariants(value Column, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Range_Int32(int32(value), COLUMN_MINIMUM, COLUMN_MAXIMUM).
+		Ensure()
+}
+
+// Line_Count is how many lines one index read.
+type Line_Count int32
+
+// Line_Count_Invariants states every count one index holds.
+func Line_Count_Invariants(value Line_Count, namespace invariant.Namespace) {
+	invariant.Tree(value, namespace).
+		Range_Int32(int32(value), LINE_COUNT_MINIMUM, LINE_COUNT_MAXIMUM).
+		Ensure()
+}
+
+// Line_Index holds where each line of one source opens. The caller owns it and reuses it for one
+// file at a time, thus naming a position allocates nothing. The count lives in an array slot for
+// the reason the scanner keeps its cursor in one: a field would owe its whole domain at every
+// step that reads the index.
+type Line_Index struct {
+	// Starts holds the offset each line opens at, in the order the source states them.
+	Starts [LINE_COUNT_MAXIMUM]Offset
+	// Counts holds how many lines the index read.
+	Counts [LINE_SLOT_COUNT]Line_Count
+}
+
+// Line_Index_Invariants states the storage the caller supplies.
+func Line_Index_Invariants(subject *Line_Index, namespace invariant.Namespace) {
+	invariant.Always(
+		len(subject.Starts) == LINE_COUNT_MAXIMUM,
+		"A line index holds one slot for every admitted line.",
+	)
+}
+
+// Index_Lines reads where every line of one source opens. A source of more lines than the index
+// holds is refused, and the index then names the lines it did read.
+func Index_Lines(subject *Line_Index, source Source) (ok Boolean) {
+	defer func() { Boolean_Invariants(ok, "index_lines.ok") }()
+	Line_Index_Invariants(subject, "index_lines.subject")
+	Source_Invariants(source, "index_lines.source")
+	subject.Starts[0] = OFFSET_MINIMUM
+	count := 1
+	for offset := range len(source) {
+		if source[offset] != '\n' {
+			continue
+		}
+		if count == LINE_COUNT_MAXIMUM {
+			subject.Counts[LINE_SLOT] = Line_Count(count)
+			return false
+		}
+		subject.Starts[count] = Offset(offset + 1)
+		count++
+	}
+	subject.Counts[LINE_SLOT] = Line_Count(count)
+	return true
+}
+
+// Position_Of names the line and the column one offset stands at. The offset one past the final
+// byte stands at the end of the final line, which is where a scan that ran out reports.
+func Position_Of(subject *Line_Index, offset Offset) (line Line, column Column) {
+	defer func() {
+		Line_Invariants(line, "position_of.line")
+		Column_Invariants(column, "position_of.column")
+	}()
+	Line_Index_Invariants(subject, "position_of.subject")
+	Offset_Invariants(offset, "position_of.offset")
+	// The starts rise with the lines, thus halving the run finds the line a byte stands on in
+	// the steps a whole file's worth of lines needs and never in a walk of them.
+	low := 0
+	high := int(subject.Counts[LINE_SLOT]) - 1
+	for low < high {
+		middle := low + (high-low+1)/2
+		if subject.Starts[middle] > offset {
+			high = middle - 1
+			continue
+		}
+		low = middle
+	}
+	return Line(low + 1), Column(int(offset) - int(subject.Starts[low]) + 1)
+}
+
 // Scanner is the cursor over one source. Its zero value with a Source set is ready to scan.
 type Scanner struct {
 	// Source is the text this cursor reads. The caller owns the bytes and the scanner never
@@ -660,11 +783,14 @@ func Scanner_Invariants(subject *Scanner, namespace invariant.Namespace) {
 func Scan(subject *Scanner) (token Token) {
 	defer func() { Token_Invariants(token, "scan.token") }()
 	Scanner_Invariants(subject, "scan.subject")
+	// A comment leaves the previous kind standing, thus the opening of the source is what the
+	// count reads rather than the kind the end of a source carries.
+	opening := subject.Offset == OFFSET_MINIMUM
 	skip_space(subject)
 	// The empty line count and the statement test stand here rather than in bodies of their
 	// own, because a body of a few lines costs one call for every token a file spends.
 	blanks := subject.Blanks
-	if subject.Previous != KIND_END_OF_FILE {
+	if !opening {
 		if blanks != BLANK_COUNT_MINIMUM {
 			blanks = blanks - 1
 		}

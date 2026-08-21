@@ -59,12 +59,19 @@ the final line.
 A byte that opens no Go token scans as KIND_ILLEGAL of size one and the cursor still advances,
 thus a hostile source never stalls a scan.
 
+# Positions
+
+Index_Lines reads one source into the line index the caller owns, and Position_Of names the line
+and the column one offset stands at. Both count from one and a column counts bytes, which is what
+a diagnostic states, and a source of more lines than the index holds is refused.
+
 # Bounds
 
 A source holds at most 1,048,576 bytes and every offset and size stays inside that bound. An
-oversized source panics before the scanner reads one byte.
+oversized source panics before the scanner reads one byte, and one line index holds at most
+131,072 lines.
 
 # Allocation
 
-Scan and Token_Text perform zero heap allocation. The caller owns the source bytes and the
-scanner, thus this package holds no storage of its own.
+Scan, Text, Index_Lines, and Position_Of perform zero heap allocation. The caller owns the source
+bytes, the scanner, and the line index, thus this package holds no storage of its own.
