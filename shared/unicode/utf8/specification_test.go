@@ -1399,3 +1399,12 @@ func text_trim_allocation_cases(
 		}},
 	}
 }
+
+// Test_Character_Count_Long_Allocation covers a source longer than the compiler's 32-byte
+// stack buffer for byte-to-text conversion, where a text bridge would allocate per call.
+func Test_Character_Count_Long_Allocation(t *testing.T) {
+	source := utf8.Bytes("世世世世世世世世世世世")
+	var count utf8.Count
+	testify.Zero_Allocation(t, func() { count = utf8.Character_Count(source) })
+	testify.Equal(t, 11, int(count))
+}

@@ -701,8 +701,13 @@ func Character_Count(source Bytes) (count Count) {
 	byte_count := len(source)
 	for ; int(count) < byte_count; count++ {
 		if source[count] >= byte(CHARACTER_SELF) {
-			return count + Character_Count_Text(Text(string(source[count:])))
+			break
 		}
+	}
+	// Decode in place: a text bridge past 32 bytes allocates a heap copy.
+	for rest := source[count:]; len(rest) > SEQUENCE_SIZE_MINIMUM; count++ {
+		_, size := Decode_Character(rest)
+		rest = rest[size:]
 	}
 	return count
 }
