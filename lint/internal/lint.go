@@ -298,13 +298,6 @@ const STDLIB_TERM_CHARS_MAX = 6
 // for axes over Left/Right operand-term strings.
 const STDLIB_TERM_CHARS_MIN = 4
 
-// METHOD_PARAMS_TEST_CORPUS_MAX matches the Params string the
-// Test_Coverage_Backfill_Method_Render_Type fixture produces for its Bar
-// method: a 1-char type `A` joined to a 128-char type via `,` totals 130.
-// Bounded axes over input.Params in check_unnecessary_method_matches_stdlib
-// use this as Hi so Bar's call observes the Hi bucket.
-const METHOD_PARAMS_TEST_CORPUS_MAX = IDENTIFIER_CHARS_MAX + 2
-
 // QUALIFIED_IDENT_CHARS_MIN caps `pkg.Func` shapes at their minimum: a
 // single-letter package, dot, single-letter func — three characters.
 const QUALIFIED_IDENT_CHARS_MIN = 3
@@ -1635,7 +1628,7 @@ func Check_File(input *Check_File_Input) (diags []Diagnostic) {
 	diags = check_file_run_tier([]Check_Function{
 		check_no_unbounded_apis,
 		check_no_function_init, make_check_no_package_vars(input.Instrumentation),
-		check_unnecessary_method,
+		check_no_method,
 		check_no_third_party_struct_tag,
 	}, input.File_Set, input.File, input.Source)
 	for i := range diags {
@@ -1719,9 +1712,7 @@ func check_casing(file_set *token.FileSet, file *ast.File, _ []byte) (diags []Di
 			// TestMain is a Go testing-package reserved name; the
 			// runner only recognizes that exact spelling.
 			if x.Name.Name != "TestMain" {
-				if !source.Method_Satisfies_Stdlib(x) {
-					check(x.Name)
-				}
+				check(x.Name)
 			}
 			check_field_list(x.Recv)
 		case *ast.TypeSpec:
@@ -6207,26 +6198,10 @@ func check_no_package_vars_all_allowed(vs *ast.ValueSpec) (yes bool) {
 	return true
 }
 
-// Receiver methods whose name+signature does not match a known stdlib
-// interface method are dressed-up free functions. With user-defined interfaces
-// banned (check_no_interfaces), the only legitimate satisfaction targets are
-// stdlib interfaces; their methods form a small fixed set whose signatures
-// can be matched syntactically. Third-party interface satisfaction is not
-// accommodated — convert to a free function whose first parameter is the
-// former receiver.
-//
-// Matching is by joined rendered type strings: each param/result list becomes
-// a comma-separated string ("[]byte" or "int,error" or ""), and the lookup
-// is a switch keyed on method name. `any` and `interface{}` both render as
-// "any" (the empty interface). Pointers, slices, ellipsis, and qualified
-// types render directly from the AST.
-func check_unnecessary_method(
+// Methods hide receiver parameter. Only aver assertion builders need chained method calls.
+func check_no_method(
 	file_set *token.FileSet, file *ast.File, _ []byte,
 ) (diags []Diagnostic) {
-	if file.Name.Name == "aver" {
-		return nil
-	}
-
 	for _, declaration := range file.Decls {
 		function_declaration, ok := declaration.(*ast.FuncDecl)
 		if !ok {
@@ -6235,14 +6210,12 @@ func check_unnecessary_method(
 		if function_declaration.Recv == nil {
 			continue
 		}
-		match := source.Method_Satisfies_Stdlib(function_declaration)
-		if match {
+		if method_is_aver_assertion_builder(file_set, file, function_declaration) {
 			continue
 		}
 		MESSAGE := fmt.Sprintf(
-			"The method %s satisfies no stdlib interface. "+
-				"Convert the method to a free function. "+
-				"Write the receiver as the first parameter.",
+			"Methods are banned. Convert %s to free function. "+
+				"Write receiver as first parameter.",
 			function_declaration.Name.Name,
 		)
 		diags = append(diags, Diagnostic{
@@ -6251,6 +6224,37 @@ func check_unnecessary_method(
 		})
 	}
 	return diags
+}
+
+// Exact directory, package, and receiver keep assertion-builder exception owned by aver.
+func method_is_aver_assertion_builder(
+	file_set *token.FileSet, file *ast.File, function *ast.FuncDecl,
+) (yes bool) {
+	if file.Name.Name != "aver" {
+		return false
+	}
+	token_file := file_set.File(file.Pos())
+	if token_file == nil {
+		return false
+	}
+	directory := path.Dir(path.Clean(token_file.Name()))
+	if directory != "shared/sim/aver" {
+		if directory != "shared/sim/aver/default" {
+			return false
+		}
+	}
+	if len(function.Recv.List) != 1 {
+		return false
+	}
+	receiver := function.Recv.List[0].Type
+	if pointer, ok := receiver.(*ast.StarExpr); ok {
+		receiver = pointer.X
+	}
+	identifier, ok := receiver.(*ast.Ident)
+	if !ok {
+		return false
+	}
+	return identifier.Name == "Assertion_Builder"
 }
 
 // Snap.Init / snap.Edit carry snapshot literals — the canonical form is
@@ -6359,9 +6363,8 @@ func check_test_documentation_comment(
 //
 // Scope: top-level FuncDecls, TypeSpecs, and ValueSpecs whose declared
 // name is exported per ast.IsExported. Methods (FuncDecl with Recv) are
-// included — every method that survived check_unnecessary_method
-// satisfies a stdlib interface and so is part of the type's public
-// shape. For grouped GenDecls, a doc on the containing block applies to
+// included because assertion-builder methods remain public shape. For grouped GenDecls, a doc on
+// the containing block applies to
 // every spec inside (matching the Go parser, which hangs a single
 // leading comment on the GenDecl rather than the spec); a spec with its
 // own Doc satisfies the rule independently.
@@ -7258,8 +7261,7 @@ func word_replacements_for(table map[string][]string, word string) (candidates [
 // Words ending in "ing" that are unambiguously nouns. Any declared
 // identifier whose final word (per suggest_split_words, lowercased)
 // ends in "ing" and is NOT a key here is flagged as a present
-// participle. The Stringer interface contract (`String() string`) is
-// satisfied implicitly because "string" is in this set.
+// participle. Identifier `String` stays valid because "string" is in this set.
 func is_allowed_ing_noun(word string) (allowed bool) {
 
 	switch word {
@@ -7418,8 +7420,7 @@ func check_names_walk_declarations_generic(gd *ast.GenDecl, emit func(identifier
 
 // Walks every declared identifier and flags any whose final tokenized
 // word (lowercased) ends in "ing" and is not in is_allowed_ing_noun.
-// The Stringer interface's String() method is implicitly allowed
-// because "string" is in the noun allowlist.
+// A String identifier remains allowed because "string" is in noun allowlist.
 func check_names_participles(file *ast.File) (violations []Name_Violation) {
 
 	check_names_walk_decls(file, func(identifier *ast.Ident) {

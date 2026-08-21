@@ -3248,10 +3248,6 @@ func raw_type_file_diagnostics(file Parsed_File) (diags []Diagnostic) {
 func raw_type_function_diagnostics(
 	file Parsed_File, function *ast.FuncDecl,
 ) (diags []Diagnostic) {
-	// Interface contract controls method shape, so local naming doctrine cannot rewrite it.
-	if source.Method_Satisfies_Stdlib(function) {
-		return nil
-	}
 	position := file.File_Set.Position(function.Name.Pos())
 	parameter_gaps := raw_type_field_gaps(function.Type.Params, "parameter")
 	diags = append(diags,

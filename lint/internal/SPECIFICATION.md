@@ -236,9 +236,8 @@ A function body holds at least one statement; an empty body is banned.
 
 ### Methods
 
-A package named aver may declare methods. Elsewhere, a method is banned unless its exact
-signature satisfies a stdlib interface — error, fmt.Stringer, io.Reader/Writer/Closer/Seeker,
-sort.Interface, marshalers, fs.FS and kin; otherwise make it a free function with the receiver.
+All methods banned except `Assertion_Builder` methods in `shared/sim/aver` and its `default` tier.
+Make every other method free function with receiver as first parameter.
 
 ### Self Recursion
 

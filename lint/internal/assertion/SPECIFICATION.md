@@ -134,7 +134,7 @@ or no TestMain, is banned.
 
 Function parameters, results, and struct fields use plain or package-qualified type identifiers.
 Any other type expression is raw and banned; declare it first. Predeclared identifiers count as
-plain. Stdlib-interface methods, test files, and opted-out packages are exempt.
+plain. Test files and opted-out packages are exempt.
 
 ### Small Slices
 

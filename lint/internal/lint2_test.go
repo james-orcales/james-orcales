@@ -1319,7 +1319,7 @@ type I interface{ M() }
 		{Snapshot: snap.Init(`a.go:5:14: Do not use generics. Write concrete types.`), Files: snapshot_package(`// Identity returns value.
 func Identity[Value any](value Value) (result Value) { return value }
 `)},
-		{Snapshot: snap.Init(`a.go:11:12: The method Compute satisfies no stdlib interface. Convert the method to a free function. Write the receiver as the first parameter.`), Files: snapshot_package(`// T is a fixture.
+		{Snapshot: snap.Init(`a.go:11:12: Methods are banned. Convert Compute to free function. Write receiver as first parameter.`), Files: snapshot_package(`// T is a fixture.
 type T struct {
 	// X is a fixture.
 	X int
@@ -4455,29 +4455,6 @@ func Test_Coverage_Backfill_Package_Group_Endpoints(t *testing.T) {
 	}
 }
 
-// Drives Check_Source against a tier-1-clean method that has no results
-// fields. check_unnecessary_method's call to field_list_types receives
-// nil Type.Results, firing the "fl may be nil" Sometimes axis's true bucket
-// — production tests don't otherwise exercise it.
-func Test_Coverage_Backfill_Nil_Field_List(t *testing.T) {
-	t.Parallel()
-	source := "// Package p is a fixture.\n" +
-		"package p\n\n" +
-		"// R is a fixture.\n" +
-		"type R struct{}\n\n" +
-		"// Method is a fixture.\n" +
-		"func (r R) Method() { return }\n"
-	diags, err := lint.Check_Source("p.go", source)
-	if err != nil {
-		t.Fatalf("Check_Source: %v", err)
-	}
-	for _, d := range diags {
-		if d.Tier == 1 {
-			t.Fatalf("expected tier-1-clean fixture; got %s", d.Message)
-		}
-	}
-}
-
 // Test_Coverage_Backfill_String_Bounded_Mixed_Invariant_Calls drives
 // extract_call_name's Lo=0 (non-invariant call name) and Hi=26 ("Recorder_
 // Distinct_Boundary") buckets via crafted source.
@@ -4966,36 +4943,6 @@ func Test_Coverage_Backfill_Struct_Field_Capitalize(t *testing.T) {
 		"}\n"
 	diags, err := lint.Check_Source("test.go", source)
 	t.Logf("capitalize diags=%d err=%v", len(diags), err)
-}
-
-// Test_Coverage_Backfill_Method_Render_Type drives check_unnecessary_method
-// and its render_type helper with a tier-1-clean source that declares a
-// method (receiver-bearing function) so render_type observes field-list type
-// rendering.
-func Test_Coverage_Backfill_Method_Render_Type(t *testing.T) {
-	t.Parallel()
-	long := strings.Repeat("x", 128)
-	source := "// Package fixture is a fixture.\n" +
-		"package fixture\n\n" +
-		"// Foo is a fixture struct.\n" +
-		"type Foo struct{}\n\n" +
-		"// A is a 1-char type so render_type's output hits Lo=1.\n" +
-		"type A int\n\n" +
-		"// " + long + " is a 128-char type so render_type's output hits Hi=128.\n" +
-		"type " + long + " int\n\n" +
-		"// Bar exercises method shape with 1-char and 128-char-typed params.\n" +
-		"func (f Foo) Bar(p A, q " + long +
-		") (result string) { result = \"x\"; return result }\n\n" +
-		// 1-char and 128-char method names span matches_stdlib's input.Name
-		// Lo=1 and Hi=128 buckets via Check_Source -> check_unnecessary_method.
-		"func (f Foo) X() (result int) { return 0 }\n\n" +
-		"func (f Foo) Q" + strings.Repeat("z", 127) +
-		"(p int) (result int) { return 0 }\n\n" +
-		// V has Results="" (0 chars = Lo); U has Results="xxx128" (128 chars = Hi).
-		"func (f Foo) V() {}\n\n" +
-		"func (f Foo) U(p " + long + ") (r " + long + ") { return r }\n"
-	diags, err := lint.Check_Source("foo.go", source)
-	t.Logf("method_render diags=%d err=%v", len(diags), err)
 }
 
 // Test_Coverage_Backfill_Check_Source_Filename drives Check_Source's

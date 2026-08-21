@@ -694,8 +694,7 @@ func Test_Source_And_Test_Bans_Empty_Bodies(t *testing.T) {
 	}
 }
 
-// Test_Source_And_Test_Bans_Methods verifies a method outside the
-// stdlib-interface exceptions is flagged.
+// Test_Source_And_Test_Bans_Methods verifies every non-builder method is flagged.
 func Test_Source_And_Test_Bans_Methods(t *testing.T) {
 	t.Parallel()
 	files := specification_one_file("package fixture\n\n// T is a fixture.\n" +
@@ -704,15 +703,15 @@ func Test_Source_And_Test_Bans_Methods(t *testing.T) {
 	// Exempt the type-invariant rule: it is tier one and would otherwise suppress
 	// the tier-two method diagnostic this test isolates.
 	diags := invariant_exempt_self_diagnostics(t, files, []string{"pkg/**"})
-	if !specification_diagnosed(diags, "satisfies no stdlib interface") {
-		t.Fatal("a non-interface method must be flagged")
+	if !specification_diagnosed(diags, "Methods are banned") {
+		t.Fatal("every non-builder method must be flagged")
 	}
 	files = specification_one_file("package aver\n\n// T is a fixture.\n" +
 		"type T struct {\n\t// X is a fixture.\n\tX int\n}\n\n// Compute does.\n" +
 		"func (t T) Compute() (n int) {\n\treturn t.X\n}\n")
 	diags = invariant_exempt_self_diagnostics(t, files, []string{"pkg/**"})
-	if specification_diagnosed(diags, "satisfies no stdlib interface") {
-		t.Fatal("a package named aver may declare methods")
+	if !specification_diagnosed(diags, "Methods are banned") {
+		t.Fatal("package name aver must not exempt an unrelated method")
 	}
 }
 
@@ -2012,15 +2011,16 @@ func Test_Raw_Type_Identifier_Passes(t *testing.T) {
 	}
 }
 
-// Test_Raw_Type_Stdlib_Method_Exempt verifies dictated stdlib signature keeps exemption.
-func Test_Raw_Type_Stdlib_Method_Exempt(t *testing.T) {
+// Test_Raw_Type_Stdlib_Method_Flagged verifies banned methods get no raw-type exemption.
+func Test_Raw_Type_Stdlib_Method_Flagged(t *testing.T) {
 	t.Parallel()
 	files := specification_one_file("package fixture\n\n" +
 		"// Writer names fixture type.\ntype Writer struct{}\n\n" +
 		"// Write implements io.Writer.\n" +
-		"func (w Writer) Write(data []byte) (count int, failure error) {\n\treturn 0, nil\n}\n")
-	if specification_flags(t, files, "raw ") {
-		t.Fatal("stdlib-interface method must keep dictated signature")
+		"func (w Writer) Write(data []byte) (count int, failure error) {\n" +
+		"\treturn 0, nil\n}\n")
+	if !specification_flags(t, files, "raw ") {
+		t.Fatal("stdlib-interface method must not bypass raw-type rule")
 	}
 }
 

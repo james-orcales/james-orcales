@@ -3229,8 +3229,7 @@ func F() (x int) {
 
 // Test_Naming_Participles verifies that declared identifiers whose final
 // tokenized word ends in "ing" and isn't in nouns_suffixed_by_ing are
-// flagged. Gerund-nouns (String, Mapping, Encoding, etc.) and the
-// Stringer interface's String method are not flagged.
+// flagged. Gerund nouns such as String, Mapping, and Encoding are not flagged.
 func Test_Naming_Participles(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -3315,9 +3314,7 @@ type Wire_Encoding struct {
 	})
 }
 
-// Test_Naming_Participles_Exempt covers shapes that look like present
-// participles but are allowed: the Stringer interface method's name lives
-// in a hard allowlist, and names without an -ing suffix are not flagged.
+// Test_Naming_Participles_Exempt covers noun allowlist and names without -ing suffix.
 func Test_Naming_Participles_Exempt(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -3326,7 +3323,7 @@ func Test_Naming_Participles_Exempt(t *testing.T) {
 		Want_Diag string
 	}{
 		{
-			Name: "String method on type allowed via noun allowlist",
+			Name: "String function allowed via noun allowlist",
 			Files: map[string]string{
 				"test.go": `package main
 
@@ -3336,7 +3333,7 @@ const FIXTURE_HI = 100
 
 type Color int
 
-func (c Color) String() (result string) {
+func String(c Color) (result string) {
 	defer func() {
 	}()
 	return ""
@@ -4275,14 +4272,8 @@ func value_at(values []int, index int) (result int) { return values[index] }
 	})
 }
 
-// Test_Unnecessary_Method verifies that receiver methods whose name+signature
-// does not match a stdlib interface method are flagged with a recommendation
-// to convert to a free function. The set of legal targets is the closed
-// stdlib table; third-party interface satisfaction is rejected by policy.
-// Test_Unnecessary_Method_Allowed covers receiver methods whose name and
-// signature match an entry in the stdlib interface table — these must pass
-// without diagnostic. Free functions are also covered as a control.
-func Test_Unnecessary_Method_Allowed(t *testing.T) {
+// Test_No_Method_Stdlib_String_Flagged verifies interface satisfaction grants no escape.
+func Test_No_Method_Stdlib_String_Flagged(t *testing.T) {
 	t.Parallel()
 	run_diag_table(t, []struct {
 		Name      string
@@ -4291,7 +4282,7 @@ func Test_Unnecessary_Method_Allowed(t *testing.T) {
 	}{
 
 		{
-			Name: "stdlib Stringer match allowed",
+			Name: "stdlib Stringer match flagged",
 			Files: map[string]string{
 				"test.go": `package main
 
@@ -4317,13 +4308,13 @@ func (t T) String() (result string) {
 }
 `,
 			},
-			Want_Diag: "",
+			Want_Diag: "Methods are banned",
 		},
 	})
 }
 
-// Additional cases, split to keep each function within the length limit.
-func Test_Unnecessary_Method_Allowed_Part2(t *testing.T) {
+// Test_No_Method_Stdlib_Error_Flagged covers error.Error shape.
+func Test_No_Method_Stdlib_Error_Flagged(t *testing.T) {
 	t.Parallel()
 	run_diag_table(t, []struct {
 		Name      string
@@ -4332,7 +4323,7 @@ func Test_Unnecessary_Method_Allowed_Part2(t *testing.T) {
 	}{
 
 		{
-			Name: "stdlib error match allowed",
+			Name: "stdlib error match flagged",
 			Files: map[string]string{
 				"test.go": `package main
 
@@ -4358,14 +4349,13 @@ func (t T) Error() (result string) {
 }
 `,
 			},
-			Want_Diag: "",
+			Want_Diag: "Methods are banned",
 		},
 	})
 }
 
-// Test_Unnecessary_Method_Allowed_Read covers the io.Reader.Read shape;
-// split off Test_Unnecessary_Method_Allowed for the 100-line cap.
-func Test_Unnecessary_Method_Allowed_Read(t *testing.T) {
+// Test_No_Method_Stdlib_Read_Flagged covers io.Reader.Read shape.
+func Test_No_Method_Stdlib_Read_Flagged(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		Name      string
@@ -4373,7 +4363,7 @@ func Test_Unnecessary_Method_Allowed_Read(t *testing.T) {
 		Want_Diag string
 	}{
 		{
-			Name: "stdlib Read match allowed",
+			Name: "stdlib Read match flagged",
 			Files: map[string]string{
 				"test.go": `package main
 
@@ -4399,16 +4389,14 @@ func (t T) Read(p []byte) (n int, err error) {
 }
 `,
 			},
-			Want_Diag: "",
+			Want_Diag: "Methods are banned",
 		},
 	}
 	run_diag_table(t, tests)
 }
 
-// Test_Unnecessary_Method_Allowed_Extra continues the allowed table: a
-// stdlib-interface-satisfying method with `any`, and a plain free function
-// (no receiver) as a control.
-func Test_Unnecessary_Method_Allowed_Extra(t *testing.T) {
+// Test_No_Method_Stdlib_Scan_Flagged covers interface{} normalization.
+func Test_No_Method_Stdlib_Scan_Flagged(t *testing.T) {
 	t.Parallel()
 	run_diag_table(t, []struct {
 		Name      string
@@ -4417,7 +4405,7 @@ func Test_Unnecessary_Method_Allowed_Extra(t *testing.T) {
 	}{
 
 		{
-			Name: "stdlib Scan with any allowed",
+			Name: "stdlib Scan with any flagged",
 			Files: map[string]string{
 				"test.go": `package main
 
@@ -4441,13 +4429,13 @@ func (t T) Scan(x any) (err error) {
 }
 `,
 			},
-			Want_Diag: "",
+			Want_Diag: "Methods are banned",
 		},
 	})
 }
 
-// Additional cases, split to keep each function within the length limit.
-func Test_Unnecessary_Method_Allowed_Extra_Part2(t *testing.T) {
+// Test_No_Method_Free_Function_Allowed keeps free functions outside method rule.
+func Test_No_Method_Free_Function_Allowed(t *testing.T) {
 	t.Parallel()
 	run_diag_table(t, []struct {
 		Name      string
@@ -4482,10 +4470,80 @@ func F() (result int) {
 	})
 }
 
-// Test_Unnecessary_Method_Flagged covers receiver methods that the stdlib
-// table does not cover — either name unknown or signature wrong-shape — and
-// must be flagged with the "convert to free function" instruction.
-func Test_Unnecessary_Method_Flagged(t *testing.T) {
+// Test_No_Method_Assertion_Builder_Allowed pins exception to owner and exact receiver.
+func Test_No_Method_Assertion_Builder_Allowed(t *testing.T) {
+	t.Parallel()
+	source_text := "// Package aver is a fixture.\n" +
+		"package aver\n\n" +
+		"// Assertion_Builder is a fixture.\n" +
+		"type Assertion_Builder struct{}\n\n" +
+		"// Sometimes is a fixture builder link.\n" +
+		"func (builder Assertion_Builder) Sometimes() (next Assertion_Builder) {\n" +
+		"\treturn builder\n}\n\n" +
+		"func (builder *Assertion_Builder) assertion_plan() (next *Assertion_Builder) {\n" +
+		"\treturn builder\n}\n"
+	for _, filename := range []string{
+		"shared/sim/aver/enforcement.go",
+		"shared/sim/aver/default/aver_default_noop.go",
+	} {
+		diags, err := lint.Check_Source(filename, source_text)
+		if err != nil {
+			t.Fatalf("Check_Source(%q): %v", filename, err)
+		}
+		for _, diagnostic := range diags {
+			if diagnostic.Tier == 1 {
+				t.Fatalf("builder fixture has tier-one diagnostic at %s: %s",
+					filename, diagnostic.Message)
+			}
+			if strings.Contains(diagnostic.Message, "Methods are banned") {
+				t.Errorf("assertion builder method flagged at %s", filename)
+			}
+		}
+	}
+}
+
+// Test_No_Method_Assertion_Builder_Boundary rejects impersonation outside exact owner.
+func Test_No_Method_Assertion_Builder_Boundary(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		Filename string
+		Package  string
+		Receiver string
+	}{
+		{Filename: "shared/sim/aver/enforcement.go", Package: "aver", Receiver: "Other"},
+		{Filename: "shared/sim/aver/child/method.go", Package: "aver",
+			Receiver: "Assertion_Builder"},
+		{Filename: "other/enforcement.go", Package: "aver", Receiver: "Assertion_Builder"},
+		{Filename: "shared/sim/aver/enforcement.go", Package: "other",
+			Receiver: "Assertion_Builder"},
+		{Filename: "fixture_test.go", Package: "fixture_test", Receiver: "Assertion_Builder"},
+	}
+	for _, test := range tests {
+		source_text := "// Package " + test.Package + " is a fixture.\n" +
+			"package " + test.Package + "\n\n" +
+			"// " + test.Receiver + " is a fixture.\n" +
+			"type " + test.Receiver + " struct{}\n\n" +
+			"// Link is a fixture.\n" +
+			"func (value " + test.Receiver + ") Link() { return }\n"
+		diags, err := lint.Check_Source(test.Filename, source_text)
+		if err != nil {
+			t.Fatalf("Check_Source(%q): %v", test.Filename, err)
+		}
+		found := false
+		for _, diagnostic := range diags {
+			if strings.Contains(diagnostic.Message, "Methods are banned") {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("method exemption escaped filename=%q package=%q receiver=%q",
+				test.Filename, test.Package, test.Receiver)
+		}
+	}
+}
+
+// Test_No_Method_Write_Flagged covers former stdlib name with wrong signature.
+func Test_No_Method_Write_Flagged(t *testing.T) {
 	t.Parallel()
 	run_diag_table(t, []struct {
 		Name      string
@@ -4518,13 +4576,13 @@ func (t T) Write(p []byte) (err error) {
 }
 `,
 			},
-			Want_Diag: "satisfies no stdlib interface",
+			Want_Diag: "Methods are banned",
 		},
 	})
 }
 
-// Additional cases, split to keep each function within the length limit.
-func Test_Unnecessary_Method_Flagged_Part2(t *testing.T) {
+// Test_No_Method_Unknown_Name_Flagged covers method without former interface exception.
+func Test_No_Method_Unknown_Name_Flagged(t *testing.T) {
 	t.Parallel()
 	run_diag_table(t, []struct {
 		Name      string
@@ -4559,7 +4617,7 @@ func (t T) Foo() (result int) {
 }
 `,
 			},
-			Want_Diag: "satisfies no stdlib interface",
+			Want_Diag: "Methods are banned",
 		},
 	})
 }
