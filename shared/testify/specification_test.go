@@ -267,6 +267,8 @@ func Test_Allocation(t *testing.T) {
 		t.Fatalf("callback count = %d; want %d",
 			callback_count, WARM_UP_CALL_COUNT+MEASURED_CALL_COUNT)
 	}
+	allocation_passing_paths(t)
+	allocation_eventually_and_never(t)
 }
 
 // Test_Control checks Condition, Fail, and the predicate split's reporting.
@@ -460,4 +462,74 @@ func file_stat(
 
 func Error(sentinel *sentinel_error) (message string) {
 	return sentinel.Label
+}
+
+// Passing assertion must allocate nothing: message text renders only after comparison
+// decides against caller.
+func allocation_passing_paths(t *testing.T) {
+	t.Helper()
+	duration := &testify.Within_Duration_Input{Expected: 1000, Actual: 1005, Delta: 10}
+	if !testify.Zero_Allocation(t, func() { testify.Within_Duration(t, duration) }) {
+		t.Fatal("Within_Duration passing path should not allocate")
+	}
+	span := &testify.Within_Range_Input{Actual: 5, Start: 1, End: 9}
+	if !testify.Zero_Allocation(t, func() { testify.Within_Range(t, span) }) {
+		t.Fatal("Within_Range passing path should not allocate")
+	}
+	delta := &testify.In_Delta_Input{
+		Expected: fixedpoint.Number(fixedpoint.From_Integer(10)),
+		Actual:   fixedpoint.Number(fixedpoint.From_Integer(10)),
+		Delta:    fixedpoint.Number(fixedpoint.From_Integer(1)),
+	}
+	if !testify.Zero_Allocation(t, func() { testify.In_Delta(t, delta) }) {
+		t.Fatal("In_Delta passing path should not allocate")
+	}
+	epsilon := &testify.In_Epsilon_Input{
+		Expected: fixedpoint.Number(fixedpoint.From_Integer(100)),
+		Actual:   fixedpoint.Number(fixedpoint.From_Integer(100)),
+		Epsilon:  fixedpoint.SCALE / 100,
+	}
+	if !testify.Zero_Allocation(t, func() { testify.In_Epsilon(t, epsilon) }) {
+		t.Fatal("In_Epsilon passing path should not allocate")
+	}
+	root := errors.New("root cause")
+	if !testify.Zero_Allocation(t, func() { testify.Equal_Error(t, root, "root cause") }) {
+		t.Fatal("Equal_Error passing path should not allocate")
+	}
+	if !testify.Zero_Allocation(t, func() { testify.Error_Contains(t, root, "cause") }) {
+		t.Fatal("Error_Contains passing path should not allocate")
+	}
+}
+
+// Arming a poll must allocate nothing: completion and poll state live in caller input.
+func allocation_eventually_and_never(t *testing.T) {
+	t.Helper()
+	memory := &polling_memory{}
+	loop, driver, host := polling_loop(memory)
+	a := &testify.Asserter{Clock: host, IO: &loop}
+	condition := func() (satisfied bool) { return true }
+	eventually := &testify.Asserter_Eventually_Input{
+		Wait: 100 * time.NANOSECOND,
+		Tick: 10 * time.NANOSECOND,
+	}
+	if !testify.Zero_Allocation(t, func() {
+		testify.Asserter_Eventually(a, t, condition, eventually)
+		nbio.Driver_Run_For(driver, 20*time.NANOSECOND)
+	}) {
+		t.Fatal("Asserter_Eventually arming should not allocate")
+	}
+	never_memory := &polling_memory{}
+	never_loop, never_driver, never_clock := polling_loop(never_memory)
+	never_asserter := &testify.Asserter{Clock: never_clock, IO: &never_loop}
+	never_condition := func() (satisfied bool) { return false }
+	never := &testify.Asserter_Never_Input{
+		Wait: 10 * time.NANOSECOND,
+		Tick: 10 * time.NANOSECOND,
+	}
+	if !testify.Zero_Allocation(t, func() {
+		testify.Asserter_Never(never_asserter, t, never_condition, never)
+		nbio.Driver_Run_For(never_driver, 20*time.NANOSECOND)
+	}) {
+		t.Fatal("Asserter_Never arming should not allocate")
+	}
 }

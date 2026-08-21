@@ -1907,12 +1907,24 @@ func file_system_path(path string) (name string) {
 }
 
 // Asserter_Eventually_Input pairs the two durations of Asserter_Eventually, which repeat a
-// type.
+// type, and holds the poll's completion and state: a closure capturing them, plus a fresh
+// completion, escaped to the heap on every arming. One arming per input at a time.
 type Asserter_Eventually_Input struct {
+	// Completion is the timeout slot the poll rides. It stays first so the static callback
+	// recovers this input from the completion address.
+	Completion nbio.Completion
 	// Wait is how long the condition has to hold before the poll gives up.
 	Wait time.Duration
 	// Tick is the interval between successive polls of the condition.
 	Tick time.Duration
+	// Asserter is set on arming.
+	Asserter *Asserter
+	// T is the handle the verdict lands on; set on arming.
+	T *testing.T
+	// Condition is the predicate each poll runs; set on arming.
+	Condition func() (satisfied bool)
+	// Deadline is the monotonic moment the poll gives up at; set on arming.
+	Deadline time.Monotonic_Moment
 }
 
 // Asserter_Eventually arms a repeating poll of condition on a's io loop; if condition never
@@ -1928,36 +1940,51 @@ func Asserter_Eventually(
 	t.Helper()
 	assert(a.Clock.Now_Monotonic != nil, "testify: Asserter clock is required for Eventually")
 	assert(a.IO != nil, "testify: Asserter io is required for Eventually")
-	deadline := time.Clock_Now_Monotonic(a.Clock) + time.Monotonic_Moment(input.Wait)
-	var poll nbio.Callback
-	poll = func(completion nbio.Completion_Handle) {
-		eventually_poll(a, t, condition, input, deadline, poll, completion)
-	}
-	nbio.Timeline_Timeout(*a.IO, &nbio.Completion{}, input.Tick, poll)
+	assert(
+		unsafe.Offsetof(input.Completion) == 0,
+		"testify: Eventually completion stays first so the poll recovers its input",
+	)
+	input.Asserter = a
+	input.T = t
+	input.Condition = condition
+	input.Deadline = time.Clock_Now_Monotonic(a.Clock) + time.Monotonic_Moment(input.Wait)
+	nbio.Timeline_Timeout(*a.IO, &input.Completion, input.Tick, eventually_poll)
 }
 
-func eventually_poll(
-	a *Asserter, t *testing.T, condition func() (satisfied bool),
-	input *Asserter_Eventually_Input, deadline time.Monotonic_Moment,
-	poll nbio.Callback, completion nbio.Completion_Handle,
-) {
-	if condition() {
+// Static poll callback: the completion is the input's first field, so the address cast
+// recovers every piece of state without a captured closure.
+func eventually_poll(completion nbio.Completion_Handle) {
+	input := (*Asserter_Eventually_Input)(unsafe.Pointer(completion))
+	if input.Condition() {
 		return
 	}
-	if time.Clock_Now_Monotonic(a.Clock) >= deadline {
+	if time.Clock_Now_Monotonic(input.Asserter.Clock) >= input.Deadline {
 		message := fmt.Sprintf("Condition never satisfied within %d ns", int64(input.Wait))
-		Fail(t, message)
+		Fail(input.T, message)
 		return
 	}
-	nbio.Timeline_Timeout(*a.IO, completion, input.Tick, poll)
+	nbio.Timeline_Timeout(*input.Asserter.IO, completion, input.Tick, eventually_poll)
 }
 
-// Asserter_Never_Input pairs the two durations of Asserter_Never, which repeat a type.
+// Asserter_Never_Input pairs the two durations of Asserter_Never, which repeat a type, and
+// holds the poll's completion and state, so arming allocates nothing. One arming per input at
+// a time.
 type Asserter_Never_Input struct {
+	// Completion is the timeout slot the poll rides. It stays first so the static callback
+	// recovers this input from the completion address.
+	Completion nbio.Completion
 	// Wait is how long the condition must stay false.
 	Wait time.Duration
 	// Tick is the interval between successive polls of the condition.
 	Tick time.Duration
+	// Asserter is set on arming.
+	Asserter *Asserter
+	// T is the handle the verdict lands on; set on arming.
+	T *testing.T
+	// Condition is the predicate each poll runs; set on arming.
+	Condition func() (satisfied bool)
+	// Deadline is the monotonic moment the poll stops at; set on arming.
+	Deadline time.Monotonic_Moment
 }
 
 // Asserter_Never arms a repeating poll of condition on a's io loop; if condition ever holds
@@ -1969,25 +1996,26 @@ func Asserter_Never(
 	t.Helper()
 	assert(a.Clock.Now_Monotonic != nil, "testify: Asserter clock is required for Never")
 	assert(a.IO != nil, "testify: Asserter io is required for Never")
-	deadline := time.Clock_Now_Monotonic(a.Clock) + time.Monotonic_Moment(input.Wait)
-	var poll nbio.Callback
-	poll = func(completion nbio.Completion_Handle) {
-		never_poll(a, t, condition, input, deadline, poll, completion)
-	}
-	nbio.Timeline_Timeout(*a.IO, &nbio.Completion{}, input.Tick, poll)
+	assert(
+		unsafe.Offsetof(input.Completion) == 0,
+		"testify: Never completion stays first so the poll recovers its input",
+	)
+	input.Asserter = a
+	input.T = t
+	input.Condition = condition
+	input.Deadline = time.Clock_Now_Monotonic(a.Clock) + time.Monotonic_Moment(input.Wait)
+	nbio.Timeline_Timeout(*a.IO, &input.Completion, input.Tick, never_poll)
 }
 
-func never_poll(
-	a *Asserter, t *testing.T, condition func() (satisfied bool),
-	input *Asserter_Never_Input, deadline time.Monotonic_Moment,
-	poll nbio.Callback, completion nbio.Completion_Handle,
-) {
-	if condition() {
-		Fail(t, "Condition satisfied, but should never be")
+// Static poll callback; see eventually_poll for the address cast.
+func never_poll(completion nbio.Completion_Handle) {
+	input := (*Asserter_Never_Input)(unsafe.Pointer(completion))
+	if input.Condition() {
+		Fail(input.T, "Condition satisfied, but should never be")
 		return
 	}
-	if time.Clock_Now_Monotonic(a.Clock) >= deadline {
+	if time.Clock_Now_Monotonic(input.Asserter.Clock) >= input.Deadline {
 		return
 	}
-	nbio.Timeline_Timeout(*a.IO, completion, input.Tick, poll)
+	nbio.Timeline_Timeout(*input.Asserter.IO, completion, input.Tick, never_poll)
 }

@@ -55,9 +55,9 @@ whether two JSON documents are semantically equal.
 
 # Allocation
 
-Zero_Allocation warms callback once, measures one execution, and passes only
-when callback performs zero heap allocations. Parallel tests cannot call it because
-Go allocation measurement temporarily changes GOMAXPROCS.
+Zero_Allocation passes only when callback performs zero heap allocations; parallel
+tests cannot call it because measurement changes GOMAXPROCS. A passing assertion, and
+arming Asserter_Eventually or Asserter_Never, allocates nothing.
 
 # Control
 
