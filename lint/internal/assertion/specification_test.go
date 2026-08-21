@@ -815,7 +815,7 @@ func Test_Invariants_Fixed_Arrays(t *testing.T) {
 		"func Fill(row Row) (out [WIDTH]Cell) {\n" +
 		"\tvar scratch [WIDTH]Cell\n\treturn scratch\n}\n"
 	diags := check_fixture(t, code)
-	remedy := " Declare a struct with one field per element instead."
+	remedy := " Convert fixed arrays to slices instead."
 	if !diagnosed(diags, "The declaration Grid has a fixed array field (Raw)."+remedy) {
 		t.Fatal("a raw fixed array field must be flagged")
 	}

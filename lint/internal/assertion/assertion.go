@@ -3377,9 +3377,10 @@ type Collection_Index struct {
 }
 
 // Flags a fixed array or a small bounded slice used as a struct field, parameter, or result. A
-// slice bounded to SMALL_SLICE_COUNT_MAX or fewer is a struct wearing a loop, and a fixed array
-// is one at any length. The ban is blanket: no helper, stdlib method, test file, or opted-out
-// package is released. A bound no chain of constants resolves is left unjudged.
+// slice bounded to SMALL_SLICE_COUNT_MAX or fewer is a struct wearing a loop. A fixed array instead
+// loses caller control over storage and length, so its remedy is a slice. The ban is blanket: no
+// helper, stdlib method, test file, or opted-out package is released. A bound no chain of constants
+// resolves is left unjudged.
 func check_collection_types(
 	parsed_files []Parsed_File, components *Component_Index,
 ) (diags []Diagnostic) {
@@ -3894,7 +3895,7 @@ func collection_type_gap(
 			return ""
 		}
 		return "has a fixed array " + role + "\x00. " +
-			"Declare a struct with one field per element instead."
+			"Convert fixed arrays to slices instead."
 	}
 	identity := collection_type_identity(core, scope)
 	if identity == "" {
@@ -3902,7 +3903,7 @@ func collection_type_gap(
 	}
 	if index.Array[identity] {
 		return "has a fixed array " + role + "\x00. " +
-			"Declare a struct with one field per element instead."
+			"Convert fixed arrays to slices instead."
 	}
 	bound, bounded := index.Slice_Bound[identity]
 	if !bounded {

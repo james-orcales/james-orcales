@@ -146,7 +146,7 @@ exemption. Declare a struct with one field per member. An unresolved bound is un
 
 A fixed [N]T array, raw or through a chain of defined types, is banned as a struct field, parameter,
 or result, whatever N and with no exemption: helper, stdlib method, test file, and opted-out package
-alike. Declare a struct with one field per element instead.
+alike. Convert fixed arrays to slices instead.
 
 # Simulation
 
