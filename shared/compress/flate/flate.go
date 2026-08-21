@@ -1478,29 +1478,14 @@ func Bit_Writer_Invariants(value Bit_Writer, namespace aver.Namespace) {
 	)
 }
 
-// Bit_Writer_Handle keeps output cursor mutations on nonnil storage.
+// Bit_Writer_Handle permits borrowed output cursor mutations.
 type Bit_Writer_Handle *Bit_Writer
 
 // Bit_Writer_Handle_Invariants bounds state reached through mutable storage.
 func Bit_Writer_Handle_Invariants(value Bit_Writer_Handle, namespace aver.Namespace) {
-	aver.Always(value != nil, "DEFLATE bit writer handle exists.")
-	aver.Tree(value, namespace).
-		Range_Int(len(value.Destination), BYTE_COUNT_MINIMUM, BYTE_COUNT_MAXIMUM).
-		Range_Int(int(value.Position), BYTE_COUNT_MINIMUM, BYTE_COUNT_MAXIMUM).
-		Range_Uint64(uint64(value.Bits), BIT_BUFFER_MINIMUM, PENDING_BITS_MAXIMUM).
-		Range_Uint8(
-			uint8(value.Bits_Count), BIT_COUNT_MINIMUM, PENDING_BIT_COUNT_MAXIMUM,
-		).
-		Sometimes(bool(value.State), "The mutable writer exhausted caller storage.").
-		Ensure()
-	aver.Always(
-		int(value.Position) <= len(value.Destination),
-		"Mutable writer position does not cross caller destination.",
-	)
-	aver.Always(
-		uint64(value.Bits) < uint64(1)<<value.Bits_Count,
-		"Mutable writer retains only declared low-order bits.",
-	)
+	if value == nil {
+		return
+	}
 	Bit_Writer_Invariants(*value, namespace)
 }
 
@@ -1536,28 +1521,14 @@ func Bit_Reader_Invariants(value Bit_Reader, namespace aver.Namespace) {
 	)
 }
 
-// Bit_Reader_Handle keeps input cursor mutations on nonnil storage.
+// Bit_Reader_Handle permits borrowed input cursor mutations.
 type Bit_Reader_Handle *Bit_Reader
 
 // Bit_Reader_Handle_Invariants bounds state reached through mutable storage.
 func Bit_Reader_Handle_Invariants(value Bit_Reader_Handle, namespace aver.Namespace) {
-	aver.Always(value != nil, "DEFLATE bit reader handle exists.")
-	aver.Tree(value, namespace).
-		Range_Int(len(value.Source), BYTE_COUNT_MINIMUM, BYTE_COUNT_MAXIMUM).
-		Range_Int(int(value.Position), BYTE_COUNT_MINIMUM, BYTE_COUNT_MAXIMUM).
-		Range_Uint64(uint64(value.Bits), BIT_BUFFER_MINIMUM, PENDING_BITS_MAXIMUM).
-		Range_Uint8(
-			uint8(value.Bits_Count), BIT_COUNT_MINIMUM, PENDING_BIT_COUNT_MAXIMUM,
-		).
-		Ensure()
-	aver.Always(
-		int(value.Position) <= len(value.Source),
-		"Mutable reader position does not cross compressed input.",
-	)
-	aver.Always(
-		uint64(value.Bits) < uint64(1)<<value.Bits_Count,
-		"Mutable reader retains only declared low-order bits.",
-	)
+	if value == nil {
+		return
+	}
 	Bit_Reader_Invariants(*value, namespace)
 }
 
@@ -1578,21 +1549,16 @@ func Fixed_Bit_Cursor_Invariants(value Fixed_Bit_Cursor, namespace aver.Namespac
 	Byte_Position_Invariants(value.Position, namespace)
 }
 
-// Fixed_Bit_Cursor_Handle keeps fast-path register mutations nonnil.
+// Fixed_Bit_Cursor_Handle permits borrowed fast-path register mutations.
 type Fixed_Bit_Cursor_Handle *Fixed_Bit_Cursor
 
 // Fixed_Bit_Cursor_Handle_Invariants bounds mutable fast-path register state.
 func Fixed_Bit_Cursor_Handle_Invariants(
 	value Fixed_Bit_Cursor_Handle, namespace aver.Namespace,
 ) {
-	aver.Always(value != nil, "DEFLATE fixed bit cursor exists.")
-	aver.Tree(value, namespace).
-		Range_Uint64(
-			uint64(value.Bits), uint64(BIT_VALUE_MINIMUM), uint64(BIT_VALUE_MAXIMUM),
-		).
-		Range_Uint(uint(value.Count), uint(BIT_COUNT_MINIMUM), uint(BIT_COUNT_MAXIMUM)).
-		Range_Int(int(value.Position), BYTE_COUNT_MINIMUM, BYTE_COUNT_MAXIMUM).
-		Ensure()
+	if value == nil {
+		return
+	}
 	Fixed_Bit_Cursor_Invariants(*value, namespace)
 }
 
@@ -1613,17 +1579,14 @@ func Fixed_Match_Invariants(value Fixed_Match, namespace aver.Namespace) {
 	Boolean_Invariants(value.Valid, namespace)
 }
 
-// Fixed_Match_Handle keeps decoded match mutations nonnil.
+// Fixed_Match_Handle permits borrowed decoded match mutations.
 type Fixed_Match_Handle *Fixed_Match
 
 // Fixed_Match_Handle_Invariants bounds mutable fixed match state.
 func Fixed_Match_Handle_Invariants(value Fixed_Match_Handle, namespace aver.Namespace) {
-	aver.Always(value != nil, "DEFLATE fixed match exists.")
-	aver.Tree(value, namespace).
-		Range_Int(int(value.Size), MATCH_SIZE_MINIMUM, MATCH_SIZE_MAXIMUM).
-		Range_Int(int(value.Distance), DISTANCE_MINIMUM, WINDOW_SIZE).
-		Sometimes(bool(value.Valid), "The mutable fixed match is valid.").
-		Ensure()
+	if value == nil {
+		return
+	}
 	Fixed_Match_Invariants(*value, namespace)
 }
 

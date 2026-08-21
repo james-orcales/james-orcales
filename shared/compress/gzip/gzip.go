@@ -2,10 +2,9 @@
 package gzip
 
 import (
-	"hash/crc32"
-
 	"local/james-orcales/shared/compress/flate"
 	"local/james-orcales/shared/encoding/binary"
+	"local/james-orcales/shared/hash/crc32"
 	"local/james-orcales/shared/sim/aver/default"
 	"local/james-orcales/shared/unicode/utf8"
 )
@@ -981,7 +980,7 @@ func Encode_Into(
 	trailer_position := int(header_size) + int(payload_count)
 	binary.Put_Uint_32(
 		binary.Bytes(destination[trailer_position:trailer_position+4]),
-		binary.Word_32(crc32.ChecksumIEEE(source_unvalidated)),
+		binary.Word_32(checksum(Bytes(source_unvalidated))),
 		binary.LITTLE_ENDIAN,
 	)
 	binary.Put_Uint_32(
@@ -1316,9 +1315,7 @@ func header_validate(
 	defer func() {
 		Header_Size_Invariants(size, "header_validate.size")
 		Header_Invariants(header, "header_validate.header")
-		Header_Validation_Status_Invariants(
-			status, "header_validate.status",
-		)
+		Header_Validation_Status_Invariants(status, "header_validate.status")
 	}()
 	Header_Unvalidated_Invariants(
 		header_unvalidated, "header_validate.header_unvalidated",
@@ -1371,12 +1368,8 @@ func header_text_wire_size(
 	status Header_Validation_Status,
 ) {
 	defer func() {
-		Header_String_Byte_Count_Invariants(
-			wire_size, "header_text_wire_size.wire_size",
-		)
-		Header_Validation_Status_Invariants(
-			status, "header_text_wire_size.status",
-		)
+		Header_String_Byte_Count_Invariants(wire_size, "header_text_wire_size.wire_size")
+		Header_Validation_Status_Invariants(status, "header_text_wire_size.status")
 	}()
 	Header_Text_Source_Invariants(source, "header_text_wire_size.source")
 	if len(source) > HEADER_TEXT_SIZE_MAXIMUM {
@@ -1524,8 +1517,7 @@ func decode_member_unchecked(
 		compressed, header_storage, capture_header,
 	)
 	if header_status != STATUS_OK {
-		return 0, Compressed_Count(len(compressed)), header,
-			Member_Status(header_status)
+		return 0, Compressed_Count(len(compressed)), header, Member_Status(header_status)
 	}
 	flate_count, flate_compressed_count, flate_status := flate.Decode_Prefix_Into(
 		flate.Destination_Unvalidated(destination),
@@ -1753,9 +1745,7 @@ func header_text_bounds(
 	defer func() {
 		Header_Comment_Position_Invariants(next, "header_text_bounds.next")
 		Header_Text_Size_Invariants(text_size, "header_text_bounds.text_size")
-		Header_Validation_Status_Invariants(
-			status, "header_text_bounds.status",
-		)
+		Header_Validation_Status_Invariants(status, "header_text_bounds.status")
 	}()
 	Member_Invariants(compressed, "header_text_bounds.compressed")
 	Header_Name_Position_Invariants(position, "header_text_bounds.position")
@@ -1802,9 +1792,7 @@ func header_checksum_parse(
 ) (next Header_Position, status Header_Validation_Status) {
 	defer func() {
 		Header_Position_Invariants(next, "header_checksum_parse.next")
-		Header_Validation_Status_Invariants(
-			status, "header_checksum_parse.status",
-		)
+		Header_Validation_Status_Invariants(status, "header_checksum_parse.status")
 	}()
 	Member_Invariants(compressed, "header_checksum_parse.compressed")
 	Header_Comment_Position_Invariants(
@@ -1823,7 +1811,7 @@ func header_checksum_parse(
 		),
 		binary.LITTLE_ENDIAN,
 	))
-	observed := uint16(crc32.ChecksumIEEE(compressed[:int(position)]))
+	observed := uint16(checksum(Bytes(compressed[:int(position)])))
 	if observed != want {
 		return Header_Position(position), STATUS_HEADER_INVALID
 	}
@@ -1842,8 +1830,23 @@ func trailer_valid(
 	want_size := uint32(binary.Uint_32(
 		binary.Bytes(compressed[4:8]), binary.LITTLE_ENDIAN,
 	))
-	if crc32.ChecksumIEEE(decoded) != want_checksum {
+	if uint32(checksum(Bytes(decoded))) != want_checksum {
 		return false
 	}
 	return uint32(len(decoded)) == want_size
+}
+
+// Checksum chunks the package byte bound through the narrower shared checksum boundary.
+func checksum(source Bytes) (value crc32.Digest_Value) {
+	defer func() { crc32.Digest_Value_Invariants(value, "checksum.value") }()
+	Bytes_Invariants(source, "checksum.source")
+	var table_storage [crc32.TABLE_WORD_COUNT]uint32
+	table := crc32.Table(table_storage[:])
+	crc32.Table_Make_Into(table, crc32.IEEE)
+	for len(source) > 0 {
+		chunk_count := min(len(source), crc32.SOURCE_SIZE_MAXIMUM)
+		value = crc32.Update(value, table, crc32.Source(source[:chunk_count]))
+		source = source[chunk_count:]
+	}
+	return value
 }

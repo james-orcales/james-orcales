@@ -1,6 +1,103 @@
 package bzip2
 
-import "testing"
+import (
+	"testing"
+
+	"local/james-orcales/shared/hash/crc32"
+	"local/james-orcales/shared/math/bits"
+	"local/james-orcales/shared/testify"
+)
+
+// Test_Checksum_Boundaries protects full bzip2 CRC and decoded-block domains.
+func Test_Checksum_Boundaries(t *testing.T) {
+	var table_storage [crc32.TABLE_WORD_COUNT]uint32
+	table := crc32.Table(table_storage[:])
+	crc32.Table_Make_Into(table, crc32.IEEE)
+	prefixes := test_checksum_prefixes(table)
+	var inverse_indexes [BYTE_VALUE_COUNT]byte
+	test_checksum_inverse_indexes(table, inverse_indexes[:])
+	targets := [...]crc32.Digest_Value{
+		crc32.Digest_Value(bits.WORD_32_MINIMUM),
+		crc32.Digest_Value(bits.WORD_32_MINIMUM + 1),
+		crc32.Digest_Value(bits.WORD_32_MINIMUM + 2),
+		crc32.Digest_Value(bits.WORD_32_MAXIMUM),
+	}
+	for _, target := range targets {
+		var preimage [crc32.DIGEST_SIZE]byte
+		found := test_checksum_preimage(
+			preimage[:], target, table, prefixes, inverse_indexes[:],
+		)
+		testify.True(t, found)
+		testify.Equal(t, target, checksum(preimage[:]))
+		reader := Trailer_Reader{Bits: 2, Bits_Count: 2}
+		testify.False(t, bool(decode_trailer(Trailer_Reader_Handle(&reader), target)))
+	}
+	maximum := make(Block_Decoded, BYTE_COUNT_MAXIMUM)
+	checksum(maximum)
+}
+
+func test_checksum_prefixes(table crc32.Table) (prefixes map[uint32]uint16) {
+	prefixes = make(map[uint32]uint16, 1<<16)
+	for first := range BYTE_VALUE_COUNT {
+		for second := range BYTE_VALUE_COUNT {
+			register := uint32(bits.WORD_32_MAXIMUM)
+			register = table[byte(register)^byte(first)] ^
+				register>>bits.BIT_COUNT_8_MAXIMUM
+			register = table[byte(register)^byte(second)] ^
+				register>>bits.BIT_COUNT_8_MAXIMUM
+			prefixes[register] = uint16(first<<bits.BIT_COUNT_8_MAXIMUM | second)
+		}
+	}
+	return prefixes
+}
+
+func test_checksum_inverse_indexes(
+	table crc32.Table, inverse_indexes []byte,
+) {
+	for index := range BYTE_VALUE_COUNT {
+		inverse_indexes[byte(table[index]>>24)] = byte(index)
+	}
+}
+
+func test_checksum_preimage(
+	preimage []byte, target crc32.Digest_Value, table crc32.Table,
+	prefixes map[uint32]uint16, inverse_indexes []byte,
+) (found bool) {
+	standard_target := bits.Reverse_32(bits.Word_32(target))
+	register := ^uint32(standard_target)
+	for fourth := range BYTE_VALUE_COUNT {
+		third_register := test_checksum_reverse(
+			register, byte(fourth), table, inverse_indexes,
+		)
+		for third := range BYTE_VALUE_COUNT {
+			prefix_register := test_checksum_reverse(
+				third_register, byte(third), table, inverse_indexes,
+			)
+			prefix, present := prefixes[prefix_register]
+			if present {
+				standard := [...]byte{
+					byte(prefix >> 8), byte(prefix), byte(third), byte(fourth),
+				}
+				for index := range standard {
+					preimage[index] = byte(
+						bits.Reverse_8(bits.Word_8(standard[index])),
+					)
+				}
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func test_checksum_reverse(
+	register uint32, source byte, table crc32.Table,
+	inverse_indexes []byte,
+) (previous uint32) {
+	index := inverse_indexes[byte(register>>24)]
+	return (register^table[index])<<bits.BIT_COUNT_8_MAXIMUM |
+		uint32(index^source)
+}
 
 // Test_Bit_And_Table_Boundaries protects bit and canonical-table edges.
 func Test_Bit_And_Table_Boundaries(t *testing.T) {
@@ -402,7 +499,7 @@ func test_transform_edges(t *testing.T) {
 		t.Fatalf("maximum inverse position = %d", first)
 	}
 	destination := make(Destination, TRANSFORM_COUNT_MAXIMUM)
-	next, _, status := emit_block(destination, 0, maximum, first)
+	next, status := emit_block(destination, 0, maximum, first)
 	if status != EMIT_STATUS_OK {
 		t.Fatalf("maximum transform emission status = %d", status)
 	}
@@ -420,7 +517,7 @@ func test_transform_edges(t *testing.T) {
 func test_emit_edges(t *testing.T) {
 	t.Helper()
 	maximum_destination := make(Destination, BYTE_COUNT_MAXIMUM)
-	next, _, status := emit_block(
+	next, status := emit_block(
 		maximum_destination, BYTE_COUNT_MAXIMUM, Block{0}, 0,
 	)
 	if status != EMIT_STATUS_OUTPUT_TOO_SMALL {
@@ -430,7 +527,7 @@ func test_emit_edges(t *testing.T) {
 		t.Fatalf("maximum emission count = (%d, %d)", next, status)
 	}
 	for _, count := range []Count{1, 2} {
-		next, _, status = emit_block(maximum_destination, count, Block{0}, 0)
+		next, status = emit_block(maximum_destination, count, Block{0}, 0)
 		if status != EMIT_STATUS_OK {
 			t.Fatalf("emission count %d status = %d", count, status)
 		}
@@ -439,11 +536,11 @@ func test_emit_edges(t *testing.T) {
 		}
 	}
 	invalid := Block{2 << 8, 0}
-	_, _, status = emit_block(maximum_destination, 0, invalid, 0)
+	_, status = emit_block(maximum_destination, 0, invalid, 0)
 	if status != EMIT_STATUS_INPUT_INVALID {
 		t.Fatalf("invalid transform status = %d", status)
 	}
-	_, _, status = emit_block(maximum_destination, 0, Block{0, 0, 0}, 2)
+	_, status = emit_block(maximum_destination, 0, Block{0, 0, 0}, 2)
 	if status != EMIT_STATUS_OK {
 		t.Fatalf("two-position emission status = %d", status)
 	}

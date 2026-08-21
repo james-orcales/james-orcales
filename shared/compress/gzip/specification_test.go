@@ -1,10 +1,11 @@
 package gzip_test
 
 import (
-	"hash/crc32"
 	"testing"
 
 	"local/james-orcales/shared/compress/gzip"
+	"local/james-orcales/shared/hash/crc32"
+	"local/james-orcales/shared/math/bits"
 	"local/james-orcales/shared/testify"
 )
 
@@ -93,6 +94,7 @@ func Test_Bounds(t *testing.T) {
 	test_oversized_storage(t, workspace)
 	test_workspace_bounds(t, workspace)
 	test_small_public_storage(t, workspace, compressed[:])
+	test_checksum_boundaries(t)
 	test_invariant_domains(t)
 
 	var missing_workspace gzip.Workspace_Unvalidated
@@ -323,7 +325,7 @@ func test_maximum_header_flags(t *testing.T) {
 	t.Helper()
 	compressed := test_complete_header_compressed()
 	compressed[3] = 1<<8 - 1
-	checksum := crc32.ChecksumIEEE(compressed[:TEST_HEADER_CRC_POSITION])
+	checksum := test_checksum(compressed[:TEST_HEADER_CRC_POSITION])
 	compressed[TEST_HEADER_CRC_POSITION] = byte(checksum)
 	compressed[TEST_HEADER_CRC_POSITION+1] = byte(checksum >> 8)
 	var extra [TEST_HEADER_EXTRA_SIZE]byte
@@ -363,7 +365,7 @@ func test_maximum_header_checksum_domain(t *testing.T) {
 	member := make([]byte, int(count)+gzip.HEADER_CHECKSUM_SIZE)
 	copy(member[:gzip.HEADER_SIZE_MAXIMUM], compressed[:gzip.HEADER_SIZE_MAXIMUM])
 	member[3] |= TEST_FLAG_HEADER_CHECKSUM
-	checksum := crc32.ChecksumIEEE(member[:gzip.HEADER_SIZE_MAXIMUM])
+	checksum := test_checksum(member[:gzip.HEADER_SIZE_MAXIMUM])
 	member[gzip.HEADER_SIZE_MAXIMUM] = byte(checksum)
 	member[gzip.HEADER_SIZE_MAXIMUM+1] = byte(checksum >> 8)
 	copy(
@@ -421,7 +423,7 @@ func test_maximum_output_compressed(decoded []byte) (compressed []byte) {
 	test_fixed_symbol(&writer, 256)
 	test_bit_writer_finish(&writer)
 	trailer_position := 10 + writer.Position
-	checksum := crc32.ChecksumIEEE(decoded)
+	checksum := test_checksum(decoded)
 	test_put_word_32(compressed[trailer_position:], checksum)
 	test_put_word_32(compressed[trailer_position+4:], uint32(len(decoded)))
 	return compressed[:trailer_position+8]
@@ -488,6 +490,118 @@ func test_put_word_32(destination []byte, value uint32) {
 	destination[1] = byte(value >> 8)
 	destination[2] = byte(value >> 16)
 	destination[3] = byte(value >> 24)
+}
+
+// Reaches the complete CRC result domain through the public encoder.
+func test_checksum_boundaries(t *testing.T) {
+	t.Helper()
+	var table_storage [crc32.TABLE_WORD_COUNT]uint32
+	table := crc32.Table(table_storage[:])
+	crc32.Table_Make_Into(table, crc32.IEEE)
+	prefixes := test_checksum_prefixes(table)
+	var inverse_indexes [1 << bits.BIT_COUNT_8_MAXIMUM]byte
+	test_checksum_inverse_indexes(table, inverse_indexes[:])
+	targets := [...]uint32{
+		bits.WORD_32_MINIMUM,
+		bits.WORD_32_MINIMUM + 1,
+		bits.WORD_32_MINIMUM + 2,
+		bits.WORD_32_MAXIMUM,
+	}
+	var destination [TEST_DESTINATION_SIZE]byte
+	var workspace_storage test_workspace
+	workspace := test_workspace_value(&workspace_storage)
+	for _, target := range targets {
+		var source [crc32.DIGEST_SIZE]byte
+		found := test_checksum_preimage(
+			source[:], target, table, prefixes, inverse_indexes[:],
+		)
+		testify.True(t, found, "CRC preimage for %d", target)
+		count, status := gzip.Encode_Into(
+			destination[:], workspace, source[:], gzip.Header_Unvalidated{},
+			gzip.DEFAULT_COMPRESSION,
+		)
+		testify.Equal_Values(t, gzip.STATUS_OK, status, "CRC encode status")
+		trailer_position := int(count) - gzip.TRAILER_SIZE
+		observed := uint32(destination[trailer_position]) |
+			uint32(destination[trailer_position+1])<<bits.BIT_COUNT_8_MAXIMUM |
+			uint32(destination[trailer_position+2])<<bits.BIT_COUNT_16_MAXIMUM |
+			uint32(destination[trailer_position+3])<<TEST_WORD_32_HIGH_BYTE_SHIFT
+		testify.Equal(t, target, observed, "CRC trailer")
+	}
+}
+
+func test_checksum(source []byte) (value uint32) {
+	var table_storage [crc32.TABLE_WORD_COUNT]uint32
+	table := crc32.Table(table_storage[:])
+	crc32.Table_Make_Into(table, crc32.IEEE)
+	checksum := crc32.Digest_Value(0)
+	for len(source) > 0 {
+		chunk_count := min(len(source), crc32.SOURCE_SIZE_MAXIMUM)
+		checksum = crc32.Update(
+			checksum, table, crc32.Source(source[:chunk_count]),
+		)
+		source = source[chunk_count:]
+	}
+	return uint32(checksum)
+}
+
+func test_checksum_prefixes(table crc32.Table) (prefixes map[uint32]uint16) {
+	prefixes = make(map[uint32]uint16, 1<<bits.BIT_COUNT_16_MAXIMUM)
+	for first := range 1 << bits.BIT_COUNT_8_MAXIMUM {
+		for second := range 1 << bits.BIT_COUNT_8_MAXIMUM {
+			register := uint32(bits.WORD_32_MAXIMUM)
+			register = table[byte(register)^byte(first)] ^
+				register>>bits.BIT_COUNT_8_MAXIMUM
+			register = table[byte(register)^byte(second)] ^
+				register>>bits.BIT_COUNT_8_MAXIMUM
+			prefixes[register] = uint16(first<<bits.BIT_COUNT_8_MAXIMUM | second)
+		}
+	}
+	return prefixes
+}
+
+func test_checksum_inverse_indexes(table crc32.Table, inverse_indexes []byte) {
+	for index := range 1 << bits.BIT_COUNT_8_MAXIMUM {
+		inverse_indexes[byte(table[index]>>TEST_WORD_32_HIGH_BYTE_SHIFT)] =
+			byte(index)
+	}
+}
+
+func test_checksum_preimage(
+	preimage []byte,
+	target uint32,
+	table crc32.Table,
+	prefixes map[uint32]uint16,
+	inverse_indexes []byte,
+) (found bool) {
+	register := ^target
+	for fourth := range 1 << bits.BIT_COUNT_8_MAXIMUM {
+		third_register := test_checksum_reverse(
+			register, byte(fourth), table, inverse_indexes,
+		)
+		for third := range 1 << bits.BIT_COUNT_8_MAXIMUM {
+			prefix_register := test_checksum_reverse(
+				third_register, byte(third), table, inverse_indexes,
+			)
+			prefix, present := prefixes[prefix_register]
+			if present {
+				preimage[0] = byte(prefix >> bits.BIT_COUNT_8_MAXIMUM)
+				preimage[1] = byte(prefix)
+				preimage[2] = byte(third)
+				preimage[3] = byte(fourth)
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func test_checksum_reverse(
+	register uint32, source byte, table crc32.Table, inverse_indexes []byte,
+) (previous uint32) {
+	index := inverse_indexes[byte(register>>TEST_WORD_32_HIGH_BYTE_SHIFT)]
+	return (register^table[index])<<bits.BIT_COUNT_8_MAXIMUM |
+		uint32(index^source)
 }
 
 func test_maximum_encoded_domain(t *testing.T) {
@@ -1120,6 +1234,7 @@ const TEST_HEADER_CRC_POSITION = 291
 const TEST_FIXED_HEADER_SIZE = 10
 const TEST_STORED_BLOCK_COUNT = 1024
 const TEST_FLAG_HEADER_CHECKSUM = 1 << 1
+const TEST_WORD_32_HIGH_BYTE_SHIFT = bits.BIT_COUNT_32_MAXIMUM - bits.BIT_COUNT_8_MAXIMUM
 
 type test_workspace struct {
 	Heads    []int32
@@ -1167,7 +1282,7 @@ func test_complete_header_compressed() (compressed []byte) {
 		compressed = append(compressed, byte(value))
 	}
 	compressed = append(compressed, 0)
-	header_checksum := crc32.ChecksumIEEE(compressed)
+	header_checksum := test_checksum(compressed)
 	compressed = append(
 		compressed, byte(header_checksum), byte(header_checksum>>8),
 	)

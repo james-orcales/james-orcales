@@ -1,7 +1,11 @@
 // Package bzip2 decodes bzip2 streams into fixed caller storage.
 package bzip2
 
-import "local/james-orcales/shared/sim/aver/default"
+import (
+	"local/james-orcales/shared/hash/crc32"
+	"local/james-orcales/shared/math/bits"
+	"local/james-orcales/shared/sim/aver/default"
+)
 
 // FILE_MAGIC identifies bzip2 container.
 const FILE_MAGIC = 0x425a
@@ -271,6 +275,16 @@ type Block []uint32
 func Block_Invariants(value Block, namespace aver.Namespace) {
 	aver.Tree(value, namespace).
 		Range_Int(len(value), BLOCK_ITEM_COUNT_MINIMUM, TRANSFORM_COUNT_MAXIMUM).
+		Ensure()
+}
+
+// Block_Decoded is one decoded block before stream checksum verification.
+type Block_Decoded []byte
+
+// Block_Decoded_Invariants bounds one decoded block inside stream storage.
+func Block_Decoded_Invariants(value Block_Decoded, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Int(len(value), BLOCK_ITEM_COUNT_MINIMUM, BYTE_COUNT_MAXIMUM).
 		Ensure()
 }
 
@@ -590,22 +604,16 @@ func Selector_Position_Invariants(value Selector_Position, namespace aver.Namesp
 		Ensure()
 }
 
-// Selector_Order_Handle keeps in-place move-to-front updates nonnil.
+// Selector_Order_Handle permits borrowed move-to-front updates.
 type Selector_Order_Handle *Selector_Order
 
 // Selector_Order_Handle_Invariants bounds every fixed selector position.
 func Selector_Order_Handle_Invariants(
 	value Selector_Order_Handle, namespace aver.Namespace,
 ) {
-	aver.Always(value != nil, "Bzip2 selector order exists.")
-	aver.Tree(value, namespace).
-		Range_Int(int(value.First), TREE_INDEX_MINIMUM, TREE_INDEX_MAXIMUM).
-		Range_Int(int(value.Second), TREE_INDEX_MINIMUM, TREE_INDEX_MAXIMUM).
-		Range_Int(int(value.Third), TREE_INDEX_MINIMUM, TREE_INDEX_MAXIMUM).
-		Range_Int(int(value.Fourth), TREE_INDEX_MINIMUM, TREE_INDEX_MAXIMUM).
-		Range_Int(int(value.Fifth), TREE_INDEX_MINIMUM, TREE_INDEX_MAXIMUM).
-		Range_Int(int(value.Sixth), TREE_INDEX_MINIMUM, TREE_INDEX_MAXIMUM).
-		Ensure()
+	if value == nil {
+		return
+	}
 	Selector_Order_Invariants(*value, namespace)
 }
 
@@ -640,17 +648,6 @@ func Character_Counts_Invariants(value Character_Counts, namespace aver.Namespac
 	)
 }
 
-// Checksum_Table borrows fixed CRC lookup storage from emission stack frame.
-type Checksum_Table []uint32
-
-// Checksum_Table_Invariants fixes one entry per possible byte.
-func Checksum_Table_Invariants(value Checksum_Table, _ aver.Namespace) {
-	aver.Always(
-		len(value) == BYTE_VALUE_COUNT,
-		"Bzip2 checksum table has one entry per byte.",
-	)
-}
-
 // Bit_Reader holds bounded input cursor.
 type Bit_Reader struct {
 	// Source remains caller-owned compressed bytes.
@@ -668,17 +665,15 @@ func Bit_Reader_Invariants(value Bit_Reader, namespace aver.Namespace) {
 	Bit_Count_Invariants(value.Bits_Count, namespace)
 }
 
-// Bit_Reader_Handle keeps cursor mutations on nonnil caller-owned state.
+// Bit_Reader_Handle permits borrowed cursor mutations.
 type Bit_Reader_Handle *Bit_Reader
 
 // Bit_Reader_Handle_Invariants bounds mutable cursor state without copying it.
 func Bit_Reader_Handle_Invariants(value Bit_Reader_Handle, namespace aver.Namespace) {
-	aver.Always(value != nil, "Bzip2 bit reader handle exists.")
-	aver.Tree(value, namespace).
-		Range_Int(len(value.Source), BYTE_COUNT_MINIMUM, BIT_SOURCE_SIZE_MAXIMUM).
-		Range_Uint64(uint64(value.Bits), BIT_BUFFER_MINIMUM, BIT_BUFFER_MAXIMUM).
-		Range_Uint(uint(value.Bits_Count), BIT_COUNT_MINIMUM, BIT_COUNT_MAXIMUM).
-		Ensure()
+	if value == nil {
+		return
+	}
+	Bit_Reader_Invariants(*value, namespace)
 }
 
 // Block_Compressed is encoded input after a block marker and checksum.
@@ -706,22 +701,16 @@ func Symbol_Reader_Invariants(value Symbol_Reader, namespace aver.Namespace) {
 	)
 }
 
-// Symbol_Reader_Handle keeps symbol parsing on nonnil caller-owned state.
+// Symbol_Reader_Handle permits borrowed symbol parsing state.
 type Symbol_Reader_Handle *Symbol_Reader
 
 // Symbol_Reader_Handle_Invariants bounds symbol-bitmap entry state.
 func Symbol_Reader_Handle_Invariants(
 	value Symbol_Reader_Handle, namespace aver.Namespace,
 ) {
-	aver.Always(value != nil, "Bzip2 symbol reader exists.")
-	aver.Tree(value, namespace).
-		Range_Int(len(value.Source), BYTE_COUNT_MINIMUM, SYMBOL_SOURCE_SIZE_MAXIMUM).
-		Range_Uint64(uint64(value.Bits), BIT_BUFFER_MINIMUM, BIT_BUFFER_MAXIMUM).
-		Ensure()
-	aver.Always(
-		value.Bits_Count == SYMBOL_BIT_COUNT,
-		"The fixed block prefix leaves seven unread bits.",
-	)
+	if value == nil {
+		return
+	}
 	Symbol_Reader_Invariants(*value, namespace)
 }
 
@@ -740,20 +729,14 @@ func Tree_Reader_Invariants(value Tree_Reader, namespace aver.Namespace) {
 	)
 }
 
-// Tree_Reader_Handle keeps tree-header parsing on nonnil caller-owned state.
+// Tree_Reader_Handle permits borrowed tree-header parsing state.
 type Tree_Reader_Handle *Tree_Reader
 
 // Tree_Reader_Handle_Invariants bounds tree-header entry state.
 func Tree_Reader_Handle_Invariants(value Tree_Reader_Handle, namespace aver.Namespace) {
-	aver.Always(value != nil, "Bzip2 tree reader exists.")
-	aver.Tree(value, namespace).
-		Range_Int(len(value.Source), BYTE_COUNT_MINIMUM, TREE_SOURCE_SIZE_MAXIMUM).
-		Range_Uint64(uint64(value.Bits), BIT_BUFFER_MINIMUM, BIT_BUFFER_MAXIMUM).
-		Ensure()
-	aver.Always(
-		value.Bits_Count == SYMBOL_BIT_COUNT,
-		"Every complete symbol bitmap leaves seven unread bits.",
-	)
+	if value == nil {
+		return
+	}
 	Tree_Reader_Invariants(*value, namespace)
 }
 
@@ -776,24 +759,17 @@ func Selector_List_Reader_Invariants(
 	)
 }
 
-// Selector_List_Reader_Handle keeps selector-list mutations nonnil.
+// Selector_List_Reader_Handle permits borrowed selector-list mutations.
 type Selector_List_Reader_Handle *Selector_List_Reader
 
 // Selector_List_Reader_Handle_Invariants bounds mutable selector-list state.
 func Selector_List_Reader_Handle_Invariants(
 	value Selector_List_Reader_Handle, namespace aver.Namespace,
 ) {
-	aver.Always(value != nil, "Bzip2 selector list reader handle exists.")
-	aver.Tree(value, namespace).
-		Range_Int(len(value.Source), BYTE_COUNT_MINIMUM, SELECTOR_SOURCE_SIZE_MAXIMUM).
-		Range_Uint64(
-			uint64(value.Bits), BIT_BUFFER_MINIMUM, SELECTOR_BIT_BUFFER_MAXIMUM,
-		).
-		Ensure()
-	aver.Always(
-		value.Bits_Count == SELECTOR_BIT_COUNT,
-		"Mutable selector list reader starts with five unread bits.",
-	)
+	if value == nil {
+		return
+	}
+	Selector_List_Reader_Invariants(*value, namespace)
 }
 
 // Selector_Reader marks reader state while consuming unary codes.
@@ -808,19 +784,16 @@ func Selector_Reader_Invariants(value Selector_Reader, namespace aver.Namespace)
 		Ensure()
 }
 
-// Selector_Reader_Handle keeps unary-code parsing on nonnil caller-owned state.
+// Selector_Reader_Handle permits borrowed unary-code parsing state.
 type Selector_Reader_Handle *Selector_Reader
 
 // Selector_Reader_Handle_Invariants bounds one selector-code boundary.
 func Selector_Reader_Handle_Invariants(
 	value Selector_Reader_Handle, namespace aver.Namespace,
 ) {
-	aver.Always(value != nil, "Bzip2 selector reader exists.")
-	aver.Tree(value, namespace).
-		Range_Int(len(value.Source), BYTE_COUNT_MINIMUM, SELECTOR_SOURCE_SIZE_MAXIMUM).
-		Range_Uint64(uint64(value.Bits), BIT_BUFFER_MINIMUM, BIT_BUFFER_MAXIMUM).
-		Range_Uint(uint(value.Bits_Count), BIT_COUNT_MINIMUM, BIT_COUNT_MAXIMUM).
-		Ensure()
+	if value == nil {
+		return
+	}
 	Selector_Reader_Invariants(*value, namespace)
 }
 
@@ -836,19 +809,16 @@ func Decoder_Reader_Invariants(value Decoder_Reader, namespace aver.Namespace) {
 		Ensure()
 }
 
-// Decoder_Reader_Handle keeps tree parsing on nonnil caller-owned state.
+// Decoder_Reader_Handle permits borrowed tree parsing state.
 type Decoder_Reader_Handle *Decoder_Reader
 
 // Decoder_Reader_Handle_Invariants bounds tree-construction state.
 func Decoder_Reader_Handle_Invariants(
 	value Decoder_Reader_Handle, namespace aver.Namespace,
 ) {
-	aver.Always(value != nil, "Bzip2 decoder reader exists.")
-	aver.Tree(value, namespace).
-		Range_Int(len(value.Source), BYTE_COUNT_MINIMUM, SELECTOR_SOURCE_SIZE_MAXIMUM).
-		Range_Uint64(uint64(value.Bits), BIT_BUFFER_MINIMUM, BIT_BUFFER_MAXIMUM).
-		Range_Uint(uint(value.Bits_Count), BIT_COUNT_MINIMUM, BIT_COUNT_MAXIMUM).
-		Ensure()
+	if value == nil {
+		return
+	}
 	Decoder_Reader_Invariants(*value, namespace)
 }
 
@@ -864,19 +834,16 @@ func Payload_Reader_Invariants(value Payload_Reader, namespace aver.Namespace) {
 		Ensure()
 }
 
-// Payload_Reader_Handle keeps block parsing on nonnil caller-owned state.
+// Payload_Reader_Handle permits borrowed block parsing state.
 type Payload_Reader_Handle *Payload_Reader
 
 // Payload_Reader_Handle_Invariants bounds compressed payload state.
 func Payload_Reader_Handle_Invariants(
 	value Payload_Reader_Handle, namespace aver.Namespace,
 ) {
-	aver.Always(value != nil, "Bzip2 payload reader exists.")
-	aver.Tree(value, namespace).
-		Range_Int(len(value.Source), BYTE_COUNT_MINIMUM, PAYLOAD_SOURCE_SIZE_MAXIMUM).
-		Range_Uint64(uint64(value.Bits), BIT_BUFFER_MINIMUM, BIT_BUFFER_MAXIMUM).
-		Range_Uint(uint(value.Bits_Count), BIT_COUNT_MINIMUM, BIT_COUNT_MAXIMUM).
-		Ensure()
+	if value == nil {
+		return
+	}
 	Payload_Reader_Invariants(*value, namespace)
 }
 
@@ -892,19 +859,16 @@ func Trailer_Reader_Invariants(value Trailer_Reader, namespace aver.Namespace) {
 		Ensure()
 }
 
-// Trailer_Reader_Handle keeps checksum parsing on nonnil caller-owned state.
+// Trailer_Reader_Handle permits borrowed checksum parsing state.
 type Trailer_Reader_Handle *Trailer_Reader
 
 // Trailer_Reader_Handle_Invariants bounds stream-checksum state.
 func Trailer_Reader_Handle_Invariants(
 	value Trailer_Reader_Handle, namespace aver.Namespace,
 ) {
-	aver.Always(value != nil, "Bzip2 trailer reader exists.")
-	aver.Tree(value, namespace).
-		Range_Int(len(value.Source), BYTE_COUNT_MINIMUM, TRAILER_SOURCE_SIZE_MAXIMUM).
-		Range_Uint64(uint64(value.Bits), BIT_BUFFER_MINIMUM, BIT_BUFFER_MAXIMUM).
-		Range_Uint(uint(value.Bits_Count), BIT_COUNT_MINIMUM, BIT_COUNT_MAXIMUM).
-		Ensure()
+	if value == nil {
+		return
+	}
 	Trailer_Reader_Invariants(*value, namespace)
 }
 
@@ -1046,25 +1010,16 @@ func Tree_Selection_Invariants(value Tree_Selection, namespace aver.Namespace) {
 	Tree_Index_Invariants(value.Current_Tree, namespace)
 }
 
-// Tree_Selection_Handle keeps selector progress mutations nonnil.
+// Tree_Selection_Handle permits borrowed selector progress mutations.
 type Tree_Selection_Handle *Tree_Selection
 
 // Tree_Selection_Handle_Invariants bounds mutable selector progress.
 func Tree_Selection_Handle_Invariants(
 	value Tree_Selection_Handle, namespace aver.Namespace,
 ) {
-	aver.Always(value != nil, "Bzip2 tree selection exists.")
-	aver.Tree(value, namespace).
-		Range_Int(
-			int(value.Selector_Index), SELECTOR_INDEX_MINIMUM, SELECTOR_COUNT_MAXIMUM,
-		).
-		Range_Int(
-			int(value.Decoded_Count), GROUP_COUNT_MINIMUM, SELECTOR_GROUP_SIZE,
-		).
-		Range_Uint8(
-			uint8(value.Current_Tree), TREE_INDEX_MINIMUM, TREE_INDEX_MAXIMUM,
-		).
-		Ensure()
+	if value == nil {
+		return
+	}
 	Tree_Selection_Invariants(*value, namespace)
 }
 
@@ -1085,7 +1040,7 @@ func Decode_Into(
 	}
 
 	reader := Bit_Reader{Source: Bit_Source(compressed[4:])}
-	var file_checksum uint32
+	var file_checksum crc32.Digest_Value
 	for more := true; more; {
 		marker, present := bit_reader_read(Bit_Reader_Handle(&reader), 48)
 		if !present {
@@ -1100,7 +1055,7 @@ func Decode_Into(
 				return count, STATUS_INPUT_INVALID
 			}
 			file_checksum = file_checksum<<1 | file_checksum>>31
-			file_checksum ^= uint32(want_block_checksum)
+			file_checksum ^= crc32.Digest_Value(want_block_checksum)
 			block_count, first, remainder, block_valid := decode_block(
 				Block_Compressed(reader.Source),
 				Block_Storage(transform[:int(block_item_count_maximum)]),
@@ -1110,15 +1065,16 @@ func Decode_Into(
 				return count, STATUS_INPUT_INVALID
 			}
 			reader = Bit_Reader(remainder)
-			var block_checksum uint32
+			block_start := count
 			var emit_status Emit_Status
-			count, block_checksum, emit_status = emit_block(
+			count, emit_status = emit_block(
 				destination, count, Block(transform[:block_count]), first,
 			)
 			if emit_status != EMIT_STATUS_OK {
 				return count, Status(emit_status)
 			}
-			if block_checksum != uint32(want_block_checksum) {
+			block_checksum := checksum(Block_Decoded(destination[block_start:count]))
+			if block_checksum != crc32.Digest_Value(want_block_checksum) {
 				return count, STATUS_INPUT_INVALID
 			}
 		case FINAL_MAGIC:
@@ -1132,6 +1088,24 @@ func Decode_Into(
 		}
 	}
 	return count, STATUS_INPUT_INVALID
+}
+
+func checksum(source Block_Decoded) (value crc32.Digest_Value) {
+	defer func() { crc32.Digest_Value_Invariants(value, "checksum.value") }()
+	Block_Decoded_Invariants(source, "checksum.source")
+	var table_storage [crc32.TABLE_WORD_COUNT]uint32
+	table := crc32.Table(table_storage[:])
+	crc32.Table_Make_Into(table, crc32.IEEE)
+	var reversed_storage [crc32.SOURCE_SIZE_MAXIMUM]byte
+	for len(source) > 0 {
+		chunk_count := min(len(source), crc32.SOURCE_SIZE_MAXIMUM)
+		for index := 0; index < chunk_count; index++ {
+			reversed_storage[index] = byte(bits.Reverse_8(bits.Word_8(source[index])))
+		}
+		value = crc32.Update(value, table, reversed_storage[:chunk_count])
+		source = source[chunk_count:]
+	}
+	return crc32.Digest_Value(bits.Reverse_32(bits.Word_32(value)))
 }
 
 func decode_header(
@@ -1170,17 +1144,18 @@ func decode_header(
 
 func decode_trailer(
 	reader Trailer_Reader_Handle,
-	file_checksum uint32,
+	file_checksum crc32.Digest_Value,
 ) (valid Boolean) {
 	defer func() { Boolean_Invariants(valid, "decode_trailer.valid") }()
 	Trailer_Reader_Handle_Invariants(reader, "decode_trailer.reader")
+	crc32.Digest_Value_Invariants(file_checksum, "decode_trailer.file_checksum")
 	want_file_checksum, checksum_present := bit_reader_read(
 		Bit_Reader_Handle((*Bit_Reader)((*Trailer_Reader)(reader))), 32,
 	)
 	if !checksum_present {
 		return false
 	}
-	if file_checksum != uint32(want_file_checksum) {
+	if file_checksum != crc32.Digest_Value(want_file_checksum) {
 		return false
 	}
 	reader.Bits_Count -= reader.Bits_Count % 8
@@ -1576,7 +1551,7 @@ func emit_block(
 	count Count,
 	transform Block,
 	position First_Position,
-) (next_count Count, checksum uint32, status Emit_Status) {
+) (next_count Count, status Emit_Status) {
 	defer func() {
 		Count_Invariants(next_count, "emit_block.next_count")
 		Emit_Status_Invariants(status, "emit_block.status")
@@ -1587,9 +1562,6 @@ func emit_block(
 	First_Position_Invariants(position, "emit_block.position")
 	last := -1
 	equal_count := 0
-	checksum_word := ^uint32(0)
-	var checksum_table [BYTE_VALUE_COUNT]uint32
-	checksum_table_fill(Checksum_Table(checksum_table[:]))
 	status = EMIT_STATUS_OK
 emission:
 	for used_index := 0; used_index < len(transform); used_index++ {
@@ -1608,8 +1580,6 @@ emission:
 				}
 				destination[count] = byte(last)
 				count++
-				checksum_index := byte(checksum_word>>24) ^ byte(last)
-				checksum_word = checksum_table[checksum_index] ^ checksum_word<<8
 			}
 			equal_count = 0
 			last = -1
@@ -1627,26 +1597,8 @@ emission:
 		}
 		destination[count] = value
 		count++
-		checksum_index := byte(checksum_word>>24) ^ value
-		checksum_word = checksum_table[checksum_index] ^ checksum_word<<8
 	}
-	return count, ^checksum_word, status
-}
-
-func checksum_table_fill(destination Checksum_Table) {
-	Checksum_Table_Invariants(destination, "checksum_table_fill.destination")
-	const POLYNOMIAL = 0x04c11db7
-	for value := range BYTE_VALUE_COUNT {
-		table_value := uint32(value) << 24
-		for range 8 {
-			if table_value&0x80000000 != 0 {
-				table_value = table_value<<1 ^ POLYNOMIAL
-			} else {
-				table_value <<= 1
-			}
-		}
-		destination[value] = table_value
-	}
+	return count, status
 }
 
 func selector_read(

@@ -1,7 +1,10 @@
 // Package zlib decodes zlib streams into fixed caller storage.
 package zlib
 
-import "local/james-orcales/shared/sim/aver/default"
+import (
+	"local/james-orcales/shared/hash/adler32"
+	"local/james-orcales/shared/sim/aver/default"
+)
 
 // DEFLATE_METHOD is zlib compression-method identifier.
 const DEFLATE_METHOD = 8
@@ -31,7 +34,7 @@ const HUFFMAN_SYMBOL_COUNT_MAXIMUM = 288
 const HUFFMAN_COUNT_SIZE = CODE_SIZE_MAXIMUM + 1
 
 // ADLER_MODULUS defines zlib checksum arithmetic.
-const ADLER_MODULUS = 65_521
+const ADLER_MODULUS = adler32.MODULUS
 
 // BYTE_COUNT_MAXIMUM matches the caller's per-stream resource boundary.
 const BYTE_COUNT_MAXIMUM = 64 * 1024 * 1024
@@ -448,28 +451,22 @@ func Bit_Reader_Invariants(value Bit_Reader, namespace aver.Namespace) {
 	Bit_Count_Invariants(value.Bits_Count, namespace)
 }
 
-// Bit_Reader_Handle keeps mutable reader storage nonnil.
+// Bit_Reader_Handle permits borrowed reader storage.
 type Bit_Reader_Handle *Bit_Reader
 
 // Bit_Reader_Handle_Invariants validates state reached through mutable storage.
 func Bit_Reader_Handle_Invariants(value Bit_Reader_Handle, namespace aver.Namespace) {
-	aver.Always(value != nil, "Zlib bit reader handle exists.")
-	aver.Tree(value, namespace).
-		Range_Int(
-			len(value.Source), COMPRESSED_PAYLOAD_SIZE_MINIMUM,
-			COMPRESSED_PAYLOAD_SIZE_MAXIMUM,
-		).
-		Range_Uint64(uint64(value.Bits), BIT_BUFFER_MINIMUM, BIT_BUFFER_MAXIMUM).
-		Range_Uint(uint(value.Bits_Count), BIT_COUNT_MINIMUM, BIT_COUNT_MAXIMUM).
-		Ensure()
+	if value == nil {
+		return
+	}
+	Bit_Reader_Invariants(*value, namespace)
 }
 
-// Stored_Reader keeps stored-block parsing on caller-owned reader state.
-type Stored_Reader *Bit_Reader
+// Stored_Reader marks stored-block parsing state.
+type Stored_Reader Bit_Reader
 
 // Stored_Reader_Invariants keeps stored-block state inside reader storage.
 func Stored_Reader_Invariants(value Stored_Reader, namespace aver.Namespace) {
-	aver.Always(value != nil, "Zlib stored reader exists.")
 	aver.Tree(value, namespace).
 		Range_Int(
 			len(value.Source), BLOCK_SOURCE_SIZE_MINIMUM, BLOCK_SOURCE_SIZE_MAXIMUM,
@@ -479,12 +476,24 @@ func Stored_Reader_Invariants(value Stored_Reader, namespace aver.Namespace) {
 		Ensure()
 }
 
-// Dynamic_Reader keeps dynamic-tree parsing on caller-owned reader state.
-type Dynamic_Reader *Bit_Reader
+// Stored_Reader_Handle permits borrowed stored-block parsing state.
+type Stored_Reader_Handle *Stored_Reader
+
+// Stored_Reader_Handle_Invariants composes borrowed stored-block state.
+func Stored_Reader_Handle_Invariants(
+	value Stored_Reader_Handle, namespace aver.Namespace,
+) {
+	if value == nil {
+		return
+	}
+	Stored_Reader_Invariants(*value, namespace)
+}
+
+// Dynamic_Reader marks dynamic-tree parsing state.
+type Dynamic_Reader Bit_Reader
 
 // Dynamic_Reader_Invariants keeps dynamic-tree state inside reader storage.
 func Dynamic_Reader_Invariants(value Dynamic_Reader, namespace aver.Namespace) {
-	aver.Always(value != nil, "Zlib dynamic reader exists.")
 	aver.Tree(value, namespace).
 		Range_Int(
 			len(value.Source), BLOCK_SOURCE_SIZE_MINIMUM, BLOCK_SOURCE_SIZE_MAXIMUM,
@@ -494,14 +503,26 @@ func Dynamic_Reader_Invariants(value Dynamic_Reader, namespace aver.Namespace) {
 		Ensure()
 }
 
-// Dynamic_Size_Reader keeps width parsing on caller-owned reader state.
-type Dynamic_Size_Reader *Bit_Reader
+// Dynamic_Reader_Handle permits borrowed dynamic-tree parsing state.
+type Dynamic_Reader_Handle *Dynamic_Reader
+
+// Dynamic_Reader_Handle_Invariants composes borrowed dynamic-tree state.
+func Dynamic_Reader_Handle_Invariants(
+	value Dynamic_Reader_Handle, namespace aver.Namespace,
+) {
+	if value == nil {
+		return
+	}
+	Dynamic_Reader_Invariants(*value, namespace)
+}
+
+// Dynamic_Size_Reader marks dynamic alphabet-width parsing state.
+type Dynamic_Size_Reader Bit_Reader
 
 // Dynamic_Size_Reader_Invariants bounds state entering dynamic alphabet widths.
 func Dynamic_Size_Reader_Invariants(
 	value Dynamic_Size_Reader, namespace aver.Namespace,
 ) {
-	aver.Always(value != nil, "Zlib dynamic size reader exists.")
 	aver.Tree(value, namespace).
 		Range_Int(
 			len(value.Source), DYNAMIC_SIZE_SOURCE_SIZE_MINIMUM,
@@ -512,12 +533,24 @@ func Dynamic_Size_Reader_Invariants(
 		Ensure()
 }
 
-// Huffman_Reader keeps Huffman parsing on caller-owned reader state.
-type Huffman_Reader *Bit_Reader
+// Dynamic_Size_Reader_Handle permits borrowed alphabet-width parsing state.
+type Dynamic_Size_Reader_Handle *Dynamic_Size_Reader
+
+// Dynamic_Size_Reader_Handle_Invariants composes borrowed alphabet-width state.
+func Dynamic_Size_Reader_Handle_Invariants(
+	value Dynamic_Size_Reader_Handle, namespace aver.Namespace,
+) {
+	if value == nil {
+		return
+	}
+	Dynamic_Size_Reader_Invariants(*value, namespace)
+}
+
+// Huffman_Reader marks Huffman parsing state.
+type Huffman_Reader Bit_Reader
 
 // Huffman_Reader_Invariants keeps Huffman state inside reader storage.
 func Huffman_Reader_Invariants(value Huffman_Reader, namespace aver.Namespace) {
-	aver.Always(value != nil, "Zlib Huffman reader exists.")
 	aver.Tree(value, namespace).
 		Range_Int(
 			len(value.Source), COMPRESSED_PAYLOAD_SIZE_MINIMUM,
@@ -528,14 +561,26 @@ func Huffman_Reader_Invariants(value Huffman_Reader, namespace aver.Namespace) {
 		Ensure()
 }
 
-// Symbol_Reader keeps symbol parsing on caller-owned reader state.
-type Symbol_Reader *Bit_Reader
+// Huffman_Reader_Handle permits borrowed Huffman parsing state.
+type Huffman_Reader_Handle *Huffman_Reader
+
+// Huffman_Reader_Handle_Invariants composes borrowed Huffman state.
+func Huffman_Reader_Handle_Invariants(
+	value Huffman_Reader_Handle, namespace aver.Namespace,
+) {
+	if value == nil {
+		return
+	}
+	Huffman_Reader_Invariants(*value, namespace)
+}
+
+// Symbol_Reader marks symbol parsing state.
+type Symbol_Reader Bit_Reader
 
 // Symbol_Reader_Invariants bounds state entering one symbol read.
 func Symbol_Reader_Invariants(
 	value Symbol_Reader, namespace aver.Namespace,
 ) {
-	aver.Always(value != nil, "Zlib symbol reader exists.")
 	aver.Tree(value, namespace).
 		Range_Int(
 			len(value.Source), COMPRESSED_PAYLOAD_SIZE_MINIMUM,
@@ -544,6 +589,19 @@ func Symbol_Reader_Invariants(
 		Range_Uint64(uint64(value.Bits), BIT_BUFFER_MINIMUM, BIT_BUFFER_MAXIMUM).
 		Range_Uint(uint(value.Bits_Count), BIT_COUNT_MINIMUM, BIT_COUNT_MAXIMUM).
 		Ensure()
+}
+
+// Symbol_Reader_Handle permits borrowed symbol parsing state.
+type Symbol_Reader_Handle *Symbol_Reader
+
+// Symbol_Reader_Handle_Invariants composes borrowed symbol state.
+func Symbol_Reader_Handle_Invariants(
+	value Symbol_Reader_Handle, namespace aver.Namespace,
+) {
+	if value == nil {
+		return
+	}
+	Symbol_Reader_Invariants(*value, namespace)
 }
 
 // Huffman_Counts borrows canonical count storage from decoder stack frame.
@@ -695,7 +753,6 @@ func Decode_Into(
 	if !header_valid(compressed) {
 		return 0, STATUS_INPUT_INVALID
 	}
-
 	reader := Bit_Reader{Source: Compressed_Payload(compressed[2:])}
 	final := Bit_Value(0)
 	for final == 0 {
@@ -708,18 +765,20 @@ func Decode_Into(
 		if !available {
 			return count, STATUS_INPUT_INVALID
 		}
-
 		switch block_kind {
 		case 0:
+			stored_reader := Stored_Reader_Handle((*Stored_Reader)(&reader))
 			stored_count := Stored_Count(0)
 			stored_count, status = decode_stored_block(
-				Stored_Destination(destination[count:]), Stored_Reader(&reader),
+				Stored_Destination(destination[count:]), stored_reader,
 			)
 			count += Count(stored_count)
 		case 1:
-			count, status = decode_fixed(destination, count, Huffman_Reader(&reader))
+			huffman_reader := Huffman_Reader_Handle((*Huffman_Reader)(&reader))
+			count, status = decode_fixed(destination, count, huffman_reader)
 		case 2:
-			count, status = decode_dynamic(destination, count, Dynamic_Reader(&reader))
+			dynamic_reader := Dynamic_Reader_Handle((*Dynamic_Reader)(&reader))
+			count, status = decode_dynamic(destination, count, dynamic_reader)
 		default:
 			return count, STATUS_INPUT_INVALID
 		}
@@ -727,24 +786,33 @@ func Decode_Into(
 			return count, status
 		}
 	}
-
 	reader.Bits = 0
 	reader.Bits_Count = 0
 	if len(reader.Source) != 4 {
 		return count, STATUS_INPUT_INVALID
 	}
-	want_checksum := uint32(reader.Source[0])<<24 |
-		uint32(reader.Source[1])<<16 |
-		uint32(reader.Source[2])<<8 |
-		uint32(reader.Source[3])
-	if adler32(destination[:count]) != want_checksum {
+	var digest adler32.Digest
+	adler32.Digest_Init(&digest)
+	decoded := adler32.Source(destination[:count])
+	for len(decoded) > 0 {
+		chunk_count := min(len(decoded), adler32.SOURCE_SIZE_MAXIMUM)
+		adler32.Digest_Write(&digest, decoded[:chunk_count])
+		decoded = decoded[chunk_count:]
+	}
+	want_checksum := adler32.Digest_Value(
+		uint32(reader.Source[0])<<24 |
+			uint32(reader.Source[1])<<16 |
+			uint32(reader.Source[2])<<8 |
+			uint32(reader.Source[3]),
+	)
+	if adler32.Digest_Sum_32(&digest) != want_checksum {
 		return count, STATUS_INPUT_INVALID
 	}
 	return count, STATUS_OK
 }
 
 func decode_fixed(
-	destination Destination, count Count, reader Huffman_Reader,
+	destination Destination, count Count, reader Huffman_Reader_Handle,
 ) (next_count Count, status Status) {
 	defer func() {
 		Count_Invariants(next_count, "decode_fixed.next_count")
@@ -752,7 +820,7 @@ func decode_fixed(
 	}()
 	Destination_Invariants(destination, "decode_fixed.destination")
 	Count_Invariants(count, "decode_fixed.count")
-	Huffman_Reader_Invariants(reader, "decode_fixed.reader")
+	Huffman_Reader_Handle_Invariants(reader, "decode_fixed.reader")
 	var literal_counts, distance_counts [HUFFMAN_COUNT_SIZE]uint16
 	var literal_symbols, distance_symbols [HUFFMAN_SYMBOL_COUNT_MAXIMUM]uint16
 	literal_decoder := Huffman_Decoder{
@@ -770,7 +838,7 @@ func decode_fixed(
 }
 
 func decode_dynamic(
-	destination Destination, count Count, reader Dynamic_Reader,
+	destination Destination, count Count, reader Dynamic_Reader_Handle,
 ) (next_count Count, status Status) {
 	defer func() {
 		Count_Invariants(next_count, "decode_dynamic.next_count")
@@ -778,7 +846,7 @@ func decode_dynamic(
 	}()
 	Destination_Invariants(destination, "decode_dynamic.destination")
 	Count_Invariants(count, "decode_dynamic.count")
-	Dynamic_Reader_Invariants(reader, "decode_dynamic.reader")
+	Dynamic_Reader_Handle_Invariants(reader, "decode_dynamic.reader")
 	var literal_counts, distance_counts [HUFFMAN_COUNT_SIZE]uint16
 	var literal_symbols, distance_symbols [HUFFMAN_SYMBOL_COUNT_MAXIMUM]uint16
 	literal_decoder := Huffman_Decoder{
@@ -793,7 +861,9 @@ func decode_dynamic(
 		return count, STATUS_INPUT_INVALID
 	}
 	return decode_huffman_block(
-		destination, count, Huffman_Reader(reader), literal_decoder, distance_decoder,
+		destination, count,
+		Huffman_Reader_Handle((*Huffman_Reader)((*Dynamic_Reader)(reader))),
+		literal_decoder, distance_decoder,
 	)
 }
 
@@ -814,17 +884,17 @@ func header_valid(compressed Compressed) (valid Boolean) {
 
 func decode_stored_block(
 	destination Stored_Destination,
-	reader Stored_Reader,
+	reader Stored_Reader_Handle,
 ) (count Stored_Count, status Status) {
 	defer func() {
 		Stored_Count_Invariants(count, "decode_stored_block.count")
 		Status_Invariants(status, "decode_stored_block.status")
 	}()
 	Stored_Destination_Invariants(destination, "decode_stored_block.destination")
-	Stored_Reader_Invariants(reader, "decode_stored_block.reader")
+	Stored_Reader_Handle_Invariants(reader, "decode_stored_block.reader")
 	reader.Bits = 0
 	reader.Bits_Count = 0
-	base_reader := Bit_Reader_Handle(reader)
+	base_reader := Bit_Reader_Handle((*Bit_Reader)((*Stored_Reader)(reader)))
 	size, available := bit_reader_read(base_reader, 16)
 	if !available {
 		return count, STATUS_INPUT_INVALID
@@ -879,12 +949,12 @@ func fixed_decoders(
 }
 
 func dynamic_decoders(
-	reader Dynamic_Reader,
+	reader Dynamic_Reader_Handle,
 	literal_decoder Huffman_Decoder,
 	distance_decoder Huffman_Decoder,
 ) (valid Boolean) {
 	defer func() { Boolean_Invariants(valid, "dynamic_decoders.valid") }()
-	Dynamic_Reader_Invariants(reader, "dynamic_decoders.reader")
+	Dynamic_Reader_Handle_Invariants(reader, "dynamic_decoders.reader")
 	Huffman_Decoder_Invariants(literal_decoder, "dynamic_decoders.literal_decoder")
 	Huffman_Decoder_Invariants(distance_decoder, "dynamic_decoders.distance_decoder")
 	var code_counts [HUFFMAN_COUNT_SIZE]uint16
@@ -900,7 +970,10 @@ func dynamic_decoders(
 	var sizes [LITERAL_COUNT_MAXIMUM + DISTANCE_COUNT_MAXIMUM]uint8
 	total_count := int(literal_count) + int(distance_count)
 	if !dynamic_sizes(
-		Dynamic_Size_Reader(reader), code_decoder, sizes[:total_count],
+		Dynamic_Size_Reader_Handle(
+			(*Dynamic_Size_Reader)((*Dynamic_Reader)(reader)),
+		),
+		code_decoder, sizes[:total_count],
 	) {
 		return false
 	}
@@ -914,17 +987,21 @@ func dynamic_decoders(
 }
 
 func dynamic_header(
-	reader Dynamic_Reader,
+	reader Dynamic_Reader_Handle,
 	code_decoder Huffman_Decoder,
-) (literal_count Literal_Count, distance_count Distance_Count, valid Boolean) {
+) (
+	literal_count Literal_Count,
+	distance_count Distance_Count,
+	valid Boolean,
+) {
 	defer func() {
 		Literal_Count_Invariants(literal_count, "dynamic_header.literal_count")
 		Distance_Count_Invariants(distance_count, "dynamic_header.distance_count")
 		Boolean_Invariants(valid, "dynamic_header.valid")
 	}()
-	Dynamic_Reader_Invariants(reader, "dynamic_header.reader")
+	Dynamic_Reader_Handle_Invariants(reader, "dynamic_header.reader")
 	Huffman_Decoder_Invariants(code_decoder, "dynamic_header.code_decoder")
-	base_reader := Bit_Reader_Handle(reader)
+	base_reader := Bit_Reader_Handle((*Bit_Reader)((*Dynamic_Reader)(reader)))
 	literal_count = LITERAL_COUNT_MINIMUM
 	distance_count = DISTANCE_COUNT_MINIMUM
 	literal_count_bits, available := bit_reader_read(base_reader, 5)
@@ -966,18 +1043,19 @@ func dynamic_header(
 }
 
 func dynamic_sizes(
-	reader Dynamic_Size_Reader,
+	reader Dynamic_Size_Reader_Handle,
 	code_decoder Huffman_Decoder,
 	sizes Dynamic_Sizes,
 ) (valid Boolean) {
 	defer func() { Boolean_Invariants(valid, "dynamic_sizes.valid") }()
-	Dynamic_Size_Reader_Invariants(reader, "dynamic_sizes.reader")
+	Dynamic_Size_Reader_Handle_Invariants(reader, "dynamic_sizes.reader")
 	Huffman_Decoder_Invariants(code_decoder, "dynamic_sizes.code_decoder")
 	Dynamic_Sizes_Invariants(sizes, "dynamic_sizes.sizes")
-	base_reader := Bit_Reader_Handle(reader)
+	base_reader := Bit_Reader_Handle((*Bit_Reader)((*Dynamic_Size_Reader)(reader)))
 	for index := 0; index < len(sizes); {
 		symbol, present := huffman_read(
-			Symbol_Reader(base_reader), code_decoder,
+			Symbol_Reader_Handle((*Symbol_Reader)((*Bit_Reader)(base_reader))),
+			code_decoder,
 		)
 		if !present {
 			return false
@@ -1036,7 +1114,7 @@ func dynamic_sizes(
 }
 
 func decode_huffman_block(
-	destination Destination, count Count, reader Huffman_Reader,
+	destination Destination, count Count, reader Huffman_Reader_Handle,
 	literal_decoder Huffman_Decoder, distance_decoder Huffman_Decoder,
 ) (next_count Count, status Status) {
 	defer func() {
@@ -1045,12 +1123,13 @@ func decode_huffman_block(
 	}()
 	Destination_Invariants(destination, "decode_huffman_block.destination")
 	Count_Invariants(count, "decode_huffman_block.count")
-	Huffman_Reader_Invariants(reader, "decode_huffman_block.reader")
+	Huffman_Reader_Handle_Invariants(reader, "decode_huffman_block.reader")
 	Huffman_Decoder_Invariants(literal_decoder, "decode_huffman_block.literal_decoder")
 	Huffman_Decoder_Invariants(distance_decoder, "decode_huffman_block.distance_decoder")
-	base_reader := Bit_Reader_Handle(reader)
+	symbol_reader := Symbol_Reader_Handle((*Symbol_Reader)((*Huffman_Reader)(reader)))
+	base_reader := Bit_Reader_Handle((*Bit_Reader)((*Huffman_Reader)(reader)))
 	for more := true; more; {
-		symbol, present := huffman_read(Symbol_Reader(base_reader), literal_decoder)
+		symbol, present := huffman_read(symbol_reader, literal_decoder)
 		if !present {
 			return count, STATUS_INPUT_INVALID
 		}
@@ -1074,8 +1153,7 @@ func decode_huffman_block(
 			return count, STATUS_INPUT_INVALID
 		}
 		match_count += Match_Size(extra)
-		distance_symbol, present := huffman_read(
-			Symbol_Reader(base_reader), distance_decoder)
+		distance_symbol, present := huffman_read(symbol_reader, distance_decoder)
 		if !present {
 			return count, STATUS_INPUT_INVALID
 		}
@@ -1162,16 +1240,16 @@ func huffman_build(
 }
 
 func huffman_read(
-	reader Symbol_Reader,
+	reader Symbol_Reader_Handle,
 	decoder Huffman_Decoder,
 ) (symbol Huffman_Symbol, present Boolean) {
 	defer func() {
 		Huffman_Symbol_Invariants(symbol, "huffman_read.symbol")
 		Boolean_Invariants(present, "huffman_read.present")
 	}()
-	Symbol_Reader_Invariants(reader, "huffman_read.reader")
+	Symbol_Reader_Handle_Invariants(reader, "huffman_read.reader")
 	Huffman_Decoder_Invariants(decoder, "huffman_read.decoder")
-	base_reader := Bit_Reader_Handle(reader)
+	base_reader := Bit_Reader_Handle((*Bit_Reader)((*Symbol_Reader)(reader)))
 	var code uint32
 	var first uint32
 	var symbol_index uint32
@@ -1217,15 +1295,4 @@ func bit_reader_read(
 	reader.Bits >>= count
 	reader.Bits_Count -= Bit_Count(count)
 	return value, true
-}
-
-func adler32(value Destination) (checksum uint32) {
-	Destination_Invariants(value, "adler32.value")
-	first := uint32(1)
-	second := uint32(0)
-	for _, one := range value {
-		first = (first + uint32(one)) % ADLER_MODULUS
-		second = (second + first) % ADLER_MODULUS
-	}
-	return second<<16 | first
 }
