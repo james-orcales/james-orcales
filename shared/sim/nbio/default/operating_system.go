@@ -48,6 +48,12 @@ type Operating_System struct {
 	Next_Identifier uint64
 	// Signals receive OS signals from os/signal notifier. Nil until first watch.
 	Signals Operating_System_Signal_Channel
+	// Forwarded receive the signals a live child is owed. A channel apart from Signals, thus
+	// stopping it hands those signals back to their default action without touching a watch.
+	Forwarded Operating_System_Signal_Channel
+	// Forward_Notified report Forwarded is registered with the notifier. Registration outlive
+	// each child: a register and stop per spawn allocate every time.
+	Forward_Notified bool
 	// Signal_Waiters borrow caller capacity for one-shot signal watches.
 	Signal_Waiters []Signal_Waiter
 	// Spawns borrow caller registry capacity for children retained through reap.
@@ -366,6 +372,10 @@ type Spawn struct {
 	Operating_System *Operating_System
 	// Input is remaining bytes to write to child standard input.
 	Input []byte
+	// Input_Inherited report child read this process's descriptor 0, which the slot never owns.
+	Input_Inherited bool
+	// Signals_Forwarded report signals this process receive pass on to child group.
+	Signals_Forwarded bool
 	// Output_Buffer receive one standard-output pass. It and the four fields below are windows
 	// of caller spawn memory, fixed for the life of the backend.
 	Output_Buffer []byte
@@ -441,6 +451,7 @@ func operating_system_spawn(
 	aver.Always(len(state.Spawns) < cap(state.Spawns),
 		"The caller-owned spawn registry has capacity before child ownership.")
 	state.Spawns = append(state.Spawns, spawn)
+	process_forward_start(state, spawn, request)
 	process_arm_pipes(state)
 	process_watch_exit(state, spawn)
 	operating_system_submit(&spawn.Deadline_Completion)
@@ -496,6 +507,8 @@ func process_start(
 	if argv_err != nil {
 		return argv_err
 	}
+	spawn.Input_Inherited = request.Input_Inherited
+	spawn.Child_Files[0] = 0
 	if pipe_err := process_pipes(state, spawn, request); pipe_err != nil {
 		return pipe_err
 	}
@@ -508,7 +521,7 @@ func process_start(
 	identifier, _, start_err := syscall.StartProcess(path, argv, &spawn.Attributes)
 	// Child hold its own copies once StartProcess return, thus parent release three ends it
 	// handed over, whether or not fork succeeded.
-	process_release_child(state, spawn.Child_Files[:])
+	process_release_child(state, process_child_owned(spawn))
 	if start_err != nil {
 		process_close_pipes(state, spawn)
 		return start_err
@@ -534,41 +547,64 @@ func process_start(
 func process_pipes(
 	state *Operating_System, spawn *Spawn, request nbio.Process_Request,
 ) (err error) {
+	if request.Input_Inherited {
+		aver.Always(len(request.Input) == 0,
+			"An inherited standard input carries no bytes for the loop to write.")
+		return process_output_pipes(state, spawn, request)
+	}
 	input_read, input_write, input_err := operating_system_pipe_procedure(state)
 	if input_err != nil {
 		return input_err
 	}
+	spawn.Input_Descriptor = int(input_write)
+	spawn.Input = request.Input
+	spawn.Child_Files[0] = uintptr(input_read)
+	output_err := process_output_pipes(state, spawn, request)
+	if output_err != nil {
+		process_release_child(state, []uintptr{uintptr(input_read)})
+		process_close_input_or_output(state, &spawn.Input_Descriptor)
+	}
+	return output_err
+}
+
+// Make standard output and error pipes, and give the child its ends their blocking mode. Input is
+// already in place, thus the mode pass cover every end the slot own.
+func process_output_pipes(
+	state *Operating_System, spawn *Spawn, request nbio.Process_Request,
+) (err error) {
 	output_read, output_write, output_err := operating_system_pipe_procedure(state)
 	if output_err != nil {
-		process_release_child(state, []uintptr{uintptr(input_read), uintptr(input_write)})
 		return output_err
 	}
 	error_read, error_write, error_err := operating_system_pipe_procedure(state)
 	if error_err != nil {
-		process_release_child(state, []uintptr{
-			uintptr(input_read), uintptr(input_write),
-			uintptr(output_read), uintptr(output_write),
-		})
+		process_release_child(state, []uintptr{uintptr(output_read), uintptr(output_write)})
 		return error_err
 	}
-	spawn.Input_Descriptor = int(input_write)
 	spawn.Output_Descriptor = int(output_read)
 	spawn.Error_Descriptor = int(error_read)
-	spawn.Input = request.Input
-	spawn.Child_Files[0] = uintptr(input_read)
 	spawn.Child_Files[1] = uintptr(output_write)
 	spawn.Child_Files[2] = uintptr(error_write)
 	if request.Inherited_Nonblock {
 		return nil
 	}
-	for _, descriptor := range spawn.Child_Files {
+	for _, descriptor := range process_child_owned(spawn) {
 		if inherit_err := pipe_inherit(int(descriptor)); inherit_err != nil {
-			process_release_child(state, spawn.Child_Files[:])
+			process_release_child(state, process_child_owned(spawn))
 			process_close_pipes(state, spawn)
 			return inherit_err
 		}
 	}
 	return nil
+}
+
+// Report child ends the slot own. Inherited descriptor 0 belong to this process, thus release
+// and mode change must never reach it.
+func process_child_owned(spawn *Spawn) (owned []uintptr) {
+	if spawn.Input_Inherited {
+		return spawn.Child_Files[1:]
+	}
+	return spawn.Child_Files[:]
 }
 
 // Release pipe ends child hold its own copies of, or ends a failed start never handed over.
@@ -991,6 +1027,68 @@ func operating_system_spawn_remove(state *Operating_System, spawn *Spawn) {
 	}
 	state.Spawns = kept
 	aver.Always(found, "A reaped child occupied one caller-owned registry slot.")
+}
+
+// Start forwarding for child unless request keep signals. Registration happen once, and stay
+// until a signal arrive with no forwarding child to receive it.
+func process_forward_start(state *Operating_System, spawn *Spawn, request nbio.Process_Request) {
+	if request.Signals_Kept {
+		return
+	}
+	spawn.Signals_Forwarded = true
+	if state.Forward_Notified {
+		return
+	}
+	if state.Forwarded.Channel == nil {
+		state.Forwarded = operating_system_signal_channel(SIGNAL_QUEUE_DEPTH)
+	}
+	state.Forward_Notified = true
+	// Each is a signal a terminal or supervisor aim at this process to end it. The child is out
+	// of this process group, thus each is owed to it too.
+	operating_system_signal_notify(state.Forwarded, syscall.SIGINT)
+	operating_system_signal_notify(state.Forwarded, syscall.SIGTERM)
+	operating_system_signal_notify(state.Forwarded, syscall.SIGHUP)
+	operating_system_signal_notify(state.Forwarded, syscall.SIGQUIT)
+}
+
+// Report whether any child still in the registry forward signals.
+func operating_system_forward_live(state *Operating_System) (live bool) {
+	for _, spawn := range state.Spawns {
+		if spawn.Signals_Forwarded {
+			return true
+		}
+	}
+	return false
+}
+
+// Pass every received signal on to each forwarding child's group. A reaped leader's identifier
+// may be reused, thus only child not yet exited receive it. A signal no child is owed was meant
+// for this process: registration stop and signal is raised again, thus its default action run.
+func operating_system_forward_signals(state *Operating_System) {
+	if !state.Forward_Notified {
+		return
+	}
+	for index := 0; index < SIGNAL_QUEUE_DEPTH; index++ {
+		received, found := operating_system_signal_receive(state.Forwarded)
+		if !found {
+			return
+		}
+		if !operating_system_forward_live(state) {
+			state.Forward_Notified = false
+			operating_system_signal_stop(state.Forwarded)
+			syscall.Kill(syscall.Getpid(), received)
+			return
+		}
+		for _, spawn := range state.Spawns {
+			if !spawn.Signals_Forwarded {
+				continue
+			}
+			if spawn.Exited {
+				continue
+			}
+			syscall.Kill(-spawn.Identifier, received)
+		}
+	}
 }
 
 // Release every pipe end loop still hold.
@@ -1722,6 +1820,7 @@ func operating_system_flush(state *Operating_System, wait time.Monotonic_Moment)
 		return expire_err
 	}
 	operating_system_signals(state)
+	operating_system_forward_signals(state)
 	process_arm_pipes(state)
 	platform_err := platform_run(state, wait)
 	if platform_err != nil {
@@ -1740,6 +1839,15 @@ func operating_system_wait_cap(
 	state *Operating_System, wait time.Monotonic_Moment,
 ) (capped time.Monotonic_Moment) {
 	capped = wait
+	// A forwarded signal is discovered by poll, like a watched one.
+	if operating_system_forward_live(state) {
+		interval := time.Monotonic_Moment(SIGNAL_POLL_INTERVAL)
+		if capped < 0 {
+			capped = interval
+		} else if interval < capped {
+			capped = interval
+		}
+	}
 	if len(state.Timeouts) > 0 {
 		until_timeout := state.Timeouts[0].Ready_At - time.Clock_Now_Monotonic(state.Host)
 		if capped < 0 {
@@ -1974,6 +2082,10 @@ func operating_system_deinitialize(state *Operating_System) {
 		"Driver Deinit follows joining every operation.")
 	if state.Signals.Channel != nil {
 		operating_system_signal_stop(state.Signals)
+	}
+	if state.Forward_Notified {
+		state.Forward_Notified = false
+		operating_system_signal_stop(state.Forwarded)
 	}
 	platform_deinitialize(state)
 }

@@ -164,6 +164,17 @@ type Process_Request struct {
 	Working_Directory string
 	// Input is the bytes written to the process's standard input.
 	Input []byte
+	// Input_Inherited hands the process this process's own standard input instead of a pipe, so
+	// a wrapper stays transparent to an interactive child. Input must be empty: no loop write
+	// could reach a descriptor the child reads directly. The simulated backend runs no process
+	// and ignores it.
+	Input_Inherited bool
+	// Signals_Kept stops the backend passing on an interrupt, termination, hangup, or quit this
+	// process receives while the child runs. Forwarding is the zero value: the child leads its
+	// own process group, thus a terminal's signal never reaches it, and a parent that died of
+	// the signal would leave the child running with nothing bounding it. The simulated backend
+	// runs no process and ignores it.
+	Signals_Kept bool
 	// Output_Storage is caller storage that captured standard output fills; its length is the
 	// capture bound. Output past it drains unkept and the result reports
 	// Process_Output_Too_Large, so a chatty child cannot grow memory. Result.Output views it.

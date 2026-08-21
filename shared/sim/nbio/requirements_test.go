@@ -654,6 +654,23 @@ func Test_Sim_Spawn(t *testing.T) {
 	nbio.IO_Deinit(loop)
 }
 
+// Test_Sim_Spawn_Inheritance verifies the simulator ignores inherited input and signal
+// forwarding: the request still retires once.
+func Test_Sim_Spawn_Inheritance(t *testing.T) {
+	loop, driver, _ := sim_loop(0)
+	callback_count := 0
+	var completion nbio.Completion
+	nbio.IO_Spawn(loop, &completion, nbio.Process_Request{
+		Path: "cat", Input_Inherited: true, Signals_Kept: true,
+	}, SIM_DEADLINE, func(_ *nbio.Completion, _ nbio.Process_Result, _ error) {
+		callback_count++
+	})
+	nbio.Driver_Run_For(driver, 16*time.NANOSECOND)
+	testify.Equal(t, 1, callback_count)
+	testify.Nil(t, completion.Backend)
+	nbio.IO_Deinit(loop)
+}
+
 // Test_Sim_Pipe verifies a read armed on an empty pipe waits for the writer, bytes arrive in
 // order, and closing the write end reads as end of file.
 func Test_Sim_Pipe(t *testing.T) {

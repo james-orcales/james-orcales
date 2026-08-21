@@ -128,6 +128,12 @@ A spawn requires a positive finite deadline; completion returns the seed-drawn e
 deadline wins ties with Deadline_Exceeded. Inherited stdio ends block unless Inherited_Nonblock.
 Real backend kills subprocess group, bounds pipe cleanup to 1s, returns partial output; sim none.
 
+### Spawn Inheritance
+
+Input_Inherited hands the child this process's standard input. An interrupt, termination,
+hangup, or quit this process receives while the child runs reaches the child's group unless
+Signals_Kept. Sim runs no process, ignores both, and still delivers one seed-drawn result.
+
 ### Pipe
 
 Pipe synchronously return read and write ends, always non-blocking and close-on-exec. Transfers

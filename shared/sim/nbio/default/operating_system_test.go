@@ -3,6 +3,7 @@ package nbio
 import (
 	"errors"
 	"os"
+	"os/signal"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -3398,4 +3399,88 @@ func Test_Operating_System_IO_Spawn_Inherited_Default(t *testing.T) {
 // non-blocking standard descriptors.
 func Test_Operating_System_IO_Spawn_Inherited_Nonblock(t *testing.T) {
 	testify.Equal(t, "nnn", spawn_probe_report(t, true))
+}
+
+// Test_Operating_System_IO_Spawn_Input_Inherited verifies Input_Inherited hands the child this
+// process's own standard input. A file dup'd onto descriptor 0 across the spawn makes the child's
+// output prove which descriptor it read.
+func Test_Operating_System_IO_Spawn_Input_Inherited(t *testing.T) {
+	host := new_operating_system_clock()
+	loop, _, driver := operating_system_loop(t, host)
+	input_path := test_path_join(t.TempDir(), "input")
+	testify.No_Error(t, os.WriteFile(input_path, []byte("inherited"), 0o600))
+	input, open_err := syscall.Open(input_path, syscall.O_RDONLY, 0)
+	testify.No_Error(t, open_err)
+	saved, dup_err := syscall.Dup(0)
+	testify.No_Error(t, dup_err)
+	testify.No_Error(t, syscall.Dup2(input, 0))
+	callback_count := 0
+	result := nbio.Process_Result{}
+	var operation_err error
+	var completion nbio.Completion
+	nbio.IO_Spawn(loop, &completion, nbio.Process_Request{
+		Path: "/bin/cat", Input_Inherited: true,
+		Output_Storage: make([]byte, SPAWN_CAPTURE_BYTES),
+	}, REAL_DEADLINE, func(
+		_ *nbio.Completion, spawned nbio.Process_Result, err error,
+	) {
+		callback_count++
+		result = spawned
+		operation_err = err
+	})
+	testify.No_Error(t, syscall.Dup2(saved, 0))
+	syscall.Close(saved)
+	syscall.Close(input)
+	testify.True(t, operating_system_run_until(
+		t, driver, func() (finished bool) { return callback_count > 0 },
+	))
+	testify.No_Error(t, operation_err)
+	testify.Equal(t, "inherited", string(result.Output))
+	nbio.Driver_Deinit(driver)
+}
+
+// Test_Operating_System_IO_Spawn_Signals_Forwarded verifies a termination this process receives
+// while the child runs reaches the child, which exits by it.
+func Test_Operating_System_IO_Spawn_Signals_Forwarded(t *testing.T) {
+	result, operation_err := spawn_signalled(t, false, REAL_DEADLINE)
+	testify.No_Error(t, operation_err)
+	testify.Equal(t, 128+int(syscall.SIGTERM), result.Exit)
+}
+
+// Test_Operating_System_IO_Spawn_Signals_Kept verifies Signals_Kept leaves the child untouched:
+// it outlives the termination and meets its deadline. The test holds its own notifier, thus the
+// termination does not end the test process.
+func Test_Operating_System_IO_Spawn_Signals_Kept(t *testing.T) {
+	held := make(chan os.Signal, 1)
+	signal.Notify(held, syscall.SIGTERM)
+	defer signal.Stop(held)
+	_, operation_err := spawn_signalled(t, true, 200*time.MILLISECOND)
+	testify.Error_Is(t, operation_err, nbio.Deadline_Exceeded)
+}
+
+// Spawns a sleeping child, sends this process a termination once the child runs, and reports the
+// child's retirement.
+func spawn_signalled(
+	t *testing.T, kept bool, deadline time.Duration,
+) (result nbio.Process_Result, operation_err error) {
+	t.Helper()
+	host := new_operating_system_clock()
+	loop, _, driver := operating_system_loop(t, host)
+	callback_count := 0
+	var completion nbio.Completion
+	nbio.IO_Spawn(loop, &completion, nbio.Process_Request{
+		Path: "/bin/sleep", Arguments: []string{"30"}, Signals_Kept: kept,
+	}, deadline, func(
+		_ *nbio.Completion, spawned nbio.Process_Result, err error,
+	) {
+		callback_count++
+		result = spawned
+		operation_err = err
+	})
+	testify.No_Error(t, syscall.Kill(syscall.Getpid(), syscall.SIGTERM))
+	testify.True(t, operating_system_run_until(
+		t, driver, func() (finished bool) { return callback_count > 0 },
+	))
+	nbio.Driver_Deinit(driver)
+	return result, operation_err
 }
