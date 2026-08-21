@@ -2760,7 +2760,7 @@ func Float_Finite_Invariants(value Float_Finite, namespace aver.Namespace) {
 			int(value.Exponent), FLOAT_EXPONENT_MINIMUM, FLOAT_EXPONENT_MAXIMUM,
 		).
 		Ensure()
-	Float_Active_Mantissa_Invariants(Float_Active_Mantissa(value.Mantissa), namespace)
+	Positive_Int_Invariants(Positive_Int(value.Mantissa), namespace)
 	aver.Always(value.Form == FLOAT_FORM_FINITE,
 		"A finite helper value has finite form.")
 }
@@ -3246,15 +3246,35 @@ func Int_Text_Workspace_Invariants(
 	Int_Text_Digits_Invariants(value.Digits, namespace)
 }
 
+// Rat_Text_Denominator reserves storage for expansion of implicit denominator one.
+type Rat_Text_Denominator Int
+
+// Rat_Text_Denominator_Invariants keeps reused scratch large enough for one word.
+func Rat_Text_Denominator_Invariants(value Rat_Text_Denominator, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Int(int(value.Count), WORD_COUNT_MINIMUM, WORD_COUNT_MAXIMUM).
+		Range_Int(len(value.Words), WORD_COUNT_INCREMENT, WORD_COUNT_MAXIMUM).
+		Enum_Uint8(uint8(value.Negative), uint8(POLARITY_NONNEGATIVE),
+			uint8(POLARITY_NEGATIVE)).
+		Ensure()
+	aver.Always(int(value.Count) <= len(value.Words),
+		"Rational text denominator scratch fits retained magnitude.")
+	minimum := Word(min(Word_Count(WORD_COUNT_INCREMENT), value.Count))
+	aver.Always(int_high_word(value.Words[:value.Count]) >= minimum,
+		"Rational text denominator scratch omits high zero words.")
+	aver.Always(int(value.Negative) <= int(value.Count),
+		"Rational text denominator scratch excludes negative zero.")
+}
+
 // Rat_Text_Integers owns expanded denominator without repeated Int invariant leaves.
 type Rat_Text_Integers struct {
 	// Denominator materializes implicit one without changing the source.
-	Denominator Int
+	Denominator Rat_Text_Denominator
 }
 
 // Rat_Text_Integers_Invariants fixes complete rational text integer capacity.
 func Rat_Text_Integers_Invariants(value Rat_Text_Integers, namespace aver.Namespace) {
-	Int_Invariants(value.Denominator, namespace)
+	Rat_Text_Denominator_Invariants(value.Denominator, namespace)
 }
 
 // Rat_Text_Integer_Workspaces owns independent reversed digits for both components.
@@ -3371,14 +3391,14 @@ func Rat_Float_Text_Workspace_Invariants(
 // Rat_Float_Precision_Integers owns mutable denominator factorization state.
 type Rat_Float_Precision_Integers struct {
 	// Denominator permits destructive factorization without changing the source.
-	Denominator Int
+	Denominator Nonempty_Int
 }
 
 // Rat_Float_Precision_Integers_Invariants fixes one denominator capacity.
 func Rat_Float_Precision_Integers_Invariants(
 	value Rat_Float_Precision_Integers, namespace aver.Namespace,
 ) {
-	Int_Invariants(value.Denominator, namespace)
+	Nonempty_Int_Invariants(value.Denominator, namespace)
 }
 
 // Rat_Float_Precision_Workspace owns mutable factorization outside caller rational.
@@ -3397,7 +3417,7 @@ func Rat_Float_Precision_Workspace_Invariants(
 // Rat_Float_64_Integers owns scaled operands and quotient-remainder output.
 type Rat_Float_64_Integers struct {
 	// Numerator preserves caller magnitude during scaling.
-	Numerator Int
+	Numerator Rat_Float_Numerator
 	// Denominator preserves caller divisor during scaling.
 	Denominator Rat_Float_64_Denominator
 	// Quotient retains guard bits before rounding.
@@ -3410,14 +3430,10 @@ type Rat_Float_64_Integers struct {
 func Rat_Float_64_Integers_Invariants(
 	value Rat_Float_64_Integers, namespace aver.Namespace,
 ) {
-	Int_Invariants(value.Numerator, namespace)
+	Rat_Float_Numerator_Invariants(value.Numerator, namespace)
 	Rat_Float_64_Denominator_Invariants(value.Denominator, namespace)
 	Rat_Float_64_Quotient_Invariants(value.Quotient, namespace)
 	Rat_Float_64_Remainder_Invariants(value.Remainder, namespace)
-	aver.Always(
-		len(value.Numerator.Words) == WORD_COUNT_MAXIMUM,
-		"Rational binary64 numerator has complete scaling storage.",
-	)
 	aver.Always(
 		len(value.Denominator.Words) == WORD_COUNT_MAXIMUM,
 		"Rational binary64 denominator has complete scaling storage.",
@@ -3568,14 +3584,14 @@ func Int_Parse_Workspace_Invariants(value Int_Parse_Workspace, namespace aver.Na
 // Rat_Integers stores numerator and denominator without repeated invariant leaf types.
 type Rat_Integers struct {
 	// Numerator keeps sign with signed component.
-	Numerator Int
+	Numerator Rat_Numerator
 	// Denominator keeps implicit one observable without backing storage.
 	Denominator Rat_Denominator
 }
 
 // Rat_Integers_Invariants fixes complete rational component capacity.
 func Rat_Integers_Invariants(value Rat_Integers, namespace aver.Namespace) {
-	Int_Invariants(value.Numerator, namespace)
+	Rat_Numerator_Invariants(value.Numerator, namespace)
 	Rat_Denominator_Invariants(value.Denominator, namespace)
 }
 
@@ -3588,24 +3604,6 @@ type Rat struct {
 // Rat_Invariants bounds both components and keeps denominator positive.
 func Rat_Invariants(value Rat, namespace aver.Namespace) {
 	Rat_Integers_Invariants(value.Integers, namespace)
-	numerator := &value.Integers.Numerator
-	denominator := (*Int)(&value.Integers.Denominator)
-	aver.Always(
-		uint(numerator.Count) <= uint(RAT_WORD_COUNT_MAXIMUM),
-		"A rational numerator stays inside its component bound.",
-	)
-	aver.Always(
-		int(numerator.Negative) <= int(numerator.Count),
-		"A rational numerator gives zero no negative twin.",
-	)
-	aver.Always(
-		uint(denominator.Count) <= uint(RAT_WORD_COUNT_MAXIMUM),
-		"A rational denominator stays inside its component bound.",
-	)
-	aver.Always(
-		denominator.Negative == POLARITY_NONNEGATIVE,
-		"A rational denominator keeps sign in its numerator.",
-	)
 }
 
 // Multiplication_Memory is reusable product scratch for composite algorithms.
@@ -3987,7 +3985,8 @@ func Float_Set_Float_64_Bits(
 		}
 	}
 	float_set_float_64_finite(
-		destination, Float_64_Finite_Exponent_Field(exponent_field),
+		(*Float_Nonempty)((*Float)(destination)),
+		Float_64_Finite_Exponent_Field(exponent_field),
 		Float_64_Mantissa_Field(mantissa_field), negative,
 		Float_Active_Precision(precision),
 	)
@@ -4340,7 +4339,7 @@ func Rat_Gob_Encode_Into(
 	}()
 	Rat_Encoding_Invariants(destination, "rat_gob_encode_into.destination")
 	Rat_Handle_Invariants(value, "rat_gob_encode_into.value")
-	numerator := &value.Integers.Numerator
+	numerator := (*Int)(&value.Integers.Numerator)
 	denominator := (*Int)(&value.Integers.Denominator)
 	numerator_size := (int(Int_Bit_Count(numerator)) + bits.BIT_COUNT_8_MAXIMUM - 1) /
 		bits.BIT_COUNT_8_MAXIMUM
@@ -4439,7 +4438,7 @@ func rat_gob_decode_commit(
 	Rat_Component_Byte_Count_Invariants(
 		numerator_size, "rat_gob_decode_commit.numerator_size",
 	)
-	numerator := &destination.Integers.Numerator
+	numerator := (*Int)(&destination.Integers.Numerator)
 	denominator := (*Int)(&destination.Integers.Denominator)
 	numerator_end_size := RAT_GOB_PREFIX_SIZE + int(numerator_size)
 	int_set_bytes_validated(
@@ -4965,9 +4964,9 @@ func Int_Add(
 				previous_count := destination.Count
 				destination.Words[WORD_COUNT_MINIMUM] = low
 				destination.Words[WORD_COUNT_INCREMENT] = high
-				destination.Words[BASE_BINARY] = high_carry
 				destination.Count = Word_Count(BASE_BINARY)
 				if high_carry != 0 {
+					destination.Words[BASE_BINARY] = high_carry
 					destination.Count += Word_Count(WORD_COUNT_INCREMENT)
 				}
 				destination.Negative = left.Negative
@@ -5015,11 +5014,7 @@ func Int_Multiply(
 	Int_Handle_Invariants(left, "int_multiply.left")
 	Int_Handle_Invariants(right, "int_multiply.right")
 	Int_Multiplication_Workspace_Handle_Invariants(workspace, "int_multiply.workspace")
-	if int_multiply_double_word(Int_References{
-		Destination: Int_Destination_Reference((*Int_Destination)((*Int)(destination))),
-		Left:        Int_Left_Reference((*Int_Left)((*Int)(left))),
-		Right:       Int_Right_Reference((*Int_Right)((*Int)(right))),
-	}) {
+	if int_multiply_double_word(destination, left, right) {
 		return STATUS_OK
 	}
 	if left.Count == Word_Count(WORD_COUNT_INCREMENT) {
@@ -5183,7 +5178,7 @@ func Int_Binomial(
 		if denominator > uint64(bits.CARRY_MAXIMUM) {
 			int_binomial_divide(
 				(*Positive_Magnitude)(accumulator),
-				Int_Division_Nonzero_Word(denominator),
+				Binomial_Divisor(denominator),
 			)
 		}
 		Int_Set_Uint_64(factor, Word_64(numerator))
@@ -5270,13 +5265,11 @@ func Int_Exponent(destination Int_Handle, base Int_Handle, exponent Int_Handle,
 	Int_Handle_Invariants(exponent, "int_exponent.exponent")
 	Int_Exponent_Workspace_Handle_Invariants(workspace, "int_exponent.workspace")
 	if base.Count <= Word_Count(WORD_COUNT_INCREMENT) {
-		if int_exponent_word(Int_References{
-			Destination: Int_Destination_Reference(
-				(*Int_Destination)((*Int)(destination)),
-			),
-			Left:  Int_Left_Reference((*Int_Left)((*Int)(base))),
-			Right: Int_Right_Reference((*Int_Right)((*Int)(exponent))),
-		}) {
+		word := Word(0)
+		if base.Count != Word_Count(WORD_COUNT_MINIMUM) {
+			word = base.Words[WORD_COUNT_MINIMUM]
+		}
+		if int_exponent_word(destination, word, base.Negative, exponent) {
 			return STATUS_OK
 		}
 	}
@@ -5310,7 +5303,10 @@ func Int_Exponent(destination Int_Handle, base Int_Handle, exponent Int_Handle,
 			return STATUS_OK
 		}
 	}
-	status = int_exponent_binary(exponent, workspace)
+	status = int_exponent_binary(
+		(*Positive_Int)((*Int)(exponent)), (*Exponent_Unit)(result), (*Nonzero_Int)(factor),
+		(*Int_Multiplication_Workspace)(&workspace.Multiplication),
+	)
 	if status != Arithmetic_Status(STATUS_OK) {
 		return status
 	}
@@ -5359,9 +5355,8 @@ func Int_Modular_Multiply(
 	factor := &workspace.Integers[MODULAR_EXPONENT_FACTOR_INDEX]
 	Int_Set(coefficient, factor)
 	int_modular_reduce(workspace, MODULAR_REDUCTION_OPERAND, right)
+	int_modular_multiply_magnitudes((*Magnitude)(coefficient), (*Magnitude)(factor), workspace)
 	result := &workspace.Integers[MODULAR_EXPONENT_RESULT_INDEX]
-	Int_Set(result, coefficient)
-	int_modular_multiply(workspace, MODULAR_MULTIPLICATION_ACCUMULATE)
 	Int_Set(destination, result)
 	return STATUS_OK
 }
@@ -5381,15 +5376,9 @@ func Int_Modular_Exponent(
 	Int_Handle_Invariants(modulus, "int_modular_exponent.modulus")
 	Int_Modular_Workspace_Handle_Invariants(workspace, "int_modular_exponent.workspace")
 	if modulus.Count == Word_Count(WORD_COUNT_INCREMENT) {
-		references := Int_References{
-			Destination: Int_Destination_Reference(
-				(*Int_Destination)((*Int)(destination)),
-			),
-			Left:  Int_Left_Reference((*Int_Left)((*Int)(base))),
-			Right: Int_Right_Reference((*Int_Right)((*Int)(exponent))),
-		}
 		if int_modular_exponent_word(
-			references, Int_Division_Nonzero_Word(modulus.Words[WORD_COUNT_MINIMUM]),
+			destination, base, exponent,
+			Int_Division_Nonzero_Word(modulus.Words[WORD_COUNT_MINIMUM]),
 		) {
 			return STATUS_OK
 		}
@@ -5429,17 +5418,8 @@ func int_modular_inverse(
 		return STATUS_DIVISOR_ZERO
 	}
 	dividend := &workspace.Integers[MODULAR_GCD_DIVIDEND_INDEX]
-	divisor := &workspace.Integers[MODULAR_GCD_DIVISOR_INDEX]
-	remainder := &workspace.Integers[MODULAR_GCD_REMAINDER_INDEX]
 	coefficient_dividend := &workspace.Integers[MODULAR_COEFFICIENT_DIVIDEND_INDEX]
 	coefficient_divisor := &workspace.Integers[MODULAR_COEFFICIENT_DIVISOR_INDEX]
-	coefficient_remainder := &workspace.Integers[MODULAR_COEFFICIENT_REMAINDER_INDEX]
-	quotient := &workspace.Integers[MODULAR_QUOTIENT_INDEX]
-	coefficient_references := Int_References{
-		Destination: Int_Destination_Reference((*Int_Destination)(coefficient_remainder)),
-		Left:        Int_Left_Reference((*Int_Left)(coefficient_dividend)),
-		Right:       Int_Right_Reference((*Int_Right)(coefficient_divisor)),
-	}
 	Int_Set(dividend, normalized_modulus)
 	int_modular_reduce(workspace, MODULAR_REDUCTION_OPERAND, value)
 	int_zero(coefficient_dividend, coefficient_dividend.Count)
@@ -5450,22 +5430,10 @@ func int_modular_inverse(
 		}
 	}
 	coefficient_bounded := Boolean(
-		int(normalized_modulus.Count) <=
-			(WORD_COUNT_MAXIMUM-WORD_COUNT_INCREMENT)/BASE_BINARY,
+		int(normalized_modulus.Count) <= COEFFICIENT_WORD_COUNT_MAXIMUM,
 	)
-	remainder_references := Int_References{
-		Destination: Int_Destination_Reference((*Int_Destination)(remainder)),
-		Left:        Int_Left_Reference((*Int_Left)(dividend)),
-		Right:       Int_Right_Reference((*Int_Right)(divisor)),
-	}
-	result_references := Int_References{
-		Destination: Int_Destination_Reference((*Int_Destination)((*Int)(destination))),
-		Left:        Int_Left_Reference((*Int_Left)(normalized_modulus)),
-		Right:       Int_Right_Reference((*Int_Right)(quotient)),
-	}
 	return Modular_Status(int_modular_inverse_euclidean(
-		workspace, coefficient_bounded, result_references,
-		remainder_references, coefficient_references,
+		workspace, coefficient_bounded, destination,
 	))
 }
 
@@ -5520,11 +5488,9 @@ func int_modular_multiply(
 	}
 	left, right := &workspace.Integers[left_index], &workspace.Integers[right_index]
 	destination := &workspace.Integers[result_index]
-	if int_modular_multiply_identity(Int_References{
-		Destination: Int_Destination_Reference((*Int_Destination)(destination)),
-		Left:        Int_Left_Reference((*Int_Left)(left)),
-		Right:       Int_Right_Reference((*Int_Right)(right)),
-	}) {
+	if int_modular_multiply_identity(
+		(*Int_Destination)(destination), (*Magnitude)(left), (*Magnitude)(right),
+	) {
 		return
 	}
 	modulus := &workspace.Integers[MODULAR_MODULUS_INDEX]
@@ -5541,13 +5507,8 @@ func int_modular_multiply(
 			"The operand-count sum proves the exact modular product fits.",
 		)
 		if int_modular_reduce_normalized_double_word(
-			Int_References{
-				Destination: Int_Destination_Reference(
-					(*Int_Destination)(destination),
-				),
-				Left:  Int_Left_Reference((*Int_Left)(product)),
-				Right: Int_Right_Reference((*Int_Right)(modulus)),
-			}) {
+			(*Magnitude)(destination), (*Magnitude)(product),
+			(*Positive_Magnitude)(modulus)) {
 			return
 		}
 		quotient := &workspace.Integers[MODULAR_QUOTIENT_INDEX]
@@ -5672,15 +5633,14 @@ func Int_Square_Root(destination Int_Handle, source Int_Handle,
 			root = next
 			next = (root + word/root) / SQUARE_ROOT_DEGREE
 		}
-		previous_count := destination.Count
-		destination.Words[WORD_COUNT_MINIMUM] = Word(root)
-		destination.Count = Word_Count(WORD_COUNT_INCREMENT)
-		destination.Negative = POLARITY_NONNEGATIVE
-		int_clear(destination, destination.Count, previous_count)
+		int_set_word(destination, Word(root), POLARITY_NONNEGATIVE)
 		return STATUS_OK
 	}
 	if source.Count == Word_Count(BASE_BINARY) {
-		int_square_root_double_word(destination, (*Int_Double_Word)((*Int)(source)))
+		int_square_root_double_word((*Nonempty_Int)((*Int)(destination)), Double_Words{
+			Low:  source.Words[WORD_COUNT_MINIMUM],
+			High: Float_Active_Word(source.Words[WORD_COUNT_INCREMENT]),
+		})
 		return STATUS_OK
 	}
 	workspace.Division.Quotient_Count, workspace.Division.Remainder_Count = 0, 0
@@ -6327,13 +6287,8 @@ func int_primality_lucas_update(
 		destination = &integers[PRIMALITY_RIGHT_INDEX]
 		subtrahend = &integers[PRIMALITY_TWO_INDEX]
 	}
-	int_primality_modular_multiply(
-		Int_References{
-			Destination: Int_Destination_Reference((*Int_Destination)(destination)),
-			Left:        Int_Left_Reference((*Int_Left)(left)),
-			Right:       Int_Right_Reference((*Int_Right)(right)),
-		}, modular,
-	)
+	int_modular_multiply_magnitudes((*Magnitude)(left), (*Magnitude)(right), modular)
+	Int_Set(destination, &modular.Integers[MODULAR_EXPONENT_RESULT_INDEX])
 	if Int_Compare(destination, subtrahend) != ORDER_BEFORE {
 		subtract_status := Int_Subtract(destination, destination, subtrahend)
 		aver.Always(
@@ -6366,27 +6321,17 @@ func int_primality_lucas_u_products(
 	left := &integers[PRIMALITY_LEFT_INDEX]
 	right := &integers[PRIMALITY_RIGHT_INDEX]
 	two := &integers[PRIMALITY_TWO_INDEX]
-	int_primality_modular_multiply(
-		Int_References{
-			Destination: Int_Destination_Reference((*Int_Destination)(left)),
-			Left:        Int_Left_Reference((*Int_Left)(base)),
-			Right:       Int_Right_Reference((*Int_Right)(current)),
-		}, modular,
-	)
-	int_primality_modular_multiply(
-		Int_References{
-			Destination: Int_Destination_Reference((*Int_Destination)(right)),
-			Left:        Int_Left_Reference((*Int_Left)(two)),
-			Right:       Int_Right_Reference((*Int_Right)(next)),
-		}, modular,
-	)
+	int_modular_multiply_magnitudes((*Magnitude)(base), (*Magnitude)(current), modular)
+	Int_Set(left, &modular.Integers[MODULAR_EXPONENT_RESULT_INDEX])
+	int_modular_multiply_magnitudes((*Magnitude)(two), (*Magnitude)(next), modular)
+	Int_Set(right, &modular.Integers[MODULAR_EXPONENT_RESULT_INDEX])
 }
 
 // Rat_Set_Int_64 writes one machine integer with implicit denominator one.
 func Rat_Set_Int_64(destination Rat_Handle, value Int_64) {
 	Rat_Handle_Invariants(destination, "rat_set_int_64.destination")
 	Int_64_Invariants(value, "rat_set_int_64.value")
-	Int_Set_Int_64(&destination.Integers.Numerator, value)
+	Int_Set_Int_64((*Int)(&destination.Integers.Numerator), value)
 	denominator := (*Int)(&destination.Integers.Denominator)
 	int_zero(denominator, denominator.Count)
 }
@@ -6395,7 +6340,7 @@ func Rat_Set_Int_64(destination Rat_Handle, value Int_64) {
 func Rat_Set_Uint_64(destination Rat_Handle, value Word_64) {
 	Rat_Handle_Invariants(destination, "rat_set_uint_64.destination")
 	Word_64_Invariants(value, "rat_set_uint_64.value")
-	Int_Set_Uint_64(&destination.Integers.Numerator, value)
+	Int_Set_Uint_64((*Int)(&destination.Integers.Numerator), value)
 	denominator := (*Int)(&destination.Integers.Denominator)
 	int_zero(denominator, denominator.Count)
 }
@@ -6429,7 +6374,7 @@ func Rat_Set_Float_64_Bits(
 		mantissa >>= 1
 		shift--
 	}
-	numerator := &destination.Integers.Numerator
+	numerator := (*Int)(&destination.Integers.Numerator)
 	denominator := (*Int)(&destination.Integers.Denominator)
 	Int_Set_Uint_64(numerator, Word_64(mantissa))
 	int_zero(denominator, denominator.Count)
@@ -6461,7 +6406,7 @@ func Rat_Set_Int(destination Rat_Handle, source Int_Handle) (status Arithmetic_S
 	if source.Count > RAT_WORD_COUNT_MAXIMUM {
 		return STATUS_VALUE_OVERFLOW
 	}
-	Int_Set(&destination.Integers.Numerator, source)
+	Int_Set((*Int)(&destination.Integers.Numerator), source)
 	denominator := (*Int)(&destination.Integers.Denominator)
 	int_zero(denominator, denominator.Count)
 	return STATUS_OK
@@ -6475,8 +6420,8 @@ func Rat_Set(destination Rat_Handle, source Rat_Handle) {
 		return
 	}
 	Int_Set(
-		&destination.Integers.Numerator,
-		&source.Integers.Numerator,
+		(*Int)(&destination.Integers.Numerator),
+		(*Int)(&source.Integers.Numerator),
 	)
 	Int_Set(
 		(*Int)(&destination.Integers.Denominator),
@@ -6634,8 +6579,9 @@ func rat_parse_float(
 		return Parse_Status(exponent_status)
 	}
 	denominator := (*Int)(&fraction.Integers.Denominator)
-	int_set_word(denominator, Word(bits.CARRY_MAXIMUM), POLARITY_NONNEGATIVE)
-	scale_status := rat_parse_scale(&fraction.Integers, exponents)
+	scale_status := rat_parse_scale(
+		(*Nonzero_Int)(numerator), &fraction.Integers.Denominator, exponents,
+	)
 	if scale_status != Arithmetic_Status(STATUS_OK) {
 		return Parse_Status(scale_status)
 	}
@@ -6904,11 +6850,15 @@ func rat_parse_exponents(
 }
 
 func rat_parse_scale(
-	integers Rat_Parse_Fraction_Integers_Handle, exponents Rat_Parse_Exponents,
+	numerator Nonzero_Int_Handle, denominator_storage Rat_Parse_Denominator_Handle,
+	exponents Rat_Parse_Exponents,
 ) (status Arithmetic_Status) {
 	defer func() { Arithmetic_Status_Invariants(status, "rat_parse_scale.status") }()
-	Rat_Parse_Fraction_Integers_Handle_Invariants(integers, "rat_parse_scale.integers")
+	Nonzero_Int_Handle_Invariants(numerator, "rat_parse_scale.numerator")
+	Rat_Parse_Denominator_Handle_Invariants(denominator_storage, "rat_parse_scale.denominator")
 	Rat_Parse_Exponents_Invariants(exponents, "rat_parse_scale.exponents")
+	denominator := (*Int)((*Rat_Parse_Denominator)(denominator_storage))
+	int_set_word(denominator, Word(bits.CARRY_MAXIMUM), POLARITY_NONNEGATIVE)
 	maximum := int64(RAT_PARSE_EXPONENT_MAGNITUDE_MAXIMUM)
 	exponent_2 := int64(exponents.Binary)
 	exponent_5 := int64(exponents.Five)
@@ -6924,14 +6874,14 @@ func rat_parse_scale(
 	if exponent_5 > maximum {
 		return STATUS_VALUE_OVERFLOW
 	}
-	value := &integers.Numerator
+	value := (*Int)((*Nonzero_Int)(numerator))
 	if exponent_5 < 0 {
-		value = (*Int)(&integers.Denominator)
+		value = denominator
 		exponent_5 = -exponent_5
 	}
 	if exponent_5 > 0 {
 		status = rat_parse_multiply_five(
-			value, Rat_Parse_Power_Count(exponent_5),
+			(*Nonzero_Int)(value), Rat_Parse_Power_Count(exponent_5),
 		)
 		if status != Arithmetic_Status(STATUS_OK) {
 			return status
@@ -6942,19 +6892,19 @@ func rat_parse_scale(
 		component = Rat_Parse_Power_Component(RAT_PARSE_FRACTION_DENOMINATOR_INDEX)
 		exponent_2 = -exponent_2
 	}
-	target := &integers.Numerator
+	target := (*Int)((*Nonzero_Int)(numerator))
 	if component == Rat_Parse_Power_Component(RAT_PARSE_FRACTION_DENOMINATOR_INDEX) {
-		target = (*Int)(&integers.Denominator)
+		target = denominator
 	}
 	return Int_Shift_Left(target, target, Shift_Count(exponent_2))
 }
 
 func rat_parse_multiply_five(
-	value Int_Handle,
+	value Nonzero_Int_Handle,
 	count Rat_Parse_Power_Count,
 ) (status Arithmetic_Status) {
 	defer func() { Arithmetic_Status_Invariants(status, "rat_parse_multiply_five.status") }()
-	Int_Handle_Invariants(value, "rat_parse_multiply_five.value")
+	Nonzero_Int_Handle_Invariants(value, "rat_parse_multiply_five.value")
 	Rat_Parse_Power_Count_Invariants(count, "rat_parse_multiply_five.count")
 	for count > 0 {
 		carry := uint64(bits.WORD_64_MINIMUM)
@@ -6986,13 +6936,14 @@ func rat_parse_multiply_five(
 func Rat_Numerator_Into(destination Int_Handle, value Rat_Handle) {
 	Int_Handle_Invariants(destination, "rat_numerator_into.destination")
 	Rat_Handle_Invariants(value, "rat_numerator_into.value")
-	Int_Set(destination, &value.Integers.Numerator)
+	Int_Set(destination, (*Int)(&value.Integers.Numerator))
 }
 
 // Rat_Denominator_Into expands implicit denominator one into caller integer storage.
-func Rat_Denominator_Into(destination Int_Handle, value Rat_Handle) {
-	Int_Handle_Invariants(destination, "rat_denominator_into.destination")
+func Rat_Denominator_Into(reference Nonempty_Int_Handle, value Rat_Handle) {
+	Nonempty_Int_Handle_Invariants(reference, "rat_denominator_into.destination")
 	Rat_Handle_Invariants(value, "rat_denominator_into.value")
+	destination := (*Int)((*Nonempty_Int)(reference))
 	denominator := (*Int)(&value.Integers.Denominator)
 	if denominator.Count == WORD_COUNT_MINIMUM {
 		int_set_word(destination, Word(bits.CARRY_MAXIMUM), POLARITY_NONNEGATIVE)
@@ -7163,8 +7114,8 @@ func Rat_Float_Precision(
 	}()
 	Rat_Handle_Invariants(value, "rat_float_precision.value")
 	Rat_Float_Precision_Workspace_Handle_Invariants(workspace, "rat_float_precision.workspace")
-	denominator := &workspace.Integers.Denominator
-	Rat_Denominator_Into(denominator, value)
+	denominator := (*Int)(&workspace.Integers.Denominator)
+	Rat_Denominator_Into((*Nonempty_Int)(denominator), value)
 	two_places := Int_Trailing_Zero_Bit_Count(denominator)
 	aver.Always(
 		int(two_places) <= RAT_FLOAT_PRECISION_COUNT_MAXIMUM,
@@ -7175,7 +7126,7 @@ func Rat_Float_Precision(
 	five_places := Decimal_Place_Count(RAT_FLOAT_PRECISION_COUNT_MINIMUM)
 	for denominator.Count != Word_Count(WORD_COUNT_INCREMENT) ||
 		denominator.Words[WORD_COUNT_MINIMUM] != Word(bits.CARRY_MAXIMUM) {
-		remainder := rat_float_divide_by_decimal_factor(workspace.Integers)
+		remainder := rat_float_divide_by_decimal_factor((*Rat_Divisor)(denominator))
 		if remainder != Decimal_Factor_Remainder(bits.WORD_64_MINIMUM) {
 			return places, Boolean(false)
 		}
@@ -7197,7 +7148,7 @@ func Rat_Float_64_Bits(
 	}()
 	Rat_Handle_Invariants(value, "rat_float_64_bits.value")
 	Rat_Float_64_Workspace_Handle_Invariants(workspace, "rat_float_64_bits.workspace")
-	numerator_source := &value.Integers.Numerator
+	numerator_source := (*Int)(&value.Integers.Numerator)
 	if numerator_source.Count == WORD_COUNT_MINIMUM {
 		return Float_64_Value_Bits(FLOAT_64_VALUE_BITS_MINIMUM), Boolean(true)
 	}
@@ -7206,7 +7157,7 @@ func Rat_Float_64_Bits(
 	if denominator_source.Count != WORD_COUNT_MINIMUM {
 		exponent += SIGN_BYTE_COUNT_MAXIMUM - int(Int_Bit_Count(denominator_source))
 	}
-	rat_float_64_divide(value, workspace)
+	rat_float_64_divide((*Nonzero_Rat)((*Rat)(value)), workspace)
 	quotient := (*Int)(&workspace.Integers.Quotient)
 	remainder := (*Int)(&workspace.Integers.Remainder)
 	quotient_word, conversion_status := Int_Uint_64(quotient)
@@ -7300,15 +7251,15 @@ func rat_float_64_encode(
 	return Float_64_Value_Bits(encoded), result_exact
 }
 
-func rat_float_64_divide(value Rat_Handle, workspace Rat_Float_64_Workspace_Handle) {
-	Rat_Handle_Invariants(value, "rat_float_64_divide.value")
+func rat_float_64_divide(value Nonzero_Rat_Handle, workspace Rat_Float_64_Workspace_Handle) {
+	Nonzero_Rat_Handle_Invariants(value, "rat_float_64_divide.value")
 	Rat_Float_64_Workspace_Handle_Invariants(workspace, "rat_float_64_divide.workspace")
-	numerator := &workspace.Integers.Numerator
+	numerator := (*Int)(&workspace.Integers.Numerator)
 	denominator := (*Int)(&workspace.Integers.Denominator)
 	quotient := (*Int)(&workspace.Integers.Quotient)
 	remainder := (*Int)(&workspace.Integers.Remainder)
-	Int_Absolute(numerator, &value.Integers.Numerator)
-	Rat_Denominator_Into(denominator, value)
+	Int_Absolute(numerator, (*Int)(&value.Integers.Numerator))
+	Rat_Denominator_Into((*Nonempty_Int)(denominator), (*Rat)((*Nonzero_Rat)(value)))
 	exponent := int(Int_Bit_Count(numerator)) - int(Int_Bit_Count(denominator))
 	shift := FLOAT_64_ROUNDING_MANTISSA_BIT_COUNT - exponent
 	shift_status := Arithmetic_Status(STATUS_OK)
@@ -7331,22 +7282,43 @@ func rat_float_64_divide(value Rat_Handle, workspace Rat_Float_64_Workspace_Hand
 	)
 }
 
+// Rat_Divisor retains positive denominator within rational component bound.
+type Rat_Divisor Int
+
+// Rat_Divisor_Invariants checks normalized positive denominator storage.
+func Rat_Divisor_Invariants(value Rat_Divisor, namespace aver.Namespace) {
+	aver.Tree(value, namespace).
+		Range_Int(int(value.Count), WORD_COUNT_INCREMENT, RAT_WORD_COUNT_MAXIMUM).
+		Range_Int(len(value.Words), WORD_COUNT_INCREMENT, WORD_COUNT_MAXIMUM).
+		Ensure()
+	aver.Always(int(value.Count) <= len(value.Words),
+		"Rational divisor magnitude fits caller storage.")
+	aver.Always(value.Negative == POLARITY_NONNEGATIVE,
+		"Rational divisor carries positive sign.")
+	aver.Always(int_high_word(value.Words[:value.Count]) != 0,
+		"Rational divisor omits high zero words.")
+}
+
+// Rat_Divisor_Handle preserves denominator metadata during destructive division.
+type Rat_Divisor_Handle *Rat_Divisor
+
+// Rat_Divisor_Handle_Invariants checks present denominator storage.
+func Rat_Divisor_Handle_Invariants(value Rat_Divisor_Handle, namespace aver.Namespace) {
+	if value == nil {
+		return
+	}
+	Rat_Divisor_Invariants(*value, namespace)
+}
+
 func rat_float_divide_by_decimal_factor(
-	integers Rat_Float_Precision_Integers,
+	value Rat_Divisor_Handle,
 ) (remainder Decimal_Factor_Remainder) {
 	defer func() {
 		Decimal_Factor_Remainder_Invariants(
 			remainder, "rat_float_divide_by_decimal_factor.remainder",
 		)
 	}()
-	Rat_Float_Precision_Integers_Invariants(
-		integers, "rat_float_divide_by_decimal_factor.integers",
-	)
-	value := &integers.Denominator
-	aver.Always(
-		value.Negative == POLARITY_NONNEGATIVE,
-		"Decimal denominator factorization receives nonnegative magnitude.",
-	)
+	Rat_Divisor_Handle_Invariants(value, "rat_float_divide_by_decimal_factor.value")
 	word_remainder := uint64(bits.WORD_64_MINIMUM)
 	for index := int(value.Count) - 1; index >= WORD_COUNT_MINIMUM; index-- {
 		word := uint64(value.Words[index])
@@ -7388,8 +7360,8 @@ func rat_float_text_components(
 	unit := &workspace.Integers[RAT_FLOAT_UNIT_INDEX]
 	base := &workspace.Integers[RAT_FLOAT_BASE_INDEX]
 	exponent := &workspace.Integers[RAT_FLOAT_PRECISION_INDEX]
-	Int_Absolute(numerator, &value.Integers.Numerator)
-	Rat_Denominator_Into(denominator, value)
+	Int_Absolute(numerator, (*Int)(&value.Integers.Numerator))
+	Rat_Denominator_Into((*Nonempty_Int)(denominator), value)
 	Int_Set_Uint_64(unit, Word_64(bits.CARRY_MAXIMUM))
 	Int_Set_Uint_64(base, Word_64(BASE_DECIMAL))
 	Int_Set_Uint_64(exponent, Word_64(precision))
@@ -7514,9 +7486,9 @@ func rat_text_into(
 	Rat_Handle_Invariants(value, "rat_text_into_internal.value")
 	Rat_Text_Workspace_Handle_Invariants(workspace, "rat_text_into_internal.workspace")
 	Rat_Text_Form_Invariants(form, "rat_text_into_internal.form")
-	numerator := &value.Integers.Numerator
-	denominator := &workspace.Integers.Denominator
-	Rat_Denominator_Into(denominator, value)
+	numerator := (*Int)(&value.Integers.Numerator)
+	denominator := (*Int)(&workspace.Integers.Denominator)
+	Rat_Denominator_Into((*Nonempty_Int)(denominator), value)
 	numerator_digits := int_text_digits(
 		numerator, BASE_DECIMAL, &workspace.Text.Numerator,
 	)
@@ -7666,24 +7638,31 @@ func rat_binary_products(
 	)
 	Rat_Operation_Invariants(operation, "rat_binary_products.operation")
 	if operation == RAT_OPERATION_ADD {
-		rat_add_products(integers, multiplication)
+		rat_add_products(
+			(*Rat_Sum_Integers)((*Rat_Loaded_Integers)(integers)), multiplication)
 		return
 	}
 	if operation == RAT_OPERATION_SUBTRACT {
-		rat_subtract_products(integers, multiplication)
+		rat_subtract_products(
+			(*Rat_Sum_Integers)((*Rat_Loaded_Integers)(integers)), multiplication)
 		return
 	}
 	if operation == RAT_OPERATION_MULTIPLY {
 		rat_multiply_products(integers, multiplication)
 		return
 	}
-	rat_quotient_products(integers, multiplication)
+	rat_quotient_products(
+		&integers.Result_Numerator, &integers.Result_Denominator,
+		Rat_Loaded_Left_Numerator(integers.Left_Numerator),
+		Rat_Loaded_Left_Denominator(integers.Left_Denominator),
+		Rat_Nonzero_Component(integers.Right_Numerator),
+		Rat_Loaded_Right_Denominator(integers.Right_Denominator), multiplication)
 }
 
 func rat_add_products(
-	integers Rat_Loaded_Integers_Handle, multiplication Int_Multiplication_Workspace_Handle,
+	integers Rat_Sum_Integers_Handle, multiplication Int_Multiplication_Workspace_Handle,
 ) {
-	Rat_Loaded_Integers_Handle_Invariants(integers, "rat_add_products.integers")
+	Rat_Sum_Integers_Handle_Invariants(integers, "rat_add_products.integers")
 	Int_Multiplication_Workspace_Handle_Invariants(
 		multiplication, "rat_add_products.multiplication")
 	status := Int_Multiply(
@@ -7721,9 +7700,9 @@ func rat_add_products(
 }
 
 func rat_subtract_products(
-	integers Rat_Loaded_Integers_Handle, multiplication Int_Multiplication_Workspace_Handle,
+	integers Rat_Sum_Integers_Handle, multiplication Int_Multiplication_Workspace_Handle,
 ) {
-	Rat_Loaded_Integers_Handle_Invariants(integers, "rat_subtract_products.integers")
+	Rat_Sum_Integers_Handle_Invariants(integers, "rat_subtract_products.integers")
 	Int_Multiplication_Workspace_Handle_Invariants(
 		multiplication, "rat_subtract_products.multiplication",
 	)
@@ -7787,32 +7766,43 @@ func rat_multiply_products(
 }
 
 func rat_quotient_products(
-	integers Rat_Loaded_Integers_Handle, multiplication Int_Multiplication_Workspace_Handle,
+	numerator_storage Rat_Result_Numerator_Handle,
+	denominator_storage Rat_Result_Denominator_Handle,
+	left_numerator Rat_Loaded_Left_Numerator, left_denominator Rat_Loaded_Left_Denominator,
+	right_numerator Rat_Nonzero_Component, right_denominator Rat_Loaded_Right_Denominator,
+	multiplication Int_Multiplication_Workspace_Handle,
 ) {
-	Rat_Loaded_Integers_Handle_Invariants(integers, "rat_quotient_products.integers")
+	Rat_Result_Numerator_Handle_Invariants(numerator_storage, "rat_quotient_products.numerator")
+	Rat_Result_Denominator_Handle_Invariants(
+		denominator_storage, "rat_quotient_products.denominator")
+	Rat_Loaded_Left_Numerator_Invariants(left_numerator, "rat_quotient_products.left_numerator")
+	Rat_Loaded_Left_Denominator_Invariants(
+		left_denominator, "rat_quotient_products.left_denominator")
+	Rat_Nonzero_Component_Invariants(
+		right_numerator, "rat_quotient_products.right_numerator")
+	Rat_Loaded_Right_Denominator_Invariants(
+		right_denominator, "rat_quotient_products.right_denominator")
 	Int_Multiplication_Workspace_Handle_Invariants(
 		multiplication, "rat_quotient_products.multiplication",
 	)
+	numerator := (*Int)((*Rat_Result_Numerator)(numerator_storage))
+	denominator := (*Int)((*Rat_Result_Denominator)(denominator_storage))
 	status := Int_Multiply(
-		(*Int)(&integers.Result_Numerator), (*Int)(&integers.Left_Numerator),
-		(*Int)(&integers.Right_Denominator), multiplication,
+		numerator, (*Int)(&left_numerator), (*Int)(&right_denominator), multiplication,
 	)
 	aver.Always(
 		status == Arithmetic_Status(STATUS_OK),
 		"A rational quotient numerator product fits reserved integer storage.",
 	)
 	status = Int_Multiply(
-		(*Int)(&integers.Result_Denominator), (*Int)(&integers.Left_Denominator),
-		(*Int)(&integers.Right_Numerator), multiplication,
+		denominator, (*Int)(&left_denominator), (*Int)(&right_numerator), multiplication,
 	)
 	aver.Always(
 		status == Arithmetic_Status(STATUS_OK),
 		"A rational quotient denominator product fits reserved integer storage.",
 	)
 	// Coprime products skip general reduction, but still need denominator sign normalization.
-	if integers.Result_Denominator.Negative == POLARITY_NEGATIVE {
-		numerator := (*Int)(&integers.Result_Numerator)
-		denominator := (*Int)(&integers.Result_Denominator)
+	if denominator.Negative == POLARITY_NEGATIVE {
 		Int_Negate(numerator, numerator)
 		Int_Negate(denominator, denominator)
 	}
@@ -7824,11 +7814,11 @@ func rat_load_operands(workspace Rat_Workspace_Handle, left Rat_Handle, right Ra
 	Rat_Handle_Invariants(right, "rat_load_operands.right")
 	Int_Set(
 		(*Int)(&workspace.Integers.Left_Numerator),
-		&left.Integers.Numerator,
+		(*Int)(&left.Integers.Numerator),
 	)
 	Int_Set(
 		(*Int)(&workspace.Integers.Right_Numerator),
-		&right.Integers.Numerator,
+		(*Int)(&right.Integers.Numerator),
 	)
 	left_denominator := (*Int)(&workspace.Integers.Left_Denominator)
 	Int_Set(left_denominator, (*Int)(&left.Integers.Denominator))
@@ -7866,7 +7856,7 @@ func rat_normalize(
 			if numerator.Count > RAT_WORD_COUNT_MAXIMUM {
 				return STATUS_VALUE_OVERFLOW
 			}
-			Int_Set(&destination.Integers.Numerator, numerator)
+			Int_Set((*Int)(&destination.Integers.Numerator), numerator)
 			Int_Set((*Int)(&destination.Integers.Denominator), denominator)
 			return STATUS_OK
 		}
@@ -7886,7 +7876,7 @@ func rat_normalize(
 			if denominator.Count > RAT_WORD_COUNT_MAXIMUM {
 				return STATUS_VALUE_OVERFLOW
 			}
-			Int_Set(&destination.Integers.Numerator, numerator)
+			Int_Set((*Int)(&destination.Integers.Numerator), numerator)
 			Int_Set((*Int)(&destination.Integers.Denominator), denominator)
 			return STATUS_OK
 		}
@@ -7910,8 +7900,8 @@ func rat_normalize(
 	if denominator.Count > RAT_WORD_COUNT_MAXIMUM {
 		return STATUS_VALUE_OVERFLOW
 	}
-	Int_Set(&destination.Integers.Numerator, numerator)
-	Int_Set((*Int)(&destination.Integers.Denominator), denominator)
+	rat_commit_normalized(
+		destination, (*Rat_Component)(numerator), (*Rat_Positive_Component)(denominator))
 	return STATUS_OK
 }
 
@@ -8286,6 +8276,13 @@ func Int_Set_Bit(
 	Int_Bitwise_Workspace_Handle_Invariants(workspace, "int_set_bit.workspace")
 	word_index := int(index) / WORD_BIT_COUNT
 	if source.Negative == POLARITY_NONNEGATIVE {
+		// Clearing an absent bit needs only enough storage for the unchanged value.
+		if bit == BIT_CLEAR {
+			if word_index >= int(source.Count) {
+				Int_Set(destination, source)
+				return STATUS_OK
+			}
+		}
 		previous_count := destination.Count
 		source_count := source.Count
 		result_count := Word_Count(word_index + WORD_COUNT_INCREMENT)
@@ -9013,14 +9010,18 @@ func float_set_nonfinite(
 	}
 }
 
-func float_compare_magnitude(left, right Float_Finite_Handle) (order Order) {
+func float_compare_magnitude(
+	left, right Positive_Int, left_exponent, right_exponent Float_Exponent,
+) (order Order) {
 	defer func() { Order_Invariants(order, "float_compare_magnitude.order") }()
-	Float_Finite_Handle_Invariants(left, "float_compare_magnitude.left")
-	Float_Finite_Handle_Invariants(right, "float_compare_magnitude.right")
-	if left.Exponent < right.Exponent {
+	Positive_Int_Invariants(left, "float_compare_magnitude.left")
+	Positive_Int_Invariants(right, "float_compare_magnitude.right")
+	Float_Exponent_Invariants(left_exponent, "float_compare_magnitude.left_exponent")
+	Float_Exponent_Invariants(right_exponent, "float_compare_magnitude.right_exponent")
+	if left_exponent < right_exponent {
 		return ORDER_BEFORE
 	}
-	if left.Exponent > right.Exponent {
+	if left_exponent > right_exponent {
 		return ORDER_AFTER
 	}
 	// Normalization shifts must not mutate either caller-owned mantissa.
@@ -9028,8 +9029,8 @@ func float_compare_magnitude(left, right Float_Finite_Handle) (order Order) {
 	var right_words [WORD_COUNT_MAXIMUM]Word
 	left_magnitude := Int{Words: left_words[:]}
 	right_magnitude := Int{Words: right_words[:]}
-	Int_Set(&left_magnitude, (*Int)(&left.Mantissa))
-	Int_Set(&right_magnitude, (*Int)(&right.Mantissa))
+	Int_Set(&left_magnitude, (*Int)(&left))
+	Int_Set(&right_magnitude, (*Int)(&right))
 	left_count := Int_Bit_Count(&left_magnitude)
 	right_count := Int_Bit_Count(&right_magnitude)
 	if left_count < right_count {
@@ -9141,7 +9142,8 @@ func float_multiply_finite(
 						right.Mantissa.Words[WORD_COUNT_INCREMENT]),
 				}
 				if float_multiply_exact_double_word(
-					destination, left_words, right_words,
+					(*Float_Active)((*Float)(destination)),
+					left_words, right_words,
 					left.Exponent, right.Exponent, negative, workspace,
 				) {
 					return
@@ -9258,11 +9260,12 @@ func float_add_finite(
 		float_addition_load(workspace, left, Float_Addition_Shift(left_least-origin))
 		float_addition_add(workspace, right, Float_Addition_Shift(right_least-origin))
 	} else {
-		order := float_compare_magnitude(left, right)
+		order := float_compare_magnitude(
+			Positive_Int(left.Mantissa), Positive_Int(right.Mantissa),
+			left.Exponent, right.Exponent)
 		if order == ORDER_SAME {
 			float_set_operation_zero(
-				destination, float_zero_polarity(mode),
-				precision, mode,
+				destination, float_zero_polarity(mode), precision, mode,
 			)
 			return
 		}
@@ -9281,7 +9284,7 @@ func float_add_finite(
 			workspace, larger, Float_Addition_Shift(larger_least-origin),
 		)
 		float_addition_subtract(
-			workspace, (*Float_Active_Mantissa)(&smaller.Mantissa),
+			workspace, (*Positive_Int)(&smaller.Mantissa),
 			Float_Subtraction_Shift(smaller_least-origin),
 			Float_Addition_Result_Word_Count(result_count),
 		)
@@ -9372,12 +9375,12 @@ func float_addition_add(
 
 func float_addition_subtract(
 	workspace Float_Addition_Workspace_Handle,
-	source Float_Active_Mantissa_Handle,
+	source Positive_Int_Handle,
 	shift Float_Subtraction_Shift,
 	limit Float_Addition_Result_Word_Count,
 ) {
 	Float_Addition_Workspace_Handle_Invariants(workspace, "float_addition_subtract.workspace")
-	Float_Active_Mantissa_Handle_Invariants(source, "float_addition_subtract.source")
+	Positive_Int_Handle_Invariants(source, "float_addition_subtract.source")
 	Float_Subtraction_Shift_Invariants(shift, "float_addition_subtract.shift")
 	Float_Addition_Result_Word_Count_Invariants(
 		limit, "float_addition_subtract.limit",
@@ -9467,14 +9470,15 @@ func float_set_addition_result(
 		return
 	}
 	float_set_addition_mantissa(
-		destination, workspace, Float_Addition_Bit_Count(bit_count),
+		(*Float_Nonempty)((*Float)(destination)), workspace,
+		Float_Addition_Bit_Count(bit_count),
 		Float_Exponent(exponent), negative,
 		precision, mode,
 	)
 }
 
 func float_set_addition_mantissa(
-	destination Float_Handle,
+	reference Float_Nonempty_Handle,
 	workspace Float_Addition_Workspace_Handle,
 	bit_count Float_Addition_Bit_Count,
 	exponent Float_Exponent,
@@ -9482,7 +9486,8 @@ func float_set_addition_mantissa(
 	precision Float_Active_Precision,
 	mode Rounding_Mode,
 ) {
-	Float_Handle_Invariants(destination, "float_set_addition_mantissa.destination_initial")
+	Float_Nonempty_Handle_Invariants(
+		reference, "float_set_addition_mantissa.destination_initial")
 	Float_Addition_Workspace_Handle_Invariants(
 		workspace, "float_set_addition_mantissa.workspace")
 	Float_Addition_Bit_Count_Invariants(bit_count, "float_set_addition_mantissa.bit_count")
@@ -9490,6 +9495,7 @@ func float_set_addition_mantissa(
 	Polarity_Invariants(negative, "float_set_addition_mantissa.negative")
 	Float_Active_Precision_Invariants(precision, "float_set_addition_mantissa.precision")
 	Rounding_Mode_Invariants(mode, "float_set_addition_mantissa.mode")
+	destination := (*Float)((*Float_Nonempty)(reference))
 	retained_count := int(bit_count)
 	if retained_count > int(precision) {
 		retained_count = int(precision)
@@ -9504,7 +9510,7 @@ func float_set_addition_mantissa(
 		source_shift := uint(source_bit % WORD_BIT_COUNT)
 		word := workspace.Result[source_index] >> source_shift
 		if source_shift != 0 {
-			if source_index+WORD_COUNT_INCREMENT < len(workspace.Result) {
+			if (source_index+WORD_COUNT_INCREMENT)*WORD_BIT_COUNT < int(bit_count) {
 				word |= workspace.Result[source_index+WORD_COUNT_INCREMENT] <<
 					(WORD_BIT_COUNT - source_shift)
 			}
@@ -9524,7 +9530,7 @@ func float_set_addition_mantissa(
 	accuracy := ACCURACY_EXACT
 	if discard_count > BIT_COUNT_MINIMUM {
 		accuracy = float_round_addition_mantissa(
-			(*Float_Active_Mantissa)(&destination.Mantissa), workspace,
+			(*Positive_Int)(&destination.Mantissa), workspace,
 			Float_Addition_Active_Discard_Count(discard_count), &exponent,
 			negative, precision, mode,
 		)
@@ -9542,7 +9548,7 @@ func float_set_addition_mantissa(
 }
 
 func float_round_addition_mantissa(
-	mantissa Float_Active_Mantissa_Handle,
+	mantissa Positive_Int_Handle,
 	workspace Float_Addition_Workspace_Handle,
 	discard_count Float_Addition_Active_Discard_Count,
 	exponent Float_Exponent_Handle,
@@ -9551,7 +9557,7 @@ func float_round_addition_mantissa(
 	mode Rounding_Mode,
 ) (accuracy Accuracy) {
 	defer func() { Accuracy_Invariants(accuracy, "float_round_addition_mantissa.accuracy") }()
-	Float_Active_Mantissa_Handle_Invariants(
+	Positive_Int_Handle_Invariants(
 		mantissa, "float_round_addition_mantissa.mantissa_initial",
 	)
 	Float_Addition_Workspace_Handle_Invariants(
@@ -9614,11 +9620,11 @@ func float_addition_sticky(
 }
 
 func float_increment_mantissa(
-	mantissa Float_Active_Mantissa_Handle,
+	mantissa Positive_Int_Handle,
 	precision Float_Active_Precision,
 	exponent Float_Exponent_Handle,
 ) {
-	Float_Active_Mantissa_Handle_Invariants(
+	Positive_Int_Handle_Invariants(
 		mantissa, "float_increment_mantissa.mantissa_initial",
 	)
 	Float_Active_Precision_Invariants(precision, "float_increment_mantissa.precision")
@@ -9634,7 +9640,7 @@ func float_increment_mantissa(
 	}
 	overflow := carry != bits.Carry_In(bits.CARRY_MINIMUM)
 	if !overflow {
-		integer := (*Int)((*Float_Active_Mantissa)(mantissa))
+		integer := (*Int)((*Positive_Int)(mantissa))
 		overflow = int(Int_Bit_Count(integer)) > int(precision)
 	}
 	if overflow {
@@ -9709,13 +9715,13 @@ func float_set_magnitude(
 }
 
 func float_set_float_64_finite(
-	destination Float_Handle,
+	reference Float_Nonempty_Handle,
 	exponent_field Float_64_Finite_Exponent_Field,
 	mantissa_field Float_64_Mantissa_Field,
 	negative Polarity,
 	precision Float_Active_Precision,
 ) {
-	Float_Handle_Invariants(destination, "float_set_float_64_finite.destination_initial")
+	Float_Nonempty_Handle_Invariants(reference, "float_set_float_64_finite.destination_initial")
 	Float_64_Finite_Exponent_Field_Invariants(
 		exponent_field, "float_set_float_64_finite.exponent_field",
 	)
@@ -9724,6 +9730,7 @@ func float_set_float_64_finite(
 	)
 	Polarity_Invariants(negative, "float_set_float_64_finite.negative")
 	Float_Active_Precision_Invariants(precision, "float_set_float_64_finite.precision")
+	destination := (*Float)((*Float_Nonempty)(reference))
 	mantissa := uint64(mantissa_field)
 	exponent := FLOAT_64_SUBNORMAL_EXPONENT - FLOAT_64_MANTISSA_BIT_COUNT
 	if exponent_field != 0 {
@@ -9791,7 +9798,7 @@ func float_round(destination Float_Handle, precision Float_Precision) {
 	rounding_bit := Bit_Value(rounding_word >> uint(rounding_index%WORD_BIT_COUNT) & 1)
 	sticky_bit := BIT_CLEAR
 	if float_low_bits_nonzero(
-		(*Float_Active_Mantissa)(&destination.Mantissa),
+		(*Positive_Int)(&destination.Mantissa),
 		Float_Discarded_Bit_Count(rounding_index),
 	) {
 		sticky_bit = BIT_SET
@@ -9853,10 +9860,10 @@ func float_round_increment(
 }
 
 func float_low_bits_nonzero(
-	value Float_Active_Mantissa_Handle, count Float_Discarded_Bit_Count,
+	value Positive_Int_Handle, count Float_Discarded_Bit_Count,
 ) (nonzero Boolean) {
 	defer func() { Boolean_Invariants(nonzero, "float_low_bits_nonzero.nonzero") }()
-	Float_Active_Mantissa_Handle_Invariants(value, "float_low_bits_nonzero.value")
+	Positive_Int_Handle_Invariants(value, "float_low_bits_nonzero.value")
 	Float_Discarded_Bit_Count_Invariants(count, "float_low_bits_nonzero.count")
 	word_count := int(count) / WORD_BIT_COUNT
 	for word_index := WORD_COUNT_MINIMUM; word_index < word_count; word_index++ {
