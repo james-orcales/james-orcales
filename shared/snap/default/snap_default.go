@@ -8,10 +8,10 @@
 package snap
 
 import (
-	"bytes"
-	"os"
 	"runtime"
+	"syscall"
 	"testing"
+	"unsafe"
 
 	"local/james-orcales/shared/snap"
 )
@@ -43,23 +43,78 @@ type Entry[T any] = snap.Entry[T]
 var Default = Init_Default_Snapper()
 
 // Init_Default_Snapper builds a Snapper wired to the host OS: the local
-// filesystem, os.Stderr, os.WriteFile, and runtime.Callers. This is the one
+// filesystem, standard error, file writes, and runtime.Callers. This is the one
 // place in the snap tree where ambient binding is permitted.
 func Init_Default_Snapper() (snapper *snap.Snapper) {
 	return &snap.Snapper{
-		File_System: os.DirFS("/"),
-		Output:      os.Stderr,
-		Write_File:  os.WriteFile,
+		Read_File:    operating_read_file,
+		Output_Write: standard_error_write,
+		Write_File:   operating_write_file,
 		Get_Caller: func(skip int) (frame_information snap.Frame_Information, err error) {
 			callers := [CALLER_FRAME_COUNT]uintptr{}
 			count := runtime.Callers(skip, callers[:])
 			frame, _ := runtime.CallersFrames(callers[:count]).Next()
 			return snap.Frame_Information{File: frame.File, Line: frame.Line}, nil
 		},
-		Stdout: &bytes.Buffer{},
-		Stderr: &bytes.Buffer{},
+		Stdout: &snap.Buffer{},
+		Stderr: &snap.Buffer{},
 		Edits:  make(map[string][]snap.File_Edit),
 	}
+}
+
+func operating_read_file(
+	_ unsafe.Pointer, path string,
+) (data snap.Data, err error) {
+	file, open_error := syscall.Open("/"+path, syscall.O_RDONLY, 0)
+	if open_error != nil {
+		return nil, open_error
+	}
+	defer syscall.Close(file)
+	var facts syscall.Stat_t
+	if stat_error := syscall.Fstat(file, &facts); stat_error != nil {
+		return nil, stat_error
+	}
+	data = make(snap.Data, int(facts.Size))
+	read_count := 0
+	for read_count < len(data) {
+		count, read_error := syscall.Read(file, data[read_count:])
+		if read_error != nil {
+			return nil, read_error
+		}
+		if count == 0 {
+			break
+		}
+		read_count += count
+	}
+	return data[:read_count], nil
+}
+
+func operating_write_file(
+	_ unsafe.Pointer, path string, data snap.Data, permission snap.Permission,
+) (err error) {
+	file, open_error := syscall.Open(
+		path, syscall.O_WRONLY|syscall.O_CREAT|syscall.O_TRUNC, uint32(permission),
+	)
+	if open_error != nil {
+		return open_error
+	}
+	defer syscall.Close(file)
+	written := 0
+	for written < len(data) {
+		count, write_error := syscall.Write(file, data[written:])
+		if write_error != nil {
+			return write_error
+		}
+		written += count
+	}
+	return nil
+}
+
+func standard_error_write(
+	_ unsafe.Pointer, data snap.Data,
+) (written snap.Data_Size, err error) {
+	count, write_error := syscall.Write(2, data)
+	return snap.Data_Size(count), write_error
 }
 
 // Init creates a snapshot bound to Default with the call-site location
@@ -117,13 +172,4 @@ func Batch_Expect[T any](t *testing.T, function func(T) (result any), entries []
 func Batch_Expect_Panic[T any](t *testing.T, function func(T), entries []Entry[T]) {
 	t.Helper()
 	snap.Batch_Expect_Panic(t, function, entries)
-}
-
-// Edits_For returns the recorded line-delta edits Default has accumulated for
-// path. Exposed for the package-level use case where tests want to inspect
-// edits without holding a *Snapper themselves.
-func Edits_For(path string) (edits []File_Edit) {
-	Default.Edits_Mu.Lock()
-	defer Default.Edits_Mu.Unlock()
-	return append([]File_Edit(nil), Default.Edits[path]...)
 }

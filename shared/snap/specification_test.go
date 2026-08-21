@@ -1,12 +1,10 @@
 package snap_test
 
 import (
-	"bytes"
+	"errors"
 	"fmt"
-	"io/fs"
-	"strings"
 	"testing"
-	"testing/fstest"
+	"unsafe"
 
 	"local/james-orcales/shared/snap"
 )
@@ -23,7 +21,7 @@ func Test_Equal_Match(t *testing.T) {
 	if !snap.Snapshot_Is_Equal(snapshot, "hello") {
 		t.Fatal("expected Snapshot_Is_Equal to return true for matching strings")
 	}
-	if output_buffer.Len() != 0 {
+	if snap.Buffer_Size(output_buffer) != 0 {
 		t.Fatalf("expected no diagnostic output, got: %s", output_buffer.String())
 	}
 }
@@ -40,7 +38,7 @@ func Test_Equal_Mismatch(t *testing.T) {
 	if snap.Snapshot_Is_Equal(snapshot, "actual") {
 		t.Fatal("expected Snapshot_Is_Equal to return false for mismatching strings")
 	}
-	if !strings.Contains(output_buffer.String(), "Snapshot mismatch") {
+	if !contains(output_buffer.String(), "Snapshot mismatch") {
 		t.Fatalf("expected mismatch header in output, got: %s", output_buffer.String())
 	}
 }
@@ -58,10 +56,10 @@ func Test_Equal_Legend(t *testing.T) {
 	snap.Snapshot_Is_Equal(snapshot, "actual")
 
 	output := output_buffer.String()
-	if !strings.Contains(output, "\033[31mexpected\033[0m") {
+	if !contains(output, "\033[31mexpected\033[0m") {
 		t.Fatalf("expected red 'expected' in legend, got:\n%s", output)
 	}
-	if !strings.Contains(output, "\033[32mactual\033[0m") {
+	if !contains(output, "\033[32mactual\033[0m") {
 		t.Fatalf("expected green 'actual' in legend, got:\n%s", output)
 	}
 }
@@ -84,10 +82,10 @@ func Test_Edit_Rewrite(t *testing.T) {
 	if !snap.Snapshot_Is_Equal(snapshot, "new") {
 		t.Fatal("expected Snapshot_Is_Equal with Should_Edit=true to return true")
 	}
-	if !strings.Contains(output_buffer.String(), "UPDATED SNAPSHOT") {
+	if !contains(output_buffer.String(), "UPDATED SNAPSHOT") {
 		t.Fatalf("expected UPDATED SNAPSHOT notice, got: %s", output_buffer.String())
 	}
-	if !strings.Contains(w_buffer.String(), "snap.Init(`new`)") {
+	if !contains(w_buffer.String(), "snap.Init(`new`)") {
 		t.Fatalf("expected W to contain snap.Init(`new`), got: %s", w_buffer.String())
 	}
 }
@@ -160,7 +158,7 @@ func Test_Batch_Expect(t *testing.T) {
 		},
 	}
 	snap.Batch_Expect(t, func(in string) (result any) {
-		return strings.ToUpper(in)
+		return upper(in)
 	}, entries)
 }
 
@@ -182,27 +180,85 @@ func Test_Run_Capture(t *testing.T) {
 
 // Builds a Snapper backed by an in-memory file system and capture buffers.
 func test_snapper(source map[string]string) (
-	s *snap.Snapper, output_buffer *bytes.Buffer, w_buffer *bytes.Buffer,
+	s *snap.Snapper, output_buffer *snap.Buffer, w_buffer *snap.Buffer,
 ) {
-	memory_file_system := fstest.MapFS{}
-	for path, content := range source {
-		memory_file_system[path] = &fstest.MapFile{Data: []byte(content)}
-	}
-	output_buffer = &bytes.Buffer{}
-	w_buffer = &bytes.Buffer{}
+	memory_file_system := memory_files(source)
+	output_buffer = &snap.Buffer{}
+	w_buffer = &snap.Buffer{}
 	s = &snap.Snapper{
-		File_System: memory_file_system,
-		W:           w_buffer,
-		Output:      output_buffer,
-		Write_File: func(path string, data []byte, perm fs.FileMode) (err error) {
+		File_System_State: unsafe.Pointer(&memory_file_system),
+		Read_File:         memory_read,
+		Writer_State:      unsafe.Pointer(w_buffer),
+		Write:             buffer_write,
+		Output_State:      unsafe.Pointer(output_buffer),
+		Output_Write:      buffer_write,
+		Write_File: func(
+			state unsafe.Pointer, path string, data snap.Data,
+			permission snap.Permission,
+		) (err error) {
 			return nil
 		},
 		Get_Caller: func(skip int) (frame_information snap.Frame_Information, err error) {
 			return snap.Frame_Information{}, nil
 		},
-		Stdout: &bytes.Buffer{},
-		Stderr: &bytes.Buffer{},
+		Stdout: &snap.Buffer{},
+		Stderr: &snap.Buffer{},
 		Edits:  make(map[string][]snap.File_Edit),
 	}
 	return s, output_buffer, w_buffer
+}
+
+type memory_files map[string]string
+
+func memory_read(
+	state unsafe.Pointer, path string,
+) (data snap.Data, err error) {
+	content, found := (*(*memory_files)(state))[path]
+	if !found {
+		return nil, errors.New("missing file")
+	}
+	return snap.Data(content), nil
+}
+
+func buffer_write(
+	state unsafe.Pointer, data snap.Data,
+) (written snap.Data_Size, err error) {
+	return snap.Buffer_Write((*snap.Buffer)(state), data)
+}
+
+func contains(value string, sought string) (present bool) {
+	if len(sought) == 0 {
+		return true
+	}
+	if len(sought) > len(value) {
+		return false
+	}
+	last_start := len(value) - len(sought)
+	for start_index := 0; start_index <= last_start; start_index++ {
+		matched := true
+		value_index := start_index
+		for sought_index := 0; sought_index < len(sought); sought_index++ {
+			if value[value_index] != sought[sought_index] {
+				matched = false
+				break
+			}
+			value_index++
+		}
+		if matched {
+			return true
+		}
+	}
+	return false
+}
+
+func upper(value string) (result string) {
+	data := []byte(value)
+	for index := 0; index < len(data); index++ {
+		if data[index] >= 'a' {
+			if data[index] <= 'z' {
+				data[index] -= 'a' - 'A'
+			}
+		}
+	}
+	return string(data)
 }
