@@ -4,7 +4,7 @@ import (
 	"reflect"
 	"testing"
 
-	"local/james-orcales/shared/random/prng"
+	"local/james-orcales/shared/simulation/prng"
 
 	"local/james-orcales/shared/invariant/default"
 )
