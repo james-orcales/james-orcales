@@ -2623,16 +2623,6 @@ func Active_Secret_Path_Failures_Invariants(
 		Ensure()
 }
 
-// External_Key_Set tracks bounded declaration presence.
-type External_Key_Set map[External_Key]Boolean
-
-// External_Key_Set_Invariants bounds duplicate detection storage.
-func External_Key_Set_Invariants(value External_Key_Set, namespace aver.Namespace) {
-	aver.Tree(value, namespace).
-		Range_Int(len(value), slices.COUNT_MINIMUM, slices.COUNT_MAXIMUM).
-		Ensure()
-}
-
 // Environment_Sources indexes bounded environment classifications.
 type Environment_Sources map[External_Key]Environment_Source
 
@@ -7558,12 +7548,17 @@ func secret_key(paths Secret_Paths) (key Secret_Key) {
 func external_validate(environment Environment_Declarations, secrets Secrets) {
 	Environment_Declarations_Invariants(environment, "external_validate.environment")
 	Secrets_Invariants(secrets, "external_validate.secrets")
-	seen := External_Key_Set{}
+	// Pairwise scan over the bounded declarations: a map would grow on heap
+	// past eight keys, and construction runs once so quadratic cost is fine.
 	for index := range environment {
 		variable := environment[index]
 		external_key_validate(variable.Key)
-		aver.Always(!seen[variable.Key], "Environment external key is unique.")
-		seen[variable.Key] = true
+		for earlier_index := 0; earlier_index < index; earlier_index++ {
+			aver.Always(
+				environment[earlier_index].Key != variable.Key,
+				"Environment external key is unique.",
+			)
+		}
 		value := External_Value{
 			Type: variable.Type, Enumeration: variable.Enumeration,
 			String: variable.State.String, Integer: variable.State.Integer,
@@ -7587,8 +7582,18 @@ func external_validate(environment Environment_Declarations, secrets Secrets) {
 		secret := &secrets[index]
 		secret_validate_paths(secret.Key, secret.Paths)
 		key := External_Key(secret.Key)
-		aver.Always(!seen[key], "Secret external key is unique.")
-		seen[key] = true
+		for variable_index := range environment {
+			aver.Always(
+				environment[variable_index].Key != key,
+				"Secret external key is absent from environment keys.",
+			)
+		}
+		for earlier_index := 0; earlier_index < index; earlier_index++ {
+			aver.Always(
+				External_Key(secrets[earlier_index].Key) != key,
+				"Secret external key is unique.",
+			)
+		}
 		external_value_validate(External_Value{
 			Type: secret.Type, Enumeration: secret.Enumeration,
 		}, false)
