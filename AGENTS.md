@@ -1,25 +1,17 @@
+AGENTS ARE NEVER AUTHORIZED TO INSTALL ANYTHING. 
+AGENTS ARE NEVER AUTHORIZED TO COMMIT OR MAKE PULL REQUESTS.
+
+Default error-handling pattern is to log the error and continue with the zero value.
 Follow YAGNI principles
-End-to-end Dependency Injection
-Everything must be bounded
 Treat unvalidated input as intentionally malicious
+Test-Driven Development
+Do not write comments. Do not delete existing comments.
 
-## Test-Driven Development
+## Development VM
 
-**WRITE FAILING TESTS FIRST, THEN IMPLEMENT.**
-A package's test suite must finish within 10 seconds locally.
-
-## Comments
-
-Comment aggressively, but only the WHY — never the WHAT. Assert it instead when possible.
-
-The code shows what it does; restating it is noise. A comment earns its place by explaining what
-the code cannot: why this approach over the alternative, why a constraint or invariant exists, why
-a value is what it is, why something that looks removable is load-bearing.
-
-## Naming
-
-Name a thing for what it is. Not a use case it serves, not a behavior it performs — what it *is*.
-`Buffer`, not `RequestBuffer`. `Clock`, not `TimeoutClock`. The narrower name is a lie the moment
-a second caller appears.
-
-Use snake_case and Ada_Case.
+The Parallels NixOS VM is at `root@10.211.55.10` (ARM64, 4 GB RAM).
+Connect from macOS with `ssh -o UseKeychain=yes root@10.211.55.10`.
+For noninteractive commands, also pass `-o BatchMode=yes`.
+The SSH key is already authorized on the VM. This agent's process may have no
+SSH agent; use macOS Keychain support before diagnosing an authentication failure
+as a missing or unauthorized key.
