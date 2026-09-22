@@ -58,7 +58,6 @@ PROMPT=$'\n\n%B%F{cyan}%~%f%b$(git_prompt)\n%(!.#.$) '
 # Fish-syntax expansions (set/and/(cmd)) are translated to zsh (x=/&&/$(cmd)).
 # jj naming: every jj abbr starts with `a`; 2nd letter follows the verb.
 typeset -A abbreviations=(
-        sh    "sh -c '!!'"
         n     'nvim .'
 
         a     'jj'
@@ -90,7 +89,6 @@ typeset -A abbreviations=(
 
         ash   'jj show --no-pager'
         ashs  'jj show --no-pager --summary'
-        ashn  'jj show --name-only'
 
         as    'jj squash'
         asi   'jj squash --interactive'
