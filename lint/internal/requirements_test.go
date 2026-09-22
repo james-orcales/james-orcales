@@ -1,7 +1,6 @@
 package lint_test
 
 import (
-	"io/fs"
 	"local/james-orcales/lint/internal/strings"
 	"testing"
 	"testing/fstest"
@@ -12,10 +11,7 @@ import (
 // This file is the doctrine, enforced by the lint tool, which dogfoods on this
 // very package whenever the tool lints lint/internal. Each Test_<Heading> builds
 // an in-memory fixture, violates exactly the rule its heading names, and asserts
-// the tool reports it — so there is no duplicated checking logic. The
-// REQUIREMENTS.md-structure rules now live in the requirements subpackage and
-// are tested there; requirements_baseline remains here for the markdown and
-// file-count rules that build on a minimal, self-consistent spec fixture.
+// the tool reports it — so there is no duplicated checking logic.
 
 // Test_Diagnostics_Tier_One verifies a tier-one diagnostic always prints, and
 // any tier-one anywhere in scope suppresses every tier-two diagnostic.
@@ -25,14 +21,14 @@ func Test_Diagnostics_Tier_One(t *testing.T) {
 	lint_main(t, &lint.Main_Input{
 		Fsys: fstest.MapFS{
 			"a.go": &fstest.MapFile{Data: []byte(
-				"// missing period at end of this comment\npackage p\n")},
+				"package p\n\nconst bad = 1\n")},
 			"b.go": &fstest.MapFile{Data: gofmt_must(t, "// Package p is a fixture.\n"+
 				"package p\n\nfunc f() { f() }\n")},
 		},
 		Stdout: &stdout,
 		Stderr: &strings.Builder{},
 	})
-	if !strings.Contains(stdout.String(), "does not end with") {
+	if !strings.Contains(stdout.String(), "Rename bad -> BAD") {
 		t.Fatalf("the tier-one diagnostic must print; got: %s", stdout.String())
 	}
 	if strings.Contains(stdout.String(), "recurse") {
@@ -58,230 +54,15 @@ func Test_Diagnostics_Tier_Two(t *testing.T) {
 	}
 }
 
-// Test_Repository_Ignored_Directories verifies a banned script that would be
+// Test_Repository_Ignored_Directories verifies a malformed Go file that would be
 // flagged anywhere else is silent under an ignored directory.
 func Test_Repository_Ignored_Directories(t *testing.T) {
 	t.Parallel()
 	files := map[string][]byte{
-		"vendor/build.sh": []byte("echo hi\n"),
+		"vendor/build.go": []byte("echo hi\n"),
 	}
-	if requirements_flags(t, files, "as a go script") {
-		t.Fatal("a script under an ignored directory must not be flagged")
-	}
-}
-
-// Test_Repository_Path_Casing verifies a hyphenated directory name is flagged.
-func Test_Repository_Path_Casing(t *testing.T) {
-	t.Parallel()
-	files := map[string][]byte{
-		"bad-dir/x.go": []byte("// Package x is a fixture.\npackage x\n"),
-	}
-	if !requirements_flags(t, files, "Rename bad-dir -> bad_dir") {
-		t.Fatal("a hyphenated directory name must be flagged")
-	}
-}
-
-// Test_Repository_Symlinks pins the tracked-symlink rule: a tracked symlink must
-// resolve to a tracked target. An untracked symlink, and every symlink when there
-// is no tracked set, are exempt.
-func Test_Repository_Symlinks(t *testing.T) {
-	t.Parallel()
-	// A target outside the tracked set is flagged whether it is missing on disk,
-	// escapes the repo, or merely sits outside the set.
-	if !requirements_diagnosed(
-		symlink_lint(t, "missing", nil, map[string]bool{"link": true}),
-		"is not tracked") {
-		t.Fatal("an untracked symlink target must be flagged")
-	}
-	// A target that is a tracked file is clean.
-	if requirements_diagnosed(symlink_lint(t, "real.txt", nil,
-		map[string]bool{"link": true, "real.txt": true}), "symlink") {
-		t.Fatal("a tracked file target must not be flagged")
-	}
-	// A target directory that holds tracked files is clean.
-	if requirements_diagnosed(symlink_lint(t, "dir", nil,
-		map[string]bool{"link": true, "dir/x": true}), "symlink") {
-		t.Fatal("a tracked directory target must not be flagged")
-	}
-	// Only tracked symlinks are checked, so one absent from the set is skipped.
-	if requirements_diagnosed(symlink_lint(t, "missing", nil,
-		map[string]bool{"other": true}), "symlink") {
-		t.Fatal("an untracked symlink must not be checked")
-	}
-	// With no tracked set (a non-git tree) the rule self-disables.
-	if requirements_diagnosed(symlink_lint(t, "missing", nil, nil), "symlink") {
-		t.Fatal("a nil tracked set must disable the check")
-	}
-	// A symlink to its own path is flagged though its own path is tracked.
-	if !requirements_diagnosed(
-		symlink_lint(t, "link", nil, map[string]bool{"link": true}),
-		"points to itself") {
-		t.Fatal("a self-referential symlink must be flagged")
-	}
-	// An unreadable target cannot be verified, so it is flagged.
-	if !requirements_diagnosed(
-		symlink_lint(t, "x", fs.ErrInvalid, map[string]bool{"link": true}),
-		"cannot read the symlink target") {
-		t.Fatal("an unreadable symlink target must be flagged")
-	}
-}
-
-// Test_Repository_Banned_Script_Extensions verifies a file flagged by its
-// scripting extension is caught.
-func Test_Repository_Banned_Script_Extensions(t *testing.T) {
-	t.Parallel()
-	files := map[string][]byte{
-		"build.sh": []byte("echo hi\n"),
-	}
-	if !requirements_flags(t, files, "as a go script") {
-		t.Fatal("a shell script must be flagged")
-	}
-}
-
-// Test_Repository_Banned_Build_Files verifies a file flagged by its base name
-// is caught.
-func Test_Repository_Banned_Build_Files(t *testing.T) {
-	t.Parallel()
-	files := map[string][]byte{
-		"Makefile": []byte("all:\n\techo hi\n"),
-	}
-	if !requirements_flags(t, files, "as a go script") {
-		t.Fatal("a makefile base name must be flagged")
-	}
-}
-
-// Test_Repository_Banned_Archives verifies an xz-compressed file is flagged.
-func Test_Repository_Banned_Archives(t *testing.T) {
-	t.Parallel()
-	files := map[string][]byte{
-		"backup.tar.xz": []byte("\xfd7zXZ\x00"),
-	}
-	if !requirements_flags(t, files, "Do not use a .xz file") {
-		t.Fatal("an xz file must be flagged")
-	}
-}
-
-// Test_Repository_Conflict_Markers verifies a merge-conflict marker line is flagged.
-func Test_Repository_Conflict_Markers(t *testing.T) {
-	t.Parallel()
-	files := map[string][]byte{
-		"notes.txt": []byte("ours\n<<<<<<< HEAD\ntheirs\n"),
-	}
-	if !requirements_flags(t, files, "Resolve the conflict") {
-		t.Fatal("a conflict marker must be flagged")
-	}
-}
-
-// Test_Repository_Github_Actions verifies a uses: line in a workflow is flagged.
-func Test_Repository_Github_Actions(t *testing.T) {
-	t.Parallel()
-	files := map[string][]byte{
-		".github/workflows/ci.yml": []byte("steps:\n  - uses: actions/checkout@v4\n"),
-	}
-	if !repository_flags(t, files, "Do not use a third-party github action") {
-		t.Fatal("a uses: line must be flagged")
-	}
-}
-
-// Test_Markdown_Line_Width verifies a line beyond the display-column cap is
-// flagged in Markdown prose, in fenced code, and in Go source, while a table row
-// and a Go raw string literal — neither of which can wrap — stay exempt.
-func Test_Markdown_Line_Width(t *testing.T) {
-	t.Parallel()
-	files := requirements_baseline(t)
-	requirements_markdown_append(files, "\n# Wide\n\n"+strings.Repeat("x", 120)+"\n")
-	if !requirements_diagnosed(requirements_self_diagnostics(t, files),
-		"visual limit") {
-		t.Fatal("an over-wide markdown line must be flagged")
-	}
-	// A table row over the cap stays exempt: pipe-delimited cells cannot wrap to
-	// the next line, so the column rule cannot apply to them.
-	table := requirements_baseline(t)
-	requirements_markdown_append(table, "\n| "+strings.Repeat("x", 120)+" |\n")
-	if requirements_diagnosed(requirements_self_diagnostics(t, table),
-		"visual limit") {
-		t.Fatal("an over-wide table row must be exempt")
-	}
-	// A long line inside a fenced code block is NOT exempt: code is held to the
-	// same visual cap as prose.
-	fenced := requirements_baseline(t)
-	requirements_markdown_append(fenced, "\n```\n"+strings.Repeat("x", 120)+"\n```\n")
-	if !requirements_diagnosed(requirements_self_diagnostics(t, fenced),
-		"visual limit") {
-		t.Fatal("an over-wide line inside a fenced code block must be flagged")
-	}
-	// The table-row and URL exemptions are markdown-rendering allowances; inside a
-	// fence the line is literal code, where that rationale evaporates, so a
-	// table-shaped or URL-bearing code line is held to the cap like any other.
-	fenced_table := requirements_baseline(t)
-	requirements_markdown_append(fenced_table,
-		"\n```\n| "+strings.Repeat("x", 120)+" |\n```\n")
-	if !requirements_diagnosed(requirements_self_diagnostics(t, fenced_table),
-		"visual limit") {
-		t.Fatal("an over-wide table-shaped line inside a fence must be flagged")
-	}
-	fenced_url := requirements_baseline(t)
-	requirements_markdown_append(fenced_url,
-		"\n```\nhttps://"+strings.Repeat("x", 120)+"\n```\n")
-	if !requirements_diagnosed(requirements_self_diagnostics(t, fenced_url),
-		"visual limit") {
-		t.Fatal("an over-wide URL line inside a fence must be flagged")
-	}
-	// In prose the URL exemption holds: an unbreakable URL has no fold point.
-	prose_url := requirements_baseline(t)
-	requirements_markdown_append(prose_url,
-		"\nSee https://"+strings.Repeat("x", 120)+"\n")
-	if requirements_diagnosed(requirements_self_diagnostics(t, prose_url),
-		"visual limit") {
-		t.Fatal("a prose line dominated by a URL must be exempt")
-	}
-	source := requirements_one_file("package fixture\n\n// " + strings.Repeat("x", 110) +
-		"\n// F does.\nfunc F() (n int) {\n\treturn 0\n}\n")
-	if !requirements_flags(t, source, "characters. The maximum is 100") {
-		t.Fatal("an over-wide source line must be flagged")
-	}
-	// A long line inside a backtick raw string literal is exempt: the bytes are
-	// data, not wrappable source, so the column cap cannot apply.
-	raw := requirements_one_file("package fixture\n\n// X is a fixture.\nconst X = `" +
-		strings.Repeat("x", 120) + "`\n")
-	if requirements_flags(t, raw, "characters. The maximum is 100") {
-		t.Fatal("a long line inside a raw string literal must be exempt")
-	}
-}
-
-// Test_Markdown_Whitespace verifies a Markdown prose line with trailing
-// whitespace is flagged.
-func Test_Markdown_Whitespace(t *testing.T) {
-	t.Parallel()
-	files := map[string][]byte{
-		"notes.md": []byte("# Title\n\nIt trails.   \n"),
-	}
-	if !requirements_flags(t, files, "markdown line has trailing whitespace") {
-		t.Fatal("a trailing-whitespace markdown line must be flagged")
-	}
-}
-
-// Test_Markdown_Agent_Documentation_Size verifies an agent doc beyond the line
-// cap is flagged.
-func Test_Markdown_Agent_Documentation_Size(t *testing.T) {
-	t.Parallel()
-	files := map[string][]byte{
-		"CLAUDE.md": []byte(strings.Repeat("line\n", 101)),
-	}
-	if !requirements_flags(t, files, "Divide the file or remove content") {
-		t.Fatal("an over-long agent doc must be flagged")
-	}
-}
-
-// Test_Markdown_Agent_Documentation_Pairing verifies a CLAUDE.md without its
-// AGENTS.md sibling is flagged.
-func Test_Markdown_Agent_Documentation_Pairing(t *testing.T) {
-	t.Parallel()
-	files := map[string][]byte{
-		"top/CLAUDE.md": []byte("Shared instructions.\n"),
-	}
-	if !repository_flags(t, files, "There is no AGENTS.md") {
-		t.Fatal("an unpaired CLAUDE.md must be flagged")
+	if requirements_flags(t, files, "expected 'package'") {
+		t.Fatal("a Go file under an ignored directory must not be flagged")
 	}
 }
 
@@ -536,105 +317,6 @@ func Test_Source_And_Test_Bans_Blank_Imports(t *testing.T) {
 	}
 }
 
-// Test_Source_And_Test_Bans_Banned_Imports verifies banned families stay unavailable.
-func Test_Source_And_Test_Bans_Banned_Imports(t *testing.T) {
-	t.Parallel()
-	banned_paths := []string{
-		"bytes",
-		`\x62ytes`,
-		"strings",
-		"slices",
-		"strconv",
-		"archive/tar",
-		"compress/gzip",
-		"container/list",
-		"encoding/json",
-		"flag",
-		"io",
-		"io/fs",
-		"math/bits",
-		"math/rand/v2",
-		"crypto/rand",
-		"crypto/rand/v2",
-		"rand",
-		"unicode/utf8",
-		"uuid",
-		"uuid/v2",
-	}
-	for _, import_path := range banned_paths {
-		files := requirements_one_file(
-			"package fixture\n\nimport \"" + import_path + "\"\n")
-		if !requirements_flags(t, files, "Banned import") {
-			t.Errorf("import %q must be flagged", import_path)
-		}
-	}
-	allowed_paths := []string{
-		"example.com/byte_strings",
-		"example.com/archive/tar",
-		"example.com/flag",
-		"example.com/io",
-		"github.com/google/uuid",
-		"local/james-orcales/shared/bytes",
-		"local/james-orcales/shared/strings",
-		"local/james-orcales/shared/uuid",
-	}
-	for _, import_path := range allowed_paths {
-		files := requirements_one_file(
-			"package fixture\n\nimport \"" + import_path + "\"\n")
-		if requirements_flags(t, files, "Banned import") {
-			t.Errorf("import %q must stay allowed", import_path)
-		}
-	}
-	shared_source := map[string][]byte{
-		"shared/fixture/rule.go": []byte(
-			"package fixture\n\nimport \"encoding/json\"\n"),
-	}
-	if !requirements_flags(t, shared_source, "Banned import") {
-		t.Fatal("shared source must be flagged")
-	}
-	test_source := map[string][]byte{
-		"pkg/rule_test.go": []byte(
-			"package fixture_test\n\nimport \"strings\"\n"),
-	}
-	if !requirements_flags(t, test_source, "Banned import") {
-		t.Fatal("test source must be flagged")
-	}
-	generated_source := requirements_one_file(
-		"// Code generated by fixture. DO NOT EDIT.\n" +
-			"package fixture\n\nimport \"strings\"\n")
-	if !requirements_flags(t, generated_source, "Banned import") {
-		t.Fatal("generated source must be flagged")
-	}
-	requirements_banned_import_boundaries(t)
-}
-
-// Test_Source_And_Test_Bans_Aver_Imports verifies aver's subtree imports any stdlib package.
-func Test_Source_And_Test_Bans_Aver_Imports(t *testing.T) {
-	t.Parallel()
-	requirements_aver_imports_all_stdlib(t)
-}
-
-// Test_Source_And_Test_Bans_Import_Aliases reserves aliases for package-name collisions.
-func Test_Source_And_Test_Bans_Import_Aliases(t *testing.T) {
-	t.Parallel()
-	default_alias := requirements_one_file(
-		"package fixture\n\nimport iodefault \"strings\"\n")
-	if !requirements_flags(t, default_alias, "The import alias") {
-		t.Fatal("alias holding \"default\" must be flagged")
-	}
-	unnecessary_alias := requirements_one_file(
-		"package fixture\n\nimport text \"strings\"\n")
-	if !requirements_flags(t, unnecessary_alias, "is unnecessary") {
-		t.Fatal("alias without package-name collision must be flagged")
-	}
-	collision := requirements_one_file("package fixture\n\nimport (\n" +
-		"\tfirst_text \"example.com/first/text\"\n" +
-		"\tsecond_text \"example.com/second/text\"\n)\n")
-	if requirements_flags(t, collision, "is unnecessary") {
-		t.Fatal("aliases resolving package-name collision must be allowed")
-	}
-}
-
 // Test_Source_And_Test_Bans_Grouped_Declarations verifies a grouped declaration is flagged.
 func Test_Source_And_Test_Bans_Grouped_Declarations(t *testing.T) {
 	t.Parallel()
@@ -705,7 +387,6 @@ func Test_Source_And_Test_Bans_Generics(t *testing.T) {
 		Scope:                    "pkg",
 		Shared_Component:         DOCTRINE_SHARED_COMPONENT_DIRECTORY,
 		Instrumentation_Packages: []string{"pkg/**"},
-		Word_Replacements:        test_word_replacements(),
 	})
 	if err != nil {
 		t.Fatalf("Check_File_System: %v", err)
@@ -896,86 +577,6 @@ func Test_Source_And_Test_Bans_Blank_Mutexes(t *testing.T) {
 	}
 }
 
-// Test_Source_And_Test_Bans_Unbounded_Read verifies an unbounded read call is flagged.
-func Test_Source_And_Test_Bans_Unbounded_Read(t *testing.T) {
-	t.Parallel()
-	files := requirements_one_file("package fixture\n\n" +
-		"// F reads.\nfunc F(r io.Reader) (b []byte) {\n" +
-		"\tb, _ = io.ReadAll(r)\n\treturn b\n}\n")
-	if !requirements_flags(t, files, "is unbounded (unbounded-read)") {
-		t.Fatal("an unbounded read must be flagged")
-	}
-}
-
-// Test_Source_And_Test_Bans_Unbounded_Decode verifies an unbounded decode is flagged.
-func Test_Source_And_Test_Bans_Unbounded_Decode(t *testing.T) {
-	t.Parallel()
-	files := requirements_one_file("package fixture\n\n" +
-		"// F decodes.\nfunc F(r io.Reader) (d *json.Decoder) {\n" +
-		"\treturn json.NewDecoder(r)\n}\n")
-	if !requirements_flags(t, files, "is unbounded (unbounded-decode)") {
-		t.Fatal("an unbounded decode must be flagged")
-	}
-}
-
-// Test_Source_And_Test_Bans_Unbounded_Decompression verifies an unbounded
-// decompression is flagged.
-func Test_Source_And_Test_Bans_Unbounded_Decompression(t *testing.T) {
-	t.Parallel()
-	files := requirements_one_file("package fixture\n\n" +
-		"// F wraps.\nfunc F(r io.Reader) (z *gzip.Reader, err error) {\n" +
-		"\treturn gzip.NewReader(r)\n}\n")
-	if !requirements_flags(t, files, "is unbounded (unbounded-decompression)") {
-		t.Fatal("an unbounded decompression must be flagged")
-	}
-}
-
-// Test_Source_And_Test_Bans_Unbounded_Allocation verifies an unbounded
-// allocation is flagged.
-func Test_Source_And_Test_Bans_Unbounded_Allocation(t *testing.T) {
-	t.Parallel()
-	files := requirements_one_file("package fixture\n\n// F buffers.\nfunc F() {\n" +
-		"\tbytes.NewBuffer(nil)\n}\n")
-	if !requirements_flags(t, files, "is unbounded (unbounded-allocation)") {
-		t.Fatal("an unbounded allocation must be flagged")
-	}
-}
-
-// Test_Source_And_Test_Bans_Unbounded_Http verifies an unbounded net/http call
-// is flagged.
-func Test_Source_And_Test_Bans_Unbounded_Http(t *testing.T) {
-	t.Parallel()
-	files := requirements_one_file("package fixture\n\nimport \"net/http\"\n\n" +
-		"// F fetches.\nfunc F(url string) (resp *http.Response, err error) {\n" +
-		"\treturn http.Get(url)\n}\n")
-	if !requirements_flags(t, files, "is unbounded (unbounded-http)") {
-		t.Fatal("an unbounded net/http call must be flagged")
-	}
-}
-
-// Test_Source_And_Test_Bans_Deprecated_Ioutil verifies a deprecated ioutil call
-// is flagged.
-func Test_Source_And_Test_Bans_Deprecated_Ioutil(t *testing.T) {
-	t.Parallel()
-	files := requirements_one_file("package fixture\n\n" +
-		"// F reads.\nfunc F(r io.Reader) (b []byte, err error) {\n" +
-		"\treturn ioutil.ReadAll(r)\n}\n")
-	if !requirements_flags(t, files, "is unbounded (deprecated-ioutil)") {
-		t.Fatal("a deprecated ioutil call must be flagged")
-	}
-}
-
-// Test_Source_And_Test_Bans_Banned_Words verifies a banned word in any
-// identifier is flagged.
-func Test_Source_And_Test_Bans_Banned_Words(t *testing.T) {
-	t.Parallel()
-	files := requirements_one_file(
-		"package fixture\n\n// Length is a fixture.\nconst Length = 0\n")
-	if !requirements_flags(t, files, "banned substring \"length\"") {
-		t.Fatal("a banned word must be flagged")
-	}
-}
-
 // Test_Source_And_Test_Requirements_Type_Resolution keeps plain syntax from hiding deleted types.
 func Test_Source_And_Test_Requirements_Type_Resolution(t *testing.T) {
 	t.Parallel()
@@ -1019,45 +620,6 @@ func Test_Source_And_Test_Requirements_Entry_Point_First(t *testing.T) {
 		"func Run() {\n\tprintln(0)\n}\n\nfunc main() {\n\tRun()\n}\n")
 	if !requirements_flags(t, files, "func main first in the file") {
 		t.Fatal("a late main must be flagged")
-	}
-}
-
-// Test_Source_And_Test_Requirements_Function_Size verifies a function over
-// seventy lines is flagged.
-func Test_Source_And_Test_Requirements_Function_Size(t *testing.T) {
-	t.Parallel()
-	files := requirements_one_file("package fixture\n\n// F does.\nfunc F() {\n" +
-		strings.Repeat("\tprintln(0)\n", 71) + "}\n")
-	if !requirements_flags(t, files, "The maximum is 70") {
-		t.Fatal("an oversized function must be flagged")
-	}
-}
-
-// Test_Source_And_Test_Requirements_File_Size verifies a file over ten thousand
-// lines is flagged even when the package file count already satisfies File Count
-// Source, which the second file here supplies.
-func Test_Source_And_Test_Requirements_File_Size(t *testing.T) {
-	t.Parallel()
-	files := map[string][]byte{
-		"pkg/a.go": []byte("// Package fixture is a fixture.\npackage fixture\n" +
-			strings.Repeat("\n", 10001)),
-		"pkg/b.go": []byte("package fixture\n"),
-	}
-	if !requirements_flags(t, files, "The maximum is 10000") {
-		t.Fatal("an oversized file must be flagged")
-	}
-}
-
-// Test_Source_And_Test_Requirements_Main_Package_Size verifies a main package over
-// two hundred lines is flagged.
-func Test_Source_And_Test_Requirements_Main_Package_Size(t *testing.T) {
-	t.Parallel()
-	files := map[string][]byte{
-		"pkg/main.go": []byte("package main\n\nfunc main() {}\n" +
-			strings.Repeat("\n", 198)),
-	}
-	if !requirements_flags(t, files, "The package main in pkg") {
-		t.Fatal("an oversized main package must be flagged")
 	}
 }
 
@@ -1141,67 +703,6 @@ func Test_Source_And_Test_Requirements_Struct_Field_Type_Encapsulation(t *testin
 	}
 }
 
-// Test_Source_And_Test_Requirements_Comment_Opening verifies a comment that does
-// not open with a capital letter is flagged.
-func Test_Source_And_Test_Requirements_Comment_Opening(t *testing.T) {
-	t.Parallel()
-	files := requirements_one_file("package fixture\n\n// f does something.\nfunc F() {}\n")
-	if !requirements_flags(t, files, "does not start with a capital letter") {
-		t.Fatal("a comment without a leading capital must be flagged")
-	}
-}
-
-// Test_Source_And_Test_Requirements_Comment_Ending verifies a comment without a
-// closing punctuation mark is flagged.
-func Test_Source_And_Test_Requirements_Comment_Ending(t *testing.T) {
-	t.Parallel()
-	files := requirements_one_file("package fixture\n\n// F does\nfunc F() {}\n")
-	if !requirements_flags(t, files, "does not end with") {
-		t.Fatal("a comment without closing punctuation must be flagged")
-	}
-}
-
-// Test_Source_And_Test_Requirements_Package_Documentation_Comments verifies a missing
-// package-clause doc comment is flagged. The documented F keeps the exported-declaration
-// check silent so only the package-clause message can satisfy the assertion.
-func Test_Source_And_Test_Requirements_Package_Documentation_Comments(t *testing.T) {
-	t.Parallel()
-	files := requirements_one_file("package fixture\n\n// F does.\nfunc F() {}\n")
-	if !requirements_flags(t, files, "The package \"fixture\" has no doc comment") {
-		t.Fatal("a missing package-clause doc comment must be flagged")
-	}
-}
-
-// Test_Source_And_Test_Requirements_Exported_Documentation_Comments verifies an
-// undocumented exported declaration is flagged. The documented package clause keeps the
-// package-clause check silent so only the exported-declaration message can satisfy it.
-func Test_Source_And_Test_Requirements_Exported_Documentation_Comments(t *testing.T) {
-	t.Parallel()
-	files := requirements_one_file(
-		"// Package fixture is a fixture.\npackage fixture\n\nfunc F() {}\n")
-	if !requirements_flags(t, files, "exported func F has no doc comment") {
-		t.Fatal("an undocumented exported declaration must be flagged")
-	}
-	// A lone Go directive is not documentation: CommentGroup.Text strips it,
-	// leaving the declaration undocumented despite the comment being present.
-	directive_only := requirements_one_file(
-		"// Package fixture is a fixture.\npackage fixture\n\n//go:noinline\nfunc G() {}\n")
-	if !requirements_flags(t, directive_only, "exported func G has no doc comment") {
-		t.Fatal("an exported declaration documented only by a directive must be flagged")
-	}
-}
-
-// Test_Source_And_Test_Requirements_Struct_Field_Documentation_Comments verifies an
-// undocumented field of an exported struct is flagged.
-func Test_Source_And_Test_Requirements_Struct_Field_Documentation_Comments(t *testing.T) {
-	t.Parallel()
-	files := requirements_one_file("package fixture\n\n// Widget is a fixture.\n" +
-		"type Widget struct {\n\tCount int\n}\n")
-	if !requirements_flags(t, files, "has no doc comment") {
-		t.Fatal("an undocumented exported-struct field must be flagged")
-	}
-}
-
 // Test_Source_And_Test_Requirements_Name_Style verifies an exported identifier
 // not in Ada_Case is flagged, and that a const is held to SCREAMING_SNAKE_CASE
 // instead — a separate diagnostic, not the general Ada_Case one — whatever its
@@ -1235,139 +736,6 @@ func Test_Source_And_Test_Requirements_Name_Style(t *testing.T) {
 	clean_diagnostics := requirements_self_diagnostics(t, clean_files)
 	if requirements_diagnosed(clean_diagnostics, "Enum_3_Int ->") {
 		t.Fatal("a numeric Ada_Case capacity segment must not be flagged")
-	}
-}
-
-// Test_Source_And_Test_Requirements_Full_Words verifies an abbreviated name is flagged.
-func Test_Source_And_Test_Requirements_Full_Words(t *testing.T) {
-	t.Parallel()
-	files := requirements_one_file(
-		"package fixture\n\n// Widget_Id is a fixture.\nconst Widget_Id = 0\n")
-	if !requirements_flags(t, files, "Widget_Identifier") {
-		t.Fatal("an abbreviated name must be flagged")
-	}
-}
-
-// Test_Source_And_Test_Requirements_Noun_Names verifies a present-participle name is flagged.
-func Test_Source_And_Test_Requirements_Noun_Names(t *testing.T) {
-	t.Parallel()
-	files := requirements_one_file("package fixture\n\n// Parsing is a fixture.\n" +
-		"type Parsing struct{ X int }\n")
-	if !requirements_flags(t, files, "is a present participle") {
-		t.Fatal("a present-participle name must be flagged")
-	}
-}
-
-// Test_Source_And_Test_Requirements_Quantity_Suffixes verifies a len-bound name without
-// the required suffix is flagged.
-func Test_Source_And_Test_Requirements_Quantity_Suffixes(t *testing.T) {
-	t.Parallel()
-	files := requirements_one_file("package fixture\n\n// F does.\n" +
-		"func F(s string) (n int) {\n\ttotal := len(s)\n\treturn total\n}\n")
-	if !requirements_flags(t, files, "has the role") {
-		t.Fatal("a quantity name without its suffix must be flagged")
-	}
-}
-
-// Test_Source_And_Test_Requirements_Arithmetic_Suffixes verifies an incoherent
-// suffix arithmetic combination is flagged.
-func Test_Source_And_Test_Requirements_Arithmetic_Suffixes(t *testing.T) {
-	t.Parallel()
-	files := requirements_one_file("package fixture\n\n// F does.\n" +
-		"func F() (n int) {\n\ta_index := 0\n\tb_size := 0\n" +
-		"\tn = a_index + b_size\n\treturn n\n}\n")
-	if !requirements_flags(t, files, "is not coherent") {
-		t.Fatal("an incoherent suffix arithmetic must be flagged")
-	}
-}
-
-// Test_Source_And_Test_Requirements_Extremum_Suffixes verifies a leading max
-// word in a declared name is flagged.
-func Test_Source_And_Test_Requirements_Extremum_Suffixes(t *testing.T) {
-	t.Parallel()
-	files := requirements_one_file("package fixture\n\n// Max count.\n" +
-		"const max_count = 1\n")
-	if !requirements_flags(t, files, "Rename max_count") {
-		t.Fatal("a leading max in a declared name must be flagged")
-	}
-}
-
-// Test_Source_And_Test_Requirements_Test_Documentation verifies an undocumented Test
-// function is flagged.
-func Test_Source_And_Test_Requirements_Test_Documentation(t *testing.T) {
-	t.Parallel()
-	files := map[string][]byte{
-		"pkg/thing_test.go": []byte("package fixture_test\n\nimport \"testing\"\n\n" +
-			"func Test_X(t *testing.T) { _ = t }\n"),
-	}
-	if !requirements_flags(t, files, "has no doc comment") {
-		t.Fatal("an undocumented test must be flagged")
-	}
-}
-
-// Test_Source_And_Test_Requirements_Snap_Literals verifies a non-backticked snap literal
-// is flagged.
-func Test_Source_And_Test_Requirements_Snap_Literals(t *testing.T) {
-	t.Parallel()
-	files := requirements_one_file("package fixture\n\n// F does.\n" +
-		"func F(snap snapper) {\n\tsnap.Init(\"plain\")\n}\n\n" +
-		"// snapper is a fixture.\ntype snapper struct{ X int }\n")
-	if !requirements_flags(t, files, "has no raw string literal") {
-		t.Fatal("a non-backticked snap literal must be flagged")
-	}
-}
-
-// Test_Source_And_Test_Requirements_File_Count_Source verifies the per-package source file cap.
-func Test_Source_And_Test_Requirements_File_Count_Source(t *testing.T) {
-	t.Parallel()
-	files := map[string][]byte{
-		"pkg/a.go": []byte("// Package fixture is a fixture.\npackage fixture\n"),
-		"pkg/b.go": []byte("package fixture\n"),
-	}
-	if !requirements_flags(t, files, "has 2 source files") {
-		t.Fatal("two small source files must be flagged")
-	}
-}
-
-// Test_Source_And_Test_Requirements_File_Count_Tests verifies test files are
-// counted independently from source files.
-func Test_Source_And_Test_Requirements_File_Count_Tests(t *testing.T) {
-	t.Parallel()
-	files := map[string][]byte{
-		"pkg/fixture.go": []byte("// Package fixture is a fixture.\npackage fixture\n"),
-		"pkg/a_test.go":  []byte("package fixture_test\n"),
-		"pkg/b_test.go":  []byte("package fixture_test\n"),
-	}
-	if !requirements_flags(t, files, "has 2 test files") {
-		t.Fatal("test files must be counted independently of source files")
-	}
-}
-
-// Test_Source_And_Test_Requirements_File_Count_Requirements_Test verifies
-// requirements_test.go is counted in its own independent group.
-func Test_Source_And_Test_Requirements_File_Count_Requirements_Test(t *testing.T) {
-	t.Parallel()
-	files := map[string][]byte{
-		"pkg/fixture.go": []byte("// Package fixture is a fixture.\npackage fixture\n"),
-		"pkg/requirements_test.go": []byte("package fixture_test\n\n" +
-			strings.Repeat("\n", 10001)),
-	}
-	if !requirements_flags(t, files, "requirements_test files") {
-		t.Fatal("requirements_test.go must be counted in its own independent group")
-	}
-}
-
-// Test_Source_And_Test_Requirements_File_Count_Build_Tags verifies files
-// sharing a build-tag constraint form an independent group.
-func Test_Source_And_Test_Requirements_File_Count_Build_Tags(t *testing.T) {
-	t.Parallel()
-	files := map[string][]byte{
-		"pkg/fixture.go": []byte("// Package fixture is a fixture.\npackage fixture\n"),
-		"pkg/a_lin.go":   []byte("//go:build linux\n\npackage fixture\n"),
-		"pkg/b_lin.go":   []byte("//go:build linux\n\npackage fixture\n"),
-	}
-	if !requirements_flags(t, files, "under build constraint") {
-		t.Fatal("files sharing a build tag must form an independent group")
 	}
 }
 
@@ -1525,6 +893,46 @@ func Test_Deterministic_Import_Induction(t *testing.T) {
 	}
 }
 
+// Test_Deterministic_Crypto_Stdlib verifies the crypto packages vendored from the
+// Go standard library are exempt from the deterministic tier: a vendored package
+// importing another is not flagged, and neither is a deterministic package
+// importing one.
+func Test_Deterministic_Crypto_Stdlib(t *testing.T) {
+	t.Parallel()
+	fsys := fstest.MapFS{
+		"go.mod": &fstest.MapFile{Data: []byte("module fixture\n\ngo 1.25\n")},
+		"shared/crypto/subtle/s.go": &fstest.MapFile{Data: []byte(
+			"// Package subtle is a fixture.\n" +
+				"package subtle\n\n" +
+				"// G is a fixture.\n" +
+				"func G() {\n\treturn\n}\n")},
+		"shared/crypto/hmac/h.go": &fstest.MapFile{Data: []byte(
+			"// Package hmac is a fixture.\n" +
+				"package hmac\n\n" +
+				"import \"fixture/shared/crypto/subtle\"\n\n" +
+				"// F is a fixture.\n" +
+				"func F() {\n\tsubtle.G()\n}\n")},
+		"shared/pkg/p.go": &fstest.MapFile{Data: []byte(
+			"// Package pkg is a fixture.\n" +
+				"package pkg\n\n" +
+				"import \"fixture/shared/crypto/subtle\"\n\n" +
+				"// F is a fixture.\n" +
+				"func F() {\n\tsubtle.G()\n}\n")},
+	}
+	diags, err := lint.Check_File_System(&lint.Check_File_System_Input{
+		Fsys:                     fsys,
+		Scope:                    "shared",
+		Shared_Component:         DOCTRINE_SHARED_COMPONENT_DIRECTORY,
+		Pure_But_Indeterministic: []string{"shared/crypto/subtle"},
+	})
+	if err != nil {
+		t.Fatalf("Check_File_System: %v", err)
+	}
+	if requirements_diagnosed(diags, "import only deterministic packages") {
+		t.Fatalf("a crypto stdlib import must be exempt; got: %v", diags)
+	}
+}
+
 // Test_Deterministic_Impurity verifies a pure_but_indeterministic_packages entry naming an
 // all-impure directory — here a main package, the one impure home a binary has —
 // matches no pure package and is reported as a coverage gap. An impure package is
@@ -1655,89 +1063,6 @@ func Test_Event_Loop_Seed(t *testing.T) {
 		"\treturn len(payloads)\n}\n")
 	if !requirements_flags(t, files, "New_Sim takes a parameter that carries outcomes") {
 		t.Fatal("a New_Sim parameter that carries outcomes must be flagged")
-	}
-}
-
-// Test_Configuration_Directory_Slash verifies a wildcard-free lint.json entry that
-// names a directory must end in a slash, and one that names a file must not.
-func Test_Configuration_Directory_Slash(t *testing.T) {
-	t.Parallel()
-	fsys := fstest.MapFS{
-		"go.mod":   {Data: []byte(DOCTRINE_ROOT_GO_MODULE)},
-		"pkg/p.go": {Data: []byte("// Package p is a fixture.\npackage p\n")},
-	}
-	tracked := map[string]bool{"go.mod": true, "pkg/p.go": true}
-	run := func(entry string) (diags []lint.Diagnostic) {
-		diags, err := lint.Check_File_System(&lint.Check_File_System_Input{
-			Fsys: fsys, Tracked: tracked,
-			Shared_Component:         DOCTRINE_SHARED_COMPONENT_DIRECTORY,
-			Pure_But_Indeterministic: []string{entry},
-		})
-		if err != nil {
-			t.Fatalf("Check_File_System: %v", err)
-		}
-		return diags
-	}
-	if !requirements_diagnosed(run("pkg"), "names a directory") {
-		t.Fatal("a directory entry without a trailing slash must be flagged")
-	}
-	if requirements_diagnosed(run("pkg/"), "names a directory") {
-		t.Fatal("a directory entry with a trailing slash must pass")
-	}
-	if !requirements_diagnosed(run("pkg/p.go/"), "names a file") {
-		t.Fatal("a file entry with a trailing slash must be flagged")
-	}
-}
-
-// Test_Configuration_Packages_Only verifies an exact-file entry is flagged in every
-// lint.json glob list except ignore and opt_out_recursion_ban, and that a wildcard-free
-// entry matching neither a tracked file nor a directory is flagged as a coverage gap.
-func Test_Configuration_Packages_Only(t *testing.T) {
-	t.Parallel()
-	fsys := fstest.MapFS{
-		"go.mod":   {Data: []byte(DOCTRINE_ROOT_GO_MODULE)},
-		"pkg/p.go": {Data: []byte("// Package p is a fixture.\npackage p\n")},
-	}
-	tracked := map[string]bool{"go.mod": true, "pkg/p.go": true}
-	run := func(input *lint.Check_File_System_Input) (diags []lint.Diagnostic) {
-		input.Fsys = fsys
-		input.Tracked = tracked
-		input.Shared_Component = DOCTRINE_SHARED_COMPONENT_DIRECTORY
-		diags, err := lint.Check_File_System(input)
-		if err != nil {
-			t.Fatalf("Check_File_System: %v", err)
-		}
-		return diags
-	}
-	if !requirements_diagnosed(
-		run(&lint.Check_File_System_Input{Pure_But_Indeterministic: []string{"pkg/p.go"}}),
-		"can name a file") {
-		t.Fatal("an exact-file entry in pure_but_indeterministic_packages must be flagged")
-	}
-	if !requirements_diagnosed(
-		run(&lint.Check_File_System_Input{Instrumentation_Packages: []string{"pkg/p.go"}}),
-		"can name a file") {
-		t.Fatal("an exact-file entry in instrumentation_packages must be flagged")
-	}
-	if !requirements_diagnosed(
-		run(&lint.Check_File_System_Input{Invariant_Exempt_Packages: []string{"pkg/p.go"}}),
-		"can name a file") {
-		t.Fatal("an exact-file entry in opt_out_assertion_mandate_packages must be flagged")
-	}
-	if requirements_diagnosed(
-		run(&lint.Check_File_System_Input{Ignore: []string{"pkg/p.go"}}),
-		"can name a file") {
-		t.Fatal("an exact-file ignore entry must be allowed")
-	}
-	if requirements_diagnosed(
-		run(&lint.Check_File_System_Input{Recursion_Exempt: []string{"pkg/p.go"}}),
-		"can name a file") {
-		t.Fatal("an exact-file opt_out_recursion_ban entry must be allowed")
-	}
-	if !requirements_diagnosed(
-		run(&lint.Check_File_System_Input{Ignore: []string{"pkg/missing"}}),
-		"matches no tracked file and no tracked directory") {
-		t.Fatal("an entry matching neither a file nor a directory must be a coverage gap")
 	}
 }
 
@@ -2131,69 +1456,6 @@ func Test_Raw_Type_Stdlib_Method_Flagged(t *testing.T) {
 	}
 }
 
-// Test_Requirements_Baseline pins that the unmutated package is clean, so every
-// other test isolates the single rule it violates.
-func Test_Requirements_Baseline(t *testing.T) {
-	t.Parallel()
-	for _, diagnostic := range requirements_self_diagnostics(t, requirements_baseline(t)) {
-		if diagnostic.Name == "requirements" {
-			t.Errorf("baseline has a requirements diagnostic: %s", diagnostic.Message)
-		}
-		if strings.Has_Suffix(diagnostic.Position.Filename, "REQUIREMENTS.md") {
-			t.Errorf("baseline flags the spec file: %s", diagnostic.Message)
-		}
-	}
-}
-
-// Runs the linter over a lone in-memory symlink and returns its diagnostics.
-// Readlink is injected because fstest.MapFS cannot represent a symlink's target,
-// and Tracked drives the tracked-membership the rule checks — the target need
-// not exist in the fixture, only in Tracked.
-func symlink_lint(
-	t *testing.T, target string, read_err error, tracked map[string]bool,
-) (diags []lint.Diagnostic) {
-	t.Helper()
-	diags, err := lint.Check_File_System(&lint.Check_File_System_Input{
-		Fsys: fstest.MapFS{
-			// Data is a fixed placeholder, not the target under test: fstest.MapFS
-			// resolves a self-referential or cyclic symlink into an infinite loop,
-			// and the rule reads the target through the injected Readlink below, not
-			// from the fixture's bytes.
-			"link": &fstest.MapFile{Mode: fs.ModeSymlink, Data: []byte("placeholder")},
-		},
-		Root_Directory: "/root",
-		Tracked:        tracked,
-		Readlink: func(_ string) (link_target string, link_err error) {
-			return target, read_err
-		},
-	})
-	if err != nil {
-		t.Fatalf("Check_File_System: %v", err)
-	}
-	return diags
-}
-
-func requirements_baseline(t *testing.T) (files map[string][]byte) {
-	t.Helper()
-	// One # leaf and its single matching test — clean under every rule, so a
-	// Requirements-section test can knock exactly one rule out of true and watch
-	// the tool catch it. The leading blank line satisfies the blank-before-heading
-	// rule for the first heading. A two-word leaf keeps the name-normalization
-	// test honest (Sole Rule -> Sole_Rule -> Test_Sole_Rule).
-	const MARKDOWN = "\n# Sole Rule\n\nThe sole rule.\n"
-	const TEST_SOURCE = "package fixture_test\n\n" +
-		"import \"testing\"\n\n" +
-		"// Test_Sole_Rule checks the sole rule.\n" +
-		"func Test_Sole_Rule(t *testing.T) {\n\tt.Parallel()\n}\n"
-	return map[string][]byte{
-		"go.mod": []byte("module fixture\n\ngo 1.25\n"),
-		"pkg/fixture.go": []byte("// Package fixture is a fixture.\n" +
-			"package fixture\n"),
-		"pkg/REQUIREMENTS.md":      []byte(MARKDOWN),
-		"pkg/requirements_test.go": []byte(TEST_SOURCE),
-	}
-}
-
 // Builds an in-memory filesystem from the fixture files, runs the linter scoped
 // to the fixture package, and returns its diagnostics.
 func requirements_self_diagnostics(
@@ -2208,8 +1470,7 @@ func requirements_self_diagnostics(
 		fsys["go.mod"] = &fstest.MapFile{Data: []byte(DOCTRINE_ROOT_GO_MODULE)}
 	}
 	diags, err := lint.Check_File_System(&lint.Check_File_System_Input{
-		Fsys: fsys, Scope: "pkg", Shared_Component: DOCTRINE_SHARED_COMPONENT_DIRECTORY,
-		Word_Replacements: test_word_replacements()})
+		Fsys: fsys, Scope: "pkg", Shared_Component: DOCTRINE_SHARED_COMPONENT_DIRECTORY})
 	if err != nil {
 		t.Fatalf("Check_File_System: %v", err)
 	}
@@ -2235,281 +1496,11 @@ func requirements_flags(
 	return requirements_diagnosed(requirements_self_diagnostics(t, files), fragment)
 }
 
-// Shared ports own exact boundaries; matching stdlib imports bypass bounded contracts.
-func requirements_shared_import_matches(t *testing.T) {
-	t.Helper()
-	banned_paths := []string{
-		"crypto/ecdsa",
-		"crypto/ed25519",
-		"crypto/elliptic",
-		"crypto/hkdf",
-		"crypto/hmac",
-		"crypto/md5",
-		"crypto/pbkdf2",
-		"crypto/rsa",
-		"crypto/sha1",
-		"crypto/sha256",
-		"crypto/sha512",
-		"crypto/subtle",
-		"crypto/x509",
-		"crypto/x509/pkix",
-		"database/sql",
-		"database/sql/driver",
-		"go/ast",
-		"go/build",
-		"go/constant",
-		"go/format",
-		"go/printer",
-		"go/token",
-		"go/types",
-		"hash/adler32",
-		"hash/crc32",
-		"hash/crc64",
-		"hash/fnv",
-		"hash/maphash",
-		"net",
-		"path",
-		"path/filepath",
-		"sort",
-		"text/scanner",
-		"text/tabwriter",
-		"text/template",
-	}
-	for _, import_path := range banned_paths {
-		files := requirements_one_file(
-			"package fixture\n\nimport \"" + import_path + "\"\n")
-		if !requirements_flags(t, files, "Banned import") {
-			t.Errorf("import %q must be flagged", import_path)
-		}
-	}
-}
-
-// Similar stdlib paths stay usable until matching bounded ports exist.
-func requirements_shared_import_nonmatches(t *testing.T) {
-	t.Helper()
-	allowed_paths := []string{
-		"crypto/aes",
-		"crypto/cipher",
-		"example.com/crypto/sha256",
-		"example.com/database/sql",
-		"example.com/net/http",
-		"go/parser",
-		"go/scanner",
-		"local/james-orcales/shared/net",
-		"local/james-orcales/shared/path",
-		"net/http",
-		"text/template/parse",
-	}
-	for _, import_path := range allowed_paths {
-		files := requirements_one_file(
-			"package fixture\n\nimport \"" + import_path + "\"\n")
-		if requirements_flags(t, files, "Banned import") {
-			t.Errorf("import %q must stay allowed", import_path)
-		}
-	}
-}
-
-// Split boundary coverage keeps doctrine test within function cap.
-func requirements_banned_import_boundaries(t *testing.T) {
-	t.Helper()
-	requirements_shared_import_matches(t)
-	requirements_shared_import_nonmatches(t)
-	requirements_os_import_boundary(t)
-}
-
-// Exact path boundary prevents similar directory from inheriting OS access.
-func requirements_os_import_boundary(t *testing.T) {
-	t.Helper()
-	for _, import_path := range []string{"os", "os/exec"} {
-		files := requirements_one_file(
-			"package fixture\n\nimport \"" + import_path + "\"\n")
-		if !requirements_flags(t, files, "Banned import") {
-			t.Errorf("import %q must be flagged", import_path)
-		}
-	}
-	third_party := requirements_one_file(
-		"package fixture\n\nimport \"example.com/os\"\n")
-	if requirements_flags(t, third_party, "Banned import") {
-		t.Error("third-party OS path must stay allowed")
-	}
-	allowed := map[string][]byte{
-		"shared/os/default/rule.go": []byte("package os\n\nimport \"os/exec\"\n"),
-	}
-	if requirements_flags(t, allowed, "Banned import") {
-		t.Error("shared/os/default must allow os/exec")
-	}
-	pure_tier := map[string][]byte{
-		"shared/os/rule.go": []byte("package os\n\nimport \"os/exec\"\n"),
-	}
-	if !requirements_flags(t, pure_tier, "Banned import") {
-		t.Error("shared/os outside its default tier must not import os/exec")
-	}
-	named_like := map[string][]byte{
-		"shared/os_extra/rule.go": []byte(
-			"package os_extra\n\nimport \"os/exec\"\n"),
-	}
-	if !requirements_flags(t, named_like, "Banned import") {
-		t.Fatal("directory named like simulation OS must stay banned")
-	}
-	requirements_signal_gateway_boundary(t)
-	requirements_process_gateway_boundary(t)
-}
-
-// Every shared port depends on aver, so aver cannot route through any of them without an import
-// cycle. Each stdlib gate thus stops at aver's subtree, process and signal gateways included.
-func requirements_aver_imports_all_stdlib(t *testing.T) {
-	t.Helper()
-	for _, import_path := range []string{
-		"bufio", "bytes", "context", "crypto/rand", "crypto/sha256", "crypto/tls", "flag",
-		"io", "math/rand", "net/http", "os", "os/exec", "os/signal", "os/user", "runtime",
-		"strconv", "strings", "sync", "sync/atomic", "syscall", "time",
-	} {
-		for _, filename := range []string{
-			"shared/sim/aver/rule.go",
-			"shared/sim/aver/default/rule.go",
-		} {
-			files := map[string][]byte{
-				filename: []byte(
-					"package aver\n\nimport \"" + import_path + "\"\n"),
-			}
-			for _, diagnostic := range requirements_self_diagnostics(t, files) {
-				flagged := diagnostic.Name == "stdlib-time"
-				if strings.Contains(diagnostic.Message, "\""+import_path+"\"") {
-					flagged = true
-				}
-				if flagged {
-					t.Errorf("%q must allow %q: %s",
-						filename, import_path, diagnostic.Message)
-				}
-			}
-		}
-	}
-	named_like := map[string][]byte{
-		"shared/sim/average/rule.go": []byte("package average\n\nimport \"syscall\"\n"),
-	}
-	if !requirements_flags(t, named_like, "Banned import") {
-		t.Fatal("directory merely named like aver must stay banned")
-	}
-}
-
-// Process bindings reach the rest of the tree only through injection, so no exemption the
-// wider ban grants — main, tests, invariant, shared/os — may widen who imports them.
-func requirements_process_gateway_boundary(t *testing.T) {
-	t.Helper()
-	for _, import_path := range []string{"os", "syscall"} {
-		for _, filename := range []string{
-			"shared/os/default/rule.go",
-			"shared/os/default/rule_test.go",
-			"shared/sim/nbio/default/rule.go",
-			"shared/sim/time/default/rule.go",
-		} {
-			allowed := map[string][]byte{
-				filename: []byte(
-					"package fixture\n\nimport \"" + import_path + "\"\n"),
-			}
-			if requirements_flags(t, allowed, "Banned import") {
-				t.Errorf("gateway file %q must allow %q", filename, import_path)
-			}
-		}
-		for _, filename := range []string{
-			"shared/os/rule.go",
-			"shared/os/default_extra/rule.go",
-			"shared/sim/time/rule.go",
-			"shared/sim/io/default/rule.go",
-			"pkg/shared/os/default/rule.go",
-			"pkg/main.go",
-			"pkg/pkg/rule_test.go",
-		} {
-			banned := map[string][]byte{
-				filename: []byte(
-					"package main\n\nimport \"" + import_path + "\"\n"),
-			}
-			if !requirements_flags(t, banned, "Banned import") {
-				t.Errorf("file %q outside the gateways must not import %q",
-					filename, import_path)
-			}
-		}
-	}
-}
-
-// The tier that drains the notifier between polls owns signal registration, and no other.
-func requirements_signal_gateway_boundary(t *testing.T) {
-	t.Helper()
-	for _, import_path := range []string{"os", "os/signal"} {
-		files := map[string][]byte{
-			"shared/sim/nbio/default/rule.go": []byte(
-				"package nbio\n\nimport \"" + import_path + "\"\n"),
-		}
-		if requirements_flags(t, files, "Banned import") {
-			t.Errorf("loop backend must allow %q", import_path)
-		}
-	}
-	for _, filename := range []string{
-		"shared/sim/nbio/rule.go",
-		"shared/os/rule.go",
-		"shared/os/default/rule.go",
-	} {
-		files := map[string][]byte{
-			filename: []byte("package fixture\n\nimport \"os/signal\"\n"),
-		}
-		if !requirements_flags(t, files, "Banned import") {
-			t.Errorf(
-				"os/signal outside signal gateway %q must be flagged", filename,
-			)
-		}
-	}
-	pure_tier := map[string][]byte{
-		"shared/sim/nbio/rule.go": []byte(
-			"package nbio\n\nimport \"os\"\n"),
-	}
-	if !requirements_flags(t, pure_tier, "Banned import") {
-		t.Fatal("os outside the signal gateway and shared/os must be flagged")
-	}
-	// The gateway earns the bare package for chan os.Signal, never the family around it.
-	wider_family := map[string][]byte{
-		"shared/sim/nbio/default/rule.go": []byte(
-			"package nbio\n\nimport \"os/exec\"\n"),
-	}
-	if !requirements_flags(t, wider_family, "Banned import") {
-		t.Fatal("os/exec in the signal gateway must stay flagged")
-	}
-}
-
-// Lints the fixture at whole-workspace scope and reports whether some diagnostic
-// message contains the fragment. The repository-wide stream checks (banned files,
-// conflict markers, workflow pins, agent-doc pairing) are exercised whole-tree —
-// the way a whole-repo run reaches them — since a scoped run, by design, examines
-// only its own subtree and so would never visit a fixture placed elsewhere.
-func repository_flags(
-	t *testing.T, files map[string][]byte, fragment string,
-) (found bool) {
-	t.Helper()
-	fsys := fstest.MapFS{}
-	for name, content := range files {
-		fsys[name] = &fstest.MapFile{Data: content}
-	}
-	diags, err := lint.Check_File_System(&lint.Check_File_System_Input{
-		Fsys: fsys, Shared_Component: DOCTRINE_SHARED_COMPONENT_DIRECTORY,
-		Word_Replacements: test_word_replacements()})
-	if err != nil {
-		t.Fatalf("Check_File_System: %v", err)
-	}
-	return requirements_diagnosed(diags, fragment)
-}
-
 // Wraps one Go source string as the sole file of a fixture package. Kept
 // separate from the fragment assertion so no caller must supply a fragment it
 // does not need.
 func requirements_one_file(source string) (files map[string][]byte) {
 	return map[string][]byte{"pkg/rule.go": []byte(source)}
-}
-
-func requirements_markdown_append(files map[string][]byte, text string) {
-	files["pkg/REQUIREMENTS.md"] = append(files["pkg/REQUIREMENTS.md"], text...)
-}
-
-func requirements_markdown_prepend(files map[string][]byte, text string) {
-	files["pkg/REQUIREMENTS.md"] = append([]byte(text), files["pkg/REQUIREMENTS.md"]...)
 }
 
 // Test_Source_And_Test_Bans_Recursion_Exempt verifies a recursive function in a
@@ -2597,7 +1588,6 @@ func invariant_exempt_self_diagnostics(
 		Fsys:                      fsys,
 		Scope:                     "pkg",
 		Shared_Component:          DOCTRINE_SHARED_COMPONENT_DIRECTORY,
-		Word_Replacements:         test_word_replacements(),
 		Invariant_Exempt_Packages: exempt,
 	})
 	if err != nil {
@@ -2620,7 +1610,6 @@ func instrumentation_self_diagnostics(
 		Fsys:                     fsys,
 		Scope:                    "pkg",
 		Shared_Component:         DOCTRINE_SHARED_COMPONENT_DIRECTORY,
-		Word_Replacements:        test_word_replacements(),
 		Instrumentation_Packages: instrumentation,
 	})
 	if err != nil {
@@ -2666,7 +1655,7 @@ func Test_Type_Invariant_Clean_Pair_Passes(t *testing.T) {
 		"// Widget is a fixture.\ntype Widget struct {\n" +
 		"\t// X is a fixture.\n\tX int\n}\n\n" +
 		"// Widget_Invariants is a fixture.\n" +
-		"func Widget_Invariants(w Widget, namespace aver.Namespace) {\n" +
+		"func Widget_Invariants(w *Widget, namespace aver.Namespace) {\n" +
 		"\tprintln(0)\n}\n")
 	if requirements_flags(t, files, "directly below the type Widget") {
 		t.Fatal("a well-formed pair must not be flagged")
@@ -2701,7 +1690,7 @@ func Test_Type_Invariant_Generic_Passes(t *testing.T) {
 		"// Box is a fixture.\ntype Box[T any] struct {\n" +
 		"\t// Item is a fixture.\n\tItem T\n}\n\n" +
 		"// Box_Invariants is a fixture.\n" +
-		"func Box_Invariants[T any](b Box[T], namespace aver.Namespace) {\n" +
+		"func Box_Invariants[T any](b *Box[T], namespace aver.Namespace) {\n" +
 		"\tprintln(0)\n}\n")
 	if requirements_flags(t, files, "directly below the type Box") {
 		t.Fatal("a matching generic bundle must not be flagged")
@@ -2734,7 +1723,7 @@ func Test_Type_Invariant_Before_A_Consumer(t *testing.T) {
 		"// Payload is a fixture.\ntype Payload struct {\n" +
 		"\t// A is a fixture.\n\tA int\n\t// B is a fixture.\n\tB int\n}\n\n" +
 		"// Payload_Invariants is a fixture.\n" +
-		"func Payload_Invariants(input Payload, namespace aver.Namespace) {\n" +
+		"func Payload_Invariants(input *Payload, namespace aver.Namespace) {\n" +
 		"\tprintln(0)\n}\n\n" +
 		"// Foo does.\nfunc Foo(input *Payload) (n int) {\n" +
 		"\treturn input.A + input.B\n}\n")
@@ -2779,10 +1768,10 @@ func Test_Type_Invariant_Struct_Composition_Passes(t *testing.T) {
 		"\t// Tok is a fixture.\n\tTok Token\n" +
 		"\t// Count is a fixture.\n\tCount Count\n}\n\n" +
 		"// Pair_Invariants is a fixture.\n" +
-		"func Pair_Invariants(v Pair, namespace aver.Namespace) {\n" +
+		"func Pair_Invariants(v *Pair, namespace aver.Namespace) {\n" +
 		"\tToken_Invariants(v.Tok, \"Pair.Tok\")\n" +
 		"\tCount_Invariants(v.Count, \"Pair.Count\")\n" +
-		"\taver.Tree(v, namespace).Sometimes(true, \"x\").Ensure()\n}\n")
+		"\taver.Tree(*v, namespace).Sometimes(true, \"x\").Ensure()\n}\n")
 	if requirements_flags(t, files, "does not call a helper") {
 		t.Fatal("a struct composing all field invariants must not be flagged")
 	}
@@ -2797,7 +1786,7 @@ func Test_Type_Invariant_Struct_Mutex_Skipped(t *testing.T) {
 		"// Guarded is a fixture.\ntype Guarded struct {\n" +
 		"\t// Mu is a fixture.\n\tMu sync.Mutex\n\t// N is a fixture.\n\tN int\n}\n\n" +
 		"// Guarded_Invariants is a fixture.\n" +
-		"func Guarded_Invariants(v Guarded, namespace aver.Namespace) {\n" +
+		"func Guarded_Invariants(v *Guarded, namespace aver.Namespace) {\n" +
 		"\taver.Assertions(namespace).Sometimes(true, \"x\").Ensure()\n}\n")
 	if requirements_flags(t, files, "does not call a helper") {
 		t.Fatal("a struct with a sync.Mutex field must be skipped entirely")
@@ -2813,7 +1802,7 @@ func Test_Type_Invariant_Struct_Function_Fields_Exempt(t *testing.T) {
 		"// Ops is a fixture.\ntype Ops struct {\n" +
 		"\t// Run is a fixture.\n\tRun func()\n}\n\n" +
 		"// Ops_Invariants is a fixture.\n" +
-		"func Ops_Invariants(v Ops, namespace aver.Namespace) {\n" +
+		"func Ops_Invariants(v *Ops, namespace aver.Namespace) {\n" +
 		"\taver.Assertions(namespace).Sometimes(true, \"x\").Ensure()\n}\n")
 	if requirements_flags(t, files, "does not call a helper") {
 		t.Fatal("a func-typed field has no invariant and must be exempt")
@@ -2829,8 +1818,8 @@ func Test_Type_Invariant_Struct_Predeclared_Field_Raw(t *testing.T) {
 		"// Flag is a fixture.\ntype Flag struct {\n" +
 		"\t// On is a fixture.\n\tOn bool\n}\n\n" +
 		"// Flag_Invariants is a fixture.\n" +
-		"func Flag_Invariants(v Flag, namespace aver.Namespace) {\n" +
-		"\taver.Tree(v, namespace).Sometimes(true, \"x\").Ensure()\n}\n")
+		"func Flag_Invariants(v *Flag, namespace aver.Namespace) {\n" +
+		"\taver.Tree(*v, namespace).Sometimes(true, \"x\").Ensure()\n}\n")
 	if !requirements_flags(t, files, "The declaration Flag has a raw type field (On).") {
 		t.Fatal("predeclared identifier must be flagged as raw")
 	}
@@ -2851,9 +1840,9 @@ func Test_Type_Invariant_Struct_Pointer_Field_Composed(t *testing.T) {
 		"// Holder is a fixture.\ntype Holder struct {\n" +
 		"\t// Tok is a fixture.\n\tTok *Token\n}\n\n" +
 		"// Holder_Invariants is a fixture.\n" +
-		"func Holder_Invariants(v Holder, namespace aver.Namespace) {\n" +
+		"func Holder_Invariants(v *Holder, namespace aver.Namespace) {\n" +
 		"\taver.Assertions(namespace).Sometimes(true, \"x\").Ensure()\n}\n")
-	if !requirements_flags(t, files, "Call Token_Invariants(v.Tok, ...).") {
+	if !requirements_flags(t, files, "Call Token_Invariants(*v.Tok, ...).") {
 		t.Fatal("a pointer field whose pointee invariant is omitted must be flagged")
 	}
 }
@@ -2956,7 +1945,6 @@ func recorder_self_diagnostics(
 	}
 	diags, err := lint.Check_File_System(&lint.Check_File_System_Input{
 		Fsys: fsys, Scope: "pkg", Shared_Component: "pkg",
-		Word_Replacements:         test_word_replacements(),
 		Invariant_Exempt_Packages: exempt,
 	})
 	if err != nil {
@@ -3096,34 +2084,6 @@ func Test_Simulation_No_Source(t *testing.T) {
 		"The simulation directory has the source file "+
 			"pkg/pkg/simulation_test/source.go. Remove the source file.") {
 		t.Fatal("a source file in the simulation directory must be flagged")
-	}
-}
-
-// Test_File_Count_Blackbox_Whitebox_Separate verifies external (foo_test) and
-// internal (foo) test files are counted as separate groups, not lumped together.
-func Test_File_Count_Blackbox_Whitebox_Separate(t *testing.T) {
-	t.Parallel()
-	files := map[string][]byte{
-		"pkg/fixture.go":    []byte("// Package fixture is a fixture.\npackage fixture\n"),
-		"pkg/white_test.go": []byte("package fixture\n"),
-		"pkg/black_test.go": []byte("package fixture_test\n"),
-	}
-	if requirements_flags(t, files, "has 2 test files") {
-		t.Fatal("blackbox and whitebox test files must count as separate groups")
-	}
-}
-
-// Test_File_Count_Whitebox verifies whitebox (internal) test files carry their own
-// independent count, flagged when they exceed the per-file cap.
-func Test_File_Count_Whitebox(t *testing.T) {
-	t.Parallel()
-	files := map[string][]byte{
-		"pkg/fixture.go": []byte("// Package fixture is a fixture.\npackage fixture\n"),
-		"pkg/a_test.go":  []byte("package fixture\n"),
-		"pkg/b_test.go":  []byte("package fixture\n"),
-	}
-	if !requirements_flags(t, files, "has 2 whitebox test files") {
-		t.Fatal("two whitebox test files must be flagged as their own group")
 	}
 }
 

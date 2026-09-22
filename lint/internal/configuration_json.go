@@ -71,8 +71,6 @@ func configuration_json_value(
 		configuration.Instrumentation_Packages, next, err = json_string_list(source, offset)
 	case "pure_but_indeterministic_packages":
 		configuration.Pure_But_Indeterministic, next, err = json_string_list(source, offset)
-	case "word_replacements":
-		configuration.Word_Replacements, next, err = json_string_list_map(source, offset)
 	case "ignore":
 		configuration.Ignore, next, err = json_string_list(source, offset)
 	case "opt_out_assertion_mandate_packages":
@@ -118,49 +116,6 @@ func json_string_list(source []byte, offset int) (values []string, next int, err
 		offset = json_space_offset(source, offset+1)
 	}
 	return nil, 0, fmt.Errorf("lint.json: unfinished array")
-}
-
-func json_string_list_map(
-	source []byte, offset int,
-) (values map[string][]string, next int, err error) {
-	values = map[string][]string{}
-	offset, err = json_byte(source, offset, '{')
-	if err != nil {
-		return nil, 0, err
-	}
-	offset = json_space_offset(source, offset)
-	if offset < len(source) {
-		if source[offset] == '}' {
-			return values, offset + 1, nil
-		}
-	}
-	for offset < len(source) {
-		key, key_next, key_err := json_string(source, offset)
-		if key_err != nil {
-			return nil, 0, key_err
-		}
-		offset, err = json_byte(source, key_next, ':')
-		if err != nil {
-			return nil, 0, err
-		}
-		value, value_next, value_err := json_string_list(source, offset)
-		if value_err != nil {
-			return nil, 0, value_err
-		}
-		values[key] = value
-		offset = json_space_offset(source, value_next)
-		if offset >= len(source) {
-			return nil, 0, fmt.Errorf("lint.json: unfinished object")
-		}
-		if source[offset] == '}' {
-			return values, offset + 1, nil
-		}
-		if source[offset] != ',' {
-			return nil, 0, fmt.Errorf("lint.json: expected comma at byte %d", offset)
-		}
-		offset = json_space_offset(source, offset+1)
-	}
-	return nil, 0, fmt.Errorf("lint.json: unfinished object")
 }
 
 func json_string(source []byte, offset int) (text string, next int, err error) {

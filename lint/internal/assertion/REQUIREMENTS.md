@@ -16,8 +16,9 @@ _invariants suffix when it is unexported.
 
 ### Signature
 
-The function takes the type, by value or pointer, as its first parameter and an
-aver.Namespace as its last.
+The function takes the type as its first parameter and an aver.Namespace as its last. A struct,
+or a type whose same-file chain of defined names ends in one, is taken by pointer, and any other
+type by value. A chain that leaves the file has an unknown kind and takes either form.
 
 ### Orphan
 
@@ -92,8 +93,9 @@ states nothing about the field's domain and never counts.
 ### Defined Pointers
 
 Defined pointer helper body is exactly `if value == nil { return }` then `Base_Invariants(*value,
-namespace)`. Struct, non-struct, foreign pointee, type over a defined pointer: same body. Pointee
-without helper or unnamed pointee is a diagnostic. No exemption exists, none is authorized.
+namespace)`, or `Base_Invariants(value, namespace)` when Base_Invariants takes a pointer. Struct,
+non-struct, foreign pointee, type over a defined pointer: same body. Pointee without helper or
+unnamed pointee is a diagnostic. No exemption exists, none is authorized.
 
 ### Embedded Fields
 
@@ -134,7 +136,8 @@ ambient sources cannot supply deterministic coverage. A binary component uses it
 
 Function parameters, results, and struct fields use user-defined type identifiers, plain,
 package-qualified, or instantiated, or error. Any other type expression is raw and banned,
-predeclared identifiers included; declare a type first. Test files and opted-out packages are exempt.
+predeclared identifiers included; declare a type first. An invariant function's first parameter
+may point at its type. Test files and opted-out packages are exempt.
 
 ### Small Slices
 

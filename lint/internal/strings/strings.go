@@ -17,7 +17,7 @@ type Builder struct {
 }
 
 // Builder_Invariants bounds owned text.
-func Builder_Invariants(builder Builder) {
+func Builder_Invariants(builder *Builder) {
 	aver.Always(
 		len(builder.Content) <= TEXT_SIZE_MAXIMUM,
 		"Lint builder text stays bounded.",
@@ -26,13 +26,13 @@ func Builder_Invariants(builder Builder) {
 
 // Builder_Size returns owned byte count.
 func Builder_Size(builder *Builder) (size int) {
-	Builder_Invariants(*builder)
+	Builder_Invariants(builder)
 	return len(builder.Content)
 }
 
 // Write satisfies io.Writer without permitting unbounded growth.
 func (builder *Builder) Write(source []byte) (count int, err error) {
-	Builder_Invariants(*builder)
+	Builder_Invariants(builder)
 	aver.Always(
 		len(source) <= TEXT_SIZE_MAXIMUM-len(builder.Content),
 		"Lint builder write stays bounded.",
@@ -43,7 +43,7 @@ func (builder *Builder) Write(source []byte) (count int, err error) {
 
 // String satisfies fmt.Stringer without exposing mutable storage.
 func (builder *Builder) String() (text string) {
-	Builder_Invariants(*builder)
+	Builder_Invariants(builder)
 	return string(builder.Content)
 }
 

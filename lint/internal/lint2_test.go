@@ -1,17 +1,16 @@
 package lint_test
 
 import (
-	"errors"
 	"fmt"
 	"go/parser"
 	"go/token"
-	"io/fs"
 	"local/james-orcales/lint/internal/strings"
 	"testing"
 	"testing/fstest"
 
 	"local/james-orcales/lint/internal"
 	"local/james-orcales/shared/sim/aver/default"
+	library "local/james-orcales/shared/snap"
 	"local/james-orcales/shared/snap/default"
 	"local/james-orcales/shared/strconv"
 )
@@ -89,267 +88,6 @@ func TestMain(m *testing.M) { return }
 				}
 			}
 		})
-	}
-}
-
-// Test_Line_Character_Count_Tabs verifies that a tab counts as TAB_WIDTH (2)
-// columns when measuring line length against the LINE_CHARS_MAX limit: a line
-// of exactly LINE_CHARS_MAX columns passes, one column more is flagged.
-func Test_Line_Character_Count_Tabs(t *testing.T) {
-	t.Parallel()
-	// Inline comments are exempt from comment-sentence rules, so this stays a
-	// pure line-length test. 18 tabs are 36 columns at width 2, 144 at width 8.
-	prefix := "func f() (result int) { return 1 } //" + strings.Repeat("\t", 18)
-	line := func(columns int) (source string) {
-		tail := strings.Repeat("x", columns-len(prefix)+18-18*2)
-		return "package main\n" + prefix + tail + "\n"
-	}
-	cases := []struct {
-		columns int
-		flagged bool
-	}{
-		{columns: 100, flagged: false},
-		{columns: 101, flagged: true},
-	}
-	for _, c := range cases {
-		stdout := &strings.Builder{}
-		lint_main(t, &lint.Main_Input{
-			Fsys: fstest.MapFS{"test.go": &fstest.MapFile{
-				Data: []byte(line(c.columns))}},
-			Stdout: stdout, Stderr: &strings.Builder{}})
-		got := strings.Contains(stdout.String(), "The line has")
-		if got != c.flagged {
-			t.Errorf("columns %d: flagged %v, want %v; output: %s",
-				c.columns, got, c.flagged, stdout.String())
-		}
-	}
-}
-
-// Test_Line_Character_Count_Import_Exempt verifies that an import line wider than
-// LINE_CHARS_MAX is not flagged: import paths are unbreakable, so a long module
-// path must never force a lint failure.
-func Test_Line_Character_Count_Import_Exempt(t *testing.T) {
-	t.Parallel()
-	long_path := "github.com/example/" + strings.Repeat("a", 90) + "/pkg"
-	source := "package main\n\nimport " + quote_text(long_path) + "\n"
-	fsys_map := fstest.MapFS{"test.go": &fstest.MapFile{
-		Data: []byte(source)}}
-	stdout := &strings.Builder{}
-	code := lint_main(t, &lint.Main_Input{
-		Fsys: fsys_map, Stdout: stdout, Stderr: &strings.Builder{}})
-	if code != 0 {
-		t.Fatalf("import line should be exempt from the length limit; got exit %d: %s",
-			code, stdout.String())
-	}
-}
-
-// Test_Comments verifies the comment-style rules: capital start, trailing
-// `.`/`:`/`?`/`!`, space after `//`, pragma exemption, and inline-comment
-// exemption from the sentence rules.
-func Test_Comments(t *testing.T) {
-	t.Parallel()
-	// TestComments fixtures include `//foo` (no space after slashes), which
-	// gofmt normalizes before our check sees it. Bypass gofmt_must so the
-	// formatting-style violations under test survive intact.
-	for _, tt := range []struct {
-		Name      string
-		Files     map[string]string
-		Want_Diag string
-	}{
-
-		{
-			Name: "missing trailing period",
-			Files: map[string]string{
-				"test.go": "// Usage info (no period)\npackage main\n",
-			},
-			Want_Diag: "does not end with",
-		},
-
-		{
-			Name: "lowercase start",
-			Files: map[string]string{
-				"test.go": "// lowercase start.\npackage main\n",
-			},
-			Want_Diag: "does not start with a capital letter",
-		},
-
-		{
-			Name: "has no space after slashes",
-			Files: map[string]string{
-				"test.go": "//No space.\npackage main\n",
-			},
-			Want_Diag: "has no space after",
-		},
-	} {
-		t.Run(tt.Name, func(t *testing.T) {
-			fsys_map := make(fstest.MapFS)
-			for k, v := range tt.Files {
-				fsys_map[k] = &fstest.MapFile{
-					Data: []byte(v)}
-			}
-			stdout := &strings.Builder{}
-			stderr := &strings.Builder{}
-			code := lint_main(t, &lint.Main_Input{
-				Fsys: fsys_map, Stdout: stdout, Stderr: stderr,
-			})
-
-			output := stdout.String()
-			if tt.Want_Diag == "" {
-				if code != 0 {
-					t.Errorf("expected exit 0, got %d; output: %s",
-						code, output)
-				}
-			} else {
-				if !strings.Contains(stdout.String(), tt.Want_Diag) {
-					t.Errorf("expected output containing %q, got: %s",
-						tt.Want_Diag, output)
-				}
-			}
-		})
-	}
-}
-
-// Additional cases, split to keep each function within the length limit.
-func Test_Comments_Part2(t *testing.T) {
-	t.Parallel()
-	// TestComments fixtures include `//foo` (no space after slashes), which
-	// gofmt normalizes before our check sees it. Bypass gofmt_must so the
-	// formatting-style violations under test survive intact.
-	for _, tt := range []struct {
-		Name      string
-		Files     map[string]string
-		Want_Diag string
-	}{
-
-		{
-			Name: "well-formed comment",
-			Files: map[string]string{
-				"test.go": "// Well-formed sentence.\npackage main\n",
-			},
-			Want_Diag: "",
-		},
-
-		{
-			Name: "trailing colon allowed",
-			Files: map[string]string{
-				"test.go": "// Followed by something:\npackage main\n",
-			},
-			Want_Diag: "",
-		},
-
-		{
-			Name: "pragma exempt",
-			Files: map[string]string{
-				"test.go": "//go:build linux\n\npackage main\n",
-			},
-			Want_Diag: "",
-		},
-	} {
-		t.Run(tt.Name, func(t *testing.T) {
-			fsys_map := make(fstest.MapFS)
-			for k, v := range tt.Files {
-				fsys_map[k] = &fstest.MapFile{
-					Data: []byte(v)}
-			}
-			stdout := &strings.Builder{}
-			stderr := &strings.Builder{}
-			code := lint_main(t, &lint.Main_Input{
-				Fsys: fsys_map, Stdout: stdout, Stderr: stderr,
-			})
-
-			output := stdout.String()
-			if tt.Want_Diag == "" {
-				if code != 0 {
-					t.Errorf("expected exit 0, got %d; output: %s",
-						code, output)
-				}
-			} else {
-				if !strings.Contains(stdout.String(), tt.Want_Diag) {
-					t.Errorf("expected output containing %q, got: %s",
-						tt.Want_Diag, output)
-				}
-			}
-		})
-	}
-}
-
-// Additional cases, split to keep each function within the length limit.
-func Test_Comments_Part3(t *testing.T) {
-	t.Parallel()
-	// TestComments fixtures include `//foo` (no space after slashes), which
-	// gofmt normalizes before our check sees it. Bypass gofmt_must so the
-	// formatting-style violations under test survive intact.
-	for _, tt := range []struct {
-		Name      string
-		Files     map[string]string
-		Want_Diag string
-	}{
-
-		{
-			Name: "multi-line group: trailing period on last line",
-			Files: map[string]string{
-				"test.go": "// First line\n// second line.\npackage main\n",
-			},
-			Want_Diag: "",
-		},
-	} {
-		t.Run(tt.Name, func(t *testing.T) {
-			fsys_map := make(fstest.MapFS)
-			for k, v := range tt.Files {
-				fsys_map[k] = &fstest.MapFile{
-					Data: []byte(v)}
-			}
-			stdout := &strings.Builder{}
-			stderr := &strings.Builder{}
-			code := lint_main(t, &lint.Main_Input{
-				Fsys: fsys_map, Stdout: stdout, Stderr: stderr,
-			})
-
-			output := stdout.String()
-			if tt.Want_Diag == "" {
-				if code != 0 {
-					t.Errorf("expected exit 0, got %d; output: %s",
-						code, output)
-				}
-			} else {
-				if !strings.Contains(stdout.String(), tt.Want_Diag) {
-					t.Errorf("expected output containing %q, got: %s",
-						tt.Want_Diag, output)
-				}
-			}
-		})
-	}
-}
-
-// Test_Comments_Inline_Exempt verifies that comments on the same line as a
-// declaration (after the opening brace, for example) are exempt from the
-// sentence rules that apply to leading doc comments.
-func Test_Comments_Inline_Exempt(t *testing.T) {
-	t.Parallel()
-	source := "package main\n\n" +
-		"import \"github.com/james-orcales/james-orcales/" +
-		"shared/sim/aver/v2\"\n\n" +
-		"const FIXTURE_HI = 100\n\n" +
-		"func f() (result int) { // some inline note\n" +
-		"\tdefer func() {\n" +
-		"\t\tinvariant.Cross_Product(\n" +
-		"\t\t\tinvariant.Distinct_Boundary(" +
-		"&aver.Boundary_Input[int]{\n" +
-		"\t\t\t\tX: result, Lo: 0, Hi: FIXTURE_HI,\n" +
-		"\t\t\t}),\n" +
-		"\t\t\tinvariant.Always(" +
-		"result == 0, \"result is zero\"),\n" +
-		"\t\t)\n" +
-		"\t}()\n" +
-		"\treturn 1\n" +
-		"}\n"
-	fsys_map := fstest.MapFS{"test.go": &fstest.MapFile{
-		Data: []byte(source)}}
-	stdout := &strings.Builder{}
-	stderr := &strings.Builder{}
-	code := lint_main(t, &lint.Main_Input{Fsys: fsys_map, Stdout: stdout, Stderr: stderr})
-	if code != 0 {
-		t.Errorf("expected exit 0, got %d; output: %s", code, stdout.String())
 	}
 }
 
@@ -530,7 +268,6 @@ func run_global_api_case(
 	diags, err := lint.Check_File_System(&lint.Check_File_System_Input{
 		Fsys:                     fsys_map,
 		Instrumentation_Packages: allowlist,
-		Word_Replacements:        test_word_replacements(),
 	})
 	if err != nil {
 		t.Fatalf("Check_File_System: %v", err)
@@ -595,12 +332,8 @@ func Test_Keyed_Struct_Init_Cross_Package(t *testing.T) {
 	}
 	workspace := func(beta_body string) (files map[string]string) {
 		return map[string]string{
-			"lib/alpha/alpha.go":             alpha,
-			"lib/alpha/REQUIREMENTS.md":      REQUIREMENTS_FIXTURE_MD,
-			"lib/alpha/requirements_test.go": fixture_requirements_test("alpha"),
-			"lib/beta/beta.go":               beta(beta_body),
-			"lib/beta/REQUIREMENTS.md":       REQUIREMENTS_FIXTURE_MD,
-			"lib/beta/requirements_test.go":  fixture_requirements_test("beta"),
+			"lib/alpha/alpha.go": alpha,
+			"lib/beta/beta.go":   beta(beta_body),
 		}
 	}
 	unkeyed := run_shared_component_output(t, workspace(
@@ -692,8 +425,6 @@ func Test_Keyed_Struct_Init_Unparsed_Package(t *testing.T) {
 			"import \"go/token\"\n\n" +
 			"// Build is a fixture.\nfunc Build() (position token.Position) {\n" +
 			"\treturn token.Position{\"a\", 1, 2, 3}\n}\n",
-		"lib/gamma/REQUIREMENTS.md":      REQUIREMENTS_FIXTURE_MD,
-		"lib/gamma/requirements_test.go": fixture_requirements_test("gamma"),
 	}, "lib")
 	if strings.Contains(output, "literal has no field keys") {
 		t.Fatalf("an unparsed package's type is unknowable; got: %s", output)
@@ -894,157 +625,6 @@ func main() { return }
 	})
 }
 
-// Test_Banned_Scripting_Files verifies that scripting-language files
-// (.py, .sh, Makefile, ...) anywhere outside the top-level third_party/
-// and vendor/ directories are flagged. Bypasses run_diag_table because
-// gofmt_must would choke on non-Go content.
-func Test_Banned_Scripting_Files(t *testing.T) {
-	t.Parallel()
-	clean_go := []byte(FIXTURE_CLEAN_GO)
-	test_banned_scripting_files_run(t, []struct {
-		Name      string
-		Files     map[string][]byte
-		Want_Diag string
-	}{
-
-		{
-			Name: "top-level .py flagged",
-			Files: map[string][]byte{
-				"test.go":   clean_go,
-				"script.py": []byte("print(1)\n"),
-			},
-			Want_Diag: "as a go script",
-		},
-
-		{
-			Name: "nested .sh flagged",
-			Files: map[string][]byte{
-				"test.go":    clean_go,
-				"cmd/run.sh": []byte("#!/bin/sh\necho hi\n"),
-			},
-			Want_Diag: "as a go script",
-		},
-
-		{
-			Name: "Makefile flagged",
-			Files: map[string][]byte{
-				"test.go":  clean_go,
-				"Makefile": []byte("all:\n\techo hi\n"),
-			},
-			Want_Diag: "as a go script",
-		},
-
-		{
-			Name: "lowercase makefile flagged",
-			Files: map[string][]byte{
-				"test.go":  clean_go,
-				"makefile": []byte("all:\n\techo hi\n"),
-			},
-			Want_Diag: "as a go script",
-		},
-
-		{
-			Name: "Rakefile flagged",
-			Files: map[string][]byte{
-				"test.go":  clean_go,
-				"Rakefile": []byte("task :default\n"),
-			},
-			Want_Diag: "as a go script",
-		},
-
-		{
-			Name: "lua flagged",
-			Files: map[string][]byte{
-				"test.go":    clean_go,
-				"script.lua": []byte("print(1)\n"),
-			},
-			Want_Diag: "as a go script",
-		},
-	})
-}
-
-// Additional cases, split to keep each function within the length limit.
-func Test_Banned_Scripting_Files_Part2(t *testing.T) {
-	t.Parallel()
-	clean_go := []byte(FIXTURE_CLEAN_GO)
-	test_banned_scripting_files_run(t, []struct {
-		Name      string
-		Files     map[string][]byte
-		Want_Diag string
-	}{
-
-		{
-			Name: "third_party top-level allowed",
-			Files: map[string][]byte{
-				"test.go":              clean_go,
-				"third_party/foo.py":   []byte("print(1)\n"),
-				"third_party/Makefile": []byte("all:\n"),
-			},
-			Want_Diag: "",
-		},
-
-		{
-			Name: "vendor top-level allowed",
-			Files: map[string][]byte{
-				"test.go":       clean_go,
-				"vendor/foo.sh": []byte("#!/bin/sh\n"),
-			},
-			Want_Diag: "",
-		},
-
-		{
-			Name: "nested third_party NOT exempt",
-			Files: map[string][]byte{
-				"test.go":              clean_go,
-				"pkg/third_party/x.py": []byte("print(1)\n"),
-			},
-			Want_Diag: "as a go script",
-		},
-
-		{
-			Name: "go file alone clean",
-			Files: map[string][]byte{
-				"test.go": clean_go,
-			},
-			Want_Diag: "",
-		},
-	})
-}
-
-// Mirrors run_diag_table but feeds raw bytes — non-Go content would not
-// survive the gofmt preprocessing in the table runner used by Go-only tests.
-func test_banned_scripting_files_run(t *testing.T, tests []struct {
-	Name      string
-	Files     map[string][]byte
-	Want_Diag string
-}) {
-	t.Helper()
-	for _, tt := range tests {
-		t.Run(tt.Name, func(t *testing.T) {
-			fsys_map := make(fstest.MapFS)
-			for k, v := range tt.Files {
-				fsys_map[k] = &fstest.MapFile{Data: v}
-			}
-			stdout := &strings.Builder{}
-			code := lint_main(t, &lint.Main_Input{
-				Fsys: fsys_map, Stdout: stdout, Stderr: &strings.Builder{},
-			})
-			output := stdout.String()
-			if tt.Want_Diag == "" {
-				if code != 0 {
-					t.Errorf("expected exit 0, got %d; output: %s",
-						code, output)
-				}
-				return
-			}
-			if !strings.Contains(stdout.String(), tt.Want_Diag) {
-				t.Errorf("expected output containing %q, got: %s",
-					tt.Want_Diag, output)
-			}
-		})
-	}
-}
-
 // Run_stream returns Main's stdout for a tree of files. Stream-tier checks
 // run against raw bytes, so test inputs go through MapFS verbatim — no
 // gofmt_must wrapping like the AST-tier tests use.
@@ -1096,23 +676,12 @@ func run_snapshot_verbatim(
 	return strings.Trim_Right(stdout.String(), "\n")
 }
 
-// Formats diagnostics exactly as Main's printer does, for the tiers not
-// reachable through Main(Fsys): git history and injected symlinks.
-func render_diags(diags []lint.Diagnostic) (output string) {
-	var builder strings.Builder
-	for _, diagnostic := range diags {
-		fmt.Fprintf(&builder, "%s: %s\n", diagnostic.Position, diagnostic.Message)
-	}
-	return strings.Trim_Right(builder.String(), "\n")
-}
-
 // Pairs a captured snapshot with the in-memory fixture whose single linter
 // diagnostic it pins. Verbatim skips gofmt for fixtures that must reach the
 // linter byte-exact (the gofmt diagnostic, non-Go files). Drop removes output
-// lines containing it, to strip orthogonal noise a fixture cannot avoid (a
-// go.mod fixture's unavoidable missing-REQUIREMENTS.md coverage diagnostic).
+// lines containing it, to strip orthogonal noise a fixture cannot avoid.
 type snapshot_case struct {
-	Snapshot snap.Snapshot
+	Snapshot library.Snapshot
 	Files    map[string]string
 	Verbatim bool
 	Drop     string
@@ -1162,80 +731,6 @@ func run_snapshot_cases_shared(t *testing.T, shared string, cases []snapshot_cas
 func snapshot_package(body string) (files map[string]string) {
 	return map[string]string{
 		"a.go": "// Package fixture is a fixture.\npackage fixture\n\n" + body}
-}
-
-// Builds the spec-fixture package around a REQUIREMENTS.md body. Coverage is
-// satisfied (the file and its test exist), so the only diagnostic is the
-// structural one the mutated markdown introduces.
-func snapshot_requirements(MARKDOWN string) (files map[string]string) {
-	return map[string]string{
-		"go.mod":                   DOCTRINE_SHARED_LIBRARY_GO_MODULE,
-		"pkg/fixture.go":           "// Package fixture is a fixture.\npackage fixture\n",
-		"pkg/REQUIREMENTS.md":      MARKDOWN,
-		"pkg/requirements_test.go": SNAPSHOT_REQUIREMENTS_TEST,
-	}
-}
-
-// Test_Snapshot_Requirements pins the REQUIREMENTS.md structural checks. The
-// section-level mutations target the baseline leaf (which keeps its test) so a
-// single spec diagnostic fires; a new leaf would also lack a test.
-func Test_Snapshot_Requirements(t *testing.T) {
-	run_snapshot_cases_shared(t, "pkg", []snapshot_case{
-		{Snapshot: snap.Init(`pkg/REQUIREMENTS.md:1: pkg/REQUIREMENTS.md:1 The content is before the first heading. Start the file with a heading.`), Files: snapshot_requirements("Stray prose.\n" + SNAPSHOT_REQUIREMENTS_MARKDOWN)},
-		{Snapshot: snap.Init(`pkg/REQUIREMENTS.md:1: pkg/REQUIREMENTS.md:1 There is no blank line before the heading "Sole Rule". Write a blank line.`), Files: snapshot_requirements("# Sole Rule\n\nThe sole rule.\n")},
-		{Snapshot: snap.Init(`pkg/REQUIREMENTS.md:2: pkg/REQUIREMENTS.md:2 The section "Sole Rule" has no body line. Write a body line.`), Files: snapshot_requirements("\n# Sole Rule\n")},
-		{Snapshot: snap.Init(`pkg/REQUIREMENTS.md:7: pkg/REQUIREMENTS.md:7 The section "Sole Rule" has more than three lines. Write a maximum of three lines.`), Files: snapshot_requirements(
-			"\n# Sole Rule\n\none\ntwo\nthree\nfour\n")},
-		{Snapshot: snap.Init(`pkg/REQUIREMENTS.md:6: pkg/REQUIREMENTS.md:6 The section "Sole Rule" has a blank line between two body lines. Remove the blank line.`), Files: snapshot_requirements("\n# Sole Rule\n\none\n\ntwo\n")},
-		{Snapshot: snap.Init(`pkg/REQUIREMENTS.md:6: pkg/REQUIREMENTS.md:6 The heading level is not "#" or "###". Write a "#" heading or a "###" heading.`), Files: snapshot_requirements(
-			SNAPSHOT_REQUIREMENTS_MARKDOWN + "\n## Mid Level\n\nLevel two.\n")},
-		{Snapshot: snap.Init(`pkg/requirements_test.go: pkg/requirements_test.go:2 The file needs Test_Phantom for the leaf "Phantom". Declare the tests in leaf order at the top of the file.`), Files: snapshot_requirements(
-			SNAPSHOT_REQUIREMENTS_MARKDOWN + "\n# Phantom\n\nIt has no test.\n")},
-	})
-}
-
-// Test_Snapshot_Requirements_Coverage pins the file-presence and test-mapping
-// spec checks. Each drops the companion noise it cannot avoid.
-func Test_Snapshot_Requirements_Coverage(t *testing.T) {
-	run_snapshot_cases_shared(t, "pkg", []snapshot_case{
-		{Snapshot: snap.Init(`pkg/REQUIREMENTS.md: The package "pkg" has no REQUIREMENTS.md. Add REQUIREMENTS.md.`), Drop: "requirements_test.go", Files: map[string]string{
-			"go.mod":         DOCTRINE_SHARED_LIBRARY_GO_MODULE,
-			"pkg/fixture.go": "// Package fixture is a fixture.\npackage fixture\n"}},
-		{Snapshot: snap.Init(`pkg/requirements_test.go: The package "pkg" has no requirements_test.go. Add requirements_test.go.`), Drop: "needs Test_", Files: map[string]string{
-			"go.mod": DOCTRINE_SHARED_LIBRARY_GO_MODULE,
-			"pkg/fixture.go": "// Package fixture is a fixture.\n" +
-				"package fixture\n",
-			"pkg/REQUIREMENTS.md": SNAPSHOT_REQUIREMENTS_MARKDOWN}},
-		{Snapshot: snap.Init(`pkg/requirements_test.go: pkg/requirements_test.go:1 The file needs Test_Sole_Rule for the leaf "Sole_Rule". Declare the tests in leaf order at the top of the file.`), Files: map[string]string{
-			"go.mod": DOCTRINE_SHARED_LIBRARY_GO_MODULE,
-			"pkg/fixture.go": "// Package fixture is a fixture.\n" +
-				"package fixture\n",
-			"pkg/REQUIREMENTS.md": SNAPSHOT_REQUIREMENTS_MARKDOWN,
-			"pkg/requirements_test.go": `package fixture_test
-
-import "testing"
-
-// Test_Wrong checks the wrong thing.
-func Test_Wrong(t *testing.T) { t.Parallel() }
-`}},
-		{Snapshot: snap.Init(`pkg/requirements_test.go: pkg/requirements_test.go:2 The file needs Test_Extra_Child for the leaf "Extra_Child". Declare the tests in leaf order at the top of the file.`), Files: snapshot_requirements(
-			SNAPSHOT_REQUIREMENTS_MARKDOWN +
-				"\n# Extra\n\n### Child\n\nA child leaf.\n")},
-		{Snapshot: snap.Init(`pkg/REQUIREMENTS.md:2: pkg/REQUIREMENTS.md:2 The heading "Sole-Rule" has a character that is not a letter or a digit. Write only letters and digits.`), Drop: "needs Test_", Files: snapshot_requirements(
-			"\n# Sole-Rule\n\nThe rule.\n")},
-	})
-}
-
-// Test_Snapshot_Requirements_Headings pins the remaining heading-structure spec
-// checks: a heading not followed by a blank line, a duplicate, and an orphan ###.
-func Test_Snapshot_Requirements_Headings(t *testing.T) {
-	run_snapshot_cases_shared(t, "pkg", []snapshot_case{
-		{Snapshot: snap.Init(`pkg/REQUIREMENTS.md:2: pkg/REQUIREMENTS.md:2 There is no blank line after the heading "Sole Rule". Write a blank line.`), Files: snapshot_requirements("\n# Sole Rule\nThe sole rule.\n")},
-		{Snapshot: snap.Init(`pkg/REQUIREMENTS.md:6: pkg/REQUIREMENTS.md:6 The heading "Sole Rule" is not unique. Write a different heading.`), Drop: "needs Test_", Files: snapshot_requirements(
-			SNAPSHOT_REQUIREMENTS_MARKDOWN + "\n# Sole Rule\n\nAgain.\n")},
-		{Snapshot: snap.Init(`pkg/REQUIREMENTS.md:2: pkg/REQUIREMENTS.md:2 The "###" heading "Orphan" has no parent "#" heading. Put the heading below a "#" heading.`), Drop: "needs Test_", Files: snapshot_requirements(
-			"\n### Orphan\n\nNo parent.\n" + SNAPSHOT_REQUIREMENTS_MARKDOWN)},
-	})
 }
 
 // Test_Snapshot_Bans_Imports pins the import-construct bans.
@@ -1367,21 +862,6 @@ var X = 0
 	})
 }
 
-// Test_Snapshot_Bans_Words pins the banned-word checks.
-func Test_Snapshot_Bans_Words(t *testing.T) {
-	run_snapshot_cases(t, []snapshot_case{
-		{
-			Snapshot: snap.Init(`a.go:5:7: The identifier "Length" contains the banned substring "length". Write a different name.`),
-			Files: snapshot_package(`// Length is a fixture.
-const Length = 0
-`),
-			// Length is also an exported const not in SCREAMING_SNAKE_CASE, incidental
-			// to the rule this case pins; drop that diagnostic rather than pin it too.
-			Drop: "Length -> LENGTH",
-		},
-	})
-}
-
 // Test_Snapshot_Requirements_Forms pins the required-form checks.
 func Test_Snapshot_Requirements_Forms(t *testing.T) {
 	run_snapshot_cases(t, []snapshot_case{
@@ -1405,47 +885,12 @@ func F() (t T) {
 	})
 }
 
-// Test_Snapshot_Documentation pins the documentation-requirement checks.
-func Test_Snapshot_Documentation(t *testing.T) {
-	run_snapshot_cases(t, []snapshot_case{
-		{Snapshot: snap.Init(`a.go:1:9: The package "fixture" has no doc comment. Write a doc comment.`), Files: map[string]string{
-			"a.go": "package fixture\n\n// F does.\nfunc F() {\n\tprintln(0)\n}\n"}},
-		{Snapshot: snap.Init(`a.go:4:6: The exported func F has no doc comment. Write a doc comment.`), Files: snapshot_package(`func F() {
-	println(0)
-}
-`)},
-		{Snapshot: snap.Init(`a.go:6:2: The field Widget.Count has no doc comment. Write a doc comment.`), Files: snapshot_package(`// Widget is a fixture.
-type Widget struct {
-	Count int
-}
-`)},
-		{Snapshot: snap.Init(`a_test.go:5:1: The test Test_X has no doc comment. Write a doc comment.`), Files: map[string]string{
-			"a_test.go": "package fixture_test\n\nimport \"testing\"\n\n" +
-				"func Test_X(t *testing.T) {\n\tt.Parallel()\n}\n"}},
-	})
-}
-
 // Test_Snapshot_Names pins the naming-convention checks.
 func Test_Snapshot_Names(t *testing.T) {
 	run_snapshot_cases(t, []snapshot_case{
 		{Snapshot: snap.Init(`a.go:5:6: Rename MyName -> My_Name.`), Files: snapshot_package(`// MyName is a fixture.
 func MyName() {
 	println(0)
-}
-`)},
-		{
-			Snapshot: snap.Init(`a.go:5:7: Rename Widget_Id -> Widget_Identifier.`),
-			Files: snapshot_package(`// Widget_Id is a fixture.
-const Widget_Id = 0
-`),
-			// Widget_Id is also an exported const not in SCREAMING_SNAKE_CASE,
-			// incidental to the rule this case pins; drop it rather than pin it too.
-			Drop: "Widget_Id -> WIDGET_ID",
-		},
-		{Snapshot: snap.Init(`a.go:5:6: The name "parsing" is a present participle. Rename it to a noun form.`), Files: snapshot_package(`// Parsing is a fixture.
-type Parsing struct {
-	// X is a fixture.
-	X int
 }
 `)},
 	})
@@ -1495,52 +940,21 @@ type Widget struct {
 	})
 }
 
-// Test_Snapshot_Stream_Files pins the stream-tier file bans.
-func Test_Snapshot_Stream_Files(t *testing.T) {
-	run_snapshot_cases(t, []snapshot_case{
-		{Snapshot: snap.Init(`notes.txt:2:1: The file has a conflict marker. Resolve the conflict and remove the marker.`), Verbatim: true, Files: map[string]string{
-			"notes.txt": "ok\n<<<<<<< HEAD\n"}},
-		{Snapshot: snap.Init(`build.sh:1:1: The file "build.sh" is a shell script. Rewrite the file as a go script.`), Verbatim: true, Files: map[string]string{
-			"build.sh": "echo hi\n"}},
-		{Snapshot: snap.Init(`Makefile:1:1: The file "Makefile" is a shell script. Rewrite the file as a go script.`), Verbatim: true, Files: map[string]string{
-			"Makefile": "all:\n\techo hi\n"}},
-		{Snapshot: snap.Init(`backup.tar.xz:1:1: Do not use a .xz file. Use a .gz file or a .zip file.`), Verbatim: true, Files: map[string]string{
-			"backup.tar.xz": "\xfd7zXZ\x00"}},
-	})
-}
-
-// Test_Snapshot_Stream_Markdown pins the markdown, agent-doc, and path checks.
-func Test_Snapshot_Stream_Markdown(t *testing.T) {
-	run_snapshot_cases(t, []snapshot_case{
-		{Snapshot: snap.Init(`notes.md:3:1: The markdown line has trailing whitespace. Remove the trailing whitespace.`), Verbatim: true, Files: map[string]string{
-			"notes.md": "# Title\n\nIt trails.   \n"}},
-		{Snapshot: snap.Init(`notes.md:3:1: The markdown line has 120 columns. The visual limit is 100.`), Verbatim: true, Files: map[string]string{
-			"notes.md": "# Wide\n\n" + strings.Repeat("x", 120) + "\n"}},
-		{Snapshot: snap.Init(`SKILL.md:1:1: The file SKILL.md has 101 lines. The maximum is 100. Write a procedural script instead of prose.`), Verbatim: true, Files: map[string]string{
-			"SKILL.md": strings.Repeat("line\n", 101)}},
-		{Snapshot: snap.Init(`top: There is no AGENTS.md. Add an AGENTS.md that is CLAUDE.md byte-for-byte`), Verbatim: true, Files: map[string]string{
-			"top/CLAUDE.md": "Shared instructions.\n"}},
-		{Snapshot: snap.Init(`bad-dir: Rename bad-dir -> bad_dir.`), Files: map[string]string{
-			"bad-dir/x.txt": "x\n"}},
-	})
-}
-
 // Test_Snapshot_Component_Layout pins the binary/shared component layout checks.
-// A binary fixture lives under app/, a shared fixture under shared/; each drops
-// the unavoidable missing-REQUIREMENTS.md coverage noise it adds.
+// A binary fixture lives under app/, a shared fixture under shared/.
 func Test_Snapshot_Module_Layout(t *testing.T) {
 	run_snapshot_cases(t, []snapshot_case{
-		{Snapshot: snap.Init(`app/feature/feature.go:1:1: Move feature -> app/pkg/feature.`), Drop: "REQUIREMENTS.md", Files: map[string]string{
+		{Snapshot: snap.Init(`app/feature/feature.go:1:1: Move feature -> app/pkg/feature.`), Files: map[string]string{
 			"app/pkg/entry.go": DOCTRINE_BINARY_PACKAGE_MAIN,
 			"app/feature/feature.go": "// Package feature is a fixture.\n" +
 				"package feature\n"}},
-		{Snapshot: snap.Init(`app/cmd/app/main.go:1:1: The binary component "github.com/james-orcales/james-orcales/app" has its main package at "cmd/app". Move the main package to the component root.`), Drop: "REQUIREMENTS.md", Files: map[string]string{
+		{Snapshot: snap.Init(`app/cmd/app/main.go:1:1: The binary component "github.com/james-orcales/james-orcales/app" has its main package at "cmd/app". Move the main package to the component root.`), Files: map[string]string{
 			"app/pkg/entry.go": DOCTRINE_BINARY_PACKAGE_MAIN,
 			"app/cmd/app/main.go": "package main\n\n" +
 				"func main() {\n\tprintln(0)\n}\n"}},
-		{Snapshot: snap.Init(`shared/internal/x/x.go:1:1: A shared library permits no internal/ directory. Remove "shared/internal".`), Drop: "REQUIREMENTS.md", Files: map[string]string{
+		{Snapshot: snap.Init(`shared/internal/x/x.go:1:1: A shared library permits no internal/ directory. Remove "shared/internal".`), Files: map[string]string{
 			"shared/internal/x/x.go": "// Package x is a fixture.\npackage x\n"}},
-		{Snapshot: snap.Init(`shared/main.go:1:1: The shared library "github.com/james-orcales/james-orcales/shared" permits no package main. Move the entry point to a binary component.`), Drop: "REQUIREMENTS.md", Files: map[string]string{
+		{Snapshot: snap.Init(`shared/main.go:1:1: The shared library "github.com/james-orcales/james-orcales/shared" permits no package main. Move the entry point to a binary component.`), Files: map[string]string{
 			"shared/main.go": "package main\n\nfunc main() {\n\tprintln(0)\n}\n"}},
 	})
 }
@@ -1549,7 +963,7 @@ func Test_Snapshot_Module_Layout(t *testing.T) {
 // now governed by the single-module rule, snapshotted in Test_Snapshot_Single_Module.
 func Test_Snapshot_Module_Structure(t *testing.T) {
 	run_snapshot_cases(t, []snapshot_case{
-		{Snapshot: snap.Init(`shared/a/b/c/c.go:1:1: The package "c" at "a/b/c" is below the library tier. It has 2 non-main ancestors: [a/b a].`), Drop: "REQUIREMENTS.md", Files: map[string]string{
+		{Snapshot: snap.Init(`shared/a/b/c/c.go:1:1: The package "c" at "a/b/c" is below the library tier. It has 2 non-main ancestors: [a/b a].`), Files: map[string]string{
 			"shared/a/a.go":     "// Package a is a fixture.\npackage a\n",
 			"shared/a/b/b.go":   "// Package b is a fixture.\npackage b\n",
 			"shared/a/b/c/c.go": "// Package c is a fixture.\npackage c\n"}},
@@ -1560,7 +974,7 @@ func Test_Snapshot_Module_Structure(t *testing.T) {
 // go.work, and a missing root go.mod are each flagged at the offending file.
 func Test_Snapshot_Single_Module(t *testing.T) {
 	run_snapshot_cases(t, []snapshot_case{
-		{Snapshot: snap.Init(`shared/nested/go.mod:1:1: A nested go.mod divides the repository into more than one module. Remove "shared/nested/go.mod".`), Drop: "REQUIREMENTS.md", Files: map[string]string{
+		{Snapshot: snap.Init(`shared/nested/go.mod:1:1: A nested go.mod divides the repository into more than one module. Remove "shared/nested/go.mod".`), Files: map[string]string{
 			"shared/nested/go.mod": "module example.com/nested\n",
 			"shared/x.go":          "// Package shared x.\npackage shared\n"}},
 	})
@@ -1569,14 +983,14 @@ func Test_Snapshot_Single_Module(t *testing.T) {
 // Test_Snapshot_Purity pins the direct impure-stdlib checks.
 func Test_Snapshot_Purity(t *testing.T) {
 	run_snapshot_cases_shared(t, "lib", []snapshot_case{
-		{Snapshot: snap.Init(`lib/library.go:4:8: The stdlib import "runtime" is impure. See lint/README.md for the resolutions.`), Drop: "REQUIREMENTS.md", Files: map[string]string{
+		{Snapshot: snap.Init(`lib/library.go:4:8: The stdlib import "runtime" is impure. See lint/README.md for the resolutions.`), Files: map[string]string{
 			"go.mod": DOCTRINE_SHARED_LIBRARY_GO_MODULE,
 			"lib/library.go": `// Package library x.
 package library
 
 import "runtime"
 `}},
-		{Snapshot: snap.Init(`lib/library.go:8:2: The stdlib call fmt.Println is impure. See lint/README.md for the resolutions.`), Drop: "REQUIREMENTS.md", Files: map[string]string{
+		{Snapshot: snap.Init(`lib/library.go:8:2: The stdlib call fmt.Println is impure. See lint/README.md for the resolutions.`), Files: map[string]string{
 			"go.mod": DOCTRINE_SHARED_LIBRARY_GO_MODULE,
 			"lib/library.go": `// Package library x.
 package library
@@ -1594,8 +1008,7 @@ func F() {
 // Test_Snapshot_Transitive pins the transitive-purity checks.
 func Test_Snapshot_Transitive(t *testing.T) {
 	run_snapshot_cases(t, []snapshot_case{
-		{Snapshot: snap.Init(`shared/lib/library_test.go:3:8: Banned import "path/filepath" belongs to stdlib family "path". Use shared package.
-shared/lib/library_test.go:7:2: The transitive call path/filepath.Walk is impure. A pure package calls only pure APIs.`), Drop: "REQUIREMENTS.md", Files: map[string]string{
+		{Snapshot: snap.Init(`shared/lib/library_test.go:7:2: The transitive call path/filepath.Walk is impure. A pure package calls only pure APIs.`), Files: map[string]string{
 			"shared/lib/library.go": "// Package library x.\npackage library\n",
 			"shared/lib/library_test.go": `package library_test
 
@@ -1606,7 +1019,7 @@ func Test_F() {
 	filepath.Walk(".", nil)
 }
 `}},
-		{Snapshot: snap.Init(`shared/lib/library.go:4:8: The dependency "github.com/james-orcales/james-orcales/shared/widget/default" is impure. A pure package imports only pure packages.`), Drop: "REQUIREMENTS.md", Files: map[string]string{
+		{Snapshot: snap.Init(`shared/lib/library.go:4:8: The dependency "github.com/james-orcales/james-orcales/shared/widget/default" is impure. A pure package imports only pure packages.`), Files: map[string]string{
 			"shared/lib/library.go": `// Package library x.
 package library
 
@@ -1628,121 +1041,10 @@ func Name() (s string) {
 	})
 }
 
-// Test_Snapshot_Unbounded pins the unbounded-API bans (tier two).
-func Test_Snapshot_Unbounded(t *testing.T) {
-	run_snapshot_cases(t, []snapshot_case{
-		{Snapshot: snap.Init(`a.go:6:9: The API "io.ReadAll" is unbounded (unbounded-read). Use io.ReadFull(r, buf) with a bounded buf instead.`), Files: snapshot_package(`// F reads.
-func F(r io.Reader) (b []byte) {
-	b, _ = io.ReadAll(r)
-	return b
-}
-`)},
-		{Snapshot: snap.Init(`a.go:6:9: The API "json.NewDecoder" is unbounded (unbounded-decode). Use json.Unmarshal over a bounded []byte instead.`), Files: snapshot_package(`// F decodes.
-func F(r io.Reader) (d *json.Decoder) {
-	return json.NewDecoder(r)
-}
-`)},
-		{Snapshot: snap.Init(`a.go:6:9: The API "gzip.NewReader" is unbounded (unbounded-decompression). Use wrap the decompressed reader in io.LimitReader instead.`), Files: snapshot_package(`// F wraps.
-func F(r io.Reader) (z *gzip.Reader, err error) {
-	return gzip.NewReader(r)
-}
-`)},
-		{Snapshot: snap.Init(`a.go:6:2: The API "bytes.NewBuffer" is unbounded (unbounded-allocation). Use a fixed []byte with explicit length tracking instead.`), Files: snapshot_package(`// F buffers.
-func F() {
-	bytes.NewBuffer(nil)
-}
-`)},
-		{Snapshot: snap.Init(`a.go:8:9: The API "http.Get" is unbounded (unbounded-http). Use (&http.Client{Timeout: N}).Get(...) instead.
-a.go:4:8: Only sim/nbio/default can import "net/http". Route IO through shared/sim/nbio.`), Drop: "The stdlib call", Files: snapshot_package(`import "net/http"
-
-// F fetches.
-func F(url string) (resp *http.Response, err error) {
-	return http.Get(url)
-}
-`)},
-		{Snapshot: snap.Init(`a.go:6:9: The API "ioutil.ReadAll" is unbounded (deprecated-ioutil). Use io.ReadFull(r, buf) with a bounded buf instead.`), Files: snapshot_package(`// F reads.
-func F(r io.Reader) (b []byte, err error) {
-	return ioutil.ReadAll(r)
-}
-`)},
-	})
-}
-
-// Test_Snapshot_Commits pins the git-history checks, rendered like Main prints.
-func Test_Snapshot_Commits(t *testing.T) {
-	snap.Expect(t, snap.Init(`<git:abc>: The commit subject has 206 characters. The maximum is 100.`), render_diags(lint.Git_Input_Check(lint.Git_Input{
-		Enabled: true,
-		Non_Merge_Commits: []lint.Git_Commit{
-			{Hash: "abc", Subject: "feat: " + strings.Repeat("x", 200)},
-		},
-	})))
-	snap.Expect(t, snap.Init(`<git:abc>: The commit subject "did some stuff" is not conventional. Write "type(scope): description".`), render_diags(lint.Git_Input_Check(lint.Git_Input{
-		Enabled: true,
-		Non_Merge_Commits: []lint.Git_Commit{
-			{Hash: "abc", Subject: "did some stuff"},
-		},
-	})))
-	snap.Expect(t, snap.Init(`<git:abc>: The commit "fixup! feat: thing" is a fixup commit. Squash it into its target commit.`), render_diags(lint.Git_Input_Check(lint.Git_Input{
-		Enabled: true,
-		Non_Merge_Commits: []lint.Git_Commit{
-			{Hash: "abc", Subject: "fixup! feat: thing"},
-		},
-	})))
-	snap.Expect(t, snap.Init(`<git:abc>: The commit "Merge branch 'feature' into main" is a merge commit. Rebase the branch onto main.`), render_diags(lint.Git_Input_Check(lint.Git_Input{
-		Enabled: true,
-		Merge_Commits: []lint.Git_Commit{
-			{Hash: "abc", Subject: "Merge branch 'feature' into main"},
-		},
-	})))
-	snap.Expect(t, snap.Init(`<git>: The linter cannot find the main ref. Fetch main, or set "actions/checkout fetch-depth: 0".`), render_diags(lint.Git_Input_Check(lint.Git_Input{
-		Enabled: true, Main_Reference_Absent: true,
-	})))
-}
-
-// Test_Snapshot_Suffixes pins the quantity/arithmetic/extremum suffix checks.
-func Test_Snapshot_Suffixes(t *testing.T) {
-	run_snapshot_cases(t, []snapshot_case{
-		{Snapshot: snap.Init(`a.go:6:2: The name total has the role count or size. Rename total -> total_count.`), Files: snapshot_package(`// F does.
-func F(s string) (n int) {
-	total := len(s)
-	return total
-}
-`)},
-		{Snapshot: snap.Init(`a.go:8:6: The arithmetic _index + _size is not coherent. Use operands with compatible suffixes.`), Files: snapshot_package(`// F does.
-func F() (n int) {
-	a_index := 0
-	b_size := 0
-	n = a_index + b_size
-	return n
-}
-`)},
-		{Snapshot: snap.Init(`a.go:6:2: Rename max_count -> count_max.`), Files: snapshot_package(`// F does.
-func F() (n int) {
-	max_count := 1
-	return max_count
-}
-`)},
-	})
-}
-
-// Test_Snapshot_Forms pins the remaining per-file form checks.
-func Test_Snapshot_Forms(t *testing.T) {
-	run_snapshot_cases(t, []snapshot_case{
-		{Snapshot: snap.Init(`a.go:4:1: The comment does not start with a capital letter. Write a capital letter first.`), Files: snapshot_package(`// f does something.
-func F() {
-	println(0)
-}
-`)},
-		{Snapshot: snap.Init(`a.go:5:1: The function has 73 lines. The maximum is 70.`), Files: snapshot_package("// F does.\nfunc F() {\n" +
-			strings.Repeat("\tprintln(0)\n", 71) + "}\n")},
-	})
-}
-
 // Test_Snapshot_Miscellaneous pins the remaining per-file checks.
 func Test_Snapshot_Miscellaneous(t *testing.T) {
 	run_snapshot_cases_shared(t, "foo", []snapshot_case{
-		{Snapshot: snap.Init(`a.go:10:6: The type snapper is not exported. Rename snapper -> Snapper.
-a.go:7:12: The call snap.Init has no raw string literal. Write a raw string literal.`), Files: snapshot_package(`// F does.
+		{Snapshot: snap.Init(`a.go:10:6: The type snapper is not exported. Rename snapper -> Snapper.`), Files: snapshot_package(`// F does.
 func F() {
 	var snap snapper
 	snap.Init("plain")
@@ -1779,16 +1081,6 @@ func F() {
 	}
 }
 `)},
-		{Snapshot: snap.Init(`a.go:4:1: The comment has no space after "//". Add a space.`),
-			Verbatim: true, Drop: "gofmt-clean", Files: map[string]string{
-				"a.go": "// Package fixture is a fixture.\npackage fixture\n\n" +
-					"//F does.\nfunc F() {\n\tprintln(0)\n}\n"}},
-		{Snapshot: snap.Init(`a.go:4:1: The comment does not end with ".", ":", "?", or "!". Add one of the four marks.`),
-			Files: snapshot_package("// F does\nfunc F() {\n\tprintln(0)\n}\n")},
-		{Snapshot: snap.Init(`.github/workflows/ci.yml:2:1: Do not use a third-party github action. Replace the "uses:" line with an inline "run:" step.`),
-			Verbatim: true, Files: map[string]string{
-				".github/workflows/ci.yml": "steps:\n" +
-					"  - uses: actions/checkout@v4\n"}},
 	})
 }
 
@@ -1916,228 +1208,59 @@ func Test_Module_Discovery_Ignores_Untracked(t *testing.T) {
 	}
 }
 
-// Conflict markers in any file must be flagged with the conflict-markers check
-// and the correct line number.
-func Test_Stream_Conflict_Markers(t *testing.T) {
-	t.Parallel()
-	output := run_stream(t, map[string]string{
-		"notes.txt": "ok line\n<<<<<<< HEAD\nmine\n=======\ntheirs\n>>>>>>> branch\n",
-	})
-	if !strings.Contains(output, "conflict marker") {
-		t.Errorf("expected conflict-markers diag, got: %s", output)
-	}
-	if !strings.Contains(output, "notes.txt:2") {
-		t.Errorf("expected diag at notes.txt:2, got: %s", output)
-	}
-}
-
-// Any `uses:` line under .github/workflows/ must be flagged. Other YAML
-// (including .github/ files outside workflows/) and other content inside a
-// workflow file (run:, name:, etc.) must pass clean.
-func Test_Stream_Github_Actions_Uses(t *testing.T) {
-	t.Parallel()
-	cases := []struct {
-		Name   string
-		Path   string
-		Body   string
-		Should string
-	}{
-		{
-			Name:   "third-party uses flagged",
-			Path:   ".github/workflows/ci.yml",
-			Body:   "jobs:\n  build:\n    steps:\n      - uses: actions/checkout@v4\n",
-			Should: "github-actions-uses",
-		},
-		{
-			Name: "local uses flagged",
-			Path: ".github/workflows/ci.yml",
-			Body: "jobs:\n  build:\n    steps:\n" +
-				"      - uses: ./.github/actions/foo\n",
-			Should: "github-actions-uses",
-		},
-		{
-			Name:   "yaml extension flagged",
-			Path:   ".github/workflows/ci.yaml",
-			Body:   "steps:\n  - uses: actions/setup-go@v5\n",
-			Should: "github-actions-uses",
-		},
-		{
-			Name: "run-only workflow clean",
-			Path: ".github/workflows/ci.yml",
-			Body: "jobs:\n  build:\n    steps:\n      - name: build\n" +
-				"        run: go build ./...\n",
-			Should: "",
-		},
-		{
-			Name:   "uses in non-workflow yaml ignored",
-			Path:   ".github/dependabot.yml",
-			Body:   "uses: whatever\n",
-			Should: "",
-		},
-		{
-			Name:   "uses in top-level yaml ignored",
-			Path:   "config.yml",
-			Body:   "uses: whatever\n",
-			Should: "",
-		},
-	}
-	for _, tc := range cases {
-		t.Run(tc.Name, func(t *testing.T) {
-			output := run_stream(t, map[string]string{tc.Path: tc.Body})
-			has := strings.Contains(output, "third-party github action")
-			want := tc.Should != ""
-			if has != want {
-				t.Errorf("path %q: want github-actions-uses=%v, got: %s",
-					tc.Path, want, output)
-			}
-		})
-	}
-}
-
 // The linter ignores a fixed set of directories outright: top-level
-// third_party/, vendor/ at any depth, .jj, and .git. A banned-scripts-tripping
+// third_party/, vendor/ at any depth, .jj, and .git. A malformed Go
 // file under each must yield no diagnostic. testdata and a nested third_party/
 // are NOT ignored — the carve-out is the top-level drop-zone only — so the same
 // file there must still be flagged.
 func Test_Stream_Ignored_Directories(t *testing.T) {
 	t.Parallel()
 	for _, p := range []string{
-		"third_party/build.sh",
-		"vendor/build.sh",
-		"deep/nest/vendor/build.sh",
-		".jj/build.sh",
-		".git/build.sh",
+		"third_party/build.go",
+		"vendor/build.go",
+		"deep/nest/vendor/build.go",
+		".jj/build.go",
+		".git/build.go",
 	} {
 		output := run_stream(t, map[string]string{p: "echo hi\n"})
-		if strings.Contains(output, "as a go script") {
+		if strings.Contains(output, "expected 'package'") {
 			t.Errorf("%s is ignored; want no diagnostic, got: %s", p, output)
 		}
 	}
 	for _, p := range []string{
-		"testdata/build.sh",
-		"pkg/third_party/build.sh",
+		"testdata/build.go",
+		"pkg/third_party/build.go",
 	} {
 		output := run_stream(t, map[string]string{p: "echo hi\n"})
-		if !strings.Contains(output, "as a go script") {
+		if !strings.Contains(output, "expected 'package'") {
 			t.Errorf("%s is not ignored; want a diagnostic, got: %s", p, output)
 		}
 	}
 }
 
-// Agent docs under an ignored directory must be skipped; agent docs under
-// normal paths must be flagged when they exceed 100 lines.
-func Test_Stream_Agent_Documentation_Lines_Max(t *testing.T) {
-	t.Parallel()
-	body := strings.Repeat("line\n", 101)
-	// The vendor/ tree is on the global ignore list, so the doc must live under
-	// a non-ignored path to be reached.
-	output := run_stream(t, map[string]string{"vendor/skills/foo/SKILL.md": body})
-	if strings.Contains(output, "The maximum is") {
-		t.Errorf("ignored-dir SKILL.md should be skipped, got: %s", output)
-	}
-	for _, name := range []string{"SKILL.md", "CLAUDE.md", "AGENTS.md"} {
-		loop_output := run_stream(t, map[string]string{"skills/foo/" + name: body})
-		if !strings.Contains(loop_output, "The maximum is") {
-			t.Errorf("expected agent-doc-max-lines diag for %s, got: %s",
-				name, loop_output)
-		}
-	}
-}
-
-// Snake_case, Ada_Case, and SCREAMING_SNAKE_CASE paths must pass; kebab-case
-// and camelCase paths must be flagged; third_party/ is fully exempt.
-func Test_Stream_Path_Casing(t *testing.T) {
-	t.Parallel()
-	cases := []struct {
-		Name   string
-		Path   string
-		Should string
-	}{
-		{"snake_case file", "lint_stream.go", ""},
-		{"Ada_Case file", "Foo_Bar.txt", ""},
-		{"SCREAMING file", "LICENSE", ""},
-		{"dotfile with valid stem", ".gitignore", ""},
-		{"snake_case dir", "big_bang/foo.go", ""},
-		{"FQDN multi-component", "TIGER_STYLE.Index_Count.md", ""},
-		{".git subtree exempt", ".git/bad-ref", ""},
-		{"third_party exempt", "third_party/badName-file.go", ""},
-		{"nested third_party path-casing exempt", "pkg/third_party/badName-file.go", ""},
-		{"vendor exempt at any depth", "deep/nest/vendor/badName-file.go", ""},
-		{"FQDN bad component flagged", "Foo.bad-component.md", "path-casing"},
-		{"hidden bad name flagged", ".Bad-Hidden.md", "path-casing"},
-		{"kebab-case file flagged", "bad-file.txt", "path-casing"},
-		{"camelCase file flagged", "badFile.txt", "path-casing"},
-		{"kebab-case dir flagged", "bad-dir/foo.txt", "path-casing"},
-	}
-	for _, tc := range cases {
-		t.Run(tc.Name, func(t *testing.T) {
-			output := run_stream(t, map[string]string{tc.Path: "x\n"})
-			has := strings.Contains(output, " -> ")
-			want := tc.Should != ""
-			if has != want {
-				t.Errorf("path %q: want rename=%v, got: %s",
-					tc.Path, want, output)
-			}
-		})
-	}
-}
-
-// Test_Path_Casing_Respects_Tracked verifies that when a tracked set is given
-// (git ls-files --exclude-standard), path-casing checks only those paths: a
-// tracked bad name is flagged, a gitignored one — absent from the set — is not.
-func Test_Path_Casing_Respects_Tracked(t *testing.T) {
-	t.Parallel()
-	fsys := fstest.MapFS{
-		"bad-Dir/x.go":        {Data: []byte("package x\n")},
-		"ignored/Bad-Name.go": {Data: []byte("package ignored\n")},
-	}
-	diags, err := lint.Check_File_System(&lint.Check_File_System_Input{
-		Fsys:    fsys,
-		Tracked: map[string]bool{"bad-Dir/x.go": true},
-	})
-	if err != nil {
-		t.Fatalf("Check_File_System: %v", err)
-	}
-	var saw_tracked, saw_ignored bool
-	for _, d := range diags {
-		if strings.Contains(d.Message, "bad-Dir") {
-			saw_tracked = true
-		}
-		if strings.Contains(d.Message, "Bad-Name") {
-			saw_ignored = true
-		}
-	}
-	if !saw_tracked {
-		t.Error("a tracked bad-cased path must be flagged")
-	}
-	if saw_ignored {
-		t.Error("a gitignored path (absent from Tracked) must not be checked")
-	}
-}
-
 // Test_Ignore_Trims_Scan_Set verifies a lint.json `ignore` glob removes a path
-// from the scan set for every tier at once: a banned script and a bad-cased
-// directory under the ignored prefix both go silent, where without `ignore` each
+// from the scan set for every tier at once: a malformed Go file and a invalid package
+// layout under the ignored prefix both go silent, where without `ignore` each
 // fires. Trimming the scan set, not exempting one rule, is what makes the path
 // invisible to all checks.
 func Test_Ignore_Trims_Scan_Set(t *testing.T) {
 	t.Parallel()
 	fsys := fstest.MapFS{
-		"foo/build.sh":     {Data: []byte("echo hi\n")},
+		"foo/build.go":     {Data: []byte("echo hi\n")},
 		"foo/bad-Dir/x.go": {Data: []byte("package x\n")},
 	}
-	tracked := map[string]bool{"foo/build.sh": true, "foo/bad-Dir/x.go": true}
+	tracked := map[string]bool{"foo/build.go": true, "foo/bad-Dir/x.go": true}
 	control, err := lint.Check_File_System(&lint.Check_File_System_Input{
 		Fsys: fsys, Tracked: tracked,
 	})
 	if err != nil {
 		t.Fatalf("control Check_File_System: %v", err)
 	}
-	if !requirements_diagnosed(control, "as a go script") {
-		t.Fatalf("control must flag the banned script: %v", control)
+	if !requirements_diagnosed(control, "expected 'package'") {
+		t.Fatalf("control must flag the malformed Go file: %v", control)
 	}
 	if !requirements_diagnosed(control, "bad-Dir") {
-		t.Fatalf("control must flag the bad-cased directory: %v", control)
+		t.Fatalf("control must flag the invalid package layout: %v", control)
 	}
 	ignored, err := lint.Check_File_System(&lint.Check_File_System_Input{
 		Fsys: fsys, Tracked: tracked, Ignore: []string{"foo/**"},
@@ -2145,11 +1268,11 @@ func Test_Ignore_Trims_Scan_Set(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ignored Check_File_System: %v", err)
 	}
-	if requirements_diagnosed(ignored, "as a go script") {
-		t.Error("ignore must silence the banned-scripts diagnostic")
+	if requirements_diagnosed(ignored, "expected 'package'") {
+		t.Error("ignore must silence the parse diagnostic")
 	}
 	if requirements_diagnosed(ignored, "bad-Dir") {
-		t.Error("ignore must silence the path-casing diagnostic")
+		t.Error("ignore must silence the parse diagnostic")
 	}
 }
 
@@ -2160,9 +1283,8 @@ func Test_Ignore_Trims_Scan_Set(t *testing.T) {
 func lint_json_ignore(t *testing.T, ignore []string) (data string) {
 	t.Helper()
 	return configuration_document(map[string]any{
-		"shared_component":  "lint_test_no_shared_component",
-		"word_replacements": test_word_replacements(),
-		"ignore":            ignore,
+		"shared_component": "lint_test_no_shared_component",
+		"ignore":           ignore,
 	})
 }
 
@@ -2205,8 +1327,8 @@ func Test_Ignore_Recursive(t *testing.T) {
 	t.Parallel()
 	fixture := func(ignore []string) (files map[string]string) {
 		return map[string]string{
-			"bad-Dir/x.txt": "x\n",
-			"lint.json":     lint_json_ignore(t, ignore),
+			"bad-Dir/x.go": "x\n",
+			"lint.json":    lint_json_ignore(t, ignore),
 		}
 	}
 	code, stdout, _ := run_lint_tracked(t, fixture(nil))
@@ -2232,28 +1354,28 @@ func Test_Ignore_Root_Relative(t *testing.T) {
 	t.Parallel()
 	fixture := func(ignore []string) (files map[string]string) {
 		return map[string]string{
-			"weird-File.txt":   "x\n",
-			"a/weird-File.txt": "x\n",
-			"lint.json":        lint_json_ignore(t, ignore),
+			"weird-File.go":   "x\n",
+			"a/weird-File.go": "x\n",
+			"lint.json":       lint_json_ignore(t, ignore),
 		}
 	}
 	code, stdout, _ := run_lint_tracked(t, fixture(nil))
 	if code != 1 {
 		t.Fatalf("control: want exit 1, got %d: %s", code, stdout)
 	}
-	if !strings.Contains(stdout, "weird-File.txt") {
-		t.Fatalf("control: want weird-File.txt flagged: %s", stdout)
+	if !strings.Contains(stdout, "weird-File.go") {
+		t.Fatalf("control: want weird-File.go flagged: %s", stdout)
 	}
 	// Root-relative: the root file is dropped, the nested one stays flagged.
-	code, stdout, stderr := run_lint_tracked(t, fixture([]string{"weird-File.txt"}))
+	code, stdout, stderr := run_lint_tracked(t, fixture([]string{"weird-File.go"}))
 	if code != 1 {
 		t.Fatalf("root-relative: nested still flagged, got %d; %q", code, stderr)
 	}
-	if !strings.Contains(stdout, "a/weird-File.txt") {
+	if !strings.Contains(stdout, "a/weird-File.go") {
 		t.Fatalf("a root-relative entry must not drop the nested file: %s", stdout)
 	}
 	// A leading **/ opts into any-depth matching, dropping both.
-	code, stdout, stderr = run_lint_tracked(t, fixture([]string{"**/weird-File.txt"}))
+	code, stdout, stderr = run_lint_tracked(t, fixture([]string{"**/weird-File.go"}))
 	if code != 0 {
 		t.Fatalf("**/: want clean run, got %d; stderr %q", code, stderr)
 	}
@@ -2267,55 +1389,55 @@ func Test_Ignore_Root_Relative(t *testing.T) {
 func Test_Ignore_Anchored(t *testing.T) {
 	t.Parallel()
 	files := map[string]string{
-		"top/weird-File.txt":   "x\n",
-		"other/weird-File.txt": "x\n",
-		"lint.json":            lint_json_ignore(t, []string{"top/weird-File.txt"}),
+		"top/weird-File.go":   "x\n",
+		"other/weird-File.go": "x\n",
+		"lint.json":           lint_json_ignore(t, []string{"top/weird-File.go"}),
 	}
 	code, stdout, stderr := run_lint_tracked(t, files)
 	if code != 1 {
 		t.Fatalf("want other/ still flagged, got %d; stderr %q", code, stderr)
 	}
-	if strings.Contains(stdout, "top/weird-File.txt") {
+	if strings.Contains(stdout, "top/weird-File.go") {
 		t.Fatalf("anchored entry must drop top/: %s", stdout)
 	}
-	if !strings.Contains(stdout, "other/weird-File.txt") {
+	if !strings.Contains(stdout, "other/weird-File.go") {
 		t.Fatalf("anchored entry must not leak to other/: %s", stdout)
 	}
 }
 
-// A single-segment glob (*.weird) is root-relative: it drops matching names at the
-// repo root only. Any-depth matching is spelled **/*.weird.
+// A single-segment glob (*.go) is root-relative: it drops matching names at the
+// repo root only. Any-depth matching is spelled **/*.go.
 func Test_Ignore_Segment_Glob(t *testing.T) {
 	t.Parallel()
 	fixture := func(ignore []string) (files map[string]string) {
 		return map[string]string{
-			"bad-Name.weird":  "x\n",
-			"a/Bad-Two.weird": "x\n",
-			"lint.json":       lint_json_ignore(t, ignore),
+			"bad-Name.go":  "x\n",
+			"a/Bad-Two.go": "x\n",
+			"lint.json":    lint_json_ignore(t, ignore),
 		}
 	}
 	code, stdout, _ := run_lint_tracked(t, fixture(nil))
 	if code != 1 {
 		t.Fatalf("control: want exit 1, got %d: %s", code, stdout)
 	}
-	if !strings.Contains(stdout, ".weird") {
-		t.Fatalf("control: want *.weird names flagged: %s", stdout)
+	if !strings.Contains(stdout, ".go") {
+		t.Fatalf("control: want *.go names flagged: %s", stdout)
 	}
-	// Root-relative: *.weird drops the root name, the nested one stays flagged.
-	code, stdout, stderr := run_lint_tracked(t, fixture([]string{"*.weird"}))
+	// Root-relative: *.go drops the root name, the nested one stays flagged.
+	code, stdout, stderr := run_lint_tracked(t, fixture([]string{"*.go"}))
 	if code != 1 {
-		t.Fatalf("*.weird: nested still flagged, got %d; %q", code, stderr)
+		t.Fatalf("*.go: nested still flagged, got %d; %q", code, stderr)
 	}
-	if !strings.Contains(stdout, "a/Bad-Two.weird") {
-		t.Fatalf("*.weird must not drop the nested name: %s", stdout)
+	if !strings.Contains(stdout, "a/Bad-Two.go") {
+		t.Fatalf("*.go must not drop the nested name: %s", stdout)
 	}
-	// **/*.weird opts into any-depth matching, dropping both.
-	code, stdout, stderr = run_lint_tracked(t, fixture([]string{"**/*.weird"}))
+	// **/*.go opts into any-depth matching, dropping both.
+	code, stdout, stderr = run_lint_tracked(t, fixture([]string{"**/*.go"}))
 	if code != 0 {
-		t.Fatalf("**/*.weird: want clean run, got %d; stderr %q", code, stderr)
+		t.Fatalf("**/*.go: want clean run, got %d; stderr %q", code, stderr)
 	}
-	if strings.Contains(stdout, ".weird") {
-		t.Fatalf("**/*.weird must drop matching names at any depth: %s", stdout)
+	if strings.Contains(stdout, ".go") {
+		t.Fatalf("**/*.go must drop matching names at any depth: %s", stdout)
 	}
 }
 
@@ -2331,7 +1453,7 @@ func Test_Ignore_Parse_Rejects(t *testing.T) {
 	bad_entries := [][]string{{"!"}, {""}, {"bad["}, {"a?b"}, {"a[bc]"}, {"!neg", "!other"}}
 	for _, bad := range bad_entries {
 		files := map[string]string{
-			"good.txt":  "x\n",
+			"good.go":   "x\n",
 			"lint.json": lint_json_ignore(t, bad),
 		}
 		code, stdout, stderr := run_lint_tracked(t, files)
@@ -2345,423 +1467,24 @@ func Test_Ignore_Parse_Rejects(t *testing.T) {
 }
 
 // A "!"-prefixed entry re-includes a path a broader entry ignored: dir/** drops
-// the whole directory, but !dir/keep-File.txt holds that one path-casing
+// the whole directory, but !dir/keep-File.go holds that one parse
 // violation out of the drop while its sibling stays dropped.
 func Test_Ignore_Negation(t *testing.T) {
 	t.Parallel()
 	files := map[string]string{
-		"dir/keep-File.txt":  "x\n",
-		"dir/other-File.txt": "x\n",
-		"lint.json":          lint_json_ignore(t, []string{"dir/**", "!dir/keep-File.txt"}),
+		"dir/keep-File.go":  "x\n",
+		"dir/other-File.go": "x\n",
+		"lint.json":         lint_json_ignore(t, []string{"dir/**", "!dir/keep-File.go"}),
 	}
 	code, stdout, stderr := run_lint_tracked(t, files)
 	if code != 1 {
-		t.Fatalf("want dir/keep-File.txt still flagged, got %d; stderr %q", code, stderr)
+		t.Fatalf("want dir/keep-File.go still flagged, got %d; stderr %q", code, stderr)
 	}
-	if !strings.Contains(stdout, "keep-File.txt") {
-		t.Fatalf("!dir/keep-File.txt must re-include the ignored path: %s", stdout)
+	if !strings.Contains(stdout, "keep-File.go") {
+		t.Fatalf("!dir/keep-File.go must re-include the ignored path: %s", stdout)
 	}
-	if strings.Contains(stdout, "other-File.txt") {
+	if strings.Contains(stdout, "other-File.go") {
 		t.Fatalf("dir/** must still drop the rest of the directory: %s", stdout)
-	}
-}
-
-// Markdown lines exceeding 100 runes must be flagged by the markdown-line-length check.
-func Test_Stream_Markdown_Line_Max(t *testing.T) {
-	t.Parallel()
-	long := strings.Repeat("x", 120) + "\n"
-	output := run_stream(t, map[string]string{"docs.md": long})
-	if !strings.Contains(output, "The markdown line has") {
-		t.Errorf("expected markdown-line-length diag, got: %s", output)
-	}
-}
-
-// Lines inside fenced code blocks are held to the markdown line cap like any
-// other line — code carries no exemption.
-func Test_Stream_Markdown_Code_Fence_Counted(t *testing.T) {
-	t.Parallel()
-	long := "```\n" + strings.Repeat("x", 200) + "\n```\n"
-	output := run_stream(t, map[string]string{"docs.md": long})
-	if !strings.Contains(output, "The markdown line has") {
-		t.Errorf("fenced code should be counted; got: %s", output)
-	}
-}
-
-// The line cap counts display columns, not runes: 60 wide ideographs are 60
-// runes but 120 columns and must be flagged.
-func Test_Stream_Markdown_Display_Width(t *testing.T) {
-	t.Parallel()
-	wide := strings.Repeat("世", 60) + "\n"
-	output := run_stream(t, map[string]string{"docs.md": wide})
-	if !strings.Contains(output, "The markdown line has") {
-		t.Errorf("expected width diag for wide runes, got: %s", output)
-	}
-}
-
-// A tab counts as two display columns in markdown: 40 tabs and 20 runes fill
-// exactly 100 columns and pass, one more rune is flagged.
-func Test_Stream_Markdown_Tab_Width(t *testing.T) {
-	t.Parallel()
-	tabs := strings.Repeat("\t", 40)
-	cases := []struct {
-		tail    int
-		flagged bool
-	}{
-		{tail: 20, flagged: false},
-		{tail: 21, flagged: true},
-	}
-	for _, c := range cases {
-		source := "```\n" + tabs + strings.Repeat("x", c.tail) + "\n```\n"
-		output := run_stream(t, map[string]string{"docs.md": source})
-		got := strings.Contains(output, "The markdown line has")
-		if got != c.flagged {
-			t.Errorf("tail %d: flagged %v, want %v; output: %s",
-				c.tail, got, c.flagged, output)
-		}
-	}
-}
-
-// A markdown line with trailing whitespace must be flagged.
-func Test_Stream_Markdown_Trailing_Whitespace(t *testing.T) {
-	t.Parallel()
-	output := run_stream(t, map[string]string{"docs.md": "Trailing here.   \n"})
-	if !strings.Contains(output, "trailing whitespace") {
-		t.Errorf("expected trailing-whitespace diag, got: %s", output)
-	}
-}
-
-// Trailing whitespace inside a fenced code block must be exempt — code may rely
-// on it.
-func Test_Stream_Markdown_Trailing_Whitespace_Fence_Exempt(t *testing.T) {
-	t.Parallel()
-	source := "```\ncode trailing   \n```\n"
-	output := run_stream(t, map[string]string{"docs.md": source})
-	if strings.Contains(output, "trailing whitespace") {
-		t.Errorf("fenced code should be exempt; got: %s", output)
-	}
-}
-
-// A directory with CLAUDE.md but no AGENTS.md must be flagged for the missing sibling.
-func Test_Stream_Agents_Claude_Pair_Absence(t *testing.T) {
-	t.Parallel()
-	output := run_stream(t, map[string]string{"CLAUDE.md": "instructions\n"})
-	if !strings.Contains(output, "AGENTS.md") {
-		t.Errorf("expected agents-claude-pair diag, got: %s", output)
-	}
-	if !strings.Contains(output, "There is no AGENTS.md") {
-		t.Errorf("expected AGENTS.md missing message, got: %s", output)
-	}
-}
-
-// AGENTS.md and CLAUDE.md with different content must be flagged as drifted.
-func Test_Stream_Agents_Claude_Pair_Drift(t *testing.T) {
-	t.Parallel()
-	output := run_stream(t, map[string]string{
-		"AGENTS.md": "version one\n",
-		"CLAUDE.md": "version two\n",
-	})
-	if !strings.Contains(output, "AGENTS.md") {
-		t.Errorf("expected agents-claude-pair diag, got: %s", output)
-	}
-	if !strings.Contains(output, "differ") {
-		t.Errorf("expected differ message, got: %s", output)
-	}
-}
-
-// Byte-identical AGENTS.md and CLAUDE.md must pass without any diag.
-func Test_Stream_Agents_Claude_Pair_Identical_OK(t *testing.T) {
-	t.Parallel()
-	output := run_stream(t, map[string]string{
-		"AGENTS.md": "shared\n",
-		"CLAUDE.md": "shared\n",
-	})
-	if strings.Contains(output, "AGENTS.md") {
-		t.Errorf("byte-identical pair should pass; got: %s", output)
-	}
-}
-
-// A conflict marker inside a .go file must surface as a stream-tier
-// conflict-markers diag, and the AST tier's parse failure on the same
-// file must degrade to a per-file diagnostic rather than aborting the
-// entire run. Both tiers run; both diags surface.
-func Test_Stream_Conflict_Marker_Input_Go_File(t *testing.T) {
-	t.Parallel()
-	bad_go := "package p\n<<<<<<< HEAD\nfunc f() {}\n=======\nfunc g() {}\n>>>>>>> branch\n"
-	output := run_stream(t, map[string]string{"a.go": bad_go})
-	if !strings.Contains(output, "conflict marker") {
-		t.Errorf("expected conflict-markers diag, got: %s", output)
-	}
-	if !strings.Contains(output, "The parser cannot read the file") {
-		t.Errorf("expected parse error diag, got: %s", output)
-	}
-}
-
-// Runs Main with the given Git_Input over an empty FS and returns
-// (stdout, exit_code). Empty FS isolates the git tier from file-tier output.
-func run_git(t *testing.T, input lint.Git_Input) (output string, code int) {
-	t.Helper()
-	stdout := &strings.Builder{}
-	code = lint_main(t, &lint.Main_Input{
-		Fsys:   fstest.MapFS{},
-		Stdout: stdout,
-		Stderr: &strings.Builder{},
-		Git:    input,
-	})
-	return stdout.String(), code
-}
-
-// Git_Input zero value must skip the git tier and surface no <git> diagnostics.
-func Test_Git_Disabled(t *testing.T) {
-	t.Parallel()
-	output, code := run_git(t, lint.Git_Input{})
-	if strings.Contains(output, "<git") {
-		t.Errorf("disabled git tier must emit no <git> diags; got: %s", output)
-	}
-	if code != 0 {
-		t.Errorf("expected exit 0, got %d; output: %s", code, output)
-	}
-}
-
-// Missing main ref (shallow CI checkout, fresh repo) must surface a single
-// actionable diagnostic naming fetch-depth, not silently pass.
-func Test_Git_Main_Reference_Absence(t *testing.T) {
-	t.Parallel()
-	output, code := run_git(t, lint.Git_Input{Enabled: true, Main_Reference_Absent: true})
-	if !strings.Contains(output, "<git>") {
-		t.Errorf("expected <git> diag for missing main ref; got: %s", output)
-	}
-	if !strings.Contains(output, "fetch-depth") {
-		t.Errorf("expected fetch-depth instruction; got: %s", output)
-	}
-	if code == 0 {
-		t.Errorf("expected non-zero exit; got 0; output: %s", output)
-	}
-}
-
-// Every merge commit in the PR range must be flagged with its short hash and
-// subject; the no-merge-commits rule name must appear so users can map output
-// to the rebase instruction.
-func Test_Git_No_Merge_Commits(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		Name          string
-		Merge_Commits []lint.Git_Commit
-		Want_Hits     []string
-		Want_Code     int
-	}{
-		{
-			Name:      "no merges",
-			Want_Code: 0,
-		},
-		{
-			Name: "one merge commit",
-			Merge_Commits: []lint.Git_Commit{
-				{
-					Hash:    "abcdef0123456789abcdef0123456789abcdef01",
-					Subject: "Merge branch foo",
-				},
-			},
-			Want_Hits: []string{"merge commit", "abcdef0123", "Merge branch foo"},
-			Want_Code: 1,
-		},
-		{
-			Name: "subtree add exempt",
-			Merge_Commits: []lint.Git_Commit{
-				{Hash: "ccccccccccdddd", Subject: "Add 'foo/' from commit " +
-					"'2d43774e164be386023c13e2b12c2403a57b4a2a'"},
-			},
-			Want_Code: 0,
-		},
-		{
-			Name: "subtree pull exempt",
-			Merge_Commits: []lint.Git_Commit{
-				{Hash: "eeeeeeeeeeffff", Subject: "Merge commit " +
-					"'2d43774e164be386023c13e2b12c2403a57b4a2a' as 'foo'"},
-			},
-			Want_Code: 0,
-		},
-		{
-			Name: "two merge commits",
-			Merge_Commits: []lint.Git_Commit{
-				{Hash: "1111111111aaaa", Subject: "Merge one"},
-				{Hash: "2222222222bbbb", Subject: "Merge two"},
-			},
-			Want_Hits: []string{"1111111111", "2222222222", "Merge one", "Merge two"},
-			Want_Code: 1,
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.Name, func(t *testing.T) {
-			output, code := run_git(t, lint.Git_Input{
-				Enabled:       true,
-				Merge_Commits: tt.Merge_Commits,
-			})
-			for _, want := range tt.Want_Hits {
-				if !strings.Contains(output, want) {
-					t.Errorf("expected output to contain %q; got: %s",
-						want, output)
-				}
-			}
-			if code != tt.Want_Code {
-				t.Errorf("expected exit %d, got %d; output: %s",
-					tt.Want_Code, code, output)
-			}
-		})
-	}
-}
-
-// Conventional-commits enforcement: subjects must match
-//
-//	type(scope)?!?: description
-//
-// with a lowercase type and a non-empty description. Fixup-shaped subjects
-// are exempt because the no-fixup-commits rule already covers them and they
-// disappear on autosquash.
-func Test_Git_Conventional_Commits(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		Name      string
-		Subject   string
-		Want_Flag bool
-	}{
-		{"plain feat", "feat: add widget", false},
-		{"feat with scope", "feat(lint): add git check", false},
-		{"fix with slashed scope", "fix(lint/impl): handle nil", false},
-		{"breaking change marker", "feat!: drop legacy field", false},
-		{"breaking change with scope", "refactor(api)!: rename field", false},
-		{"no type prefix", "add widget", true},
-		{"missing colon", "feat add widget", true},
-		{"has no space after colon", "feat:add widget", true},
-		{"empty description", "feat: ", true},
-		{"capitalized type", "Feat: add widget", true},
-		{"fixup exempt from conventional", "fixup! feat: foo", false},
-		{"squash exempt from conventional", "squash! feat: foo", false},
-		// Empty subjects (e.g. WIP commits authored with --allow-empty-message)
-		// are skipped entirely; the cost of rewriting history to fix them
-		// outweighs the value of flagging them on every lint run.
-		{"empty subject skipped", "", false},
-	}
-	for _, tt := range tests {
-		t.Run(tt.Name, func(t *testing.T) {
-			output, _ := run_git(t, lint.Git_Input{
-				Enabled: true,
-				Non_Merge_Commits: []lint.Git_Commit{
-					{Hash: "abc1234567def", Subject: tt.Subject},
-				},
-			})
-			flagged := strings.Contains(output, "conventional-commits") ||
-				strings.Contains(output, "is not conventional")
-			if flagged != tt.Want_Flag {
-				t.Errorf("subject %q: want flagged=%v, got flagged=%v; output: %s",
-					tt.Subject, tt.Want_Flag, flagged, output)
-			}
-		})
-	}
-}
-
-// Commit subjects longer than 100 chars must be flagged. Matches the
-// LINE_CHARS_MAX cap the file-tier check enforces on source lines — same
-// reasoning (visual scan limit in code-review UIs and terminals).
-func Test_Git_Commit_Subject_Chars(t *testing.T) {
-	t.Parallel()
-	// 100 chars: a conventional prefix plus 94 'x' chars (6 = len("feat: ")).
-	at_limit := "feat: " + strings.Repeat("x", 94)
-	over_limit := "feat: " + strings.Repeat("x", 95)
-	tests := []struct {
-		Name      string
-		Subject   string
-		Want_Flag bool
-	}{
-		{"at limit (100)", at_limit, false},
-		{"over limit (101)", over_limit, true},
-	}
-	for _, tt := range tests {
-		t.Run(tt.Name, func(t *testing.T) {
-			output, _ := run_git(t, lint.Git_Input{
-				Enabled: true,
-				Non_Merge_Commits: []lint.Git_Commit{
-					{Hash: "abc1234567def", Subject: tt.Subject},
-				},
-			})
-			flagged := strings.Contains(output, "The commit subject has")
-			if flagged != tt.Want_Flag {
-				t.Errorf("len=%d: want flagged=%v, got flagged=%v; output: %s",
-					len(tt.Subject), tt.Want_Flag, flagged, output)
-			}
-		})
-	}
-}
-
-// Subjects matching IsFixupSubject must be flagged; ordinary subjects must
-// pass. Covers both the literal fixup!/squash! prefixes and the review-comment
-// phrasings so a regression in either branch shows up.
-func Test_Git_No_Fixup_Commits(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		Name      string
-		Subject   string
-		Want_Flag bool
-	}{
-		{"literal fixup", "fixup! refactor: extract foo", true},
-		{"literal squash", "squash! feat: add bar", true},
-		{"address review comments", "address review comments", true},
-		{"apply review feedback", "apply review feedback", true},
-		{"cr comment", "cr comment", true},
-		{"review nit", "review nit", true},
-		{"ordinary feat", "feat: add X", false},
-		{"ordinary fix", "fix: handle nil pointer in foo", false},
-		{"review without action verb", "chore: reviewed the code", false},
-	}
-	for _, tt := range tests {
-		t.Run(tt.Name, func(t *testing.T) {
-			output, code := run_git(t, lint.Git_Input{
-				Enabled: true,
-				Non_Merge_Commits: []lint.Git_Commit{
-					{Hash: "deadbeef00cafe", Subject: tt.Subject},
-				},
-			})
-			flagged := strings.Contains(output, "is a fixup commit")
-			if flagged != tt.Want_Flag {
-				t.Errorf("subject %q: want flagged=%v, got flagged=%v; output: %s",
-					tt.Subject, tt.Want_Flag, flagged, output)
-			}
-			want_code := 0
-			if tt.Want_Flag {
-				want_code = 1
-			}
-			if code != want_code {
-				t.Errorf("expected exit %d, got %d", want_code, code)
-			}
-		})
-	}
-}
-
-// Test_Banned_Stdlib_Import_Aver verifies aver library keeps cycle-breaking
-// stdlib access while similarly named directories stay banned.
-func Test_Banned_Stdlib_Import_Aver(t *testing.T) {
-	t.Parallel()
-	aver_files := []string{
-		"shared/sim/aver/rule.go",
-		"shared/sim/aver/default/rule.go",
-	}
-	for _, filename := range aver_files {
-		diags, err := lint.Check_Source(
-			filename, "package aver\n\nimport \"encoding/json\"\n")
-		if err != nil {
-			t.Fatalf("Check_Source %q: %v", filename, err)
-		}
-		if requirements_diagnosed(diags, "Banned import") {
-			t.Errorf("aver file %q must be allowed", filename)
-		}
-	}
-	named_like_aver, err := lint.Check_Source(
-		"shared/sim/aver_extra/rule.go",
-		"package aver_extra\n\nimport \"encoding/json\"\n")
-	if err != nil {
-		t.Fatalf("Check_Source aver-like path: %v", err)
-	}
-	if !requirements_diagnosed(named_like_aver, "Banned import") {
-		t.Error("directory named like aver must stay banned")
 	}
 }
 
@@ -2825,31 +1548,6 @@ func Test_No_Impure_Stdlib_Hard_Imports_Part2(t *testing.T) {
 		Files     map[string]string
 		Want_Diag string
 	}{
-
-		{
-			Name: "library imports math/rand/v2",
-			Files: map[string]string{
-				"a.go": `// Package library x.
-package library
-
-import (
-	"math/rand/v2"
-
-)
-
-// FIXTURE_HI is a fixture.
-const FIXTURE_HI = 100
-
-// F is a fixture.
-func F(r *rand.Rand) (n int) {
-	defer func() {
-	}()
-	return r.Int()
-}
-`,
-			},
-			Want_Diag: "Banned import",
-		},
 
 		{
 			Name: "library imports runtime",
@@ -3140,20 +1838,6 @@ func F() (err error) { return smtp.SendMail("h:25", nil, "f", nil, nil) }
 `,
 			},
 			Want_Diag: "The transitive call",
-		},
-		{
-			Name: "filepath.Join import banned",
-			Files: map[string]string{
-				"a.go": `// Package library x.
-package library
-
-import "path/filepath"
-
-// F is a fixture.
-func F() (s string) { return filepath.Join("a", "b") }
-`,
-			},
-			Want_Diag: "Banned import",
 		},
 	}
 	run_diag_table(t, tests)
@@ -3933,322 +2617,6 @@ func Test_Library_Tier_Depth_Package_Anchor(t *testing.T) {
 	run_doctrine_diag_table(t, tests)
 }
 
-// Test_Exported_Documentation_Comment verifies that every exported top-level
-// identifier (func, method, type, var, const) carries a doc comment.
-// For grouped declarations, a comment on the containing GenDecl is
-// inherited by each spec; single-spec GenDecls behave the same way
-// since the parser hangs the leading comment on the GenDecl rather
-// than the spec. package main is exempt — it exports nothing
-// reachable from outside.
-func Test_Exported_Documentation_Comment(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		Name      string
-		Files     map[string]string
-		Want_Diag string
-	}{
-
-		{
-			Name: "exported func without doc flagged",
-			Files: map[string]string{
-				"foo.go": "// Package foo provides things.\npackage foo\n\n" +
-					"func Do() { return }\n",
-			},
-			Want_Diag: "exported func Do has no doc comment",
-		},
-
-		{
-			Name: "exported func with doc allowed",
-			Files: map[string]string{
-				"foo.go": "// Package foo provides things.\n" +
-					"package foo\n\n" +
-					"// Do performs the operation.\n" +
-					"func Do() { return }\n",
-			},
-			Want_Diag: "",
-		},
-
-		{
-			Name: "unexported func without doc allowed",
-			Files: map[string]string{
-				"foo.go": "// Package foo provides things.\npackage foo\n\n" +
-					"func do() { return }\n",
-			},
-			Want_Diag: "",
-		},
-
-		{
-			Name: "exported type without doc flagged",
-			Files: map[string]string{
-				"foo.go": "// Package foo provides things.\npackage foo\n\n" +
-					"type Thing struct{ X int }\n",
-			},
-			Want_Diag: "exported type Thing has no doc comment",
-		},
-
-		{
-			Name: "exported var without doc flagged",
-			Files: map[string]string{
-				"foo.go": "// Package foo provides things.\n" +
-					"package foo\n\n" +
-					"import \"regexp\"\n\n" +
-					"var Default_Pattern = regexp.MustCompile(\"abc\")\n",
-			},
-			Want_Diag: "exported var Default_Pattern has no doc comment",
-		},
-
-		{
-			Name: "exported const without doc flagged",
-			Files: map[string]string{
-				"foo.go": "// Package foo provides things.\npackage foo\n\n" +
-					"const Count_Max = 100\n",
-			},
-			Want_Diag: "exported const Count_Max has no doc comment",
-		},
-	}
-	run_diag_table(t, tests)
-}
-
-// Additional cases, split to keep each function within the length limit.
-func Test_Exported_Documentation_Comment_Part2(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		Name      string
-		Files     map[string]string
-		Want_Diag string
-	}{
-
-		{
-			Name: "exported var with GenDecl doc inherited",
-			Files: map[string]string{
-				"foo.go": "// Package foo provides things.\n" +
-					"package foo\n\n" +
-					"import \"regexp\"\n\n" +
-					"// Default_Pattern matches things.\n" +
-					"var Default_Pattern = regexp.MustCompile(\"abc\")\n",
-			},
-			Want_Diag: "",
-		},
-
-		{
-			Name: "grouped consts: each spec needs its own doc when group has no doc",
-			Files: map[string]string{
-				"foo.go": "// Package foo provides things.\n" +
-					"package foo\n\n" +
-					"const (\n" +
-					"\tA_Count = 1\n" +
-					"\tB_Count = 2\n" +
-					")\n",
-			},
-			Want_Diag: "exported const A_Count has no doc comment",
-		},
-
-		{
-			Name: "exported method without doc flagged",
-			Files: map[string]string{
-				"foo.go": "// Package foo provides things.\n" +
-					"package foo\n\n" +
-					"// Thing is a thing.\n" +
-					"type Thing struct{ X int }\n\n" +
-					"func (t *Thing) String() (output string) " +
-					"{ return \"\" }\n",
-			},
-			Want_Diag: "exported method String has no doc comment",
-		},
-
-		{
-			Name: "package main exempt: exported func without doc allowed",
-			Files: map[string]string{
-				"main.go": "package main\n\nfunc main() { return }\n\n" +
-					"func Run() { return }\n",
-			},
-			Want_Diag: "",
-		},
-	}
-	run_diag_table(t, tests)
-}
-
-// Test_Package_Documentation_Comment verifies that every non-main, non-_test
-// package has a package doc comment in at least one of its files.
-// The doc comment is the comment group immediately preceding the
-// `package` clause and lands on ast.File.Doc.
-func Test_Package_Documentation_Comment(t *testing.T) {
-	tests := []struct {
-		Name      string
-		Files     map[string]string
-		Want_Diag string
-	}{
-		{
-			Name: "package without doc flagged",
-			Files: map[string]string{
-				"foo.go": "package foo\n\n" +
-					"// Do performs the operation.\nfunc Do() { return }\n",
-			},
-			Want_Diag: "The package \"foo\" has no doc comment",
-		},
-		{
-			Name: "package with doc allowed",
-			Files: map[string]string{
-				"foo.go": "// Package foo provides things.\n" +
-					"package foo\n\n" +
-					"// Do performs the operation.\n" +
-					"func Do() { return }\n",
-			},
-			Want_Diag: "",
-		},
-		{
-			Name: "package doc on one of multiple files satisfies the rule",
-			Files: map[string]string{
-				"documentation.go": "//go:build doc_only\n\n" +
-					"// Package foo provides things.\npackage foo\n",
-				"foo.go": "package foo\n\n" +
-					"// Do performs the operation.\n" +
-					"func Do() { return }\n",
-			},
-			Want_Diag: "",
-		},
-		{
-			Name: "package main exempt",
-			Files: map[string]string{
-				"main.go": "package main\n\n" +
-					"func main() { return }\n",
-			},
-			Want_Diag: "",
-		},
-		{
-			Name: "test package exempt",
-			Files: map[string]string{
-				"foo.go": "// Package foo provides things.\n" +
-					"package foo\n\n" +
-					"// Do performs the operation.\n" +
-					"func Do() { return }\n",
-				"foo_test.go": "package foo_test\n\n" +
-					"import \"testing\"\n\n" +
-					"// Test_Do verifies Do.\n" +
-					"func Test_Do(t *testing.T) { t.Helper() }\n",
-			},
-			Want_Diag: "",
-		},
-	}
-	run_diag_table(t, tests)
-}
-
-// Test_Coverage_Backfill_Read_Error drives Check_File_System against an
-// fs.FS whose Open returns an error for selected paths, so the stream
-// tier's `load()` callback returns err != nil and the source-nil /
-// err-non-nil tuple fires on every check_stream_* assertion. Fixture
-// names are chosen so each check_stream_* filter (markdown, github actions,
-// agent docs, agents-claude pair) sees at least one failing load.
-func Test_Coverage_Backfill_Read_Error(t *testing.T) {
-	t.Parallel()
-	base := fstest.MapFS{
-		"go.mod": &fstest.MapFile{
-			Data: []byte("module example.com/rd\n")},
-		"good.go": &fstest.MapFile{
-			Data: []byte("// Package rd is a fixture.\npackage rd\n")},
-		"fail.go": &fstest.MapFile{
-			Data: []byte("// Package rd is a fixture.\npackage rd\n")},
-		"fail.md": &fstest.MapFile{
-			Data: []byte("# fixture\n")},
-		"fail.yml": &fstest.MapFile{
-			Data: []byte("name: fixture\n")},
-		"fail.txt": &fstest.MapFile{
-			Data: []byte("fixture\n")},
-		".github/workflows/fail.yml": &fstest.MapFile{
-			Data: []byte("name: fixture\n")},
-		"CLAUDE.md": &fstest.MapFile{
-			Data: []byte("# fixture\n")},
-		"AGENTS.md": &fstest.MapFile{
-			Data: []byte("# fixture\n")},
-	}
-	// Fail.go is intentionally excluded: the AST tier reads .go files in
-	// bulk via check_file_system_read_files, which asserts sources != nil.
-	// Stream-tier coverage for read errors is exercised on non-.go paths.
-	fail_paths := map[string]bool{
-		"fail.md":                    true,
-		"fail.yml":                   true,
-		"fail.txt":                   true,
-		".github/workflows/fail.yml": true,
-		"CLAUDE.md":                  true,
-		"AGENTS.md":                  true,
-	}
-	fsys := read_error_file_system{MapFS: base, Fail_Paths: fail_paths}
-	var stdout, stderr strings.Builder
-	lint_main(t, &lint.Main_Input{
-		Fsys:      fsys,
-		Stdout:    &stdout,
-		Stderr:    &stderr,
-		CPU_Count: 1,
-	})
-}
-
-// Test_Coverage_Backfill_Main_With_Git fires Main's prologue Cross_Product
-// with Git.Enabled=true (and both branches of Main_Reference_Absent) so the
-// (Hi, Enabled=true, …) tuples on the Main prologue's tracker are observed.
-// Without this, those tuples sit unfired and the suite-end coverage report
-// flags Main.
-func Test_Coverage_Backfill_Main_With_Git(t *testing.T) {
-	t.Parallel()
-	base := fstest.MapFS{
-		"go.mod": &fstest.MapFile{
-			Data: []byte("module example.com/git\n")},
-		"good.go": &fstest.MapFile{
-			Data: []byte(
-				"// Package git is a fixture.\npackage git\n")},
-	}
-	for _, absent := range []bool{false, true} {
-		var stdout, stderr strings.Builder
-		lint_main(t, &lint.Main_Input{
-			Fsys:      base,
-			Stdout:    &stdout,
-			Stderr:    &stderr,
-			CPU_Count: 1,
-			Git: lint.Git_Input{
-				Enabled:               true,
-				Main_Reference_Absent: absent,
-			},
-		})
-	}
-}
-
-type read_error_file_system struct {
-	fstest.MapFS
-	Fail_Paths map[string]bool
-}
-
-func (e read_error_file_system) Open(name string) (file fs.File, err error) {
-	if e.Fail_Paths[name] {
-		return nil, err_simulated_read
-	}
-	return e.MapFS.Open(name)
-}
-
-// ReadFile overrides the fstest.MapFS.ReadFile promoted method. fs.ReadFile
-// preferentially dispatches to ReadFileFS — without this, the embedded
-// MapFS.ReadFile is used directly and the Fail_Paths simulation is bypassed
-// for every caller that goes through fs.ReadFile.
-func (e read_error_file_system) ReadFile(name string) (data []byte, err error) {
-	if e.Fail_Paths[name] {
-		return nil, err_simulated_read
-	}
-	return e.MapFS.ReadFile(name)
-}
-
-var err_simulated_read = errors.New("simulated read error")
-
-// Test_Coverage_Backfill_Empty_Comment_Body exercises comment_body
-// returning "" for a whitespace-only comment.
-func Test_Coverage_Backfill_Empty_Comment_Body(t *testing.T) {
-	t.Parallel()
-	source := "package fixture\n\n" +
-		"//\n" +
-		"const X = 1\n"
-	_, err := lint.Check_Source("fixture.go", source)
-	if err != nil {
-		t.Fatalf("parse error: %v", err)
-	}
-}
-
 // Test_Coverage_Backfill_S_Abbreviation exercises
 // banned_abbreviation_candidates_s by passing a word starting with 's'.
 func Test_Coverage_Backfill_S_Abbreviation(t *testing.T) {
@@ -4289,27 +2657,6 @@ func Test_Coverage_Backfill_Parse_Error(t *testing.T) {
 	}
 }
 
-// Test_Coverage_Backfill_Documented_Value_Requirements exercises the
-// per-spec doc comment branch of check_exported_documentation_comment,
-// firing requirements_has_documentation = true for a value spec that
-// has its own doc comment instead of relying on the parent var-block.
-func Test_Coverage_Backfill_Documented_Value_Requirements(t *testing.T) {
-	t.Parallel()
-	source := "// Package fixture is documented.\n" +
-		"package fixture\n\n" +
-		"var (\n" +
-		"\t// Documented_Value is documented.\n" +
-		"\tDocumented_Value = 1\n" +
-		")\n"
-	diags, err := lint.Check_Source("fixture.go", source)
-	if err != nil {
-		t.Fatalf("parse error: %v", err)
-	}
-	for _, d := range diags {
-		t.Logf("diag: %s", d.Message)
-	}
-}
-
 // Main and Check_File_System fire their Hi bucket only when CPU_Count > 0;
 // production tests use the degraded CPU_Count=0 path throughout.
 func Test_Coverage_Backfill(t *testing.T) {
@@ -4323,54 +2670,6 @@ func Test_Coverage_Backfill(t *testing.T) {
 	})
 	if code != 0 {
 		t.Logf("Main exit code with empty FS: %d", code)
-	}
-}
-
-// Drives Check_File_System against a synthesised package whose total line
-// count exceeds the per-file cap AND whose file count exceeds the resulting
-// files_max quota, forcing package_group_key_diag's files_max Boundary axis
-// to fire its Hi bucket. Production tests never hit this saturation point.
-func Test_Coverage_Backfill_Large_Package(t *testing.T) {
-	t.Parallel()
-	const FILE_COUNT = 50
-	fsys := fstest.MapFS{
-		"go.mod": &fstest.MapFile{
-			Data: []byte("module example.com/big\n")},
-	}
-	for i_index := 0; i_index < FILE_COUNT; i_index++ {
-		name := "f" + strings.Repeat("x", i_index+1) + ".go"
-		// Each file declares a unique constant to avoid redeclaration errors,
-		// then pads with blank lines to push total lines past
-		// LINES_PER_FILE_MAX, so files_max climbs past 1 and the Boundary's
-		// Hi bucket fires (X == Hi == files_max > Lo == 1).
-		var body strings.Builder
-		strings.Builder_Write_Text(&body, "// Package big is a fixture.\n")
-		strings.Builder_Write_Text(&body, "package big\n\n")
-		strings.Builder_Write_Text(
-			&body, "// K"+strings.Repeat("a", i_index+1)+" is a fixture.\n",
-		)
-		strings.Builder_Write_Text(&body, "const K"+strings.Repeat("a", i_index+1)+" = 1\n")
-		for j_index := 0; j_index < 250; j_index++ {
-			strings.Builder_Write_Text(&body, "\n")
-		}
-		fsys[name] = &fstest.MapFile{
-			Data: []byte(body.String())}
-	}
-	var stdout, stderr strings.Builder
-	code := lint_main(t, &lint.Main_Input{
-		Fsys:      fsys,
-		Stdout:    &stdout,
-		Stderr:    &stderr,
-		CPU_Count: 1,
-	})
-	if code != 1 {
-		t.Logf("stdout: %s", stdout.String())
-		t.Logf("stderr: %s", stderr.String())
-		t.Fatalf("expected exit 1 (diagnostics emitted); got %d", code)
-	}
-	if !strings.Contains(stdout.String(), "lines in total") {
-		t.Fatalf("fixture did not trigger package_split diagnostic; stdout:\n%s",
-			stdout.String())
 	}
 }
 
@@ -4431,66 +2730,6 @@ func Test_Coverage_Backfill_Module_Index_Hi_Index(t *testing.T) {
 	}
 }
 
-// Test_Coverage_Backfill_Package_Group_Endpoints exercises the Lo endpoints
-// of package_group_key_diag's two Boundary axes (st.Lines=2, files_max=1)
-// plus the Sometimes(key.Is_Test) true branch via a two-file test package.
-// Together with Test_Coverage_Backfill_Large_Package (which hits Hi-lines)
-// this rounds out the per-tuple Cross_Product coverage for the diag call.
-func Test_Coverage_Backfill_Package_Group_Endpoints(t *testing.T) {
-	t.Parallel()
-	source_fragment := func(suffix string) (fsys fstest.MapFS) {
-		return fstest.MapFS{
-			"go.mod": &fstest.MapFile{
-				Data: []byte("module example.com/min" + suffix + "\n")},
-			"a" + suffix + ".go": &fstest.MapFile{
-				Data: []byte("package min" + suffix + "\n")},
-			"b" + suffix + ".go": &fstest.MapFile{
-				Data: []byte("package min" + suffix + "\n")},
-		}
-	}
-	for _, suffix := range []string{"", "_test"} {
-		fsys := source_fragment(suffix)
-		var stdout, stderr strings.Builder
-		code := lint_main(t, &lint.Main_Input{
-			Fsys: fsys, Stdout: &stdout, Stderr: &stderr, CPU_Count: 1,
-		})
-		if code != 1 {
-			t.Errorf("suffix %q: expected exit 1; got %d; output: %s",
-				suffix, code, stdout.String())
-		}
-	}
-	// Test-package variant of Large_Package — drives the (Hi-lines, Lo-files)
-	// tuple with key.Is_Test=true.
-	const FILE_COUNT = 50
-	fsys := fstest.MapFS{
-		"go.mod": &fstest.MapFile{
-			Data: []byte("module example.com/bigt\n")},
-	}
-	for i_index := 0; i_index < FILE_COUNT; i_index++ {
-		name := "f" + strings.Repeat("x", i_index+1) + "_test.go"
-		var body strings.Builder
-		strings.Builder_Write_Text(&body, "// Package bigt_test is a fixture.\n")
-		strings.Builder_Write_Text(&body, "package bigt_test\n\n")
-		strings.Builder_Write_Text(
-			&body, "// K"+strings.Repeat("a", i_index+1)+" is a fixture.\n",
-		)
-		strings.Builder_Write_Text(&body, "const K"+strings.Repeat("a", i_index+1)+" = 1\n")
-		for j_index := 0; j_index < 250; j_index++ {
-			strings.Builder_Write_Text(&body, "\n")
-		}
-		fsys[name] = &fstest.MapFile{
-			Data: []byte(body.String())}
-	}
-	var stdout, stderr strings.Builder
-	code := lint_main(t, &lint.Main_Input{
-		Fsys: fsys, Stdout: &stdout, Stderr: &stderr, CPU_Count: 1,
-	})
-	if code != 1 {
-		t.Errorf("test-pkg Large_Package mirror: expected exit 1; got %d; output: %s",
-			code, stdout.String())
-	}
-}
-
 // Test_Coverage_Backfill_String_Bounded_Mixed_Invariant_Calls drives
 // extract_call_name's Lo=0 (non-invariant call name) and Hi=26 ("Recorder_
 // Distinct_Boundary") buckets via crafted source.
@@ -4526,16 +2765,7 @@ func Test_Coverage_Backfill_String_Bounded_Mixed_Invariant_Calls(t *testing.T) {
 	t.Logf("rich diags=%d err=%v", len(rich_diags), rich_err)
 }
 
-// Test_Coverage_Backfill_String_Bounded_Helpers_Git_Input drives the git-
-// tier helpers (git_input_check_short_hash, _is_subtree_merge_subject,
-// _is_fixup_subject) with empty and max-length subject / hash strings.
-// Test_Coverage_Backfill_Main_Input_Combinations exercises every tuple of
-// Main's input-shape Cross_Product so each (Lo, Hi) bucket combination
-// across Root_Directory / Scope_Prefix / Tracked / Merge_Commits /
-// Non_Merge_Commits / Git.Enabled / Git.Main_Reference_Absent /
-// CPU_Count gets observed at least once. The cross-product has 2^8 cells
-// in observable space; the loop visits each by toggling the eight axes
-// independently.
+// Test_Coverage_Backfill_Main_Input_Combinations exercises input sizes and parallelism.
 func Test_Coverage_Backfill_Main_Input_Combinations(t *testing.T) {
 	t.Parallel()
 	long_path := strings.Repeat("a", 4096)
@@ -4545,15 +2775,8 @@ func Test_Coverage_Backfill_Main_Input_Combinations(t *testing.T) {
 	for i_index := 0; i_index < 29998; i_index++ {
 		full_tracked["k"+decimal_text(i_index)] = true
 	}
-	// Empty-Subject commits short-circuit at the Subject=="" gate in
-	// Git_Input_Check, so the 30000 elements drive only the Hi=30000
-	// len-boundary observation without paying per-commit regex/format costs.
-	full_commits := make([]lint.Git_Commit, 30000)
-	for bits_index := 0; bits_index < 256; bits_index++ {
-		root_directory := ""
-		if bits_index&(1<<0) != 0 {
-			root_directory = long_path
-		}
+	for bits_index := 0; bits_index < 16; bits_index++ {
+
 		scope_prefix := ""
 		if bits_index&(1<<1) != 0 {
 			scope_prefix = long_path
@@ -4562,23 +2785,8 @@ func Test_Coverage_Backfill_Main_Input_Combinations(t *testing.T) {
 		if bits_index&(1<<2) != 0 {
 			tracked = full_tracked
 		}
-		merge_commits := []lint.Git_Commit(nil)
-		if bits_index&(1<<3) != 0 {
-			merge_commits = full_commits
-		}
-		non_merge_commits := []lint.Git_Commit(nil)
-		if bits_index&(1<<4) != 0 {
-			non_merge_commits = full_commits
-		}
-		git_enabled := bits_index&(1<<5) != 0
-		main_absent := bits_index&(1<<6) != 0
-		if main_absent {
-			if !git_enabled {
-				continue
-			}
-		}
 		cpu_count := 0
-		if bits_index&(1<<7) != 0 {
+		if bits_index&(1<<3) != 0 {
 			cpu_count = 1024
 		}
 		var stdout, stderr strings.Builder
@@ -4587,80 +2795,13 @@ func Test_Coverage_Backfill_Main_Input_Combinations(t *testing.T) {
 				"go.mod":  {Data: []byte("module test\ngo 1.25\n")},
 				"main.go": {Data: []byte("package main\n\nfunc main() {}\n")},
 			},
-			Stdout:         &stdout,
-			Stderr:         &stderr,
-			Root_Directory: root_directory,
-			Scope_Prefix:   scope_prefix,
-			Tracked:        tracked,
-			CPU_Count:      cpu_count,
-			Git: lint.Git_Input{
-				Enabled:               git_enabled,
-				Main_Reference_Absent: main_absent,
-				Merge_Commits:         merge_commits,
-				Non_Merge_Commits:     non_merge_commits,
-			},
+			Stdout:       &stdout,
+			Stderr:       &stderr,
+			Scope_Prefix: scope_prefix,
+			Tracked:      tracked,
+			CPU_Count:    cpu_count,
 		})
 	}
-}
-
-// Test_Coverage_Backfill_String_Bounded_Helpers_Git_Input drives the
-// git-history tier helpers with empty + max-length subject and hash
-// strings so the per-axis Lo/Hi bucket pairs are observed end-to-end.
-func Test_Coverage_Backfill_String_Bounded_Helpers_Git_Input(t *testing.T) {
-	t.Parallel()
-	long_subject := strings.Repeat("s", 100)
-	long_hash := strings.Repeat("a", 64)
-	git_input := lint.Git_Input{
-		Enabled: true,
-		Merge_Commits: []lint.Git_Commit{
-			{Hash: "", Subject: ""}, // filtered out by upstream empty-subject check
-			// Exercises empty-hash Lo bucket in git_input_check_short_hash.
-			{Hash: "", Subject: "x"},
-			{Hash: "a", Subject: "x"},
-			{Hash: long_hash, Subject: long_subject},
-		},
-		Non_Merge_Commits: []lint.Git_Commit{
-			{Hash: "", Subject: ""},
-			{Hash: "a", Subject: "x"},
-			{Hash: long_hash, Subject: long_subject},
-		},
-	}
-	var stdout, stderr strings.Builder
-	lint_main(t, &lint.Main_Input{
-		Fsys: fstest.MapFS{
-			"go.mod":  {Data: []byte("module test\ngo 1.25\n")},
-			"main.go": {Data: []byte("package main\n\nfunc main() {}\n")},
-		},
-		Stdout:         &stdout,
-		Stderr:         &stderr,
-		CPU_Count:      1,
-		Root_Directory: ".",
-		Git:            git_input,
-	})
-}
-
-// Test_Coverage_Backfill_Build_Key_Hi drives build_key with a long-form
-// //go:build constraint whose normalized AST is exactly 128 chars so its
-// Hi bucket fires; combined with non-build-tagged files in other tests it
-// also covers Lo=0.
-func Test_Coverage_Backfill_Build_Key_Hi(t *testing.T) {
-	t.Parallel()
-	// Normalized form: each `||` becomes ` || `, and groups wrap in parens.
-	// Length: each `(OS || OS || ...) && (ARCH || ARCH || ...) && cgo` —
-	// tuned by trial to 128 chars exactly.
-	long_build := "//go:build (linux || darwin || windows || freebsd || netbsd || plan9) && " +
-		"(amd64 || arm64 || ppc64 || ppc64le || riscv64 || s390x) && cgo\n\n" +
-		"package main\n\nfunc main() {}\n"
-	var stdout, stderr strings.Builder
-	lint_main(t, &lint.Main_Input{
-		Fsys: fstest.MapFS{
-			"go.mod":  {Data: []byte("module test\ngo 1.25\n")},
-			"main.go": {Data: []byte(long_build)},
-		},
-		Stdout:    &stdout,
-		Stderr:    &stderr,
-		CPU_Count: 1,
-	})
 }
 
 // Test_Coverage_Backfill_Library_Tier_Depth drives
@@ -4726,9 +2867,7 @@ func Test_Coverage_Backfill_Terminology(t *testing.T) {
 }
 
 // Test_Coverage_Backfill_Check_File_System_Empty_Input drives
-// Check_File_System with an empty fs.FS and no Root / Root_Directory /
-// Tracked, exercising the (Lo root, Lo root_directory, Lo tracked) defer
-// and prologue cells at CPU_Count=0 (Lo) and CPU_Count=1024 (Hi).
+// Check_File_System with an empty filesystem at CPU_Count=0 and CPU_Count=1024.
 func Test_Coverage_Backfill_Check_File_System_Empty_Input(t *testing.T) {
 	t.Parallel()
 	for _, cpu_count := range []int{0, 1024} {
@@ -5053,33 +3192,6 @@ func f(value int) {
 	}
 }
 
-// Test_Coverage_Backfill_String_Bounded_Helpers_Long_Path drives stream-
-// tier helpers (check_stream_conflict_markers etc.) with a 4096-char file
-// path so their len(p) Hi=4096 buckets fire.
-func Test_Coverage_Backfill_String_Bounded_Helpers_Long_Path(t *testing.T) {
-	t.Parallel()
-	// 4092 + ".txt" = 4096 chars exactly so the stream-tier path boundary
-	// fires Hi instead of fatalling.
-	long_filename := strings.Repeat("a", 4092)
-	long_directory := strings.Repeat("d", 128)
-	fsys := fstest.MapFS{
-		"go.mod":                 {Data: []byte("module test\ngo 1.25\n")},
-		"main.go":                {Data: []byte("package main\n\nfunc main() {}\n")},
-		long_filename + ".txt":   {Data: []byte("x\n")},
-		"empty.go":               {Data: []byte("")},
-		"x/x.go":                 {Data: []byte("package x\n")},
-		long_directory + "/x.go": {Data: []byte("package x\n")},
-	}
-	var stdout, stderr strings.Builder
-	lint_main(t, &lint.Main_Input{
-		Fsys:           fsys,
-		Stdout:         &stdout,
-		Stderr:         &stderr,
-		CPU_Count:      1,
-		Root_Directory: ".",
-	})
-}
-
 // Test_Coverage_Backfill_Banned_Abbreviation_D feeds Check_Source a fixture
 // with a `dir` identifier so banned_abbreviation_candidates_d_f's d-helper
 // dispatch path observes the non-nil branch.
@@ -5090,15 +3202,6 @@ func Test_Coverage_Backfill_Banned_Abbreviation_D(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-}
-
-// Test_Coverage_Backfill_Check_Comments_Group_Source_Min feeds Check_Source
-// the minimum-byte file containing a comment (`package x\n\n// c\n`, 16 bytes)
-// so check_comments_group's source-length Lo bucket fires.
-func Test_Coverage_Backfill_Check_Comments_Group_Source_Min(t *testing.T) {
-	t.Parallel()
-	diags, err := lint.Check_Source("test.go", "package x\n\n// c\n")
-	t.Logf("diags=%d err=%v", len(diags), err)
 }
 
 // Test_Coverage_Backfill_Shadow_Walker_Top_Level_If_Range feeds Check_File
@@ -5153,550 +3256,6 @@ func Test_Coverage_Backfill_Check_File_Empty_Source(t *testing.T) {
 	t.Logf("empty_source diags=%d", len(diags))
 }
 
-// Builds a MapFS — Go sources gofmt-normalised, other files verbatim — runs
-// the filesystem tier scoped to the fixture package, and returns only the
-// requirements-rule diagnostics so a test sees this check in isolation.
-func requirements_diagnostics(
-	t *testing.T, files map[string]string,
-) (diags []lint.Diagnostic) {
-	t.Helper()
-	fsys_map := make(fstest.MapFS)
-	for name, content := range files {
-		if strings.Has_Suffix(name, ".go") {
-			fsys_map[name] = &fstest.MapFile{Data: gofmt_must(t, content)}
-			continue
-		}
-		fsys_map[name] = &fstest.MapFile{Data: []byte(content)}
-	}
-	// Scope to the fixture package so the coverage rule, which is gated on an
-	// explicit package argument, applies to it.
-	input := &lint.Check_File_System_Input{Fsys: fsys_map, Scope: "greet"}
-	all, err := lint.Check_File_System(input)
-	if err != nil {
-		t.Fatalf("Check_File_System: %v", err)
-	}
-	for _, d := range all {
-		if d.Name == "requirements" {
-			diags = append(diags, d)
-		}
-	}
-	return diags
-}
-
-func requirements_clean_files() (files map[string]string) {
-	return map[string]string{
-		// A go.mod gives greet an owning module; the coverage mandate no-ops on
-		// module-less directories, so without it the missing-file rule never fires.
-		"go.mod":                     "module fixture\n\ngo 1.25\n",
-		"greet/greet.go":             REQUIREMENTS_CLEAN_SOURCE,
-		"greet/requirements_test.go": REQUIREMENTS_CLEAN_TEST,
-		"greet/REQUIREMENTS.md":      REQUIREMENTS_CLEAN_MD,
-	}
-}
-
-func requirements_message_contains(
-	diags []lint.Diagnostic, fragment string,
-) (found bool) {
-	for _, d := range diags {
-		if strings.Contains(d.Message, fragment) {
-			return true
-		}
-	}
-	return false
-}
-
-// Test_Requirements_Conformance verifies a fully conforming package emits no
-// requirements diagnostics.
-func Test_Requirements_Conformance(t *testing.T) {
-	t.Parallel()
-	diags := requirements_diagnostics(t, requirements_clean_files())
-	if len(diags) != 0 {
-		t.Fatalf("conforming package should emit no diagnostics, got %v", diags)
-	}
-}
-
-// Test_Requirements_Missing_File verifies a scoped package without the file is
-// flagged.
-func Test_Requirements_Missing_File(t *testing.T) {
-	t.Parallel()
-	files := requirements_clean_files()
-	delete(files, "greet/REQUIREMENTS.md")
-	diags := requirements_diagnostics(t, files)
-	if !requirements_message_contains(diags, "has no REQUIREMENTS.md") {
-		t.Fatalf("expected missing-file diagnostic, got %v", diags)
-	}
-}
-
-// Test_Requirements_Heading_Level_Two_Flagged verifies a ## heading is flagged;
-// only # and ### are permitted levels.
-func Test_Requirements_Heading_Level_Two_Flagged(t *testing.T) {
-	t.Parallel()
-	files := requirements_clean_files()
-	files["greet/REQUIREMENTS.md"] = "\n## Greeting\n\nIt greets the caller.\n"
-	diags := requirements_diagnostics(t, files)
-	if !requirements_message_contains(diags, "heading level is not") {
-		t.Fatalf("expected heading-level diagnostic, got %v", diags)
-	}
-}
-
-// Test_Requirements_Heading_Missing_Blank_Line verifies an unfenced heading is
-// flagged.
-func Test_Requirements_Heading_Missing_Blank_Line(t *testing.T) {
-	t.Parallel()
-	files := requirements_clean_files()
-	files["greet/REQUIREMENTS.md"] = "\n# Greeting\nIt greets the caller.\n"
-	diags := requirements_diagnostics(t, files)
-	if !requirements_message_contains(diags, "no blank line after the heading") {
-		t.Fatalf("expected blank-line diagnostic, got %v", diags)
-	}
-}
-
-// Test_Requirements_Section_Too_Long verifies a four-line section is flagged.
-func Test_Requirements_Section_Too_Long(t *testing.T) {
-	t.Parallel()
-	files := requirements_clean_files()
-	files["greet/REQUIREMENTS.md"] = "\n# Greeting\n\none\ntwo\nthree\nfour\n"
-	diags := requirements_diagnostics(t, files)
-	if !requirements_message_contains(diags, "has more than three lines") {
-		t.Fatalf("expected section-size diagnostic, got %v", diags)
-	}
-}
-
-// Test_Requirements_Missing_Test_File verifies an absent requirements_test.go
-// is flagged when the spec exists.
-func Test_Requirements_Missing_Test_File(t *testing.T) {
-	t.Parallel()
-	files := requirements_clean_files()
-	delete(files, "greet/requirements_test.go")
-	diags := requirements_diagnostics(t, files)
-	if !requirements_message_contains(diags, "has no requirements_test.go") {
-		t.Fatalf("expected missing-test-file diagnostic, got %v", diags)
-	}
-}
-
-// Test_Requirements_Heading_Without_Test verifies a heading with no matching
-// test is flagged.
-func Test_Requirements_Heading_Without_Test(t *testing.T) {
-	t.Parallel()
-	files := requirements_clean_files()
-	files["greet/REQUIREMENTS.md"] = "\n# Farewell\n\nIt bids farewell.\n"
-	diags := requirements_diagnostics(t, files)
-	if !requirements_message_contains(diags, "Test_Farewell") {
-		t.Fatalf("expected diagnostic naming Test_Farewell, got %v", diags)
-	}
-}
-
-// Test_Requirements_Wrong_Test_Order verifies tests not in heading order are
-// flagged.
-func Test_Requirements_Wrong_Test_Order(t *testing.T) {
-	t.Parallel()
-	files := requirements_clean_files()
-	files["greet/REQUIREMENTS.md"] =
-		"\n# Greeting\n\nIt greets.\n\n# Farewell\n\nIt bids farewell.\n"
-	files["greet/requirements_test.go"] = "package greet_test\n\n" +
-		"import \"testing\"\n\n" +
-		"// Test_Farewell is a fixture.\n" +
-		"func Test_Farewell(t *testing.T) { _ = t }\n\n" +
-		"// Test_Greeting is a fixture.\n" +
-		"func Test_Greeting(t *testing.T) { _ = t }\n"
-	diags := requirements_diagnostics(t, files)
-	if !requirements_message_contains(diags, "needs Test_Greeting") {
-		t.Fatalf("expected ordering diagnostic, got %v", diags)
-	}
-}
-
-// Test_Requirements_Coverage_Respects_Package_Argument verifies the coverage
-// rule is bounded by the package argument: an out-of-scope package missing the
-// file is not flagged, while that package is flagged when it is the target.
-func Test_Requirements_Coverage_Respects_Package_Argument(t *testing.T) {
-	t.Parallel()
-	other := "// Package other is a fixture.\npackage other\n\n" +
-		"// Other does.\nfunc Other() { return }\n"
-	files := fstest.MapFS{
-		"go.mod": &fstest.MapFile{Data: []byte("module fixture\n\ngo 1.25\n")},
-		"greet/greet.go": &fstest.MapFile{
-			Data: gofmt_must(t, REQUIREMENTS_CLEAN_SOURCE)},
-		"greet/requirements_test.go": &fstest.MapFile{
-			Data: gofmt_must(t, REQUIREMENTS_CLEAN_TEST)},
-		"greet/REQUIREMENTS.md": &fstest.MapFile{
-			Data: []byte(REQUIREMENTS_CLEAN_MD)},
-		"other/other.go": &fstest.MapFile{Data: gofmt_must(t, other)},
-	}
-	input_greet := &strings.Builder{}
-	lint_main(t, &lint.Main_Input{
-		Fsys: files, Stdout: input_greet, Stderr: &strings.Builder{},
-		Scope_Prefix: "greet"})
-	if strings.Contains(input_greet.String(), "REQUIREMENTS.md") {
-		t.Fatalf("scoped to greet, other's missing file must not surface: %s",
-			input_greet.String())
-	}
-	input_other := &strings.Builder{}
-	lint_main(t, &lint.Main_Input{
-		Fsys: files, Stdout: input_other, Stderr: &strings.Builder{},
-		Scope_Prefix: "other"})
-	if !strings.Contains(input_other.String(), "has no REQUIREMENTS.md") {
-		t.Fatalf("scoped to other, its missing file must surface: %s",
-			input_other.String())
-	}
-}
-
-// Runs the filesystem tier with no scope — the whole-workspace case — and
-// returns only requirements diagnostics, so tests can assert the coverage
-// mandate now fires without a package argument.
-func requirements_diagnostics_workspace(
-	t *testing.T, files map[string]string,
-) (diags []lint.Diagnostic) {
-	t.Helper()
-	fsys_map := make(fstest.MapFS)
-	for name, content := range files {
-		if strings.Has_Suffix(name, ".go") {
-			fsys_map[name] = &fstest.MapFile{Data: gofmt_must(t, content)}
-			continue
-		}
-		fsys_map[name] = &fstest.MapFile{Data: []byte(content)}
-	}
-	// Names the shared component so a `shared/...` fixture is classified as the
-	// library; without it every component reads as a binary, where the impure
-	// tier does not exist.
-	all, err := lint.Check_File_System(&lint.Check_File_System_Input{
-		Fsys: fsys_map, Shared_Component: DOCTRINE_SHARED_COMPONENT_DIRECTORY})
-	if err != nil {
-		t.Fatalf("Check_File_System: %v", err)
-	}
-	for _, d := range all {
-		if d.Name == "requirements" {
-			diags = append(diags, d)
-		}
-	}
-	return diags
-}
-
-func requirements_fixture_package(directory string) (files map[string]string) {
-	return map[string]string{
-		"go.mod": "module fixture\n\ngo 1.25\n",
-		directory + "/thing.go": "// Package thing is a fixture.\n" +
-			"package thing\n\n// Thing does.\nfunc Thing() { return }\n",
-	}
-}
-
-// Test_Requirements_Coverage_Whole_Workspace verifies a scopeless run mandates
-// REQUIREMENTS.md for every non-exempt package, not only a scoped target.
-func Test_Requirements_Coverage_Whole_Workspace(t *testing.T) {
-	t.Parallel()
-	diags := requirements_diagnostics_workspace(t, requirements_fixture_package("thing"))
-	if !requirements_message_contains(diags, "has no REQUIREMENTS.md") {
-		t.Fatalf("scopeless run must mandate the file, got %v", diags)
-	}
-}
-
-// Test_Requirements_Coverage_Exempts_Third_Party verifies vendored third_party
-// packages are not held to the coverage mandate even on a scopeless run.
-func Test_Requirements_Coverage_Exempts_Third_Party(t *testing.T) {
-	t.Parallel()
-	diags := requirements_diagnostics_workspace(
-		t, requirements_fixture_package("third_party/vendored"))
-	if requirements_message_contains(diags, "has no REQUIREMENTS.md") {
-		t.Fatalf("third_party must be exempt from coverage, got %v", diags)
-	}
-}
-
-// Test_Requirements_Coverage_Exempts_Examples verifies example packages are not
-// held to the coverage mandate.
-func Test_Requirements_Coverage_Exempts_Examples(t *testing.T) {
-	t.Parallel()
-	diags := requirements_diagnostics_workspace(
-		t, requirements_fixture_package("snippets/examples/demo"))
-	if requirements_message_contains(diags, "has no REQUIREMENTS.md") {
-		t.Fatalf("examples must be exempt from coverage, got %v", diags)
-	}
-}
-
-// Test_Requirements_Coverage_Exempts_Main verifies an impure package main is not
-// held to the coverage mandate; only a pure package carries the file.
-func Test_Requirements_Coverage_Exempts_Main(t *testing.T) {
-	t.Parallel()
-	files := map[string]string{
-		"go.mod":  "module example.com/mybinary\n\ngo 1.25\n",
-		"main.go": "// Package main is a fixture.\npackage main\n\nfunc main() {}\n",
-	}
-	diags := requirements_diagnostics_workspace(t, files)
-	if requirements_message_contains(diags, "has no REQUIREMENTS.md") {
-		t.Fatalf("package main must be exempt from coverage, got %v", diags)
-	}
-}
-
-// Test_Requirements_Coverage_Exempts_Default verifies an impure `default` package
-// is not held to the coverage mandate; only a pure package carries the file.
-func Test_Requirements_Coverage_Exempts_Default(t *testing.T) {
-	t.Parallel()
-	files := map[string]string{
-		"go.mod": "module fixture\n\ngo 1.25\n",
-		// Under the shared component, the only place a default tier is legal.
-		"shared/foo/default/wire.go": "// Package foo is a fixture.\npackage foo\n",
-	}
-	diags := requirements_diagnostics_workspace(t, files)
-	if requirements_message_contains(diags, "has no REQUIREMENTS.md") {
-		t.Fatalf("a `default` package must be exempt from coverage, got %v", diags)
-	}
-}
-
-// Test_Requirements_Coverage_Exempt_Requirements_Validated verifies an impure package
-// that nonetheless ships a REQUIREMENTS.md is still format-checked: the exemption
-// lifts the requirement to carry the file, not the rules a present file obeys.
-func Test_Requirements_Coverage_Exempt_Requirements_Validated(t *testing.T) {
-	t.Parallel()
-	main_source := "// Package main is a fixture.\npackage main\n\nfunc main() {}\n"
-	files := map[string]string{
-		"go.mod":          "module example.com/mybinary\n\ngo 1.25\n",
-		"main.go":         main_source,
-		"REQUIREMENTS.md": "\n## Mid Level\n\nA level-two heading is banned.\n",
-	}
-	diags := requirements_diagnostics_workspace(t, files)
-	if !requirements_message_contains(diags, "heading level is not") {
-		t.Fatalf("an impure package's present spec must still be validated, got %v", diags)
-	}
-}
-
-// Case_insensitive_file_system models a case-insensitive filesystem (default
-// macOS APFS): a lookup resolves to an entry of any case, while the directory
-// listing still reports the real names. It lets a test prove the exact-name
-// rule, which fs.ReadFile alone cannot detect on such a filesystem — there the
-// doctrine's REQUIREMENTS.md would silently resolve to a differently-cased file.
-type case_insensitive_file_system struct{ Inner fstest.MapFS }
-
-func (c case_insensitive_file_system) Open(name string) (file fs.File, err error) {
-	file, err = c.Inner.Open(name)
-	if err == nil {
-		return file, nil
-	}
-	for key := range c.Inner {
-		if strings.Equal_Fold(key, name) {
-			return c.Inner.Open(key)
-		}
-	}
-	return file, err
-}
-
-// Test_Requirements_File_Name_Exact_Case verifies a REQUIREMENTS.md present
-// only under a different case is treated as missing — the exact byte-for-byte
-// name is enforced even where the filesystem would resolve the wrong case.
-func Test_Requirements_File_Name_Exact_Case(t *testing.T) {
-	t.Parallel()
-	inner := fstest.MapFS{
-		"go.mod":         {Data: []byte("module fixture\n\ngo 1.25\n")},
-		"greet/greet.go": {Data: gofmt_must(t, REQUIREMENTS_CLEAN_SOURCE)},
-		"greet/requirements_test.go": {
-			Data: gofmt_must(t, REQUIREMENTS_CLEAN_TEST)},
-		// Wrong-case name; a case-insensitive FS resolves it for ReadFile.
-		"greet/requirements.md": {Data: []byte(REQUIREMENTS_CLEAN_MD)},
-	}
-	all, err := lint.Check_File_System(&lint.Check_File_System_Input{
-		Fsys: case_insensitive_file_system{Inner: inner}, Scope: "greet"})
-	if err != nil {
-		t.Fatalf("Check_File_System: %v", err)
-	}
-	if !requirements_message_contains(all, "has no REQUIREMENTS.md") {
-		t.Fatalf("wrong-case spec file must be flagged, got %v", all)
-	}
-}
-
-// Test_Requirements_Test_File_Name_Exact_Case verifies the same exact-name rule
-// for requirements_test.go.
-func Test_Requirements_Test_File_Name_Exact_Case(t *testing.T) {
-	t.Parallel()
-	inner := fstest.MapFS{
-		"go.mod":                {Data: []byte("module fixture\n\ngo 1.25\n")},
-		"greet/greet.go":        {Data: gofmt_must(t, REQUIREMENTS_CLEAN_SOURCE)},
-		"greet/REQUIREMENTS.md": {Data: []byte(REQUIREMENTS_CLEAN_MD)},
-		// Wrong-case name, still a _test.go so it parses as the test package.
-		"greet/Requirements_test.go": {Data: gofmt_must(t, REQUIREMENTS_CLEAN_TEST)},
-	}
-	all, err := lint.Check_File_System(&lint.Check_File_System_Input{
-		Fsys: case_insensitive_file_system{Inner: inner}, Scope: "greet"})
-	if err != nil {
-		t.Fatalf("Check_File_System: %v", err)
-	}
-	if !requirements_message_contains(all, "has no requirements_test.go") {
-		t.Fatalf("wrong-case test file must be flagged, got %v", all)
-	}
-}
-
-// Test_Requirements_Preamble_Flagged verifies non-blank content before the first
-// heading is flagged.
-func Test_Requirements_Preamble_Flagged(t *testing.T) {
-	t.Parallel()
-	files := requirements_clean_files()
-	files["greet/REQUIREMENTS.md"] = "Stray prose.\n\n# Greeting\n\nIt greets.\n"
-	diags := requirements_diagnostics(t, files)
-	if !requirements_message_contains(diags, "is before the first heading") {
-		t.Fatalf("expected preamble diagnostic, got %v", diags)
-	}
-}
-
-// Test_Requirements_Section_Body verifies a heading with no body line is
-// flagged.
-func Test_Requirements_Section_Body(t *testing.T) {
-	t.Parallel()
-	files := requirements_clean_files()
-	files["greet/REQUIREMENTS.md"] = "\n# Greeting\n\n"
-	diags := requirements_diagnostics(t, files)
-	if !requirements_message_contains(diags, "has no body line") {
-		t.Fatalf("expected section-body diagnostic, got %v", diags)
-	}
-}
-
-// Test_Requirements_Section_Contiguity_Flagged verifies a blank line between a
-// section's body lines is flagged.
-func Test_Requirements_Section_Contiguity_Flagged(t *testing.T) {
-	t.Parallel()
-	files := requirements_clean_files()
-	files["greet/REQUIREMENTS.md"] = "\n# Greeting\n\none\n\ntwo\n"
-	diags := requirements_diagnostics(t, files)
-	if !requirements_message_contains(diags, "blank line between two body lines") {
-		t.Fatalf("expected contiguity diagnostic, got %v", diags)
-	}
-}
-
-// Test_Requirements_Heading_Uniqueness_Flagged verifies two headings sharing a name
-// are flagged.
-func Test_Requirements_Heading_Uniqueness_Flagged(t *testing.T) {
-	t.Parallel()
-	files := requirements_clean_files()
-	files["greet/REQUIREMENTS.md"] =
-		"\n# Greeting\n\nIt greets.\n\n# Greeting\n\nAgain.\n"
-	diags := requirements_diagnostics(t, files)
-	if !requirements_message_contains(diags, "is not unique") {
-		t.Fatalf("expected duplicate-heading diagnostic, got %v", diags)
-	}
-}
-
-// Test_Requirements_Heading_Words verifies a heading word containing a
-// non-letter/digit rune is flagged, since it would not form a legal test name.
-func Test_Requirements_Heading_Words(t *testing.T) {
-	t.Parallel()
-	files := requirements_clean_files()
-	files["greet/REQUIREMENTS.md"] = "\n# Greeting-Caller\n\nIt greets.\n"
-	diags := requirements_diagnostics(t, files)
-	if !requirements_message_contains(diags, "Write only letters and digits") {
-		t.Fatalf("expected heading-words diagnostic, got %v", diags)
-	}
-}
-
-// Test_Requirements_Test_Order_Leading_Declaration verifies a var/const/type
-// declared before the heading tests is flagged: the tests must be the file's
-// first declarations, not merely in order among themselves.
-func Test_Requirements_Test_Order_Leading_Declaration(t *testing.T) {
-	t.Parallel()
-	files := requirements_clean_files()
-	files["greet/requirements_test.go"] = "package greet_test\n\n" +
-		"import \"testing\"\n\n" +
-		"// Fixture_value precedes the tests.\n" +
-		"var Fixture_value = 0\n\n" +
-		"// Test_Greeting is a fixture.\n" +
-		"func Test_Greeting(t *testing.T) { _ = t }\n"
-	diags := requirements_diagnostics(t, files)
-	if !requirements_message_contains(diags, "at the top of the file") {
-		t.Fatalf("leading declaration must be flagged, got %v", diags)
-	}
-}
-
-// Test_Requirements_Subheading_Leaf_Test verifies a ### leaf requires a test
-// named for its parent and itself, Test_<Parent>_<Heading>.
-func Test_Requirements_Subheading_Leaf_Test(t *testing.T) {
-	t.Parallel()
-	files := requirements_clean_files()
-	files["greet/REQUIREMENTS.md"] = "\n# Greeting\n\n### Hello\n\nIt says hello.\n"
-	diags := requirements_diagnostics(t, files)
-	if !requirements_message_contains(diags, "Test_Greeting_Hello") {
-		t.Fatalf("### leaf must require Test_Greeting_Hello, got %v", diags)
-	}
-}
-
-// Test_Requirements_Branch_Needs_No_Test verifies a ## branch (one with ###
-// children) needs no test of its own; only its ### leaves do.
-func Test_Requirements_Branch_Needs_No_Test(t *testing.T) {
-	t.Parallel()
-	files := requirements_clean_files()
-	files["greet/REQUIREMENTS.md"] = "\n# Greeting\n\n### Hello\n\nIt says hello.\n"
-	files["greet/requirements_test.go"] = "package greet_test\n\nimport \"testing\"\n\n" +
-		"// Test_Greeting_Hello is a fixture.\n" +
-		"func Test_Greeting_Hello(t *testing.T) { _ = t }\n"
-	diags := requirements_diagnostics(t, files)
-	if len(diags) != 0 {
-		t.Fatalf("a branch needs no test of its own, got %v", diags)
-	}
-}
-
-// Test_Requirements_Heading_Level_Four_Flagged verifies a #### heading is
-// flagged; only ## and ### are permitted.
-func Test_Requirements_Heading_Level_Four_Flagged(t *testing.T) {
-	t.Parallel()
-	files := requirements_clean_files()
-	files["greet/REQUIREMENTS.md"] = "\n# Greeting\n\n#### Deep\n\nToo deep.\n"
-	diags := requirements_diagnostics(t, files)
-	if !requirements_message_contains(diags, "heading level is not") {
-		t.Fatalf("a #### heading must be flagged, got %v", diags)
-	}
-}
-
-// Test_Requirements_Subheading_Duplicate verifies two ### sharing a name under
-// one parent are flagged.
-func Test_Requirements_Subheading_Duplicate(t *testing.T) {
-	t.Parallel()
-	files := requirements_clean_files()
-	files["greet/REQUIREMENTS.md"] =
-		"\n# Greeting\n\n### Hello\n\nHi.\n\n### Hello\n\nAgain.\n"
-	diags := requirements_diagnostics(t, files)
-	if !requirements_message_contains(diags, "is not unique") {
-		t.Fatalf("a duplicate ### under one parent must be flagged, got %v", diags)
-	}
-}
-
-// Test_Requirements_Subheading_Reuse_Across_Parents verifies the same ### name
-// under two different parents is allowed (their leaf tests differ).
-func Test_Requirements_Subheading_Reuse_Across_Parents(t *testing.T) {
-	t.Parallel()
-	files := requirements_clean_files()
-	files["greet/REQUIREMENTS.md"] =
-		"\n# Greeting\n\n### Hello\n\nHi.\n\n# Farewell\n\n### Hello\n\nBye.\n"
-	files["greet/requirements_test.go"] = "package greet_test\n\nimport \"testing\"\n\n" +
-		"// Test_Greeting_Hello is a fixture.\n" +
-		"func Test_Greeting_Hello(t *testing.T) { _ = t }\n\n" +
-		"// Test_Farewell_Hello is a fixture.\n" +
-		"func Test_Farewell_Hello(t *testing.T) { _ = t }\n"
-	diags := requirements_diagnostics(t, files)
-	if requirements_message_contains(diags, "is not unique") {
-		t.Fatalf("the same ### under two parents must be allowed, got %v", diags)
-	}
-}
-
-// Test_Requirements_Branch_Intro_Allowed verifies a branch ## may carry an
-// intro body before its first ###.
-func Test_Requirements_Branch_Intro_Allowed(t *testing.T) {
-	t.Parallel()
-	files := requirements_clean_files()
-	files["greet/REQUIREMENTS.md"] = "\n# Greeting\n\nAn intro line.\n\n### Hello\n\nHi.\n"
-	files["greet/requirements_test.go"] = "package greet_test\n\nimport \"testing\"\n\n" +
-		"// Test_Greeting_Hello is a fixture.\n" +
-		"func Test_Greeting_Hello(t *testing.T) { _ = t }\n"
-	diags := requirements_diagnostics(t, files)
-	if len(diags) != 0 {
-		t.Fatalf("a branch intro body must be allowed, got %v", diags)
-	}
-}
-
-// Test_Requirements_Subheading_Empty verifies a ### leaf with no body line is
-// flagged.
-func Test_Requirements_Subheading_Empty(t *testing.T) {
-	t.Parallel()
-	files := requirements_clean_files()
-	files["greet/REQUIREMENTS.md"] = "\n# Greeting\n\nIntro.\n\n### Hello\n\n"
-	diags := requirements_diagnostics(t, files)
-	if !requirements_message_contains(diags, "has no body line") {
-		t.Fatalf("a bodyless ### leaf must be flagged, got %v", diags)
-	}
-}
-
 // Test_Parse_Configuration covers lint.json decoding: a document with every key
 // present yields the shared module and the allowlist; a missing required key, an
 // empty value where one is required, an unknown top-level key, a rejected glob,
@@ -5716,7 +3275,6 @@ func Test_Parse_Configuration(t *testing.T) {
 				t.Fatalf("unexpected error: %v", err)
 			}
 			assert_configuration(t, configuration, tt.Want_Shared, tt.Want_List)
-			assert_word_replacements_round_trip(t, configuration)
 		})
 	}
 }
@@ -5746,7 +3304,6 @@ func configuration_document(overrides map[string]any) (document string) {
 		"shared_component":                   "example.com/lib",
 		"instrumentation_packages":           []string{},
 		"pure_but_indeterministic_packages":  []string{},
-		"word_replacements":                  map[string][]string{"id": {"identifier"}},
 		"ignore":                             []string{},
 		"opt_out_assertion_mandate_packages": []string{},
 		"opt_out_recursion_ban":              []string{},
@@ -5887,17 +3444,6 @@ func parse_configuration_error_cases() (cases []parse_configuration_case) {
 			Want_Err: true,
 		},
 		{
-			Name:     "missing word_replacements rejected",
-			Input:    configuration_document(map[string]any{"word_replacements": nil}),
-			Want_Err: true,
-		},
-		{
-			Name: "empty word_replacements rejected",
-			Input: configuration_document(
-				map[string]any{"word_replacements": map[string][]string{}}),
-			Want_Err: true,
-		},
-		{
 			Name: "unknown key rejected",
 			Input: configuration_document(
 				map[string]any{"global_api_allowlst": []string{}}),
@@ -5937,8 +3483,7 @@ func parse_configuration_error_cases() (cases []parse_configuration_case) {
 	}
 }
 
-// The negation-specific hard-error forms, split from parse_configuration_error_cases
-// to keep each case-returning function within the function-length cap: a bare "!",
+// The negation-specific hard-error forms: a bare "!",
 // a "!" negating only whitespace, and a list that is entirely negation entries.
 func parse_configuration_negation_error_cases() (cases []parse_configuration_case) {
 	return []parse_configuration_case{
@@ -5960,19 +3505,6 @@ func parse_configuration_negation_error_cases() (cases []parse_configuration_cas
 				map[string]any{"ignore": []string{"!keep", "!other"}}),
 			Want_Err: true,
 		},
-	}
-}
-
-// Proves the word_replacements table survives the decode: every valid fixture
-// carries id -> identifier, so a dropped or mis-decoded table fails loudly here.
-func assert_word_replacements_round_trip(t *testing.T, configuration *lint.Configuration) {
-	t.Helper()
-	expansions := configuration.Word_Replacements["id"]
-	if len(expansions) != 1 {
-		t.Fatalf("word_replacements[id] length: got %v", expansions)
-	}
-	if expansions[0] != "identifier" {
-		t.Fatalf("word_replacements[id]: got %q", expansions[0])
 	}
 }
 

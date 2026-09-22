@@ -693,16 +693,13 @@ func invariant_builder_link(
 func invariant_root_subject(
 	expression ast.Expr, helper *ast.FuncDecl, type_specification *ast.TypeSpec,
 ) (matched bool) {
-	name, _ := invariant_value_parameter(helper, type_specification.Name.Name)
+	name, pointer := invariant_value_parameter(helper, type_specification.Name.Name)
 	if name == "" {
 		return false
 	}
-	expression = invariant_unparen(expression)
-	star, is_star := expression.(*ast.StarExpr)
-	if is_star {
-		expression = invariant_unparen(star.X)
-	}
-	return invariant_identifier(expression, name)
+	// The root keys its plan on the subject's type, and a pointer type has no name, thus a pointer
+	// subject roots at its pointee.
+	return invariant_value(expression, name, pointer)
 }
 
 // A Tree root takes the helper's own subject before its namespace. The subject supplies the chain
@@ -1104,6 +1101,7 @@ func check_struct_invariants(
 	defined := struct_helper_index(parsed_files, components)
 	declarations := index_declarations(parsed_files, components)
 	pointers := index_defined_pointers(parsed_files, components)
+	pointer_helpers := pointer_helper_index(parsed_files, components)
 	for _, pf := range parsed_files {
 		if strings.Has_Suffix(pf.Path, "_test.go") {
 			continue
@@ -1112,14 +1110,15 @@ func check_struct_invariants(
 			continue
 		}
 		diags = append(diags,
-			struct_file_diagnostics(pf, defined, declarations, components)...)
-		diags = append(diags,
-			defined_pointer_file_diagnostics(pf, defined, pointers, components)...)
+			struct_file_diagnostics(pf, defined, pointer_helpers, declarations, components)...)
+		diags = append(diags, defined_pointer_file_diagnostics(
+			pf, defined, pointer_helpers, pointers, components)...)
 	}
 	return diags
 }
 
-// Pointer helper owes one thing: pointee helper on dereferenced value. Nil exit comes first,
+// Pointer helper owes one thing: pointee helper on dereferenced value, or on the pointer itself
+// when the pointee helper takes a pointer. Nil exit comes first,
 // because dereference of nil storage panics before any assertion runs. Any further statement
 // restates pointee properties at a second position, thus body is exactly two statements.
 //
@@ -1134,8 +1133,8 @@ func check_struct_invariants(
 // declaration spells a name and no star, thus the rule follows the name to the star at the chain's
 // end. Last carve-out read only the star and let `type State other.Handle` state a bare nil check.
 func defined_pointer_file_diagnostics(
-	file Parsed_File, defined map[string]bool, pointers *Defined_Pointer_Index,
-	components *Component_Index,
+	file Parsed_File, defined map[string]bool, pointer_helpers map[string]bool,
+	pointers *Defined_Pointer_Index, components *Component_Index,
 ) (diags []Diagnostic) {
 	for index, declaration := range file.File.Decls {
 		general, is_general := declaration.(*ast.GenDecl)
@@ -1172,6 +1171,7 @@ func defined_pointer_file_diagnostics(
 		}
 		scope := &Invariant_Scope{
 			Defined:         defined,
+			Pointer_Helpers: pointer_helpers,
 			Current_Package: helper_package_path(file, components),
 			Imports:         helper_import_paths(file.File),
 			Shadowed:        function_value_names(helper),
@@ -1332,7 +1332,18 @@ func defined_pointer_gap(
 	}
 	return "body is not exactly `if " + parameter + " == nil { return }` then `" +
 		defined_pointer_callee_text(expected, scope) +
-		"(*" + parameter + ", " + namespace + ")`."
+		"(" + defined_pointer_argument_text(expected, parameter, scope) + ", " + namespace + ")`."
+}
+
+// A pointee helper that takes a pointer receives the defined pointer itself, and every other
+// helper receives the dereferenced value.
+func defined_pointer_argument_text(
+	expected string, parameter string, scope *Invariant_Scope,
+) (text string) {
+	if scope.Pointer_Helpers[expected] {
+		return parameter
+	}
+	return "*" + parameter
 }
 
 // Remedy text is what the reader types. A foreign pointee's helper is reached through the
@@ -1395,11 +1406,15 @@ func defined_pointer_body_exact(
 	if len(call.Args) != 2 {
 		return false
 	}
-	dereference, is_dereference := call.Args[0].(*ast.StarExpr)
-	if !is_dereference {
-		return false
+	argument := call.Args[0]
+	if !scope.Pointer_Helpers[expected] {
+		dereference, is_dereference := argument.(*ast.StarExpr)
+		if !is_dereference {
+			return false
+		}
+		argument = dereference.X
 	}
-	subject, is_identifier := dereference.X.(*ast.Ident)
+	subject, is_identifier := argument.(*ast.Ident)
 	if !is_identifier {
 		return false
 	}
@@ -1461,7 +1476,7 @@ func defined_pointer_nil_guard(statement ast.Stmt, parameter string) (guards boo
 // same-package struct and thus inherits its fields. A defined pointer is not here: it has its
 // own exact-body rule in defined_pointer_file_diagnostics.
 func struct_file_diagnostics(
-	file Parsed_File, defined map[string]bool,
+	file Parsed_File, defined map[string]bool, pointer_helpers map[string]bool,
 	declarations *Declaration_Index, components *Component_Index,
 ) (diags []Diagnostic) {
 	for index, declaration := range file.File.Decls {
@@ -1493,6 +1508,7 @@ func struct_file_diagnostics(
 			Type_Specification: type_specification,
 			Struct_Type:        struct_type,
 			Defined:            defined,
+			Pointer_Helpers:    pointer_helpers,
 			Declarations:       declarations,
 			Inherits:           inherits,
 			Components:         components,
@@ -1513,6 +1529,8 @@ type Struct_Type_Input struct {
 	Struct_Type *ast.StructType
 	// Defined is the module-wide helper index.
 	Defined map[string]bool
+	// Pointer_Helpers is the subset of Defined whose first parameter is a pointer.
+	Pointer_Helpers map[string]bool
 	// Declarations classifies an inherited field's type.
 	Declarations *Declaration_Index
 	// Inherits selects the inherited-field rule over the own-field rule.
@@ -1545,6 +1563,7 @@ func struct_type_diagnostics(input *Struct_Type_Input) (diags []Diagnostic) {
 	scope := &Invariant_Scope{
 		Type_Parameters: struct_type_parameter_set(type_specification),
 		Defined:         defined,
+		Pointer_Helpers: input.Pointer_Helpers,
 		Current_Package: current_package,
 		Imports:         imports,
 		Default_Package: helper_default_package(components, imports),
@@ -1870,8 +1889,9 @@ func struct_inherited_field_gaps(
 		if gaps_input.Converted[name] {
 			continue
 		}
+		argument := helper_argument_text(subject, field.Type, expected, gaps_input.Scope)
 		gaps = append(gaps, "does not call a helper for the inherited field "+
-			subject+". Call "+helper_identity_name(expected)+"("+subject+", ...).")
+			subject+". Call "+helper_identity_name(expected)+"("+argument+", ...).")
 	}
 	return gaps
 }
@@ -1906,12 +1926,13 @@ func struct_inline_fields(
 ) (inline map[string]bool) {
 	inline = map[string]bool{}
 	boolean_fields := struct_boolean_fields(struct_type, scope)
+	_, pointer := bundle.Type.Params.List[0].Type.(*ast.StarExpr)
 	for _, statement := range bundle.Body.List {
 		call := statement_call(statement)
 		if call == nil {
 			continue
 		}
-		for _, name := range struct_chain_fields(call, parameter, boolean_fields) {
+		for _, name := range struct_chain_fields(call, parameter, pointer, boolean_fields) {
 			inline[name] = true
 		}
 		if !always_named_call(call, scope.Imports, scope.Default_Package) {
@@ -2013,7 +2034,7 @@ func struct_boolean_fields(
 // Walks one ensured chain from Ensure back to its root and names the field each stating link
 // takes. The root takes the whole value and names no field, thus the walk ends there.
 func struct_chain_fields(
-	call *ast.CallExpr, parameter string, boolean_fields map[string]bool,
+	call *ast.CallExpr, parameter string, pointer bool, boolean_fields map[string]bool,
 ) (names []string) {
 	current, ensured := invariant_ensure_receiver(call)
 	if !ensured {
@@ -2032,7 +2053,24 @@ func struct_chain_fields(
 		}
 		current = receiver
 	}
+	if pointer {
+		if struct_chain_root_is_pointer(current, parameter) {
+			return nil
+		}
+	}
 	return names
+}
+
+// A Tree keys its plan on the subject's type, and a pointer type has no name to key on, thus a
+// chain rooted at the bare pointer subject states nothing.
+func struct_chain_root_is_pointer(root *ast.CallExpr, parameter string) (yes bool) {
+	if root == nil {
+		return false
+	}
+	if len(root.Args) == 0 {
+		return false
+	}
+	return invariant_identifier(root.Args[0], parameter)
 }
 
 // The link's first argument is its subject.
@@ -2105,7 +2143,7 @@ func struct_converted_fields(
 	return converted
 }
 
-// Reads a first argument of the form Defined(parameter.Field).
+// Reads a first argument of the form Defined(parameter.Field) or (*Defined)(&parameter.Field).
 func struct_conversion_argument(
 	call *ast.CallExpr, parameter string,
 ) (defined string, field string) {
@@ -2119,11 +2157,25 @@ func struct_conversion_argument(
 	if len(conversion.Args) != 1 {
 		return "", ""
 	}
-	identifier, is_identifier := conversion.Fun.(*ast.Ident)
+	target := invariant_unparen(conversion.Fun)
+	converted := invariant_unparen(conversion.Args[0])
+	star, is_star := target.(*ast.StarExpr)
+	if is_star {
+		address, is_address := converted.(*ast.UnaryExpr)
+		if !is_address {
+			return "", ""
+		}
+		if address.Op != token.AND {
+			return "", ""
+		}
+		target = star.X
+		converted = invariant_unparen(address.X)
+	}
+	identifier, is_identifier := target.(*ast.Ident)
 	if !is_identifier {
 		return "", ""
 	}
-	selector, is_selector := invariant_unparen(conversion.Args[0]).(*ast.SelectorExpr)
+	selector, is_selector := converted.(*ast.SelectorExpr)
 	if !is_selector {
 		return "", ""
 	}
@@ -2165,6 +2217,45 @@ func struct_helper_index(
 	return defined
 }
 
+// Keys are the helpers whose first parameter is a pointer, in the identity form
+// struct_helper_index uses. A defined pointer passes such a helper its own value, and every other
+// helper the dereferenced one.
+func pointer_helper_index(
+	parsed_files []Parsed_File, components *Component_Index,
+) (pointers map[string]bool) {
+	pointers = map[string]bool{}
+	for _, pf := range parsed_files {
+		if strings.Has_Suffix(pf.Path, "_test.go") {
+			continue
+		}
+		for _, declaration := range pf.File.Decls {
+			function, is_function := declaration.(*ast.FuncDecl)
+			if !is_function {
+				continue
+			}
+			if function.Recv != nil {
+				continue
+			}
+			if !type_invariants_is_bundle_name(function.Name.Name) {
+				continue
+			}
+			if function.Type.Params == nil {
+				continue
+			}
+			if len(function.Type.Params.List) == 0 {
+				continue
+			}
+			_, is_star := function.Type.Params.List[0].Type.(*ast.StarExpr)
+			if !is_star {
+				continue
+			}
+			identity := helper_package_path(pf, components) + "\x00" + function.Name.Name
+			pointers[identity] = true
+		}
+	}
+	return pointers
+}
+
 // Separating field discovery from diagnostic ownership keeps bundle identity and position out of
 // an argument-bundling struct.
 func struct_field_missing_calls(
@@ -2189,8 +2280,9 @@ func struct_field_missing_calls(
 			continue
 		}
 		subject := parameter + "." + name
+		argument := helper_argument_text(subject, field.Type, expected, scope)
 		gaps = append(gaps, "does not call a helper for the field "+subject+
-			". Call "+helper_identity_name(expected)+"("+subject+", ...).")
+			". Call "+helper_identity_name(expected)+"("+argument+", ...).")
 	}
 	return gaps
 }
@@ -2332,8 +2424,8 @@ func struct_callee_name(callee ast.Expr) (name string) {
 	}
 }
 
-// Returns the field name when a call's first argument is parameter.Field or
-// *parameter.Field; "" otherwise.
+// Returns the field name when a call's first argument is parameter.Field, *parameter.Field, or
+// &parameter.Field; "" otherwise.
 func struct_first_argument_field(call *ast.CallExpr, parameter string) (field string) {
 	if len(call.Args) == 0 {
 		return ""
@@ -2342,6 +2434,12 @@ func struct_first_argument_field(call *ast.CallExpr, parameter string) (field st
 	star, is_star := argument.(*ast.StarExpr)
 	if is_star {
 		argument = star.X
+	}
+	address, is_address := argument.(*ast.UnaryExpr)
+	if is_address {
+		if address.Op == token.AND {
+			argument = address.X
+		}
 	}
 	selector, is_selector := argument.(*ast.SelectorExpr)
 	if !is_selector {
@@ -2459,6 +2557,7 @@ func check_function_invariants(
 	parsed_files []Parsed_File, components *Component_Index, exemptions *Exemptions,
 ) (diags []Diagnostic) {
 	defined := struct_helper_index(parsed_files, components)
+	pointer_helpers := pointer_helper_index(parsed_files, components)
 	for _, pf := range parsed_files {
 		if strings.Has_Suffix(pf.Path, "_test.go") {
 			continue
@@ -2466,14 +2565,16 @@ func check_function_invariants(
 		if exemptions_match_file(pf.Path, exemptions) {
 			continue
 		}
-		diags = append(diags, function_file_diagnostics(pf, defined, components)...)
+		diags = append(diags,
+			function_file_diagnostics(pf, defined, pointer_helpers, components)...)
 	}
 	return diags
 }
 
 // Checks every named free function in one file.
 func function_file_diagnostics(
-	file Parsed_File, defined map[string]bool, components *Component_Index,
+	file Parsed_File, defined map[string]bool, pointer_helpers map[string]bool,
+	components *Component_Index,
 ) (diags []Diagnostic) {
 	for _, declaration := range file.File.Decls {
 		function, is_function := declaration.(*ast.FuncDecl)
@@ -2496,6 +2597,7 @@ func function_file_diagnostics(
 			file,
 			function,
 			defined,
+			pointer_helpers,
 			components,
 		)...)
 	}
@@ -2509,6 +2611,8 @@ type Invariant_Scope struct {
 	Type_Parameters map[string]bool
 	// Defined is the set of type names with an invariant bundle in the module.
 	Defined map[string]bool
+	// Pointer_Helpers is the subset of Defined whose first parameter is a pointer.
+	Pointer_Helpers map[string]bool
 	// Current_Package qualifies bare helper calls.
 	Current_Package string
 	// Imports resolves selector types and calls.
@@ -2531,6 +2635,8 @@ type Invariant_Scope struct {
 type Helper_Requirement struct {
 	// Subject is the parameter or named-return name that needs its helper.
 	Subject string
+	// Argument is Subject spelled as the expected helper takes it.
+	Argument string
 	// Expected is the exact helper identity.
 	Expected string
 }
@@ -2540,12 +2646,14 @@ func function_diagnostics(
 	file Parsed_File,
 	function *ast.FuncDecl,
 	defined map[string]bool,
+	pointer_helpers map[string]bool,
 	components *Component_Index,
 ) (diags []Diagnostic) {
 	imports := helper_import_paths(file.File)
 	scope := &Invariant_Scope{
 		Type_Parameters: function_type_parameter_set(function),
 		Defined:         defined,
+		Pointer_Helpers: pointer_helpers,
 		Current_Package: helper_package_path(file, components),
 		Imports:         imports,
 		Default_Package: helper_default_package(components, imports),
@@ -2689,7 +2797,9 @@ func function_requirements(
 				continue
 			}
 			requirements = append(requirements, Helper_Requirement{
-				Subject: name.Name, Expected: expected,
+				Subject:  name.Name,
+				Argument: helper_argument_text(name.Name, field.Type, expected, scope),
+				Expected: expected,
 			})
 		}
 	}
@@ -2868,7 +2978,7 @@ func function_calls_helper(
 }
 
 // Returns a call's first-argument identifier name, dereferencing a leading
-// pointer; "" when the first argument is not an identifier.
+// pointer or dropping a leading address; "" when the first argument is not an identifier.
 func function_first_argument_name(call *ast.CallExpr) (name string) {
 	if len(call.Args) == 0 {
 		return ""
@@ -2877,6 +2987,12 @@ func function_first_argument_name(call *ast.CallExpr) (name string) {
 	star, is_star := argument.(*ast.StarExpr)
 	if is_star {
 		argument = star.X
+	}
+	address, is_address := argument.(*ast.UnaryExpr)
+	if is_address {
+		if address.Op == token.AND {
+			argument = address.X
+		}
 	}
 	identifier, is_identifier := argument.(*ast.Ident)
 	if !is_identifier {
@@ -2887,7 +3003,26 @@ func function_first_argument_name(call *ast.CallExpr) (name string) {
 
 // Renders the expected helper form for a diagnostic without exposing the identity separator.
 func function_form(requirement Helper_Requirement) (form string) {
-	return helper_identity_name(requirement.Expected) + "(" + requirement.Subject + ", ...)"
+	return helper_identity_name(requirement.Expected) + "(" + requirement.Argument + ", ...)"
+}
+
+// Spells the subject as the expected helper takes it: addressed when the helper takes a pointer and
+// the subject is a value, dereferenced when the helper takes a value and the subject is a pointer.
+func helper_argument_text(
+	subject string, subject_type ast.Expr, expected string, scope *Invariant_Scope,
+) (text string) {
+	_, is_pointer := subject_type.(*ast.StarExpr)
+	takes_pointer := scope.Pointer_Helpers[expected]
+	if takes_pointer {
+		if !is_pointer {
+			return "&" + subject
+		}
+		return subject
+	}
+	if is_pointer {
+		return "*" + subject
+	}
+	return subject
 }
 
 // Pure shared libraries need coverage witnesses as well as enforced assertions. TestMain can
@@ -3541,13 +3676,43 @@ func raw_type_function_diagnostics(
 	file Parsed_File, function *ast.FuncDecl,
 ) (diags []Diagnostic) {
 	position := file.File_Set.Position(function.Name.Pos())
-	parameter_gaps := raw_type_field_gaps(function.Type.Params, "parameter")
+	parameters := function.Type.Params
+	if raw_type_helper_subject(function) {
+		parameters = &ast.FieldList{List: parameters.List[1:]}
+	}
+	parameter_gaps := raw_type_field_gaps(parameters, "parameter")
 	diags = append(diags,
 		boundary_owner_diagnostics(parameter_gaps, function.Name.Name, position)...)
 	result_gaps := raw_type_field_gaps(function.Type.Results, "result")
 	diags = append(diags,
 		boundary_owner_diagnostics(result_gaps, function.Name.Name, position)...)
 	return diags
+}
+
+// A struct helper takes its subject through a pointer. That subject is a pointer to an identifier
+// type and the helper's only single-name first parameter, thus it is exempt and nothing else is.
+func raw_type_helper_subject(function *ast.FuncDecl) (yes bool) {
+	if function.Recv != nil {
+		return false
+	}
+	if !type_invariants_is_bundle_name(function.Name.Name) {
+		return false
+	}
+	if function.Type.Params == nil {
+		return false
+	}
+	if len(function.Type.Params.List) == 0 {
+		return false
+	}
+	subject := function.Type.Params.List[0]
+	if len(subject.Names) != 1 {
+		return false
+	}
+	star, is_star := subject.Type.(*ast.StarExpr)
+	if !is_star {
+		return false
+	}
+	return type_is_identifier(star.X)
 }
 
 // Only named struct declarations create field boundaries; inline structs get caught at owner
@@ -4277,9 +4442,11 @@ func check_type_invariants_one(
 	if bundle.Name.Name != want {
 		return append(diags, type_invariants_absent(file_set, type_specification, want))
 	}
-	if !type_invariants_signature_ok(bundle, type_specification, invariant_names) {
-		diags = append(diags,
-			type_invariants_bad_signature(file_set, bundle, type_specification))
+	is_struct, known := type_invariants_kind(type_specification, file)
+	if !type_invariants_signature_ok(bundle, type_specification, is_struct, known,
+		invariant_names) {
+		diags = append(diags, type_invariants_bad_signature(
+			file_set, bundle, type_specification, is_struct, known))
 	}
 	diags = append(diags,
 		check_type_invariants_gap(file_set, file, type_specification, bundle)...)
@@ -4301,20 +4468,88 @@ func type_invariants_absent(
 	}
 }
 
-// Builds the diagnostic for a bundle whose parameters
-// are not the type, by value or pointer, first and an aver.Namespace last.
+// Builds the diagnostic for a bundle whose parameters are not the type, by pointer for a struct
+// and by value otherwise, first and an aver.Namespace last.
 func type_invariants_bad_signature(
 	file_set *token.FileSet, function *ast.FuncDecl, type_specification *ast.TypeSpec,
+	is_struct bool, known bool,
 ) (diag Diagnostic) {
 
 	type_name := type_specification.Name.Name
+	subject := type_name + " or *" + type_name
+	if known {
+		subject = type_name
+		if is_struct {
+			subject = "*" + type_name
+		}
+	}
 	return Diagnostic{
 		Position: file_set.Position(function.Name.Pos()),
 		Message: fmt.Sprintf(
 			"The function %s has incorrect parameters. "+
-				"Write the parameters (%s or *%s, aver.Namespace).",
-			function.Name.Name, type_name, type_name),
+				"Write the parameters (%s, aver.Namespace).",
+			function.Name.Name, subject),
 	}
+}
+
+// Reports whether the type is a struct, following defined names declared in the same file to the
+// type at the end of the chain. A chain that leaves the file cannot be read here, thus its kind is
+// not known and the bundle may take either form. The bound keeps the walk finite on a cycle the
+// compiler never saw.
+func type_invariants_kind(
+	type_specification *ast.TypeSpec, file *ast.File,
+) (is_struct bool, known bool) {
+	current := type_specification.Type
+	for step := 0; step <= len(file.Decls); step++ {
+		switch typed := current.(type) {
+		case *ast.StructType:
+			return true, true
+		case *ast.IndexExpr:
+			current = typed.X
+		case *ast.IndexListExpr:
+			current = typed.X
+		case *ast.ParenExpr:
+			current = typed.X
+		case *ast.SelectorExpr:
+			return false, false
+		case *ast.Ident:
+			next := type_invariants_file_type(file, typed.Name)
+			if next != nil {
+				current = next.Type
+				continue
+			}
+			if struct_is_builtin(typed.Name) {
+				return false, true
+			}
+			return false, false
+		default:
+			return false, true
+		}
+	}
+	return false, false
+}
+
+// Returns the type declaration named name in file, or nil when the file declares none.
+func type_invariants_file_type(file *ast.File, name string) (type_specification *ast.TypeSpec) {
+	for _, declaration := range file.Decls {
+		general, is_general := declaration.(*ast.GenDecl)
+		if !is_general {
+			continue
+		}
+		if general.Tok != token.TYPE {
+			continue
+		}
+		for _, specification := range general.Specs {
+			candidate, is_type := specification.(*ast.TypeSpec)
+			if !is_type {
+				continue
+			}
+			if candidate.Name.Name == name {
+				return candidate
+			}
+		}
+	}
+	return nil
 }
 
 // Flags a bundle-named function adrift from its
@@ -4442,10 +4677,10 @@ func type_invariants_is_bundle_name(name string) (yes bool) {
 	return strings.Has_Suffix(name, "_invariants")
 }
 
-// Reports whether the bundle takes its type, by
-// value or pointer, first and an aver.Namespace last.
+// Reports whether the bundle takes its type, by pointer for a struct and by value otherwise, first
+// and an aver.Namespace last.
 func type_invariants_signature_ok(
-	function *ast.FuncDecl, type_specification *ast.TypeSpec,
+	function *ast.FuncDecl, type_specification *ast.TypeSpec, is_struct bool, known bool,
 	invariant_names map[string]bool,
 ) (ok bool) {
 
@@ -4456,22 +4691,27 @@ func type_invariants_signature_ok(
 	if len(list) < 2 {
 		return false
 	}
-	if !type_invariants_first_is_type(list[0].Type, type_specification) {
+	if !type_invariants_first_is_type(list[0].Type, type_specification, is_struct, known) {
 		return false
 	}
 	return type_invariants_last_is_namespace(list[len(list)-1].Type, invariant_names)
 }
 
-// Reports whether expression is the bundle's type,
-// dereferencing a leading pointer and, for a generic type, requiring it be
-// instantiated over its own parameters in order.
+// Reports whether expression is the bundle's type, behind the pointer a struct requires and bare
+// otherwise, and, for a generic type, instantiated over its own parameters in order. A type of
+// unknown kind may take either form.
 func type_invariants_first_is_type(
-	expression ast.Expr, type_specification *ast.TypeSpec,
+	expression ast.Expr, type_specification *ast.TypeSpec, is_struct bool, known bool,
 ) (ok bool) {
 
 	star, is_star := expression.(*ast.StarExpr)
 	if is_star {
 		expression = star.X
+	}
+	if known {
+		if is_star != is_struct {
+			return false
+		}
 	}
 	if type_specification.TypeParams == nil {
 		identifier, is_identifier := expression.(*ast.Ident)

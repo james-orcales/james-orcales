@@ -4,7 +4,6 @@ package main
 import (
 	"fmt"
 	"io/fs"
-	"local/james-orcales/lint/internal/strings"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -29,18 +28,15 @@ func main() {
 	root, scope_prefix := main_resolve_root(request)
 	start := time.Now()
 	fsys := os.DirFS(root)
-	// The lint.json config (policy plus the word-replacements table) is read by
+	// The lint.json config is read by
 	// lint.Main from this Fsys, not here: one config path shared with the tests.
 	code := lint.Main(&lint.Main_Input{
-		Fsys:           fsys,
-		Stdout:         os.Stdout,
-		Stderr:         os.Stderr,
-		Root_Directory: root,
-		Tracked:        main_load_tracked(root, fsys),
-		Git:            lint.Load_Git(main_git_command(root)),
-		CPU_Count:      runtime.NumCPU(),
-		Readlink:       os.Readlink,
-		Scope_Prefix:   scope_prefix,
+		Fsys:         fsys,
+		Stdout:       os.Stdout,
+		Stderr:       os.Stderr,
+		Tracked:      main_load_tracked(root, fsys),
+		CPU_Count:    runtime.NumCPU(),
+		Scope_Prefix: scope_prefix,
 	})
 	main_print_rss_and_elapsed(start)
 	os.Exit(code)
@@ -116,24 +112,6 @@ func main_print_rss_and_elapsed(start time.Time) {
 	peak_rss_mb := lint.Format_Thousands(peak_rss_bytes / (1024 * 1024))
 	elapsed_seconds := time.Since(start).Seconds()
 	fmt.Fprintf(os.Stderr, "peak_rss=%s MiB elapsed_sec=%.3f\n", peak_rss_mb, elapsed_seconds)
-}
-
-// Binds lint.Git_Command to a real `git` in root. The library tier drives the
-// sequence of subcommands; shelling out is the impurity that stays here.
-func main_git_command(root string) (run lint.Git_Command) {
-	return func(args ...string) (output string, ok bool) {
-		return main_git_command_run(root, args...)
-	}
-}
-
-func main_git_command_run(root string, args ...string) (output string, ok bool) {
-	command := exec.Command("git", args...)
-	command.Dir = root
-	stdout, err := command.Output()
-	if err != nil {
-		return "", false
-	}
-	return strings.Trim_Space(string(stdout)), true
 }
 
 // Builds the tracked-file set the linter walks: git answers which paths are

@@ -11,8 +11,7 @@ Every per-file rule not listed under Tier Two.
 
 ### Tier Two
 
-Unbounded Read, Unbounded Decode, Unbounded Decompression, Unbounded Allocation, Unbounded Http,
-Deprecated Ioutil, Self Recursion, Mutual Recursion, Init Functions, Mutable Globals, Methods,
+Self Recursion, Mutual Recursion, Init Functions, Mutable Globals, Methods,
 Struct Tags.
 
 # Repository
@@ -24,66 +23,6 @@ These rules govern every tracked file, whatever its language.
 The linter never scans the top-level `third_party/` drop-zone, any `vendor/`, `.jj`, `.git`, or a
 gitignored path. A nested `third_party/` below the repository root is first-party code, scanned
 like anything else.
-
-### Path Casing
-
-Every tracked path segment, split on its dots, is snake_case, Ada_Case, or SCREAMING_SNAKE_CASE;
-underscores join words, never hyphens. A vendored tree — any path with a `third_party` or `vendor`
-segment — is exempt.
-
-### Symlinks
-
-A tracked symlink resolves to a tracked target: a tracked file, or a directory that holds
-tracked files. A target outside the tracked set, or the symlink's own path, is banned. An
-untracked symlink is not checked.
-
-### Banned Script Extensions
-
-A file is banned by a scripting extension: .py .sh .bash .zsh .fish .ksh .csh .pl .pm .rb .lua .tcl
-.awk .ps1 .psm1 .bat .cmd .vbs .groovy .r .jl.
-
-### Banned Build Files
-
-A file is banned by base name: makefile, gnumakefile, rakefile, gemfile, pipfile, justfile, or
-taskfile.
-
-### Banned Archives
-
-An `.xz` file is banned: the stdlib cannot decompress it, forcing external tar, whose GNU and BSD
-builds diverge. Use gzip, read directly by compress/gzip and archive/tar.
-
-### Conflict Markers
-
-No line begins with a merge conflict marker: seven repeats of <, >, %, +, or backslash, the
-sentinels a git/jujutsu writes into a file when it cannot auto-merge.
-
-### Github Actions
-
-In a .github/workflows YAML file, a `uses:` line is banned; rewrite the step as an inline run.
-Third-party actions are considered a dependency.
-
-# Markdown
-
-These rules govern every tracked Markdown file; the Line Width cap also binds source lines.
-
-### Line Width
-
-A line spans at most 100 display columns, a wide rune counting two, a tab counting two, a
-combining or zero-width mark none. Outside fenced code a sole URL or a table
-row is exempt (neither can wrap), as is a source line in a backtick raw string literal.
-
-### Whitespace
-
-A Markdown prose line carries no trailing whitespace; fenced code is exempt.
-
-### Agent Documentation Size
-
-A CLAUDE.md, AGENTS.md, or SKILL.md spans at most 100 lines.
-
-### Agent Documentation Pairing
-
-AGENTS.md and CLAUDE.md exist as a byte-identical pair in one directory, at the repository root or
-one level below.
 
 # Component Layout
 
@@ -184,28 +123,6 @@ and complicates type resolution.
 An import names a package a caller uses; blank imports are banned. Blank imports indicate that
 a library is being imported solely for it's global side-effects, an implicit control flow.
 
-### Banned Imports
-
-Banned stdlib families are archive, bytes, compress, container, encoding, flag, io, math, os,
-rand, slices, strconv, strings, unicode, and uuid. Exact shared counterparts under crypto,
-database, go, hash, net, path, sort, and text are also banned.
-
-### Aver Imports
-
-`shared/sim/aver/**` imports any stdlib package; every shared port depends on aver, so a port
-closes an import cycle. No stdlib import rule holds there, gateways and determinism included.
-
-### Process Gateways
-
-Only `shared/os/default`, `shared/sim/nbio/default`, and `shared/sim/time/default` import `os` or
-`syscall`. No other file may outside `shared/sim/aver/**`, package main and tests included.
-
-### Import Aliases
-
-Import alias is permitted only when imported package's declared name collides with another import.
-It holds no `default`, in any case: default directory declares its parent's name, so tier label
-there fights package's own clause.
-
 ### Grouped Declarations
 
 Each const, var, and type stands alone; parenthesized groups are banned. Simple reduction of the
@@ -304,42 +221,6 @@ A struct tag uses only the stdlib keys json, xml, and asn1; any other key is ban
 
 A sync.Mutex or sync.RWMutex struct field is named so it can be locked; a blank-named one is banned.
 
-### Unbounded Read
-
-An unbounded read is banned: io.ReadAll, io.Copy, os.ReadFile, os.ReadDir, bufio.NewScanner, or
-bufio.NewReader; read into a fixed buffer instead. Generated files are exempt.
-
-### Unbounded Decode
-
-An unbounded decode is banned: json, xml, or gob NewDecoder, or csv.NewReader; unmarshal a bounded
-[]byte instead. Generated files are exempt.
-
-### Unbounded Decompression
-
-An unbounded decompression is banned: gzip, flate, zlib, bzip2, lzw, zip, or tar readers; cap the
-output against a literal before reading. Generated files are exempt.
-
-### Unbounded Allocation
-
-An unbounded allocation is banned: bytes.NewBuffer or bytes.NewBufferString; use a fixed []byte
-with explicit length tracking instead. Generated files are exempt.
-
-### Unbounded Http
-
-An unbounded net/http call is banned: http.Get, http.Post, http.ListenAndServe, or a Default
-client, mux, or transport; set explicit timeouts instead. Generated files are exempt.
-
-### Deprecated Ioutil
-
-A deprecated ioutil call is banned: ioutil.ReadAll, ReadFile, WriteFile, TempFile, NopCloser, and
-kin; use the os or io replacement instead. Generated files are exempt.
-
-### Banned Words
-
-A package, file, or declared identifier splits into words; no word, ignoring case, equals a word
-listed in lint.json's `word_replacements` with an empty candidate list (util, utils, utility,
-utilities, len, length). Use sites go unchecked, so the len and cap builtins stay legal.
-
 # Source And Test Requirements
 
 These forms are required in source and test files alike.
@@ -357,19 +238,6 @@ shadowing the library it re-exports.
 ### Entry Point First
 
 A file's main, Main, or TestMain is its first function declaration.
-
-### Function Size
-
-A function spans at most seventy lines.
-
-### File Size
-
-A source or test file spans at most 10000 lines.
-
-### Main Package Size
-
-A package main's source spans at most 500 lines, counted per build-tag group as the file count
-is. Its test files carry no count.
 
 ### Named Returns
 
@@ -403,83 +271,11 @@ Every struct field name begins with a capital letter; an unexported field is ban
 
 A struct field's type must be exported if the struct is exported.
 
-### Comment Opening
-
-A comment opens with a space and a capital letter.
-
-### Comment Ending
-
-A comment ends in a period, colon, question mark, or exclamation mark.
-
-### Package Documentation Comments
-
-A package carries a doc comment on its clause: `// Package x ...` on at least one of its files.
-
-### Exported Documentation Comments
-
-Every exported package-level declaration carries a doc comment; a lone Go directive does not count.
-
-### Struct Field Documentation Comments
-
-Every struct field of an exported package-level struct carries a doc comment.
-
 ### Name Style
 
 Exported identifiers use Ada_Case, unexported use snake_case, TestMain aside; every const uses
 SCREAMING_SNAKE_CASE instead, whatever its scope or export status. A numeric capacity may occupy
 one underscore-delimited Ada_Case segment, as in Enum_3_Int.
-
-### Full Words
-
-A declared name splits into words; each word, lowercased, is looked up in lint.json's required
-`word_replacements` table (from the abbreviations-in-code project): a non-empty candidate list is an
-abbreviation reported with its full-word expansion (id -> identifier), an empty list is a ban.
-
-### Noun Names
-
-A declared name splits into words; its last word, lowercased, must not end in ing unless it is in
-the curated noun allowlist (string, ring, heading, encoding, …), so String and Encoding pass but
-Parsing does not.
-
-### Quantity Suffixes
-
-Within a function, an AST pattern binds a required suffix to a declared name: len or cap to _count
-or _size, a C-style induction to _index, a string Index call to _offset. The name's trailing word
-must equal a required suffix.
-
-### Arithmetic Suffixes
-
-Operands of + and - share one quantity suffix, and the assigned result carries it too.
-
-### Extremum Suffixes
-
-A declared name's words include max or min only as the final word; a leading or interior max or min
-is banned. Write line_max, not max_line.
-
-### Test Documentation
-
-Every Test function carries a doc comment, TestMain aside.
-
-### Snap Literals
-
-A snap.Init or snap.Edit first argument is a backticked raw string literal.
-
-### File Count Source
-
-A package holds exactly ceil(total_sloc/10000) source files.
-
-### File Count Tests
-
-Blackbox (foo_test) and whitebox (foo) test files each carry an independent total_sloc count,
-from source files and from each other.
-
-### File Count Requirements Test
-
-requirements_test.go carries its own independent total_sloc count from other test files.
-
-### File Count Build Tags
-
-Files sharing a build-tag constraint form an independent group with its own total_sloc count.
 
 # Deterministic
 
@@ -567,14 +363,3 @@ other raw IO through shared/sim/nbio.
 
 A simulated backend takes only a seed. New_Sim has one integer seed parameter, and no Sim_* helper
 lets a caller script outcomes. Thus, a run is a pure function of its seed.
-
-# Configuration
-
-lint.json's path lists share one glob matcher. Instrumentation packages are implicit assertion
-exemptions, and their exact entries cannot recur in `opt_out_assertion_mandate_packages`. Broader
-assertion globs may cover them without error.
-
-### Directory Slash
-
-A wildcard-free entry that resolves to a directory ends in a slash and a file entry does not, so
-the slash alone tells them apart. A wildcard entry is exempt, already expressing its shape.
