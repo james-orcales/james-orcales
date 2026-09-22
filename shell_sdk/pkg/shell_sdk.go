@@ -90,6 +90,8 @@ type Main_Input struct {
   Stdout_Is_Terminal bool
   // Link points a destination path at the running binary, for install.
   Link func(destination string) (err error)
+  // Unlink removes a destination path that points at the running binary, for uninstall.
+  Unlink func(destination string) (err error)
 }
 
 // Main dispatches on the invoking link's name, runs one verb, and returns a
@@ -158,6 +160,10 @@ func Main(input *Main_Input) (status_code int) {
   if command.Label == "install" {
     directory := cli.Option_String(cli.Resolved_Options(command.Arguments), "dir")
     return run_install(input, string(directory))
+  }
+  if command.Label == "uninstall" {
+    directory := cli.Option_String(cli.Resolved_Options(command.Arguments), "dir")
+    return run_uninstall(input, string(directory))
   }
   mode := resolve_output_mode(cli.Resolved_Options(global_flags), input.Stdout_Is_Terminal)
   kind, _ := verb_kind_of(string(command.Label))
@@ -231,6 +237,9 @@ const VERB_KIND_FLATTEN Verb_Kind = 17
 // run on the bare binary before the links exist, not a data transform.
 const VERB_KIND_INSTALL Verb_Kind = 18
 
+// The uninstall verb removes the links install created from a directory.
+const VERB_KIND_UNINSTALL Verb_Kind = 19
+
 // Output_Mode selects how a verb presents its result.
 type Output_Mode int
 
@@ -286,6 +295,12 @@ func verb_table() (verbs []Verb_Descriptor) {
       Kind:      VERB_KIND_INSTALL,
       Label:     "install",
       Summary:   "symlink the verbs into a directory",
+      Arguments: string_arguments("dir"),
+    },
+    {
+      Kind:      VERB_KIND_UNINSTALL,
+      Label:     "uninstall",
+      Summary:   "remove the verb symlinks from a directory",
       Arguments: string_arguments("dir"),
     },
     {
@@ -518,6 +533,9 @@ func verb_names() (names []string) {
     if table[verb_index].Label == "install" {
       continue
     }
+    if table[verb_index].Label == "uninstall" {
+      continue
+    }
     names = append(names, table[verb_index].Label)
   }
   return names
@@ -534,6 +552,19 @@ func run_install(input *Main_Input, destination string) (status_code int) {
     }
   }
   fmt.Fprintf(input.Output, "linked %d verbs into %s\n", len(names), destination)
+  return EXIT_SUCCESS
+}
+
+func run_uninstall(input *Main_Input, destination string) (status_code int) {
+  names := verb_names()
+  for name_index := 0; name_index < len(names); name_index++ {
+    unlink_err := input.Unlink(destination + "/" + names[name_index])
+    if unlink_err != nil {
+      fmt.Fprintf(input.Error_Output, "shell_sdk: uninstall: %v\n", unlink_err)
+      return EXIT_FAILURE
+    }
+  }
+  fmt.Fprintf(input.Output, "unlinked %d verbs from %s\n", len(names), destination)
   return EXIT_SUCCESS
 }
 

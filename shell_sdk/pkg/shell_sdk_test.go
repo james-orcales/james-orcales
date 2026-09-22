@@ -1,26 +1,17 @@
 package shell_sdk_test
 
+import "bytes"
+import "errors"
 import "testing"
 
 import "local/james-orcales/shared/std/strings"
 import "local/james-orcales/shell_sdk/pkg"
 
 // Capture_Writer records every write, standing in for a process stream.
-type Capture_Writer struct {
-  // Data holds every byte written so far.
-  Data []byte
-}
-
+// Data holds every byte written so far.
 // Records the written bytes.
-func (writer *Capture_Writer) Write(content []byte) (count int, err error) {
-  writer.Data = append(writer.Data, content...)
-  return len(content), nil
-}
-
 // Reads every byte written so far as text.
-func (writer *Capture_Writer) String() (text string) {
-  return string(writer.Data)
-}
+type Capture_Writer = bytes.Buffer
 
 // The JSON the fake filesystem serves for any load path.
 func sample_file() (data []byte) {
@@ -247,6 +238,74 @@ func Test_Install_Links(t *testing.T) {
   }
   if !found_data_verb {
     t.Errorf("expected a data verb like /opt/bin/from among %v", links)
+  }
+}
+
+// Test_Uninstall_Unlinks verifies the uninstall verb removes exactly the links install
+// creates: every data verb, and neither install nor uninstall.
+func Test_Uninstall_Unlinks(t *testing.T) {
+  output := Capture_Writer{}
+  problems := Capture_Writer{}
+  links := []string{}
+  unlinks := []string{}
+  install := &shell_sdk.Main_Input{
+    Arguments:    []string{"shell_sdk", "install", "/opt/bin"},
+    Output:       &output,
+    Error_Output: &problems,
+    Read_Stdin:   func() (data []byte, err error) { return nil, nil },
+    Read_File:    func(name string) (data []byte, err error) { return nil, nil },
+    Link: func(destination string) (err error) {
+      links = append(links, destination)
+      return nil
+    },
+    Unlink: func(destination string) (err error) { return nil },
+  }
+  if code := shell_sdk.Main(install); code != 0 {
+    t.Fatalf("install should exit 0, got %d (%s)", code, problems.String())
+  }
+  uninstall := *install
+  uninstall.Arguments = []string{"shell_sdk", "uninstall", "/opt/bin"}
+  uninstall.Unlink = func(destination string) (err error) {
+    unlinks = append(unlinks, destination)
+    return nil
+  }
+  if code := shell_sdk.Main(&uninstall); code != 0 {
+    t.Fatalf("uninstall should exit 0, got %d (%s)", code, problems.String())
+  }
+  if len(unlinks) != len(links) {
+    t.Fatalf("uninstall removed %v, install linked %v", unlinks, links)
+  }
+  for index := range links {
+    if unlinks[index] != links[index] {
+      t.Errorf("uninstall removed %q, install linked %q", unlinks[index], links[index])
+    }
+    if strings.Has_Suffix(strings.Text(links[index]), "/uninstall") {
+      t.Errorf("install must not link uninstall: %q", links[index])
+    }
+  }
+}
+
+// Test_Uninstall_Reports_Failure verifies an unlink error fails uninstall with exit 1.
+func Test_Uninstall_Reports_Failure(t *testing.T) {
+  output := Capture_Writer{}
+  problems := Capture_Writer{}
+  code := shell_sdk.Main(
+    &shell_sdk.Main_Input{
+      Arguments:    []string{"shell_sdk", "uninstall", "/opt/bin"},
+      Output:       &output,
+      Error_Output: &problems,
+      Read_Stdin:   func() (data []byte, err error) { return nil, nil },
+      Read_File:    func(name string) (data []byte, err error) { return nil, nil },
+      Unlink: func(destination string) (err error) {
+        return errors.New("not a shell_sdk link")
+      },
+    },
+  )
+  if code != 1 {
+    t.Fatalf("a failed unlink should exit 1, got %d", code)
+  }
+  if !strings.Contains(strings.Text(problems.String()), "not a shell_sdk link") {
+    t.Fatalf("expected the unlink error, got %q", problems.String())
   }
 }
 

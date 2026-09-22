@@ -32,6 +32,13 @@ shell_sdk install ~/.local/bin       # add that directory to your PATH
 
 Every verb is now its own command: `filter`, `sort-by`, `to`, and so on.
 
+The `uninstall` verb removes those links. It skips a missing link, and it refuses a
+verb-named path that does not point at the running binary:
+
+```
+shell_sdk uninstall ~/.local/bin
+```
+
 ## Verbs
 
 | verb | arguments | does |
