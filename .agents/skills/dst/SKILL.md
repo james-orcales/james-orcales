@@ -18,7 +18,7 @@ Fuzz for 60 seconds. If it doesn't crash, ADD ASSERTIONS (invariant.Always, inva
 and each axis so that a change moves one child instead of every pinned seed.
 - **`dst.swarm`** — what varies between seeds. One seed selects which features the run can use,
 which rate each fault holds, and how large each fault is, then holds that choice for every step.
-- **`dst.optimize`** — what each run costs. 
+- **`dst.optimize`** — what each run costs.
 - **`dst.verify`** — whether any check watches when the run gets there. Break the check and see
 what fails, then correct every other instance of the class.
 

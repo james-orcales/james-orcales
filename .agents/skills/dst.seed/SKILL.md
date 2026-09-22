@@ -47,7 +47,7 @@ add, remove, or move changes each value after it. One stream for the whole run c
 the run to every other part, and a change anywhere then moves each pinned seed. (invalidating the
 entire seed history)
 
-`Generator_Split(&parent)` is `New(Generator_Next(&parent))`: one draw off the parent, made into
+`Xoshiro_Split(&parent)` is `New(Xoshiro_Next(&parent))`: one draw off the parent, made into
 an independent child, thus a draw in a child moves no other stream. Fork one stream for each
 entity and each axis at construction, and put each new fork after the last one
 (`prng.New(seed ^ SALT)` for an axis that must never move). A draw added to the root, a fork put
