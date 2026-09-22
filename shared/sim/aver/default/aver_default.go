@@ -5,27 +5,18 @@
 // and OS-bound tiers existed.
 package aver
 
-import (
-	"go/build"
-	"io"
-	"os"
-	"reflect"
-	"runtime"
-	"runtime/debug"
-	"strconv"
-	"strings"
-	"testing"
+import "go/build"
+import "io"
+import "os"
+import "reflect"
+import "runtime"
+import "runtime/debug"
+import "strconv"
+import "strings"
+import "testing"
 
-	"local/james-orcales/shared/sim/aver"
-	"local/james-orcales/shared/sim/aver/flatjson"
-)
-
-// Recorder re-exports the library type so callers importing only this package
-// can refer to it without a second import.
-type Recorder = aver.Recorder
-
-// Assertion_Metadata re-exports the library coverage-tracker entry type.
-type Assertion_Metadata = aver.Assertion_Metadata
+import "local/james-orcales/shared/sim/aver"
+import "local/james-orcales/shared/sim/aver/flatjson"
 
 // Sugar_Package_Marker gives registration an import identity without a hard-coded module path.
 type Sugar_Package_Marker struct{}
@@ -40,90 +31,92 @@ var Default = Init_Default_Recorder()
 // the test / fuzz / benchmark environment flags. No caller seam is wired — an
 // assertion is identified by its message, not its source location.
 func Init_Default_Recorder() (recorder *aver.Recorder) {
-	is_test, is_fuzz, is_fuzz_worker, is_benchmark := running_environment_flags()
-	// /dev/tty bypasses `go test`'s stdout/stderr capture so the success summary
-	// shows without -v. Assigned only on success: a nil *os.File stored in an
-	// io.Writer interface is a non-nil interface, defeating the consumer's nil check.
-	var tty io.Writer
-	opened, open_error := os.OpenFile("/dev/tty", os.O_WRONLY, 0)
-	if open_error == nil {
-		tty = opened
-	}
-	working_directory, _ := os.Getwd()
-	recorder = &aver.Recorder{
-		Output:              os.Stderr,
-		Tty:                 tty,
-		File_System:         os.DirFS("/"),
-		Build_Context:       running_build_context(),
-		Exit:                os.Exit,
-		Is_Test:             is_test,
-		Is_Fuzz:             is_fuzz,
-		Is_Fuzz_Worker:      is_fuzz_worker,
-		Is_Benchmark:        is_benchmark,
-		Packages_To_Analyze: []string{"."},
-		Working_Directory:   working_directory,
-		Sugar_Package:       reflect.TypeOf(Sugar_Package_Marker{}).PkgPath(),
-	}
-	recorder.Report_Overflow = coverage_gap_overflow_write
-	recorder_output_configure(recorder, os.Getenv(OUTPUT_ENVIRONMENT))
-	return recorder
+  is_test, is_fuzz, is_fuzz_worker, is_benchmark := running_environment_flags()
+  // /dev/tty bypasses `go test`'s stdout/stderr capture so the success summary
+  // shows without -v. Assigned only on success: a nil *os.File stored in an
+  // io.Writer interface is a non-nil interface, defeating the consumer's nil check.
+  var tty io.Writer
+  opened, open_error := os.OpenFile("/dev/tty", os.O_WRONLY, 0)
+  if open_error == nil {
+    tty = opened
+  }
+  working_directory, _ := os.Getwd()
+  recorder = &aver.Recorder{
+    Output:              os.Stderr,
+    Tty:                 tty,
+    File_System:         os.DirFS("/"),
+    Build_Context:       running_build_context(),
+    Exit:                os.Exit,
+    Is_Test:             is_test,
+    Is_Fuzz:             is_fuzz,
+    Is_Fuzz_Worker:      is_fuzz_worker,
+    Is_Benchmark:        is_benchmark,
+    Packages_To_Analyze: []string{"."},
+    Working_Directory:   working_directory,
+    Sugar_Package:       reflect.TypeOf(Sugar_Package_Marker{}).PkgPath(),
+  }
+  recorder.Report_Overflow = coverage_gap_overflow_write
+  recorder_output_configure(recorder, os.Getenv(OUTPUT_ENVIRONMENT))
+  return recorder
 }
 
 // Runtime environment can differ from compiler invocation; binary settings own active tags.
 func running_build_context() (context build.Context) {
-	context = build.Default
-	context.GOOS = runtime.GOOS
-	context.GOARCH = runtime.GOARCH
-	context.Compiler = runtime.Compiler
-	context.BuildTags = nil
-	context.CgoEnabled = false
-	information, ok := debug.ReadBuildInfo()
-	if !ok {
-		return context
-	}
-	for _, setting := range information.Settings {
-		switch setting.Key {
-		case "-tags":
-			context.BuildTags = append(context.BuildTags,
-				strings.FieldsFunc(setting.Value, build_tag_separator)...)
-		case "CGO_ENABLED":
-			context.CgoEnabled = setting.Value == "1"
-		case "-race", "-msan", "-asan":
-			if setting.Value == "true" {
-				context.BuildTags = append(context.BuildTags,
-					strings.TrimPrefix(setting.Key, "-"))
-			}
-		}
-	}
-	return context
+  context = build.Default
+  context.GOOS = runtime.GOOS
+  context.GOARCH = runtime.GOARCH
+  context.Compiler = runtime.Compiler
+  context.BuildTags = nil
+  context.CgoEnabled = false
+  information, ok := debug.ReadBuildInfo()
+  if !ok {
+    return context
+  }
+  for _, setting := range information.Settings {
+    switch setting.Key {
+    case "-tags":
+      context.BuildTags = append(
+        context.BuildTags,
+        strings.FieldsFunc(setting.Value, build_tag_separator)...,
+      )
+    case "CGO_ENABLED":
+      context.CgoEnabled = setting.Value == "1"
+    case "-race", "-msan", "-asan":
+      if setting.Value == "true" {
+        context.BuildTags = append(context.BuildTags,
+          strings.TrimPrefix(setting.Key, "-"))
+      }
+    }
+  }
+  return context
 }
 
 func build_tag_separator(character rune) (separator bool) {
-	if character == ',' {
-		return true
-	}
-	return character == ' '
+  if character == ',' {
+    return true
+  }
+  return character == ' '
 }
 
 // Persists a report too large for a terminal and returns where it put it. The file holds JSON in
 // each output mode, because a spilled report is read by a later pass and never by eye. It stays on
 // disk after the run: it is the artifact the terminal line points at.
 func coverage_gap_overflow_write(
-	gaps []aver.Coverage_Gap,
+  gaps []aver.Coverage_Gap,
 ) (path string, err error) {
-	file, create_error := os.CreateTemp("", "invariant-coverage-gaps-*.json")
-	if create_error != nil {
-		return "", create_error
-	}
-	write_error := Coverage_Gap_Json_Write(file, gaps)
-	close_error := file.Close()
-	if write_error != nil {
-		return "", write_error
-	}
-	if close_error != nil {
-		return "", close_error
-	}
-	return file.Name(), nil
+  file, create_error := os.CreateTemp("", "invariant-coverage-gaps-*.json")
+  if create_error != nil {
+    return "", create_error
+  }
+  write_error := Coverage_Gap_Json_Write(file, gaps)
+  close_error := file.Close()
+  if write_error != nil {
+    return "", write_error
+  }
+  if close_error != nil {
+    return "", close_error
+  }
+  return file.Name(), nil
 }
 
 // Sniffs os.Args for the go-test harness flags that distinguish a plain test run from a fuzz
@@ -131,29 +124,32 @@ func coverage_gap_overflow_write(
 // extension of the "-test.fuzz" the is_fuzz check also matches, so a worker reports both is_fuzz
 // and is_fuzz_worker; the recorder gates coverage on is_fuzz_worker.
 func running_environment_flags() (
-	is_test bool, is_fuzz bool, is_fuzz_worker bool, is_benchmark bool,
+  is_test bool,
+  is_fuzz bool,
+  is_fuzz_worker bool,
+  is_benchmark bool,
 ) {
-	for _, argument := range os.Args {
-		if strings.HasPrefix(argument, "-test.fuzzworker") {
-			is_fuzz_worker = true
-		}
-		if strings.HasPrefix(argument, "-test.fuzz") {
-			is_fuzz = true
-		}
-		if strings.HasPrefix(argument, "-test.bench") {
-			is_benchmark = true
-		}
-		if strings.HasPrefix(argument, "-test.") {
-			is_test = true
-		}
-	}
-	return is_test, is_fuzz, is_fuzz_worker, is_benchmark
+  for _, argument := range os.Args {
+    if strings.HasPrefix(argument, "-test.fuzzworker") {
+      is_fuzz_worker = true
+    }
+    if strings.HasPrefix(argument, "-test.fuzz") {
+      is_fuzz = true
+    }
+    if strings.HasPrefix(argument, "-test.bench") {
+      is_benchmark = true
+    }
+    if strings.HasPrefix(argument, "-test.") {
+      is_test = true
+    }
+  }
+  return is_test, is_fuzz, is_fuzz_worker, is_benchmark
 }
 
 // Run_Test_Main adds OS-backed fuzz coverage and the selected report format to the core runner.
 func Run_Test_Main(m *testing.M, directories ...string) {
-	fuzz_coverage_setup(Default)
-	aver.Recorder_Run_Test_Main(Default, m, directories...)
+  fuzz_coverage_setup(Default)
+  aver.Recorder_Run_Test_Main(Default, m, directories...)
 }
 
 // OUTPUT_ENVIRONMENT selects the complete coverage-gap representation for a test process.
@@ -161,36 +157,37 @@ const OUTPUT_ENVIRONMENT = "INVARIANT_OUTPUT"
 
 // Coverage_Gap_Json_Write emits one compact flat array and its terminating newline.
 func Coverage_Gap_Json_Write(output io.Writer, gaps []aver.Coverage_Gap) (err error) {
-	data, marshal_error := aver_flatjson.Marshal(gaps)
-	if marshal_error != nil {
-		return marshal_error
-	}
-	// One write, array and newline together: a reader that sees the array sees its terminator.
-	data = append(data, '\n')
-	written, write_error := output.Write(data)
-	if write_error != nil {
-		return write_error
-	}
-	if written != len(data) {
-		return io.ErrShortWrite
-	}
-	return nil
+  data, marshal_error := aver_flatjson.Marshal(gaps)
+  if marshal_error != nil {
+    return marshal_error
+  }
+  // One write, array and newline together: a reader that sees the array sees its terminator.
+  data = append(data, '\n')
+  written, write_error := output.Write(data)
+  if write_error != nil {
+    return write_error
+  }
+  if written != len(data) {
+    return io.ErrShortWrite
+  }
+  return nil
 }
 
 // Applies one already-read environment value before the suite can emit a different format.
 func recorder_output_configure(recorder *aver.Recorder, output string) {
-	recorder.Output_Configuration_Diagnostic = ""
-	switch output {
-	case "", "table":
-		recorder.Report_Coverage_Gaps = aver.Coverage_Gap_Table_Write
-	case "json":
-		recorder.Report_Coverage_Gaps = Coverage_Gap_Json_Write
-	default:
-		recorder.Report_Coverage_Gaps = nil
-		recorder.Output_Configuration_Diagnostic =
-			OUTPUT_ENVIRONMENT + " has unknown value " + strconv.Quote(output) +
-				"; expected \"table\" or \"json\""
-	}
+  recorder.Output_Configuration_Diagnostic = ""
+  switch output {
+  case "", "table":
+    recorder.Report_Coverage_Gaps = aver.Coverage_Gap_Table_Write
+  case "json":
+    recorder.Report_Coverage_Gaps = Coverage_Gap_Json_Write
+  default:
+    recorder.Report_Coverage_Gaps = nil
+    recorder.Output_Configuration_Diagnostic = OUTPUT_ENVIRONMENT +
+      " has unknown value " +
+      strconv.Quote(output) +
+      "; expected \"table\" or \"json\""
+  }
 }
 
 // FUZZ_COVERAGE_FILE_ENVIRONMENT names the env var a fuzz coordinator sets to the shared
@@ -204,57 +201,57 @@ const FUZZ_COVERAGE_FILE_ENVIRONMENT = "INVARIANT_FUZZ_COVERAGE_FILE"
 // coordinator unions that file into its registered entries before analyzing. A plain test or
 // benchmark wires nothing.
 func fuzz_coverage_setup(recorder *aver.Recorder) {
-	if recorder.Is_Fuzz_Worker {
-		path := os.Getenv(FUZZ_COVERAGE_FILE_ENVIRONMENT)
-		if path == "" {
-			return
-		}
-		file, open_error := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
-		if open_error != nil {
-			return
-		}
-		// One Write per line under O_APPEND: the kernel serializes appends across worker
-		// processes, so no mutex (useless across processes) and no flock are needed.
-		// The line format lives in Fuzz_Coverage_Line so it round-trips with the merge.
-		recorder.Coverage_Sink = func(key string, fired_true bool) {
-			io.WriteString(file, aver.Fuzz_Coverage_Line(key, fired_true))
-		}
-		return
-	}
-	if !recorder.Is_Fuzz {
-		return
-	}
-	// Coordinator: create the shared file now (before m.Run spawns workers) and hand its
-	// path to them via the inherited env; union and remove it after the run.
-	file, create_error := os.CreateTemp("", "invariant-fuzz-coverage-*.tsv")
-	if create_error != nil {
-		return
-	}
-	path := file.Name()
-	file.Close()
-	os.Setenv(FUZZ_COVERAGE_FILE_ENVIRONMENT, path)
-	recorder.Merge_Fuzz_Coverage = func() { fuzz_coverage_merge(recorder, path) }
+  if recorder.Is_Fuzz_Worker {
+    path := os.Getenv(FUZZ_COVERAGE_FILE_ENVIRONMENT)
+    if path == "" {
+      return
+    }
+    file, open_error := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+    if open_error != nil {
+      return
+    }
+    // One Write per line under O_APPEND: the kernel serializes appends across worker
+    // processes, so no mutex (useless across processes) and no flock are needed.
+    // The line format lives in Fuzz_Coverage_Line so it round-trips with the merge.
+    recorder.Coverage_Sink = func(key string, fired_true bool) {
+      io.WriteString(file, aver.Fuzz_Coverage_Line(key, fired_true))
+    }
+    return
+  }
+  if !recorder.Is_Fuzz {
+    return
+  }
+  // Coordinator: create the shared file now (before m.Run spawns workers) and hand its
+  // path to them via the inherited env; union and remove it after the run.
+  file, create_error := os.CreateTemp("", "invariant-fuzz-coverage-*.tsv")
+  if create_error != nil {
+    return
+  }
+  path := file.Name()
+  file.Close()
+  os.Setenv(FUZZ_COVERAGE_FILE_ENVIRONMENT, path)
+  recorder.Merge_Fuzz_Coverage = func() { fuzz_coverage_merge(recorder, path) }
 }
 
 // Unions the worker file into the coordinator, then removes it whether or not it opened.
 func fuzz_coverage_merge(recorder *aver.Recorder, path string) {
-	opened, open_error := os.Open(path)
-	if open_error == nil {
-		aver.Recorder_Merge_Fuzz_Coverage_From(recorder, opened)
-		opened.Close()
-	}
-	os.Remove(path)
+  opened, open_error := os.Open(path)
+  if open_error == nil {
+    aver.Recorder_Merge_Fuzz_Coverage_From(recorder, opened)
+    opened.Close()
+  }
+  os.Remove(path)
 }
 
 // Register_Packages_For_Analysis forwards to the library function on Default.
 func Register_Packages_For_Analysis(directories ...string) {
-	aver.Recorder_Register_Packages_For_Analysis(Default, directories...)
+  aver.Recorder_Register_Packages_For_Analysis(Default, directories...)
 }
 
 // Analyze_Assertion_Frequency forwards to the library function on Default.
 func Analyze_Assertion_Frequency() {
-	aver.Recorder_Analyze_Assertion_Frequency(Default)
+  aver.Recorder_Analyze_Assertion_Frequency(Default)
 }
 
-// Namespace re-exports the chain identity used by every _Invariants helper.
-type Namespace = aver.Namespace
+// Namespace identifies a chain dispatched through the default recorder.
+type Namespace aver.Namespace

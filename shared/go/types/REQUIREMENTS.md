@@ -33,6 +33,28 @@ be two entries, thus a caller compares kinds and parts and never indexes.
 A type declaration builds a named type that carries its symbol and its underlying type. A cycle
 through a name that no pointer, slice, or map breaks is a refusal, because such a type has no size.
 
+# Type Resolution
+
+Every name a type expression states names a type: a predeclared one, one a package declares, or a
+type parameter in scope. A constant, a variable, a function, or a builtin in its place fails with
+FAILURE_NOT_TYPE. The operand of new and the case of a type switch admit a value, because Go does.
+
+# Exported Types
+
+A type declaration at package level states an exported name, else it fails with
+FAILURE_UNEXPORTED_TYPE. A type a function body states is exempt, since no other package names it.
+
+# Exported Struct Fields
+
+An exported struct exposes no field of an unexported type, through any struct its own package
+declares. Every type a package declares is exported, thus FAILURE_UNEXPORTED_TYPE refuses the
+unexported type such a field reaches.
+
+# Struct Field Type Encapsulation
+
+A field of an exported struct wears an exported type, a predeclared type, or a type parameter.
+FAILURE_UNEXPORTED_TYPE refuses the unexported declaration such a field names.
+
 # Bodies
 
 Check walks the bodies of one file and records the type of every expression it folds. The caller

@@ -1,10 +1,8 @@
 // Package utf16 supplies native UTF-16 character and sequence conversion.
 package utf16
 
-import (
-	"local/james-orcales/shared/math/bits"
-	"local/james-orcales/shared/sim/aver/default"
-)
+import "local/james-orcales/shared/math/bits"
+import "local/james-orcales/shared/sim/aver/default"
 
 // REPLACEMENT_CHARACTER substitutes for invalid characters and surrogate sequences.
 const REPLACEMENT_CHARACTER Character = '\uFFFD'
@@ -92,9 +90,9 @@ type Character rune
 
 // Character_Invariants covers the complete rune-storage domain.
 func Character_Invariants(value Character, namespace aver.Namespace) {
-	aver.Tree(value, namespace).
-		Range_Int32(int32(value), CHARACTER_MINIMUM, CHARACTER_MAXIMUM).
-		Ensure()
+  aver.Tree(value, namespace).
+    Range_Int32(int32(value), CHARACTER_MINIMUM, CHARACTER_MAXIMUM).
+    Ensure()
 }
 
 // Decoded_Character is one valid Unicode code point that a decoder returns.
@@ -102,13 +100,15 @@ type Decoded_Character rune
 
 // Decoded_Character_Invariants covers all valid decoded code points.
 func Decoded_Character_Invariants(
-	value Decoded_Character, namespace aver.Namespace,
+  value Decoded_Character, namespace aver.Namespace,
 ) {
-	aver.Tree(value, namespace).
-		Range_Int32(
-			int32(value), DECODED_CHARACTER_MINIMUM, DECODED_CHARACTER_MAXIMUM,
-		).
-		Ensure()
+  aver.Tree(value, namespace).
+    Range_Int32(
+    int32(value),
+    DECODED_CHARACTER_MINIMUM,
+    DECODED_CHARACTER_MAXIMUM,
+  ).
+    Ensure()
 }
 
 // Combined_Character is a decoded surrogate pair or its replacement.
@@ -116,15 +116,19 @@ type Combined_Character rune
 
 // Combined_Character_Invariants excludes the two noncharacters below supplementary storage.
 func Combined_Character_Invariants(
-	value Combined_Character, namespace aver.Namespace,
+  value Combined_Character, namespace aver.Namespace,
 ) {
-	aver.Tree(value, namespace).
-		Range_Holed_Int32(
-			int32(value), COMBINED_CHARACTER_MINIMUM, COMBINED_CHARACTER_MAXIMUM,
-			COMBINED_CHARACTER_HOLE_FIRST, COMBINED_CHARACTER_HOLE_FINAL,
-			COMBINED_CHARACTER_HOLE_FINAL, COMBINED_CHARACTER_HOLE_FINAL,
-		).
-		Ensure()
+  aver.Tree(value, namespace).
+    Range_Holed_Int32(
+    int32(value),
+    COMBINED_CHARACTER_MINIMUM,
+    COMBINED_CHARACTER_MAXIMUM,
+    COMBINED_CHARACTER_HOLE_FIRST,
+    COMBINED_CHARACTER_HOLE_FINAL,
+    COMBINED_CHARACTER_HOLE_FINAL,
+    COMBINED_CHARACTER_HOLE_FINAL,
+  ).
+    Ensure()
 }
 
 // First_Encoded_Character is a high surrogate or REPLACEMENT_CHARACTER.
@@ -132,19 +136,20 @@ type First_Encoded_Character rune
 
 // First_Encoded_Character_Invariants permits the valid first results.
 func First_Encoded_Character_Invariants(
-	value First_Encoded_Character, namespace aver.Namespace,
+  value First_Encoded_Character, namespace aver.Namespace,
 ) {
-	aver.Tree(value, namespace).
-		Range_Int32(
-			int32(value), FIRST_ENCODED_CHARACTER_MINIMUM,
-			FIRST_ENCODED_CHARACTER_MAXIMUM,
-		).
-		Ensure()
-	aver.Always(
-		(Character(value) < LOW_SURROGATE_FIRST) ==
-			(Character(value) != REPLACEMENT_CHARACTER),
-		"An encoded first character is a high surrogate or the replacement character.",
-	)
+  aver.Tree(value, namespace).
+    Range_Int32(
+    int32(value),
+    FIRST_ENCODED_CHARACTER_MINIMUM,
+    FIRST_ENCODED_CHARACTER_MAXIMUM,
+  ).
+    Ensure()
+  aver.Always(
+    (Character(value) < LOW_SURROGATE_FIRST) ==
+      (Character(value) != REPLACEMENT_CHARACTER),
+    "An encoded first character is a high surrogate or the replacement character.",
+  )
 }
 
 // Second_Encoded_Character is a low surrogate or REPLACEMENT_CHARACTER.
@@ -152,19 +157,20 @@ type Second_Encoded_Character rune
 
 // Second_Encoded_Character_Invariants permits the valid second results.
 func Second_Encoded_Character_Invariants(
-	value Second_Encoded_Character, namespace aver.Namespace,
+  value Second_Encoded_Character, namespace aver.Namespace,
 ) {
-	aver.Tree(value, namespace).
-		Range_Int32(
-			int32(value), SECOND_ENCODED_CHARACTER_MINIMUM,
-			SECOND_ENCODED_CHARACTER_MAXIMUM,
-		).
-		Ensure()
-	aver.Always(
-		(Character(value) < SURROGATE_LIMIT) ==
-			(Character(value) != REPLACEMENT_CHARACTER),
-		"An encoded second character is a low surrogate or the replacement character.",
-	)
+  aver.Tree(value, namespace).
+    Range_Int32(
+    int32(value),
+    SECOND_ENCODED_CHARACTER_MINIMUM,
+    SECOND_ENCODED_CHARACTER_MAXIMUM,
+  ).
+    Ensure()
+  aver.Always(
+    (Character(value) < SURROGATE_LIMIT) ==
+      (Character(value) != REPLACEMENT_CHARACTER),
+    "An encoded second character is a low surrogate or the replacement character.",
+  )
 }
 
 // Size is a valid encoded size or CHARACTER_SIZE_INVALID.
@@ -172,12 +178,14 @@ type Size int
 
 // Size_Invariants covers invalidity and both UTF-16 encoding sizes.
 func Size_Invariants(value Size, namespace aver.Namespace) {
-	aver.Tree(value, namespace).
-		Enum_3_Int(
-			int(value), CHARACTER_SIZE_INVALID,
-			CHARACTER_SIZE_MINIMUM, CHARACTER_SIZE_MAXIMUM,
-		).
-		Ensure()
+  aver.Tree(value, namespace).
+    Enum_3_Int(
+    int(value),
+    CHARACTER_SIZE_INVALID,
+    CHARACTER_SIZE_MINIMUM,
+    CHARACTER_SIZE_MAXIMUM,
+  ).
+    Ensure()
 }
 
 // Words is one bounded UTF-16 sequence.
@@ -185,9 +193,9 @@ type Words []uint16
 
 // Words_Invariants applies the package sequence limit.
 func Words_Invariants(value Words, namespace aver.Namespace) {
-	aver.Tree(value, namespace).
-		Range_Int(len(value), SEQUENCE_SIZE_MINIMUM, SEQUENCE_SIZE_MAXIMUM).
-		Ensure()
+  aver.Tree(value, namespace).
+    Range_Int(len(value), SEQUENCE_SIZE_MINIMUM, SEQUENCE_SIZE_MAXIMUM).
+    Ensure()
 }
 
 // Nonempty_Words is one append result, which always contains a new encoding.
@@ -195,9 +203,9 @@ type Nonempty_Words []uint16
 
 // Nonempty_Words_Invariants excludes an empty append result.
 func Nonempty_Words_Invariants(value Nonempty_Words, namespace aver.Namespace) {
-	aver.Tree(value, namespace).
-		Range_Int(len(value), CHARACTER_SIZE_MINIMUM, SEQUENCE_SIZE_MAXIMUM).
-		Ensure()
+  aver.Tree(value, namespace).
+    Range_Int(len(value), CHARACTER_SIZE_MINIMUM, SEQUENCE_SIZE_MAXIMUM).
+    Ensure()
 }
 
 // Characters is one bounded sequence that an encoder reads.
@@ -205,9 +213,9 @@ type Characters []Character
 
 // Characters_Invariants applies the package sequence limit.
 func Characters_Invariants(value Characters, namespace aver.Namespace) {
-	aver.Tree(value, namespace).
-		Range_Int(len(value), SEQUENCE_SIZE_MINIMUM, SEQUENCE_SIZE_MAXIMUM).
-		Ensure()
+  aver.Tree(value, namespace).
+    Range_Int(len(value), SEQUENCE_SIZE_MINIMUM, SEQUENCE_SIZE_MAXIMUM).
+    Ensure()
 }
 
 // Decoded_Characters is one bounded sequence that Decode returns.
@@ -215,11 +223,11 @@ type Decoded_Characters []Decoded_Character
 
 // Decoded_Characters_Invariants applies the package sequence limit.
 func Decoded_Characters_Invariants(
-	value Decoded_Characters, namespace aver.Namespace,
+  value Decoded_Characters, namespace aver.Namespace,
 ) {
-	aver.Tree(value, namespace).
-		Range_Int(len(value), SEQUENCE_SIZE_MINIMUM, SEQUENCE_SIZE_MAXIMUM).
-		Ensure()
+  aver.Tree(value, namespace).
+    Range_Int(len(value), SEQUENCE_SIZE_MINIMUM, SEQUENCE_SIZE_MAXIMUM).
+    Ensure()
 }
 
 // Boolean gives each UTF-16 report its own coverage identity.
@@ -227,226 +235,231 @@ type Boolean bool
 
 // Boolean_Invariants requires both report values.
 func Boolean_Invariants(value Boolean, namespace aver.Namespace) {
-	aver.Tree(value, namespace).
-		Sometimes(bool(value), "A UTF-16 report is true.").
-		Ensure()
+  aver.Tree(value, namespace).
+    Sometimes(bool(value), "A UTF-16 report is true.").
+    Ensure()
 }
 
 // Is_Surrogate reports whether a character can occur in a surrogate pair.
 func Is_Surrogate(character Character) (yes Boolean) {
-	defer func() { Boolean_Invariants(yes, "is_surrogate.yes") }()
-	Character_Invariants(character, "is_surrogate.character")
-	return Boolean(SURROGATE_FIRST <= character && character < SURROGATE_LIMIT)
+  defer func() { Boolean_Invariants(yes, "is_surrogate.yes") }()
+  Character_Invariants(character, "is_surrogate.character")
+  // A character lies in [minimum, limit) exactly when it falls below limit but not minimum.
+  return Boolean((character < SURROGATE_FIRST) != (character < SURROGATE_LIMIT))
 }
 
 // Decode_Character combines one high surrogate and one low surrogate.
 func Decode_Character(
-	first Character, second Character,
+  first Character, second Character,
 ) (character Combined_Character) {
-	defer func() {
-		Combined_Character_Invariants(character, "decode_character.character")
-	}()
-	Character_Invariants(first, "decode_character.first")
-	Character_Invariants(second, "decode_character.second")
-	if SURROGATE_FIRST <= first {
-		if first < LOW_SURROGATE_FIRST {
-			if LOW_SURROGATE_FIRST <= second {
-				if second < SURROGATE_LIMIT {
-					high := (first - SURROGATE_FIRST) << SURROGATE_SHIFT
-					low := second - LOW_SURROGATE_FIRST
-					return Combined_Character(
-						high | low + SUPPLEMENTARY_FIRST,
-					)
-				}
-			}
-		}
-	}
-	return Combined_Character(REPLACEMENT_CHARACTER)
+  defer func() {
+    Combined_Character_Invariants(character, "decode_character.character")
+  }()
+  Character_Invariants(first, "decode_character.first")
+  Character_Invariants(second, "decode_character.second")
+  if !(SURROGATE_FIRST > first) {
+    if first < LOW_SURROGATE_FIRST {
+      if !(LOW_SURROGATE_FIRST > second) {
+        if second < SURROGATE_LIMIT {
+          high := (first - SURROGATE_FIRST) << SURROGATE_SHIFT
+          low := second - LOW_SURROGATE_FIRST
+          return Combined_Character(
+            high | low + SUPPLEMENTARY_FIRST,
+          )
+        }
+      }
+    }
+  }
+  return Combined_Character(REPLACEMENT_CHARACTER)
 }
 
 // Encode_Character divides one supplementary character into a surrogate pair.
 func Encode_Character(
-	character Character,
+  character Character,
 ) (first First_Encoded_Character, second Second_Encoded_Character) {
-	defer func() {
-		First_Encoded_Character_Invariants(first, "encode_character.first")
-		Second_Encoded_Character_Invariants(second, "encode_character.second")
-	}()
-	Character_Invariants(character, "encode_character.character")
-	if character < SUPPLEMENTARY_FIRST {
-		return First_Encoded_Character(REPLACEMENT_CHARACTER),
-			Second_Encoded_Character(REPLACEMENT_CHARACTER)
-	}
-	if character > RUNE_MAX {
-		return First_Encoded_Character(REPLACEMENT_CHARACTER),
-			Second_Encoded_Character(REPLACEMENT_CHARACTER)
-	}
-	character -= SUPPLEMENTARY_FIRST
-	return First_Encoded_Character(
-		SURROGATE_FIRST + (character>>SURROGATE_SHIFT)&SURROGATE_MASK,
-	), Second_Encoded_Character(LOW_SURROGATE_FIRST + character&SURROGATE_MASK)
+  defer func() {
+    First_Encoded_Character_Invariants(first, "encode_character.first")
+    Second_Encoded_Character_Invariants(second, "encode_character.second")
+  }()
+  Character_Invariants(character, "encode_character.character")
+  if character < SUPPLEMENTARY_FIRST {
+    return First_Encoded_Character(REPLACEMENT_CHARACTER),
+      Second_Encoded_Character(REPLACEMENT_CHARACTER)
+  }
+  if character > RUNE_MAX {
+    return First_Encoded_Character(REPLACEMENT_CHARACTER),
+      Second_Encoded_Character(REPLACEMENT_CHARACTER)
+  }
+  character -= SUPPLEMENTARY_FIRST
+  return First_Encoded_Character(
+    SURROGATE_FIRST + (character>>SURROGATE_SHIFT)&SURROGATE_MASK,
+  ), Second_Encoded_Character(LOW_SURROGATE_FIRST + character&SURROGATE_MASK)
 }
 
 // Character_Size returns the word count or CHARACTER_SIZE_INVALID.
 func Character_Size(character Character) (size Size) {
-	defer func() { Size_Invariants(size, "character_size.size") }()
-	Character_Invariants(character, "character_size.character")
-	switch {
-	case 0 <= character && character < SURROGATE_FIRST:
-		return CHARACTER_SIZE_MINIMUM
-	case SURROGATE_LIMIT <= character && character < SUPPLEMENTARY_FIRST:
-		return CHARACTER_SIZE_MINIMUM
-	case SUPPLEMENTARY_FIRST <= character && character <= RUNE_MAX:
-		return CHARACTER_SIZE_MAXIMUM
-	default:
-		return CHARACTER_SIZE_INVALID
-	}
+  defer func() { Size_Invariants(size, "character_size.size") }()
+  Character_Invariants(character, "character_size.character")
+  switch {
+  case (character < 0) != (character < SURROGATE_FIRST):
+    return CHARACTER_SIZE_MINIMUM
+  case (character < SURROGATE_LIMIT) != (character < SUPPLEMENTARY_FIRST):
+    return CHARACTER_SIZE_MINIMUM
+  case (character < SUPPLEMENTARY_FIRST) != (character < RUNE_MAX+1):
+    return CHARACTER_SIZE_MAXIMUM
+  default:
+    return CHARACTER_SIZE_INVALID
+  }
 }
 
 // Encode converts a character sequence into caller-owned UTF-16 word storage.
 func Encode(buffer Words, source Characters) (result Words) {
-	defer func() { Words_Invariants(result, "encode.result") }()
-	Words_Invariants(buffer, "encode.buffer")
-	Characters_Invariants(source, "encode.source")
-	result_size := len(buffer) + len(source)
-	for _, character := range source {
-		if character >= SUPPLEMENTARY_FIRST {
-			if character <= RUNE_MAX {
-				result_size++
-			}
-		}
-	}
-	aver.Always(
-		result_size <= SEQUENCE_SIZE_MAXIMUM,
-		"A UTF-16 encoding result does not exceed the sequence limit.",
-	)
-	aver.Always(
-		result_size <= cap(buffer),
-		"Caller storage holds the UTF-16 encoding result.",
-	)
-	result = buffer[:result_size]
-	position_count := len(buffer)
-	for _, character := range source {
-		switch {
-		case 0 <= character && character < SURROGATE_FIRST,
-			SURROGATE_LIMIT <= character && character < SUPPLEMENTARY_FIRST:
-			result[position_count] = uint16(character)
-			position_count++
-		case SUPPLEMENTARY_FIRST <= character && character <= RUNE_MAX:
-			character -= SUPPLEMENTARY_FIRST
-			result[position_count] = uint16(
-				SURROGATE_FIRST + (character>>SURROGATE_SHIFT)&SURROGATE_MASK,
-			)
-			result[position_count+CHARACTER_SIZE_MINIMUM] = uint16(
-				LOW_SURROGATE_FIRST + character&SURROGATE_MASK,
-			)
-			position_count += CHARACTER_SIZE_MAXIMUM
-		default:
-			result[position_count] = uint16(REPLACEMENT_CHARACTER)
-			position_count++
-		}
-	}
-	result = result[:position_count]
-	return result
+  defer func() { Words_Invariants(result, "encode.result") }()
+  Words_Invariants(buffer, "encode.buffer")
+  Characters_Invariants(source, "encode.source")
+  result_size := len(buffer) + len(source)
+  for _, character := range source {
+    if !(character < SUPPLEMENTARY_FIRST) {
+      if !(character > RUNE_MAX) {
+        result_size++
+      }
+    }
+  }
+  aver.Always(
+    !(result_size > SEQUENCE_SIZE_MAXIMUM),
+    "A UTF-16 encoding result does not exceed the sequence limit.",
+  )
+  aver.Always(
+    !(result_size > cap(buffer)),
+    "Caller storage holds the UTF-16 encoding result.",
+  )
+  result = buffer[:result_size]
+  position_count := len(buffer)
+  for _, character := range source {
+    switch {
+    case (character < 0) != (character < SURROGATE_FIRST),
+      (character < SURROGATE_LIMIT) != (character < SUPPLEMENTARY_FIRST):
+      result[position_count] = uint16(character)
+      position_count++
+    case (character < SUPPLEMENTARY_FIRST) != (character < RUNE_MAX+1):
+      character -= SUPPLEMENTARY_FIRST
+      result[position_count] = uint16(
+        SURROGATE_FIRST + (character>>SURROGATE_SHIFT)&SURROGATE_MASK,
+      )
+      result[position_count+CHARACTER_SIZE_MINIMUM] = uint16(
+        LOW_SURROGATE_FIRST + character&SURROGATE_MASK,
+      )
+      position_count += CHARACTER_SIZE_MAXIMUM
+    default:
+      result[position_count] = uint16(REPLACEMENT_CHARACTER)
+      position_count++
+    }
+  }
+  result = result[:position_count]
+  return result
 }
 
 // Append_Character adds one UTF-16 encoding within caller-owned capacity.
 func Append_Character(buffer Words, character Character) (result Nonempty_Words) {
-	defer func() {
-		Nonempty_Words_Invariants(result, "append_character.result")
-	}()
-	Words_Invariants(buffer, "append_character.buffer")
-	Character_Invariants(character, "append_character.character")
-	character_size := int(Character_Size(character))
-	if character_size == CHARACTER_SIZE_INVALID {
-		character_size = CHARACTER_SIZE_MINIMUM
-	}
-	result_size := len(buffer) + character_size
-	aver.Always(
-		result_size <= SEQUENCE_SIZE_MAXIMUM,
-		"A UTF-16 append result does not exceed the sequence limit.",
-	)
-	aver.Always(
-		result_size <= cap(buffer),
-		"Caller storage holds the appended UTF-16 encoding.",
-	)
-	result = Nonempty_Words(buffer[:result_size])
-	position_count := len(buffer)
-	switch {
-	case 0 <= character && character < SURROGATE_FIRST,
-		SURROGATE_LIMIT <= character && character < SUPPLEMENTARY_FIRST:
-		result[position_count] = uint16(character)
-	case SUPPLEMENTARY_FIRST <= character && character <= RUNE_MAX:
-		character -= SUPPLEMENTARY_FIRST
-		result[position_count] = uint16(
-			SURROGATE_FIRST + (character>>SURROGATE_SHIFT)&SURROGATE_MASK,
-		)
-		result[position_count+CHARACTER_SIZE_MINIMUM] = uint16(
-			LOW_SURROGATE_FIRST + character&SURROGATE_MASK,
-		)
-	default:
-		result[position_count] = uint16(REPLACEMENT_CHARACTER)
-	}
-	return result
+  defer func() {
+    Nonempty_Words_Invariants(result, "append_character.result")
+  }()
+  Words_Invariants(buffer, "append_character.buffer")
+  Character_Invariants(character, "append_character.character")
+  character_size := int(Character_Size(character))
+  if character_size == CHARACTER_SIZE_INVALID {
+    character_size = CHARACTER_SIZE_MINIMUM
+  }
+  result_size := len(buffer) + character_size
+  aver.Always(
+    !(result_size > SEQUENCE_SIZE_MAXIMUM),
+    "A UTF-16 append result does not exceed the sequence limit.",
+  )
+  aver.Always(
+    !(result_size > cap(buffer)),
+    "Caller storage holds the appended UTF-16 encoding.",
+  )
+  result = Nonempty_Words(buffer[:result_size])
+  position_count := len(buffer)
+  switch {
+  case (character < 0) != (character < SURROGATE_FIRST),
+    (character < SURROGATE_LIMIT) != (character < SUPPLEMENTARY_FIRST):
+    result[position_count] = uint16(character)
+  case (character < SUPPLEMENTARY_FIRST) != (character < RUNE_MAX+1):
+    character -= SUPPLEMENTARY_FIRST
+    result[position_count] = uint16(
+      SURROGATE_FIRST + (character>>SURROGATE_SHIFT)&SURROGATE_MASK,
+    )
+    result[position_count+CHARACTER_SIZE_MINIMUM] = uint16(
+      LOW_SURROGATE_FIRST + character&SURROGATE_MASK,
+    )
+  default:
+    result[position_count] = uint16(REPLACEMENT_CHARACTER)
+  }
+  return result
 }
 
 // Decode converts UTF-16 words into caller-owned character storage.
 func Decode(
-	buffer Decoded_Characters, source Words,
+  buffer Decoded_Characters, source Words,
 ) (result Decoded_Characters) {
-	defer func() { Decoded_Characters_Invariants(result, "decode.result") }()
-	Decoded_Characters_Invariants(buffer, "decode.buffer")
-	Words_Invariants(source, "decode.source")
-	decoded_count := 0
-	for index := 0; index < len(source); index++ {
-		if Character(source[index]) < LOW_SURROGATE_FIRST {
-			if SURROGATE_FIRST <= Character(source[index]) {
-				if index+CHARACTER_SIZE_MINIMUM < len(source) {
-					second := Character(source[index+CHARACTER_SIZE_MINIMUM])
-					if LOW_SURROGATE_FIRST <= second {
-						if second < SURROGATE_LIMIT {
-							index++
-						}
-					}
-				}
-			}
-		}
-		decoded_count++
-	}
-	result_size := len(buffer) + decoded_count
-	aver.Always(
-		result_size <= SEQUENCE_SIZE_MAXIMUM,
-		"A UTF-16 decoding result does not exceed the sequence limit.",
-	)
-	aver.Always(
-		result_size <= cap(buffer),
-		"Caller storage holds the UTF-16 decoding result.",
-	)
-	result = buffer[:result_size]
-	position_count := len(buffer)
-	for index := 0; index < len(source); index++ {
-		first := source[index]
-		var character Decoded_Character
-		switch {
-		case Character(first) < SURROGATE_FIRST,
-			SURROGATE_LIMIT <= Character(first):
-			character = Decoded_Character(first)
-		case Character(first) < LOW_SURROGATE_FIRST &&
-			index+CHARACTER_SIZE_MINIMUM < len(source) &&
-			LOW_SURROGATE_FIRST <= Character(source[index+CHARACTER_SIZE_MINIMUM]) &&
-			Character(source[index+CHARACTER_SIZE_MINIMUM]) < SURROGATE_LIMIT:
-			second := source[index+CHARACTER_SIZE_MINIMUM]
-			high := (Character(first) - SURROGATE_FIRST) << SURROGATE_SHIFT
-			low := Character(second) - LOW_SURROGATE_FIRST
-			character = Decoded_Character(
-				high | low + SUPPLEMENTARY_FIRST,
-			)
-			index++
-		default:
-			character = Decoded_Character(REPLACEMENT_CHARACTER)
-		}
-		result[position_count] = character
-		position_count++
-	}
-	return result
+  defer func() { Decoded_Characters_Invariants(result, "decode.result") }()
+  Decoded_Characters_Invariants(buffer, "decode.buffer")
+  Words_Invariants(source, "decode.source")
+  decoded_count := 0
+  for index := 0; index < len(source); index++ {
+    if Character(source[index]) < LOW_SURROGATE_FIRST {
+      if !(SURROGATE_FIRST > Character(source[index])) {
+        if index+CHARACTER_SIZE_MINIMUM < len(source) {
+          second := Character(source[index+CHARACTER_SIZE_MINIMUM])
+          if !(LOW_SURROGATE_FIRST > second) {
+            if second < SURROGATE_LIMIT {
+              index++
+            }
+          }
+        }
+      }
+    }
+    decoded_count++
+  }
+  result_size := len(buffer) + decoded_count
+  aver.Always(
+    !(result_size > SEQUENCE_SIZE_MAXIMUM),
+    "A UTF-16 decoding result does not exceed the sequence limit.",
+  )
+  aver.Always(
+    !(result_size > cap(buffer)),
+    "Caller storage holds the UTF-16 decoding result.",
+  )
+  result = buffer[:result_size]
+  position_count := len(buffer)
+  for index := 0; index < len(source); index++ {
+    first := source[index]
+    var character Decoded_Character
+    paired := false
+    if Character(first) < LOW_SURROGATE_FIRST {
+      if index+CHARACTER_SIZE_MINIMUM < len(source) {
+        second := Character(source[index+CHARACTER_SIZE_MINIMUM])
+        paired = (second < LOW_SURROGATE_FIRST) != (second < SURROGATE_LIMIT)
+      }
+    }
+    switch {
+    case Character(first) < SURROGATE_FIRST,
+      !(SURROGATE_LIMIT > Character(first)):
+      character = Decoded_Character(first)
+    case paired:
+      second := source[index+CHARACTER_SIZE_MINIMUM]
+      high := (Character(first) - SURROGATE_FIRST) << SURROGATE_SHIFT
+      low := Character(second) - LOW_SURROGATE_FIRST
+      character = Decoded_Character(
+        high | low + SUPPLEMENTARY_FIRST,
+      )
+      index++
+    default:
+      character = Decoded_Character(REPLACEMENT_CHARACTER)
+    }
+    result[position_count] = character
+    position_count++
+  }
+  return result
 }

@@ -1,12 +1,10 @@
 package strings_test
 
-import (
-	"testing"
+import "testing"
 
-	"local/james-orcales/shared/sim/aver/default"
-)
+import "local/james-orcales/shared/sim/aver/default"
 
 // TestMain lets invariant coverage reject unobserved branches.
 func TestMain(m *testing.M) {
-	aver.Run_Test_Main(m)
+  aver.Run_Test_Main(m)
 }

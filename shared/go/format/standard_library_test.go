@@ -1,15 +1,13 @@
 package format_test
 
-import (
-	"testing"
+import "testing"
 
-	"local/james-orcales/shared/sim/aver/default"
-	"local/james-orcales/shared/testify"
-)
+import "local/james-orcales/shared/sim/aver/default"
+import "local/james-orcales/shared/testify"
 
 // TestMain lets production entry points prove every registered format domain.
 func TestMain(m *testing.M) {
-	aver.Run_Test_Main(m)
+  aver.Run_Test_Main(m)
 }
 
 // STANDARD_FLAT_SOURCE states a file the author wrote with no empty line and no tab, which is the
@@ -210,36 +208,46 @@ Loop:
 // Test_Standard_Library_Format states that one format writes the form the standard formatter
 // writes, over every source this dialect admits.
 func Test_Standard_Library_Format(t *testing.T) {
-	for _, one := range []struct {
-		Source string
-		Form   string
-	}{
-		{Source: STANDARD_FLAT_SOURCE, Form: STANDARD_FLAT_FORM},
-		{Source: STANDARD_SPACED_SOURCE, Form: STANDARD_SPACED_FORM},
-		{Source: STANDARD_WIDE_SOURCE, Form: STANDARD_WIDE_FORM},
-	} {
-		testify.Equal(t, one.Form, formatted(t, one.Source),
-			"one format writes the form the standard formatter writes")
-	}
+  for _, one := range []struct {
+    Source string
+    Form   string
+  }{
+    {Source: STANDARD_FLAT_SOURCE, Form: STANDARD_FLAT_FORM},
+    {Source: STANDARD_SPACED_SOURCE, Form: STANDARD_SPACED_FORM},
+    {Source: STANDARD_WIDE_SOURCE, Form: STANDARD_WIDE_FORM},
+  } {
+    testify.Equal(
+      t,
+      one.Form,
+      formatted(t, one.Source),
+      "one format writes the form the standard formatter writes",
+    )
+  }
 }
 
 // Test_Standard_Library_Clean states that a source the standard formatter leaves alone is the
 // source one clean report calls clean, and that every other source is not.
 func Test_Standard_Library_Clean(t *testing.T) {
-	for _, one := range []struct {
-		Source string
-		Form   string
-	}{
-		{Source: STANDARD_FLAT_SOURCE, Form: STANDARD_FLAT_FORM},
-		{Source: STANDARD_SPACED_SOURCE, Form: STANDARD_SPACED_FORM},
-		{Source: STANDARD_WIDE_SOURCE, Form: STANDARD_WIDE_FORM},
-	} {
-		testify.True(t, bool(cleanliness(t, one.Form)),
-			"a source the standard formatter leaves alone is a clean source")
-		if one.Form == one.Source {
-			continue
-		}
-		testify.False(t, bool(cleanliness(t, one.Source)),
-			"a source the standard formatter rewrites is no clean source")
-	}
+  for _, one := range []struct {
+    Source string
+    Form   string
+  }{
+    {Source: STANDARD_FLAT_SOURCE, Form: STANDARD_FLAT_FORM},
+    {Source: STANDARD_SPACED_SOURCE, Form: STANDARD_SPACED_FORM},
+    {Source: STANDARD_WIDE_SOURCE, Form: STANDARD_WIDE_FORM},
+  } {
+    testify.True(
+      t,
+      bool(cleanliness(t, one.Form)),
+      "a source the standard formatter leaves alone is a clean source",
+    )
+    if one.Form == one.Source {
+      continue
+    }
+    testify.False(
+      t,
+      bool(cleanliness(t, one.Source)),
+      "a source the standard formatter rewrites is no clean source",
+    )
+  }
 }

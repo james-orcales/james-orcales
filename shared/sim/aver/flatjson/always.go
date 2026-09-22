@@ -6,8 +6,8 @@ import "local/james-orcales/shared/sim/aver"
 
 // Always enforces encoder assertions locally because recording would create false obligations.
 func Always[T ~bool](condition T, message string) {
-	if !condition {
-		panic(aver.ASSERTION_FAILURE_MESSAGE_PREFIX + message +
-			"  Always — condition was false: false")
-	}
+  if !condition {
+    panic(aver.ASSERTION_FAILURE_MESSAGE_PREFIX + message +
+      "  Always — condition was false: false")
+  }
 }

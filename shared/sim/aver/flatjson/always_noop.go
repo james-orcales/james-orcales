@@ -4,5 +4,5 @@ package aver_flatjson
 
 // Always stays inert because invariant_noop exists only to measure assertion overhead.
 func Always[T ~bool](condition T, message string) {
-	return
+  return
 }

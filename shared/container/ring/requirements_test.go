@@ -1,202 +1,287 @@
 package ring_test
 
-import (
-	"testing"
+import "testing"
 
-	"local/james-orcales/shared/container/ring"
-	"local/james-orcales/shared/testify"
-)
+import "local/james-orcales/shared/container/ring"
+import "local/james-orcales/shared/testify"
 
 // Test_Construction verifies caller-owned storage, Initialize, and each New count.
 func Test_Construction(t *testing.T) {
-	t.Parallel()
-	subject, _ := ready_pool()
-	testify.Equal(t, ring.POSITION_NONE, ring.New(subject, 0),
-		"New must return POSITION_NONE for a count of zero")
-	single := node(ring.New(subject, 1))
-	testify.Equal(t, ring.Count(1), ring.Element_Count(subject, handle(single)),
-		"New must make a ring of its count")
-	testify.Equal(t, single, ring.Next(subject, single),
-		"a ring of one node follows itself")
-	ready, _ := ready_pool()
-	testify.Equal(t, ring.Count(5), ring.Element_Count(ready, ring.New(ready, 5)),
-		"Initialize must ready a pool")
+  t.Parallel()
+  subject, _ := ready_pool()
+  testify.Equal(
+    t,
+    ring.POSITION_NONE,
+    ring.New(subject, 0),
+    "New must return POSITION_NONE for a count of zero",
+  )
+  single := node(ring.New(subject, 1))
+  testify.Equal(
+    t,
+    ring.Count(1),
+    ring.Element_Count(subject, handle(single)),
+    "New must make a ring of its count",
+  )
+  testify.Equal(t, single, ring.Next(subject, single),
+    "a ring of one node follows itself")
+  ready, _ := ready_pool()
+  testify.Equal(
+    t,
+    ring.Count(5),
+    ring.Element_Count(ready, ring.New(ready, 5)),
+    "Initialize must ready a pool",
+  )
 }
 
 // Test_Handles verifies Value_At, Set_Value, and the empty-ring handle.
 func Test_Handles(t *testing.T) {
-	t.Parallel()
-	subject, position := filled_ring(3)
-	testify.Equal(t, ring.Value(0), ring.Value_At(subject, node(position)),
-		"Value_At must return the stored value")
-	ring.Set_Value(subject, node(position), 9)
-	testify.Equal(t, ring.Value(9), ring.Value_At(subject, node(position)),
-		"Set_Value must write the stored value")
-	testify.Equal(t, ring.Count(0), ring.Element_Count(subject, ring.POSITION_NONE),
-		"an empty ring holds no node")
+  t.Parallel()
+  subject, position := filled_ring(3)
+  testify.Equal(
+    t,
+    ring.Value(0),
+    ring.Value_At(subject, node(position)),
+    "Value_At must return the stored value",
+  )
+  ring.Set_Value(subject, node(position), 9)
+  testify.Equal(
+    t,
+    ring.Value(9),
+    ring.Value_At(subject, node(position)),
+    "Set_Value must write the stored value",
+  )
+  testify.Equal(
+    t,
+    ring.Count(0),
+    ring.Element_Count(subject, ring.POSITION_NONE),
+    "an empty ring holds no node",
+  )
 }
 
 // Test_Traversal verifies Next, Previous, and Element_Count around one ring.
 func Test_Traversal(t *testing.T) {
-	t.Parallel()
-	subject, position := filled_ring(3)
-	second := ring.Next(subject, node(position))
-	testify.Equal(t, ring.Value(1), ring.Value_At(subject, second),
-		"Next must walk forward")
-	testify.Equal(t, node(position), ring.Previous(subject, second),
-		"Previous must walk backward")
-	third := ring.Next(subject, second)
-	testify.Equal(t, node(position), ring.Next(subject, third),
-		"Next must close the ring")
-	testify.Equal(t, ring.Count(3), ring.Element_Count(subject, position),
-		"Element_Count must count one lap")
+  t.Parallel()
+  subject, position := filled_ring(3)
+  second := ring.Next(subject, node(position))
+  testify.Equal(t, ring.Value(1), ring.Value_At(subject, second),
+    "Next must walk forward")
+  testify.Equal(t, node(position), ring.Previous(subject, second),
+    "Previous must walk backward")
+  third := ring.Next(subject, second)
+  testify.Equal(t, node(position), ring.Next(subject, third),
+    "Next must close the ring")
+  testify.Equal(
+    t,
+    ring.Count(3),
+    ring.Element_Count(subject, position),
+    "Element_Count must count one lap",
+  )
 }
 
 // Test_Movement verifies Move in both directions and over one full lap.
 func Test_Movement(t *testing.T) {
-	t.Parallel()
-	subject, position := filled_ring(4)
-	testify.Equal(t, node(position), ring.Move(subject, node(position), 0),
-		"an offset of zero must return its own handle")
-	testify.Equal(t, ring.Value(2),
-		ring.Value_At(subject, ring.Move(subject, node(position), 2)),
-		"a positive offset must walk forward")
-	testify.Equal(t, ring.Value(3),
-		ring.Value_At(subject, ring.Move(subject, node(position), -1)),
-		"a negative offset must walk backward")
-	testify.Equal(t, node(position), ring.Move(subject, node(position), 4),
-		"one full lap must return its own handle")
+  t.Parallel()
+  subject, position := filled_ring(4)
+  testify.Equal(
+    t,
+    node(position),
+    ring.Move(subject, node(position), 0),
+    "an offset of zero must return its own handle",
+  )
+  testify.Equal(
+    t,
+    ring.Value(2),
+    ring.Value_At(subject, ring.Move(subject, node(position), 2)),
+    "a positive offset must walk forward",
+  )
+  testify.Equal(
+    t,
+    ring.Value(3),
+    ring.Value_At(subject, ring.Move(subject, node(position), -1)),
+    "a negative offset must walk backward",
+  )
+  testify.Equal(
+    t,
+    node(position),
+    ring.Move(subject, node(position), 4),
+    "one full lap must return its own handle",
+  )
 }
 
 // Test_Linking verifies that Link joins two rings and that two handles of one ring divide it.
 func Test_Link(t *testing.T) {
-	t.Parallel()
-	subject, first := filled_ring(2)
-	second := node(ring.New(subject, 2))
-	ring.Set_Value(subject, second, 8)
-	ring.Set_Value(subject, ring.Next(subject, second), 9)
-	followed := ring.Link(subject, node(first), handle(second))
-	testify.Equal(t, []int{0, 8, 9, 1}, ring_values(subject, first),
-		"Link must join the other ring after the handle")
-	testify.Equal(t, ring.Value(1), ring.Value_At(subject, followed),
-		"Link must return the handle that followed the first one")
-	divided_subject, whole := filled_ring(4)
-	third := ring.Move(divided_subject, node(whole), 2)
-	divided := ring.Link(divided_subject, node(whole), handle(third))
-	testify.Equal(t, []int{0, 2, 3}, ring_values(divided_subject, whole),
-		"two handles of one ring must divide that ring")
-	testify.Equal(t, []int{1}, ring_values(divided_subject, handle(divided)),
-		"Link must return the handle of the divided part")
+  t.Parallel()
+  subject, first := filled_ring(2)
+  second := node(ring.New(subject, 2))
+  ring.Set_Value(subject, second, 8)
+  ring.Set_Value(subject, ring.Next(subject, second), 9)
+  followed := ring.Link(subject, node(first), handle(second))
+  testify.Equal(
+    t,
+    []int{0, 8, 9, 1},
+    ring_values(subject, first),
+    "Link must join the other ring after the handle",
+  )
+  testify.Equal(
+    t,
+    ring.Value(1),
+    ring.Value_At(subject, followed),
+    "Link must return the handle that followed the first one",
+  )
+  divided_subject, whole := filled_ring(4)
+  third := ring.Move(divided_subject, node(whole), 2)
+  divided := ring.Link(divided_subject, node(whole), handle(third))
+  testify.Equal(
+    t,
+    []int{0, 2, 3},
+    ring_values(divided_subject, whole),
+    "two handles of one ring must divide that ring",
+  )
+  testify.Equal(
+    t,
+    []int{1},
+    ring_values(divided_subject, handle(divided)),
+    "Link must return the handle of the divided part",
+  )
 }
 
 // Test_Unlinking verifies the taken part, the smaller ring, and a count of zero.
 func Test_Unlink(t *testing.T) {
-	t.Parallel()
-	subject, position := filled_ring(4)
-	taken := ring.Unlink(subject, node(position), 2)
-	testify.Equal(t, []int{0, 3}, ring_values(subject, position),
-		"Unlink must leave the other nodes")
-	testify.Equal(t, []int{1, 2}, ring_values(subject, taken),
-		"Unlink must return the taken nodes")
-	testify.Equal(t, ring.POSITION_NONE, ring.Unlink(subject, node(position), 0),
-		"a count of zero must return POSITION_NONE")
-	testify.Equal(t, []int{0, 3}, ring_values(subject, position),
-		"a count of zero must change nothing")
+  t.Parallel()
+  subject, position := filled_ring(4)
+  taken := ring.Unlink(subject, node(position), 2)
+  testify.Equal(t, []int{0, 3}, ring_values(subject, position),
+    "Unlink must leave the other nodes")
+  testify.Equal(t, []int{1, 2}, ring_values(subject, taken),
+    "Unlink must return the taken nodes")
+  testify.Equal(
+    t,
+    ring.POSITION_NONE,
+    ring.Unlink(subject, node(position), 0),
+    "a count of zero must return POSITION_NONE",
+  )
+  testify.Equal(
+    t,
+    []int{0, 3},
+    ring_values(subject, position),
+    "a count of zero must change nothing",
+  )
 }
 
 // Test_Iteration verifies For_Each in forward order and over an empty ring.
 func Test_Iteration(t *testing.T) {
-	t.Parallel()
-	subject, position := filled_ring(3)
-	testify.Equal(t, []int{0, 1, 2}, ring_values(subject, position),
-		"For_Each must read every value in forward order")
-	testify.Count(t, ring_values(subject, ring.POSITION_NONE), 0,
-		"For_Each must read no value of an empty ring")
+  t.Parallel()
+  subject, position := filled_ring(3)
+  testify.Equal(
+    t,
+    []int{0, 1, 2},
+    ring_values(subject, position),
+    "For_Each must read every value in forward order",
+  )
+  testify.Count(
+    t,
+    ring_values(subject, ring.POSITION_NONE),
+    0,
+    "For_Each must read no value of an empty ring",
+  )
 }
 
 // Test_Release verifies that Release returns nodes to the pool for a later New.
 func Test_Release(t *testing.T) {
-	t.Parallel()
-	subject, position := filled_ring(3)
-	ring.Release(subject, position)
-	testify.Equal(t, ring.Count(3),
-		ring.Element_Count(subject, ring.New(subject, 3)),
-		"Release must return the nodes to the pool")
-	ring.Release(subject, ring.POSITION_NONE)
+  t.Parallel()
+  subject, position := filled_ring(3)
+  ring.Release(subject, position)
+  testify.Equal(
+    t,
+    ring.Count(3),
+    ring.Element_Count(subject, ring.New(subject, 3)),
+    "Release must return the nodes to the pool",
+  )
+  ring.Release(subject, ring.POSITION_NONE)
 }
 
 // Test_Size_Limits verifies the largest admitted ring and the rejection of one more node.
 func Test_Size_Limits(t *testing.T) {
-	t.Parallel()
-	subject, _ := ready_pool()
-	position := ring.New(subject, ring.COUNT_MAXIMUM)
-	testify.Equal(t, ring.Count(ring.COUNT_MAXIMUM),
-		ring.Element_Count(subject, position),
-		"a pool must hold ELEMENT_COUNT_MAXIMUM nodes")
-	testify.True(t, panicked(func() { ring.New(subject, 1) }),
-		"a full pool must reject a new ring")
+  t.Parallel()
+  subject, _ := ready_pool()
+  position := ring.New(subject, ring.COUNT_MAXIMUM)
+  testify.Equal(
+    t,
+    ring.Count(ring.COUNT_MAXIMUM),
+    ring.Element_Count(subject, position),
+    "a pool must hold ELEMENT_COUNT_MAXIMUM nodes",
+  )
+  testify.True(t, panicked(func() { ring.New(subject, 1) }),
+    "a full pool must reject a new ring")
 }
 
 // Test_Allocation keeps fixed pool meaningful; every public operation must use pool storage
 // without hidden collector work.
 func Test_Allocation(t *testing.T) {
-	state := prepare_ring_allocation_state()
-	verify_zero_allocation_cases(t, ring_construction_allocation_cases(state))
-	verify_zero_allocation_cases(t, ring_access_allocation_cases(state))
-	verify_zero_allocation_cases(t, ring_link_allocation_cases(state))
-	testify.Not_Equal(t, ring.POSITION_NONE, state.Position_Result,
-		"position allocation probes did not run")
-	testify.True(t, state.Element_Position_Result >= ring.FIRST_ELEMENT_POSITION,
-		"element position allocation probes did not run")
-	testify.Equal(t, ring.Count(3), state.Count_Result,
-		"Element_Count allocation probe did not run")
-	testify.Equal(t, ring.Value(1), state.Value_Result,
-		"Value_At allocation probe did not run")
-	testify.Equal(t, 6, state.Visited, "For_Each allocation probe did not run")
+  state := prepare_ring_allocation_state()
+  verify_zero_allocation_cases(t, ring_construction_allocation_cases(state))
+  verify_zero_allocation_cases(t, ring_access_allocation_cases(state))
+  verify_zero_allocation_cases(t, ring_link_allocation_cases(state))
+  testify.Not_Equal(
+    t,
+    ring.POSITION_NONE,
+    state.Position_Result,
+    "position allocation probes did not run",
+  )
+  testify.True(
+    t,
+    !(state.Element_Position_Result < ring.FIRST_ELEMENT_POSITION),
+    "element position allocation probes did not run",
+  )
+  testify.Equal(t, ring.Count(3), state.Count_Result,
+    "Element_Count allocation probe did not run")
+  testify.Equal(t, ring.Value(1), state.Value_Result,
+    "Value_At allocation probe did not run")
+  testify.Equal(t, 6, state.Visited, "For_Each allocation probe did not run")
 }
 
 // Test_Domain_Errors verifies the panic for each handle that no live node holds.
 func Test_Domain_Errors(t *testing.T) {
-	t.Parallel()
-	subject, taken := filled_ring(2)
-	ring.Release(subject, taken)
-	live_subject, live := filled_ring(2)
-	panic_cases := []func(){
-		func() { ring.Next(subject, node(taken)) },
-		func() { ring.Previous(subject, node(taken)) },
-		func() { ring.Value_At(subject, node(taken)) },
-		func() { ring.Set_Value(subject, node(taken), 0) },
-		func() { ring.Move(subject, node(taken), 1) },
-		func() { ring.Value_At(subject, ring.FREE_POSITION) },
-		func() { ring.Value_At(subject, ring.Element_Position(ring.POSITION_MAXIMUM)) },
-		func() { ring.Element_Count(subject, ring.Position(ring.FREE_POSITION)) },
-		func() { ring.Unlink(live_subject, node(live), 2) },
-	}
-	for panic_index, action := range panic_cases {
-		testify.True(t, panicked(action), "domain error %d did not panic", panic_index)
-	}
+  t.Parallel()
+  subject, taken := filled_ring(2)
+  ring.Release(subject, taken)
+  live_subject, live := filled_ring(2)
+  panic_cases := []func(){
+    func() { ring.Next(subject, node(taken)) },
+    func() { ring.Previous(subject, node(taken)) },
+    func() { ring.Value_At(subject, node(taken)) },
+    func() { ring.Set_Value(subject, node(taken), 0) },
+    func() { ring.Move(subject, node(taken), 1) },
+    func() { ring.Value_At(subject, ring.FREE_POSITION) },
+    func() { ring.Value_At(subject, ring.Element_Position(ring.POSITION_MAXIMUM)) },
+    func() { ring.Element_Count(subject, ring.Position(ring.FREE_POSITION)) },
+    func() { ring.Unlink(live_subject, node(live), 2) },
+  }
+  for panic_index, action := range panic_cases {
+    testify.True(t, panicked(action), "domain error %d did not panic", panic_index)
+  }
 }
 
 // Test_Invariant_Domains verifies each special value through a public ring operation.
 func Test_Invariant_Domains(t *testing.T) {
-	t.Parallel()
-	for _, state := range probe_states() {
-		drive_every_operation(state)
-	}
-	cover_value_domains()
+  t.Parallel()
+  for _, state := range probe_states() {
+    drive_every_operation(state)
+  }
+  cover_value_domains()
 }
 
 // Reaches every sentinel required by concrete stored-value boundaries through public calls.
 func cover_value_domains() {
-	values := []ring.Value{
-		ring.VALUE_MINIMUM, -1, 0, 1, 2, ring.VALUE_MAXIMUM,
-	}
-	for _, value := range values {
-		subject, position := filled_ring(1)
-		target := node(position)
-		ring.Set_Value(subject, target, value)
-		ring.Value_At(subject, target)
-	}
+  values := []ring.Value{
+    ring.VALUE_MINIMUM, -1, 0, 1, 2, ring.VALUE_MAXIMUM,
+  }
+  for _, value := range values {
+    subject, position := filled_ring(1)
+    target := node(position)
+    ring.Set_Value(subject, target, value)
+    ring.Value_At(subject, target)
+  }
 }
 
 // Makes one fresh pool and one handle of one state, so a driven operation never reads a pool
@@ -206,390 +291,456 @@ type pool_factory func() (subject *ring.Pool, position ring.Position)
 // Names each pool state declared domains need, from uninitialized storage to pool whose free chain
 // runs from final node.
 func probe_states() (states []pool_factory) {
-	return []pool_factory{
-		uninitialized_pool,
-		ready_pool,
-		func() (subject *ring.Pool, position ring.Position) {
-			return filled_ring(1)
-		},
-		func() (subject *ring.Pool, position ring.Position) {
-			return filled_ring(2)
-		},
-		func() (subject *ring.Pool, position ring.Position) {
-			return filled_ring(3)
-		},
-		one_free_pool,
-		two_free_pool,
-		full_ring,
-		released_pool,
-	}
+  return []pool_factory{
+    uninitialized_pool,
+    ready_pool,
+    func() (subject *ring.Pool, position ring.Position) {
+      return filled_ring(1)
+    },
+    func() (subject *ring.Pool, position ring.Position) {
+      return filled_ring(2)
+    },
+    func() (subject *ring.Pool, position ring.Position) {
+      return filled_ring(3)
+    },
+    one_free_pool,
+    two_free_pool,
+    full_ring,
+    released_pool,
+  }
 }
 
 // Drives every operation over a fresh state, so each assertion root observes that state. A
 // domain error is one of the observations, thus each call absorbs its panic.
 func drive_every_operation(state pool_factory) {
-	_, own := state()
-	for _, position := range append(probe_positions(), own) {
-		drive_every_position_operation(state, position)
-	}
-	for _, count := range probe_counts() {
-		attempt(func() {
-			subject, _ := state()
-			ring.New(subject, count)
-		})
-	}
-	attempt(func() {
-		subject, _ := state()
-		ring.Initialize(subject)
-	})
+  _, own := state()
+  for _, position := range append(probe_positions(), own) {
+    drive_every_position_operation(state, position)
+  }
+  for _, count := range probe_counts() {
+    attempt(func() { probe_new(state, count) })
+  }
+  attempt(func() { probe_initialize(state) })
 }
 
 // Drives every operation that takes a handle over a fresh state.
 func drive_every_position_operation(state pool_factory, position ring.Position) {
-	target := node(position)
-	attempt(func() {
-		subject, _ := state()
-		ring.Next(subject, target)
-	})
-	attempt(func() {
-		subject, _ := state()
-		ring.Previous(subject, target)
-	})
-	attempt(func() {
-		subject, _ := state()
-		ring.Value_At(subject, target)
-	})
-	attempt(func() {
-		subject, _ := state()
-		ring.Set_Value(subject, target, 0)
-	})
-	attempt(func() {
-		subject, _ := state()
-		ring.Element_Count(subject, position)
-	})
-	attempt(func() {
-		subject, _ := state()
-		read_every_value(subject, position)
-	})
-	attempt(func() {
-		subject, _ := state()
-		ring.Release(subject, position)
-	})
-	drive_every_offset_operation(state, target)
-	drive_every_count_operation(state, target)
-	drive_every_link_operation(state, position)
+  target := node(position)
+  attempt(func() { probe_next(state, target) })
+  attempt(func() { probe_previous(state, target) })
+  attempt(func() { probe_value_at(state, target) })
+  attempt(func() { probe_set_value(state, target) })
+  attempt(func() { probe_element_count(state, position) })
+  attempt(func() { probe_read_every_value(state, position) })
+  attempt(func() { probe_release(state, position) })
+  drive_every_offset_operation(state, target)
+  drive_every_count_operation(state, target)
+  drive_every_link_operation(state, position)
 }
 
 // Drives Move over each offset that the declared domain names.
 func drive_every_offset_operation(state pool_factory, target ring.Element_Position) {
-	for _, offset := range probe_offsets() {
-		attempt(func() {
-			subject, _ := state()
-			ring.Move(subject, target, offset)
-		})
-	}
+  for _, offset := range probe_offsets() {
+    attempt(func() { probe_move(state, target, offset) })
+  }
 }
 
 // Drives Unlink over each count that the declared domain names.
 func drive_every_count_operation(state pool_factory, target ring.Element_Position) {
-	for _, count := range probe_counts() {
-		attempt(func() {
-			subject, _ := state()
-			ring.Unlink(subject, target, count)
-		})
-	}
+  for _, count := range probe_counts() {
+    attempt(func() { probe_unlink(state, target, count) })
+  }
 }
 
 // Drives Link over each probe handle, on both sides of the join.
 func drive_every_link_operation(state pool_factory, position ring.Position) {
-	for _, other := range probe_positions() {
-		attempt(func() {
-			subject, _ := state()
-			ring.Link(subject, node(position), other)
-		})
-		attempt(func() {
-			subject, own := state()
-			ring.Link(subject, node(other), own)
-		})
-	}
+  for _, other := range probe_positions() {
+    attempt(func() { probe_link(state, position, other) })
+    attempt(func() { probe_link_own(state, other) })
+  }
 }
 
 // Names each handle that the domains need, including POSITION_NONE, the sentinel, both
 // interior sentinels, and both highest positions of a full pool.
 func probe_positions() (positions []ring.Position) {
-	return []ring.Position{
-		ring.POSITION_NONE,
-		ring.FREE_POSITION,
-		ring.Position(ring.FIRST_ELEMENT_POSITION),
-		ring.Position(ring.FIRST_ELEMENT_POSITION + 1),
-		ring.Position(ring.POSITION_MAXIMUM - 1),
-		ring.Position(ring.POSITION_MAXIMUM),
-	}
+  return []ring.Position{
+    ring.POSITION_NONE,
+    ring.FREE_POSITION,
+    ring.Position(ring.FIRST_ELEMENT_POSITION),
+    ring.Position(ring.FIRST_ELEMENT_POSITION + 1),
+    ring.Position(ring.POSITION_MAXIMUM - 1),
+    ring.Position(ring.POSITION_MAXIMUM),
+  }
 }
 
 // Names each offset that the declared walk domain needs.
 func probe_offsets() (offsets []ring.Offset) {
-	return []ring.Offset{
-		ring.OFFSET_MINIMUM, -1, 0, 1, 2, ring.OFFSET_MAXIMUM,
-	}
+  return []ring.Offset{
+    ring.OFFSET_MINIMUM, -1, 0, 1, 2, ring.OFFSET_MAXIMUM,
+  }
 }
 
 // Names each count that the declared count domain needs.
 func probe_counts() (counts []ring.Count) {
-	return []ring.Count{0, 1, 2, ring.COUNT_MAXIMUM}
+  return []ring.Count{0, 1, 2, ring.COUNT_MAXIMUM}
 }
 
 // Makes uninitialized Pool over caller storage, which threads no free chain.
 func uninitialized_pool() (subject *ring.Pool, position ring.Position) {
-	return &ring.Pool{Nodes: make(ring.Nodes, ring.NODE_COUNT_MAXIMUM)}, ring.POSITION_NONE
+  return &ring.Pool{Nodes: make(ring.Nodes, ring.NODE_COUNT_MAXIMUM)}, ring.POSITION_NONE
 }
 
 // Makes a ready pool that holds no ring.
 func ready_pool() (subject *ring.Pool, position ring.Position) {
-	subject, _ = uninitialized_pool()
-	ring.Initialize(subject)
-	return subject, ring.POSITION_NONE
+  subject, _ = uninitialized_pool()
+  ring.Initialize(subject)
+  return subject, ring.POSITION_NONE
 }
 
 // Makes a pool whose free chain holds one node.
 func one_free_pool() (subject *ring.Pool, position ring.Position) {
-	subject, _ = ready_pool()
-	return subject, ring.New(subject, ring.COUNT_MAXIMUM-1)
+  subject, _ = ready_pool()
+  return subject, ring.New(subject, ring.COUNT_MAXIMUM-1)
 }
 
 // Makes a pool whose free chain holds two nodes.
 func two_free_pool() (subject *ring.Pool, position ring.Position) {
-	subject, _ = ready_pool()
-	return subject, ring.New(subject, ring.COUNT_MAXIMUM-2)
+  subject, _ = ready_pool()
+  return subject, ring.New(subject, ring.COUNT_MAXIMUM-2)
 }
 
 // Makes a pool whose one ring holds every node.
 func full_ring() (subject *ring.Pool, position ring.Position) {
-	subject, _ = ready_pool()
-	return subject, ring.New(subject, ring.COUNT_MAXIMUM)
+  subject, _ = ready_pool()
+  return subject, ring.New(subject, ring.COUNT_MAXIMUM)
 }
 
 // Makes a pool whose free chain runs from the final node of the pool, so a later New reaches
 // the highest handle.
 func released_pool() (subject *ring.Pool, position ring.Position) {
-	subject, whole := full_ring()
-	ring.Release(subject, whole)
-	return subject, ring.New(subject, 2)
+  subject, whole := full_ring()
+  ring.Release(subject, whole)
+  return subject, ring.New(subject, 2)
 }
 
 // Makes a pool and one ring of increasing values.
 func filled_ring(element_count int) (subject *ring.Pool, position ring.Position) {
-	subject, _ = ready_pool()
-	position = ring.New(subject, ring.Count(element_count))
-	walk := node(position)
-	for value := range element_count {
-		ring.Set_Value(subject, walk, ring.Value(value))
-		walk = ring.Next(subject, walk)
-	}
-	return subject, position
+  subject, _ = ready_pool()
+  position = ring.New(subject, ring.Count(element_count))
+  walk := node(position)
+  for value := range element_count {
+    ring.Set_Value(subject, walk, ring.Value(value))
+    walk = ring.Next(subject, walk)
+  }
+  return subject, position
 }
 
 // Reads one handle as a live node.
 func node(position ring.Position) (target ring.Element_Position) {
-	return ring.Element_Position(position)
+  return ring.Element_Position(position)
 }
 
 // Reads one live node as a handle that admits an empty ring.
 func handle(target ring.Element_Position) (position ring.Position) {
-	return ring.Position(target)
+  return ring.Position(target)
 }
 
 // Reads every value of one ring in forward order.
 func ring_values(subject *ring.Pool, position ring.Position) (values []int) {
-	values = []int{}
-	ring.For_Each(subject, position, func(value ring.Value) {
-		values = append(values, int(value))
-	})
-	return values
+  values = []int{}
+  ring.For_Each(subject, position, func(value ring.Value) {
+    append_value(&values, value)
+  })
+  return values
 }
 
 // Reads every value of one ring and keeps none, so a driven For_Each states its assertions.
 func read_every_value(subject *ring.Pool, position ring.Position) {
-	seen := 0
-	ring.For_Each(subject, position, func(value ring.Value) {
-		seen += int(value)
-	})
+  seen := 0
+  ring.For_Each(subject, position, func(value ring.Value) {
+    add_value(&seen, value)
+  })
+}
+
+func append_value(values *[]int, value ring.Value) {
+  *values = append(*values, int(value))
+}
+
+func add_value(sum *int, value ring.Value) {
+  *sum += int(value)
 }
 
 // Runs an action and absorbs a domain panic, because a domain error is an observation.
 func attempt(action func()) {
-	defer func() {
-		recover()
-	}()
-	action()
+  defer func() {
+    recover()
+  }()
+  action()
 }
 
 // Runs an action and reports whether it caused a panic.
 func panicked(action func()) (raised bool) {
-	defer func() {
-		if recover() != nil {
-			raised = true
-		}
-	}()
-	action()
-	return false
+  defer func() {
+    record_panic(&raised, recover())
+  }()
+  action()
+  return false
 }
 
 type allocation_case struct {
-	Name string
-	Run  func()
+  Name string
+  Run  func()
 }
 
 type ring_allocation_state struct {
-	Empty                   ring.Pool
-	Single                  ring.Pool
-	Triple                  ring.Pool
-	Linked                  ring.Pool
-	Subject                 ring.Pool
-	First                   ring.Position
-	Triple_First            ring.Position
-	Linked_First            ring.Position
-	Linked_Other            ring.Position
-	Position_Result         ring.Position
-	Element_Position_Result ring.Element_Position
-	Count_Result            ring.Count
-	Value_Result            ring.Value
-	Visited                 int
-	Visitor                 ring.Visitor_Function
+  Empty                   ring.Pool
+  Single                  ring.Pool
+  Triple                  ring.Pool
+  Linked                  ring.Pool
+  Subject                 ring.Pool
+  First                   ring.Position
+  Triple_First            ring.Position
+  Linked_First            ring.Position
+  Linked_Other            ring.Position
+  Position_Result         ring.Position
+  Element_Position_Result ring.Element_Position
+  Count_Result            ring.Count
+  Value_Result            ring.Value
+  Visited                 int
+  Visitor                 ring.Visitor_Function
 }
 
 // Snapshots restore each destructive probe without asking pool API for fresh state.
 func prepare_ring_allocation_state() (state *ring_allocation_state) {
-	state = &ring_allocation_state{}
-	state.Empty = pool_value()
-	state.Single = pool_value()
-	state.First = ring.New(&state.Single, 1)
-	state.Triple = pool_value()
-	state.Triple_First = ring.New(&state.Triple, 3)
-	walk := ring.Element_Position(state.Triple_First)
-	for value := 1; value <= 3; value++ {
-		ring.Set_Value(&state.Triple, walk, ring.Value(value))
-		walk = ring.Next(&state.Triple, walk)
-	}
-	state.Linked = pool_value()
-	state.Linked_First = ring.New(&state.Linked, 2)
-	state.Linked_Other = ring.New(&state.Linked, 2)
-	state.Subject = pool_value()
-	state.Visitor = func(value ring.Value) {
-		state.Visited += int(value)
-	}
-	return state
+  state = &ring_allocation_state{}
+  state.Empty = pool_value()
+  state.Single = pool_value()
+  state.First = ring.New(&state.Single, 1)
+  state.Triple = pool_value()
+  state.Triple_First = ring.New(&state.Triple, 3)
+  walk := ring.Element_Position(state.Triple_First)
+  for value := 1; !(value > 3); value++ {
+    ring.Set_Value(&state.Triple, walk, ring.Value(value))
+    walk = ring.Next(&state.Triple, walk)
+  }
+  state.Linked = pool_value()
+  state.Linked_First = ring.New(&state.Linked, 2)
+  state.Linked_Other = ring.New(&state.Linked, 2)
+  state.Subject = pool_value()
+  state.Visitor = func(value ring.Value) {
+    add_value(&state.Visited, value)
+  }
+  return state
 }
 
 // Makes initialized pool value with distinct caller storage.
 func pool_value() (subject ring.Pool) {
-	allocated, _ := ready_pool()
-	return *allocated
+  allocated, _ := ready_pool()
+  return *allocated
 }
 
 // Copies pool into distinct caller storage so allocation probes keep snapshots stable.
 func restore_pool(destination *ring.Pool, source *ring.Pool) {
-	copy(destination.Nodes, source.Nodes)
-	destination.Free_Count = source.Free_Count
+  copy(destination.Nodes, source.Nodes)
+  destination.Free_Count = source.Free_Count
 }
 
 // Each callback stays named so one failure identifies one regressed construction operation.
 func ring_construction_allocation_cases(
-	state *ring_allocation_state,
+  state *ring_allocation_state,
 ) (cases []allocation_case) {
-	return []allocation_case{
-		{Name: "Initialize", Run: func() {
-			restore_pool(&state.Subject, &state.Triple)
-			ring.Initialize(&state.Subject)
-		}},
-		{Name: "New", Run: func() {
-			restore_pool(&state.Subject, &state.Empty)
-			state.Position_Result = ring.New(&state.Subject, 2)
-		}},
-	}
+  return []allocation_case{
+    {Name: "Initialize", Run: func() { allocation_initialize(state) }},
+    {Name: "New", Run: func() { allocation_new(state) }},
+  }
 }
 
 // Each callback stays named so one failure identifies one regressed access operation.
 func ring_access_allocation_cases(
-	state *ring_allocation_state,
+  state *ring_allocation_state,
 ) (cases []allocation_case) {
-	return []allocation_case{
-		{Name: "Next", Run: func() {
-			restore_pool(&state.Subject, &state.Triple)
-			state.Element_Position_Result = ring.Next(
-				&state.Subject, ring.Element_Position(state.Triple_First),
-			)
-		}},
-		{Name: "Previous", Run: func() {
-			restore_pool(&state.Subject, &state.Triple)
-			state.Element_Position_Result = ring.Previous(
-				&state.Subject, ring.Element_Position(state.Triple_First),
-			)
-		}},
-		{Name: "Value_At", Run: func() {
-			restore_pool(&state.Subject, &state.Triple)
-			state.Value_Result = ring.Value_At(
-				&state.Subject, ring.Element_Position(state.Triple_First),
-			)
-		}},
-		{Name: "Set_Value", Run: func() {
-			restore_pool(&state.Subject, &state.Triple)
-			ring.Set_Value(
-				&state.Subject, ring.Element_Position(state.Triple_First), 4,
-			)
-		}},
-		{Name: "Move", Run: func() {
-			restore_pool(&state.Subject, &state.Triple)
-			state.Element_Position_Result = ring.Move(
-				&state.Subject, ring.Element_Position(state.Triple_First), 1,
-			)
-		}},
-		{Name: "Element_Count", Run: func() {
-			restore_pool(&state.Subject, &state.Triple)
-			state.Count_Result = ring.Element_Count(&state.Subject, state.Triple_First)
-		}},
-		{Name: "For_Each", Run: func() {
-			restore_pool(&state.Subject, &state.Triple)
-			state.Visited = 0
-			ring.For_Each(&state.Subject, state.Triple_First, state.Visitor)
-		}},
-	}
+  return []allocation_case{
+    {Name: "Next", Run: func() { allocation_next(state) }},
+    {Name: "Previous", Run: func() { allocation_previous(state) }},
+    {Name: "Value_At", Run: func() { allocation_value_at(state) }},
+    {Name: "Set_Value", Run: func() { allocation_set_value(state) }},
+    {Name: "Move", Run: func() { allocation_move(state) }},
+    {Name: "Element_Count", Run: func() { allocation_element_count(state) }},
+    {Name: "For_Each", Run: func() { allocation_for_each(state) }},
+  }
 }
 
 // Each callback stays named so one failure identifies one regressed relinking operation.
 func ring_link_allocation_cases(
-	state *ring_allocation_state,
+  state *ring_allocation_state,
 ) (cases []allocation_case) {
-	return []allocation_case{
-		{Name: "Link", Run: func() {
-			restore_pool(&state.Subject, &state.Linked)
-			state.Element_Position_Result = ring.Link(
-				&state.Subject,
-				ring.Element_Position(state.Linked_First),
-				state.Linked_Other,
-			)
-		}},
-		{Name: "Unlink", Run: func() {
-			restore_pool(&state.Subject, &state.Triple)
-			state.Position_Result = ring.Unlink(
-				&state.Subject, ring.Element_Position(state.Triple_First), 1,
-			)
-		}},
-		{Name: "Release", Run: func() {
-			restore_pool(&state.Subject, &state.Single)
-			ring.Release(&state.Subject, state.First)
-		}},
-	}
+  return []allocation_case{
+    {Name: "Link", Run: func() { allocation_link(state) }},
+    {Name: "Unlink", Run: func() { allocation_unlink(state) }},
+    {Name: "Release", Run: func() { allocation_release(state) }},
+  }
 }
 
 // Serial measurement keeps testing allocation counter isolated from parallel tests.
 func verify_zero_allocation_cases(t *testing.T, cases []allocation_case) {
-	t.Helper()
-	for _, one := range cases {
-		t.Run(one.Name, func(t *testing.T) {
-			testify.Zero_Allocation(
-				t, one.Run, "%s must allocate no heap storage", one.Name,
-			)
-		})
-	}
+  t.Helper()
+  for _, one := range cases {
+    t.Run(one.Name, func(t *testing.T) {
+      testify.Zero_Allocation(
+        t, one.Run, "%s must allocate no heap storage", one.Name,
+      )
+    })
+  }
+}
+
+func record_panic(raised *bool, value any) {
+  if value != nil {
+    *raised = true
+  }
+}
+
+func allocation_initialize(state *ring_allocation_state) {
+  restore_pool(&state.Subject, &state.Triple)
+  ring.Initialize(&state.Subject)
+}
+
+func allocation_new(state *ring_allocation_state) {
+  restore_pool(&state.Subject, &state.Empty)
+  state.Position_Result = ring.New(&state.Subject, 2)
+}
+
+func allocation_next(state *ring_allocation_state) {
+  restore_pool(&state.Subject, &state.Triple)
+  state.Element_Position_Result = ring.Next(
+    &state.Subject,
+    ring.Element_Position(state.Triple_First),
+  )
+}
+
+func allocation_previous(state *ring_allocation_state) {
+  restore_pool(&state.Subject, &state.Triple)
+  state.Element_Position_Result = ring.Previous(
+    &state.Subject,
+    ring.Element_Position(state.Triple_First),
+  )
+}
+
+func allocation_value_at(state *ring_allocation_state) {
+  restore_pool(&state.Subject, &state.Triple)
+  state.Value_Result = ring.Value_At(
+    &state.Subject, ring.Element_Position(state.Triple_First),
+  )
+}
+
+func allocation_set_value(state *ring_allocation_state) {
+  restore_pool(&state.Subject, &state.Triple)
+  ring.Set_Value(
+    &state.Subject, ring.Element_Position(state.Triple_First), 4,
+  )
+}
+
+func allocation_move(state *ring_allocation_state) {
+  restore_pool(&state.Subject, &state.Triple)
+  state.Element_Position_Result = ring.Move(
+    &state.Subject,
+    ring.Element_Position(state.Triple_First),
+    1,
+  )
+}
+
+func allocation_element_count(state *ring_allocation_state) {
+  restore_pool(&state.Subject, &state.Triple)
+  state.Count_Result = ring.Element_Count(&state.Subject, state.Triple_First)
+}
+
+func allocation_for_each(state *ring_allocation_state) {
+  restore_pool(&state.Subject, &state.Triple)
+  state.Visited = 0
+  ring.For_Each(&state.Subject, state.Triple_First, state.Visitor)
+}
+
+func allocation_link(state *ring_allocation_state) {
+  restore_pool(&state.Subject, &state.Linked)
+  state.Element_Position_Result = ring.Link(
+    &state.Subject,
+    ring.Element_Position(state.Linked_First),
+    state.Linked_Other,
+  )
+}
+
+func allocation_unlink(state *ring_allocation_state) {
+  restore_pool(&state.Subject, &state.Triple)
+  state.Position_Result = ring.Unlink(
+    &state.Subject, ring.Element_Position(state.Triple_First), 1,
+  )
+}
+
+func allocation_release(state *ring_allocation_state) {
+  restore_pool(&state.Subject, &state.Single)
+  ring.Release(&state.Subject, state.First)
+}
+
+func probe_new(state pool_factory, count ring.Count) {
+  subject, _ := state()
+  ring.New(subject, count)
+}
+
+func probe_initialize(state pool_factory) {
+  subject, _ := state()
+  ring.Initialize(subject)
+}
+
+func probe_next(state pool_factory, target ring.Element_Position) {
+  subject, _ := state()
+  ring.Next(subject, target)
+}
+
+func probe_previous(state pool_factory, target ring.Element_Position) {
+  subject, _ := state()
+  ring.Previous(subject, target)
+}
+
+func probe_value_at(state pool_factory, target ring.Element_Position) {
+  subject, _ := state()
+  ring.Value_At(subject, target)
+}
+
+func probe_set_value(state pool_factory, target ring.Element_Position) {
+  subject, _ := state()
+  ring.Set_Value(subject, target, 0)
+}
+
+func probe_element_count(state pool_factory, position ring.Position) {
+  subject, _ := state()
+  ring.Element_Count(subject, position)
+}
+
+func probe_read_every_value(state pool_factory, position ring.Position) {
+  subject, _ := state()
+  read_every_value(subject, position)
+}
+
+func probe_release(state pool_factory, position ring.Position) {
+  subject, _ := state()
+  ring.Release(subject, position)
+}
+
+func probe_move(state pool_factory, target ring.Element_Position, offset ring.Offset) {
+  subject, _ := state()
+  ring.Move(subject, target, offset)
+}
+
+func probe_unlink(state pool_factory, target ring.Element_Position, count ring.Count) {
+  subject, _ := state()
+  ring.Unlink(subject, target, count)
+}
+
+func probe_link(state pool_factory, position ring.Position, other ring.Position) {
+  subject, _ := state()
+  ring.Link(subject, node(position), other)
+}
+
+func probe_link_own(state pool_factory, other ring.Position) {
+  subject, own := state()
+  ring.Link(subject, node(other), own)
 }

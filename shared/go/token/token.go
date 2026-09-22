@@ -3,9 +3,7 @@
 // the subset this repository's linter permits, so an identifier is ASCII and nothing else.
 package token
 
-import (
-	"local/james-orcales/shared/sim/aver/default"
-)
+import "local/james-orcales/shared/sim/aver/default"
 
 // SOURCE_SIZE_MINIMUM admits the empty source, which scans to KIND_END_OF_FILE at once.
 const SOURCE_SIZE_MINIMUM = 0
@@ -386,9 +384,9 @@ type Kind uint8
 
 // Kind_Invariants states the complete lexical class domain.
 func Kind_Invariants(value Kind, namespace aver.Namespace) {
-	aver.Tree(value, namespace).
-		Range_Uint8(uint8(value), KIND_MINIMUM, KIND_MAXIMUM).
-		Ensure()
+  aver.Tree(value, namespace).
+    Range_Uint8(uint8(value), KIND_MINIMUM, KIND_MAXIMUM).
+    Ensure()
 }
 
 // Scanned_Kind is the class of a token that source bytes spell, thus never KIND_END_OF_FILE.
@@ -396,9 +394,9 @@ type Scanned_Kind int
 
 // Scanned_Kind_Invariants excludes the kind that no source byte spells.
 func Scanned_Kind_Invariants(value Scanned_Kind, namespace aver.Namespace) {
-	aver.Tree(value, namespace).
-		Range_Int(int(value), SCANNED_KIND_MINIMUM, SCANNED_KIND_MAXIMUM).
-		Ensure()
+  aver.Tree(value, namespace).
+    Range_Int(int(value), SCANNED_KIND_MINIMUM, SCANNED_KIND_MAXIMUM).
+    Ensure()
 }
 
 // Word_Kind is the class of one letter run: a keyword or KIND_IDENTIFIER.
@@ -406,9 +404,9 @@ type Word_Kind int
 
 // Word_Kind_Invariants states the identifier and keyword block.
 func Word_Kind_Invariants(value Word_Kind, namespace aver.Namespace) {
-	aver.Tree(value, namespace).
-		Range_Int(int(value), WORD_KIND_MINIMUM, WORD_KIND_MAXIMUM).
-		Ensure()
+  aver.Tree(value, namespace).
+    Range_Int(int(value), WORD_KIND_MINIMUM, WORD_KIND_MAXIMUM).
+    Ensure()
 }
 
 // Keyword_Kind is the class of one Go keyword.
@@ -416,9 +414,9 @@ type Keyword_Kind int
 
 // Keyword_Kind_Invariants states the keyword block alone.
 func Keyword_Kind_Invariants(value Keyword_Kind, namespace aver.Namespace) {
-	aver.Tree(value, namespace).
-		Range_Int(int(value), KEYWORD_KIND_MINIMUM, KEYWORD_KIND_MAXIMUM).
-		Ensure()
+  aver.Tree(value, namespace).
+    Range_Int(int(value), KEYWORD_KIND_MINIMUM, KEYWORD_KIND_MAXIMUM).
+    Ensure()
 }
 
 // Number_Kind is the class of one numeric literal.
@@ -426,9 +424,14 @@ type Number_Kind int
 
 // Number_Kind_Invariants states the three numeric classes.
 func Number_Kind_Invariants(value Number_Kind, namespace aver.Namespace) {
-	aver.Tree(value, namespace).
-		Enum_3_Int(int(value), int(KIND_INTEGER), int(KIND_FLOAT), int(KIND_IMAGINARY)).
-		Ensure()
+  aver.Tree(value, namespace).
+    Enum_3_Int(
+    int(value),
+    int(KIND_INTEGER),
+    int(KIND_FLOAT),
+    int(KIND_IMAGINARY),
+  ).
+    Ensure()
 }
 
 // Quoted_Kind is the class of one quoted literal, or KIND_ILLEGAL when no quote closed it.
@@ -436,9 +439,14 @@ type Quoted_Kind int
 
 // Quoted_Kind_Invariants states the two closed literal classes and the unclosed one.
 func Quoted_Kind_Invariants(value Quoted_Kind, namespace aver.Namespace) {
-	aver.Tree(value, namespace).
-		Enum_3_Int(int(value), int(KIND_ILLEGAL), int(KIND_CHARACTER), int(KIND_STRING)).
-		Ensure()
+  aver.Tree(value, namespace).
+    Enum_3_Int(
+    int(value),
+    int(KIND_ILLEGAL),
+    int(KIND_CHARACTER),
+    int(KIND_STRING),
+  ).
+    Ensure()
 }
 
 // Operator_Kind is the class of one operator or delimiter.
@@ -446,9 +454,9 @@ type Operator_Kind int
 
 // Operator_Kind_Invariants states the whole operator block.
 func Operator_Kind_Invariants(value Operator_Kind, namespace aver.Namespace) {
-	aver.Tree(value, namespace).
-		Range_Int(int(value), OPERATOR_KIND_MINIMUM, OPERATOR_KIND_MAXIMUM).
-		Ensure()
+  aver.Tree(value, namespace).
+    Range_Int(int(value), OPERATOR_KIND_MINIMUM, OPERATOR_KIND_MAXIMUM).
+    Ensure()
 }
 
 // Operator_Kind_1 is the class of one one-byte operator.
@@ -456,9 +464,13 @@ type Operator_Kind_1 int
 
 // Operator_Kind_1_Invariants states the one-byte operator block.
 func Operator_Kind_1_Invariants(value Operator_Kind_1, namespace aver.Namespace) {
-	aver.Tree(value, namespace).
-		Range_Int(int(value), OPERATOR_KIND_1_MINIMUM, OPERATOR_KIND_1_MAXIMUM).
-		Ensure()
+  aver.Tree(value, namespace).
+    Range_Int(
+    int(value),
+    OPERATOR_KIND_1_MINIMUM,
+    OPERATOR_KIND_1_MAXIMUM,
+  ).
+    Ensure()
 }
 
 // Operator_Kind_2 is the class of one two-byte operator.
@@ -466,9 +478,13 @@ type Operator_Kind_2 int
 
 // Operator_Kind_2_Invariants states the two-byte operator block.
 func Operator_Kind_2_Invariants(value Operator_Kind_2, namespace aver.Namespace) {
-	aver.Tree(value, namespace).
-		Range_Int(int(value), OPERATOR_KIND_2_MINIMUM, OPERATOR_KIND_2_MAXIMUM).
-		Ensure()
+  aver.Tree(value, namespace).
+    Range_Int(
+    int(value),
+    OPERATOR_KIND_2_MINIMUM,
+    OPERATOR_KIND_2_MAXIMUM,
+  ).
+    Ensure()
 }
 
 // Operator_Kind_3 is the class of one three-byte operator.
@@ -476,12 +492,15 @@ type Operator_Kind_3 int
 
 // Operator_Kind_3_Invariants states the four three-byte operators.
 func Operator_Kind_3_Invariants(value Operator_Kind_3, namespace aver.Namespace) {
-	aver.Tree(value, namespace).
-		Enum_4_Int(
-			int(value), int(KIND_SHIFT_LEFT_ASSIGN), int(KIND_SHIFT_RIGHT_ASSIGN),
-			int(KIND_AND_NOT_ASSIGN), int(KIND_ELLIPSIS),
-		).
-		Ensure()
+  aver.Tree(value, namespace).
+    Enum_4_Int(
+    int(value),
+    int(KIND_SHIFT_LEFT_ASSIGN),
+    int(KIND_SHIFT_RIGHT_ASSIGN),
+    int(KIND_AND_NOT_ASSIGN),
+    int(KIND_ELLIPSIS),
+  ).
+    Ensure()
 }
 
 // Operator_Size is the byte count of one operator.
@@ -489,9 +508,14 @@ type Operator_Size int
 
 // Operator_Size_Invariants states the three legal operator widths.
 func Operator_Size_Invariants(value Operator_Size, namespace aver.Namespace) {
-	aver.Tree(value, namespace).
-		Enum_3_Int(int(value), OPERATOR_SIZE_ONE, OPERATOR_SIZE_TWO, OPERATOR_SIZE_THREE).
-		Ensure()
+  aver.Tree(value, namespace).
+    Enum_3_Int(
+    int(value),
+    OPERATOR_SIZE_ONE,
+    OPERATOR_SIZE_TWO,
+    OPERATOR_SIZE_THREE,
+  ).
+    Ensure()
 }
 
 // Blank_Count is the count of empty lines before one token. It stands over a byte because a
@@ -500,9 +524,9 @@ type Blank_Count uint8
 
 // Blank_Count_Invariants states the saturating empty line count.
 func Blank_Count_Invariants(value Blank_Count, namespace aver.Namespace) {
-	aver.Tree(value, namespace).
-		Range_Uint8(uint8(value), BLANK_COUNT_MINIMUM, BLANK_COUNT_MAXIMUM).
-		Ensure()
+  aver.Tree(value, namespace).
+    Range_Uint8(uint8(value), BLANK_COUNT_MINIMUM, BLANK_COUNT_MAXIMUM).
+    Ensure()
 }
 
 // Boolean is a true or false report about one scan.
@@ -510,9 +534,9 @@ type Boolean bool
 
 // Boolean_Invariants states both scan reports as obligations.
 func Boolean_Invariants(value Boolean, namespace aver.Namespace) {
-	aver.Tree(value, namespace).
-		Sometimes(bool(value), "The token scan report is true.").
-		Ensure()
+  aver.Tree(value, namespace).
+    Sometimes(bool(value), "The token scan report is true.").
+    Ensure()
 }
 
 // Offset is a byte position in a source. It stands over a four-byte integer because a source
@@ -521,9 +545,9 @@ type Offset int32
 
 // Offset_Invariants admits the position one past the final byte, which ends every scan.
 func Offset_Invariants(value Offset, namespace aver.Namespace) {
-	aver.Tree(value, namespace).
-		Range_Int32(int32(value), OFFSET_MINIMUM, OFFSET_MAXIMUM).
-		Ensure()
+  aver.Tree(value, namespace).
+    Range_Int32(int32(value), OFFSET_MINIMUM, OFFSET_MAXIMUM).
+    Ensure()
 }
 
 // Size is the byte count of one token, zero for an inserted semicolon. It stands over a
@@ -532,9 +556,9 @@ type Size int32
 
 // Size_Invariants admits the zero width of an inserted semicolon.
 func Size_Invariants(value Size, namespace aver.Namespace) {
-	aver.Tree(value, namespace).
-		Range_Int32(int32(value), SIZE_MINIMUM, SIZE_MAXIMUM).
-		Ensure()
+  aver.Tree(value, namespace).
+    Range_Int32(int32(value), SIZE_MINIMUM, SIZE_MAXIMUM).
+    Ensure()
 }
 
 // Token_Size is the byte count of one token that source bytes spell, thus never zero.
@@ -542,9 +566,9 @@ type Token_Size int
 
 // Token_Size_Invariants excludes the zero width that no source byte can produce.
 func Token_Size_Invariants(value Token_Size, namespace aver.Namespace) {
-	aver.Tree(value, namespace).
-		Range_Int(int(value), TOKEN_SIZE_MINIMUM, TOKEN_SIZE_MAXIMUM).
-		Ensure()
+  aver.Tree(value, namespace).
+    Range_Int(int(value), TOKEN_SIZE_MINIMUM, TOKEN_SIZE_MAXIMUM).
+    Ensure()
 }
 
 // Comment_Size is the byte count of one comment, whose opener alone spans two bytes.
@@ -552,9 +576,9 @@ type Comment_Size int
 
 // Comment_Size_Invariants counts the two bytes that every comment opener holds.
 func Comment_Size_Invariants(value Comment_Size, namespace aver.Namespace) {
-	aver.Tree(value, namespace).
-		Range_Int(int(value), COMMENT_SIZE_MINIMUM, COMMENT_SIZE_MAXIMUM).
-		Ensure()
+  aver.Tree(value, namespace).
+    Range_Int(int(value), COMMENT_SIZE_MINIMUM, COMMENT_SIZE_MAXIMUM).
+    Ensure()
 }
 
 // Source is the Go source text of one file. The caller owns the bytes.
@@ -562,9 +586,9 @@ type Source []byte
 
 // Source_Invariants caps the source so a hostile file is refused before the first read.
 func Source_Invariants(value Source, namespace aver.Namespace) {
-	aver.Tree(value, namespace).
-		Range_Int(len(value), SOURCE_SIZE_MINIMUM, SOURCE_SIZE_MAXIMUM).
-		Ensure()
+  aver.Tree(value, namespace).
+    Range_Int(len(value), SOURCE_SIZE_MINIMUM, SOURCE_SIZE_MAXIMUM).
+    Ensure()
 }
 
 // Tail is the source that the cursor has not read, at a position that opens one token.
@@ -572,9 +596,9 @@ type Tail []byte
 
 // Tail_Invariants excludes the exhausted source, which opens no token.
 func Tail_Invariants(value Tail, namespace aver.Namespace) {
-	aver.Tree(value, namespace).
-		Range_Int(len(value), TAIL_SIZE_MINIMUM, SOURCE_SIZE_MAXIMUM).
-		Ensure()
+  aver.Tree(value, namespace).
+    Range_Int(len(value), TAIL_SIZE_MINIMUM, SOURCE_SIZE_MAXIMUM).
+    Ensure()
 }
 
 // Comment_Tail is a tail whose first two bytes open a comment.
@@ -582,9 +606,9 @@ type Comment_Tail []byte
 
 // Comment_Tail_Invariants states that both opener bytes are present.
 func Comment_Tail_Invariants(value Comment_Tail, namespace aver.Namespace) {
-	aver.Tree(value, namespace).
-		Range_Int(len(value), COMMENT_TAIL_SIZE_MINIMUM, SOURCE_SIZE_MAXIMUM).
-		Ensure()
+  aver.Tree(value, namespace).
+    Range_Int(len(value), COMMENT_TAIL_SIZE_MINIMUM, SOURCE_SIZE_MAXIMUM).
+    Ensure()
 }
 
 // Operator_Tail_2 is a tail long enough to hold a two-byte operator.
@@ -592,9 +616,9 @@ type Operator_Tail_2 []byte
 
 // Operator_Tail_2_Invariants states that both operator bytes are present.
 func Operator_Tail_2_Invariants(value Operator_Tail_2, namespace aver.Namespace) {
-	aver.Tree(value, namespace).
-		Range_Int(len(value), OPERATOR_SIZE_TWO, SOURCE_SIZE_MAXIMUM).
-		Ensure()
+  aver.Tree(value, namespace).
+    Range_Int(len(value), OPERATOR_SIZE_TWO, SOURCE_SIZE_MAXIMUM).
+    Ensure()
 }
 
 // Operator_Tail_3 is a tail long enough to hold a three-byte operator.
@@ -602,9 +626,9 @@ type Operator_Tail_3 []byte
 
 // Operator_Tail_3_Invariants states that all three operator bytes are present.
 func Operator_Tail_3_Invariants(value Operator_Tail_3, namespace aver.Namespace) {
-	aver.Tree(value, namespace).
-		Range_Int(len(value), OPERATOR_SIZE_THREE, SOURCE_SIZE_MAXIMUM).
-		Ensure()
+  aver.Tree(value, namespace).
+    Range_Int(len(value), OPERATOR_SIZE_THREE, SOURCE_SIZE_MAXIMUM).
+    Ensure()
 }
 
 // Exponent_Letter separates exponent syntax from arbitrary source bytes.
@@ -612,20 +636,24 @@ type Exponent_Letter byte
 
 // Exponent_Letter_Invariants admits every byte so malformed numbers still scan whole.
 func Exponent_Letter_Invariants(value Exponent_Letter, namespace aver.Namespace) {
-	aver.Tree(value, namespace).
-		Range_Uint8(uint8(value), EXPONENT_LETTER_MINIMUM, EXPONENT_LETTER_MAXIMUM).
-		Ensure()
+  aver.Tree(value, namespace).
+    Range_Uint8(
+    uint8(value),
+    EXPONENT_LETTER_MINIMUM,
+    EXPONENT_LETTER_MAXIMUM,
+  ).
+    Ensure()
 }
 
 // Exponent_Text leaves no indexed collection around its sole exponent letter.
 type Exponent_Text struct {
-	// Letter stands alone because exponent lookbehind always reads exactly one byte.
-	Letter Exponent_Letter
+  // Letter stands alone because exponent lookbehind always reads exactly one byte.
+  Letter Exponent_Letter
 }
 
 // Exponent_Text_Invariants states that a sign is judged against one byte alone.
-func Exponent_Text_Invariants(value Exponent_Text, namespace aver.Namespace) {
-	Exponent_Letter_Invariants(value.Letter, namespace)
+func Exponent_Text_Invariants(value *Exponent_Text, namespace aver.Namespace) {
+  Exponent_Letter_Invariants(value.Letter, namespace)
 }
 
 // Token_Text is the exact byte run of one token that source bytes spell.
@@ -633,32 +661,32 @@ type Token_Text []byte
 
 // Token_Text_Invariants excludes the empty run, which spells no token.
 func Token_Text_Invariants(value Token_Text, namespace aver.Namespace) {
-	aver.Tree(value, namespace).
-		Range_Int(len(value), TAIL_SIZE_MINIMUM, SOURCE_SIZE_MAXIMUM).
-		Ensure()
+  aver.Tree(value, namespace).
+    Range_Int(len(value), TAIL_SIZE_MINIMUM, SOURCE_SIZE_MAXIMUM).
+    Ensure()
 }
 
 // Token is one lexical unit of a source.
 type Token struct {
-	// Offset is the position of the first byte of this token in its source. An inserted
-	// semicolon carries the position of the byte that follows the line it closes.
-	Offset Offset
-	// Size is the byte count of this token, zero for an inserted semicolon.
-	Size Size
-	// Kind is the lexical class this token belongs to. It stands last so the two four-byte
-	// fields pack ahead of it and one token spans twelve bytes rather than sixteen.
-	Kind Kind
-	// Blanks is the count of empty lines between the token before this one and this one, so a
-	// caller can write the source back out with the spacing its author gave it.
-	Blanks Blank_Count
+  // Offset is the position of the first byte of this token in its source. An inserted
+  // semicolon carries the position of the byte that follows the line it closes.
+  Offset Offset
+  // Size is the byte count of this token, zero for an inserted semicolon.
+  Size Size
+  // Kind is the lexical class this token belongs to. It stands last so the two four-byte
+  // fields pack ahead of it and one token spans twelve bytes rather than sixteen.
+  Kind Kind
+  // Blanks is the count of empty lines between the token before this one and this one, so a
+  // caller can write the source back out with the spacing its author gave it.
+  Blanks Blank_Count
 }
 
 // Token_Invariants composes the class, the position, and the width of one token.
-func Token_Invariants(value Token, namespace aver.Namespace) {
-	Offset_Invariants(value.Offset, namespace)
-	Size_Invariants(value.Size, namespace)
-	Kind_Invariants(value.Kind, namespace)
-	Blank_Count_Invariants(value.Blanks, namespace)
+func Token_Invariants(value *Token, namespace aver.Namespace) {
+  Offset_Invariants(value.Offset, namespace)
+  Size_Invariants(value.Size, namespace)
+  Kind_Invariants(value.Kind, namespace)
+  Blank_Count_Invariants(value.Blanks, namespace)
 }
 
 // Line is the line one offset stands on, counted from one.
@@ -666,9 +694,9 @@ type Line int32
 
 // Line_Invariants states every line one index names.
 func Line_Invariants(value Line, namespace aver.Namespace) {
-	aver.Tree(value, namespace).
-		Range_Int32(int32(value), LINE_MINIMUM, LINE_MAXIMUM).
-		Ensure()
+  aver.Tree(value, namespace).
+    Range_Int32(int32(value), LINE_MINIMUM, LINE_MAXIMUM).
+    Ensure()
 }
 
 // Column is the byte one offset stands at inside its line, counted from one. A tab counts as one
@@ -677,9 +705,9 @@ type Column int32
 
 // Column_Invariants states every column one line holds.
 func Column_Invariants(value Column, namespace aver.Namespace) {
-	aver.Tree(value, namespace).
-		Range_Int32(int32(value), COLUMN_MINIMUM, COLUMN_MAXIMUM).
-		Ensure()
+  aver.Tree(value, namespace).
+    Range_Int32(int32(value), COLUMN_MINIMUM, COLUMN_MAXIMUM).
+    Ensure()
 }
 
 // Line_Count is how many lines one index read.
@@ -687,9 +715,9 @@ type Line_Count int32
 
 // Line_Count_Invariants states every count one index holds.
 func Line_Count_Invariants(value Line_Count, namespace aver.Namespace) {
-	aver.Tree(value, namespace).
-		Range_Int32(int32(value), LINE_COUNT_MINIMUM, LINE_COUNT_MAXIMUM).
-		Ensure()
+  aver.Tree(value, namespace).
+    Range_Int32(int32(value), LINE_COUNT_MINIMUM, LINE_COUNT_MAXIMUM).
+    Ensure()
 }
 
 // Line_Starts keeps complete position storage caller-owned and prevents growth.
@@ -697,37 +725,37 @@ type Line_Starts []Offset
 
 // Line_Starts_Invariants fixes storage to widest admitted source.
 func Line_Starts_Invariants(value Line_Starts, _ aver.Namespace) {
-	aver.Always(
-		len(value) == LINE_COUNT_MAXIMUM,
-		"A line index holds one slot for every admitted line.",
-	)
-	aver.Always(cap(value) == LINE_COUNT_MAXIMUM, "Line start storage cannot grow.")
+  aver.Always(
+    len(value) == LINE_COUNT_MAXIMUM,
+    "A line index holds one slot for every admitted line.",
+  )
+  aver.Always(cap(value) == LINE_COUNT_MAXIMUM, "Line start storage cannot grow.")
 }
 
 // Line_Count_Slot leaves no indexed collection around one cursor value.
 type Line_Count_Slot struct {
-	// Value stands alone because one index owns exactly one populated length.
-	Value Line_Count
+  // Value stands alone because one index owns exactly one populated length.
+  Value Line_Count
 }
 
 // Line_Count_Slot_Invariants gives its one member normal count obligations.
-func Line_Count_Slot_Invariants(value Line_Count_Slot, namespace aver.Namespace) {
-	Line_Count_Invariants(value.Value, namespace)
+func Line_Count_Slot_Invariants(value *Line_Count_Slot, namespace aver.Namespace) {
+  Line_Count_Invariants(value.Value, namespace)
 }
 
 // Line_Index holds where each line of one source opens. Caller supplies both bounded stores, so
 // naming a position allocates nothing.
 type Line_Index struct {
-	// Starts holds the offset each line opens at, in the order the source states them.
-	Starts Line_Starts
-	// Counts holds how many lines the index read.
-	Counts Line_Count_Slot
+  // Starts holds the offset each line opens at, in the order the source states them.
+  Starts Line_Starts
+  // Counts holds how many lines the index read.
+  Counts Line_Count_Slot
 }
 
 // Line_Index_Invariants states the storage caller supplies.
-func Line_Index_Invariants(value Line_Index, namespace aver.Namespace) {
-	Line_Starts_Invariants(value.Starts, namespace)
-	Line_Count_Slot_Invariants(value.Counts, namespace)
+func Line_Index_Invariants(value *Line_Index, namespace aver.Namespace) {
+  Line_Starts_Invariants(value.Starts, namespace)
+  Line_Count_Slot_Invariants(&value.Counts, namespace)
 }
 
 // Line_Index_Handle gives caller-owned index state one identity.
@@ -735,100 +763,101 @@ type Line_Index_Handle *Line_Index
 
 // Line_Index_Handle_Invariants composes present caller storage.
 func Line_Index_Handle_Invariants(value Line_Index_Handle, namespace aver.Namespace) {
-	if value == nil {
-		return
-	}
-	Line_Index_Invariants(*value, namespace)
+  if value == nil {
+    return
+  }
+  Line_Index_Invariants(value, namespace)
 }
 
 // Index_Lines reads where every line of one source opens. A source of more lines than the index
 // holds is refused, and the index then names the lines it did read.
 func Index_Lines(subject Line_Index_Handle, source Source) (ok Boolean) {
-	defer func() { Boolean_Invariants(ok, "index_lines.ok") }()
-	Line_Index_Handle_Invariants(subject, "index_lines.subject")
-	Source_Invariants(source, "index_lines.source")
-	aver.Always(subject != nil, "Index_Lines receives caller-owned index state.")
-	subject.Starts[0] = OFFSET_MINIMUM
-	count := 1
-	for offset := range len(source) {
-		if source[offset] != '\n' {
-			continue
-		}
-		if count == LINE_COUNT_MAXIMUM {
-			subject.Counts.Value = Line_Count(count)
-			return false
-		}
-		subject.Starts[count] = Offset(offset + 1)
-		count++
-	}
-	subject.Counts.Value = Line_Count(count)
-	return true
+  defer func() { Boolean_Invariants(ok, "index_lines.ok") }()
+  Line_Index_Handle_Invariants(subject, "index_lines.subject")
+  Source_Invariants(source, "index_lines.source")
+  aver.Always(subject != nil, "Index_Lines receives caller-owned index state.")
+  subject.Starts[0] = OFFSET_MINIMUM
+  count := 1
+  for offset := range len(source) {
+    if source[offset] != '\n' {
+      continue
+    }
+    if count == LINE_COUNT_MAXIMUM {
+      subject.Counts.Value = Line_Count(count)
+      return false
+    }
+    subject.Starts[count] = Offset(offset + 1)
+    count++
+  }
+  subject.Counts.Value = Line_Count(count)
+  return true
 }
 
 // Position_Result keeps physical coordinates at one output boundary.
 type Position_Result struct {
-	// Line stays one-based independently from byte column.
-	Line Line
-	// Column stays one-based independently from physical line.
-	Column Column
+  // Line stays one-based independently from byte column.
+  Line Line
+  // Column stays one-based independently from physical line.
+  Column Column
 }
 
 // Position_Result_Invariants composes one source position.
-func Position_Result_Invariants(value Position_Result, namespace aver.Namespace) {
-	Line_Invariants(value.Line, namespace)
-	Column_Invariants(value.Column, namespace)
+func Position_Result_Invariants(value *Position_Result, namespace aver.Namespace) {
+  Line_Invariants(value.Line, namespace)
+  Column_Invariants(value.Column, namespace)
 }
 
 // Position_Of names the line and the column one offset stands at. The offset one past the final
 // byte stands at the end of the final line, which is where a scan that ran out reports.
 func Position_Of(subject Line_Index_Handle, offset Offset) (result Position_Result) {
-	defer func() { Position_Result_Invariants(result, "position_of.result") }()
-	Line_Index_Handle_Invariants(subject, "position_of.subject")
-	Offset_Invariants(offset, "position_of.offset")
-	aver.Always(subject != nil, "Position_Of receives caller-owned index state.")
-	// The starts rise with the lines, thus halving the run finds the line a byte stands on in
-	// the steps a whole file's worth of lines needs and never in a walk of them.
-	low := 0
-	high := int(subject.Counts.Value) - 1
-	for low < high {
-		middle := low + (high-low+1)/2
-		if subject.Starts[middle] > offset {
-			high = middle - 1
-			continue
-		}
-		low = middle
-	}
-	return Position_Result{
-		Line: Line(low + 1), Column: Column(int(offset) - int(subject.Starts[low]) + 1),
-	}
+  defer func() { Position_Result_Invariants(&result, "position_of.result") }()
+  Line_Index_Handle_Invariants(subject, "position_of.subject")
+  Offset_Invariants(offset, "position_of.offset")
+  aver.Always(subject != nil, "Position_Of receives caller-owned index state.")
+  // The starts rise with the lines, thus halving the run finds the line a byte stands on in
+  // the steps a whole file's worth of lines needs and never in a walk of them.
+  low := 0
+  high := int(subject.Counts.Value) - 1
+  for low < high {
+    middle := low + (high-low+1)/2
+    if subject.Starts[middle] > offset {
+      high = middle - 1
+      continue
+    }
+    low = middle
+  }
+  return Position_Result{
+    Line:   Line(low + 1),
+    Column: Column(int(offset) - int(subject.Starts[low]) + 1),
+  }
 }
 
 // Scanner is the cursor over one source. Its zero value with a Source set is ready to scan.
 type Scanner struct {
-	// Source is the text this cursor reads. The caller owns the bytes and the scanner never
-	// writes them.
-	Source Source
-	// Offset is the position of the byte that the next scan reads.
-	Offset Offset
-	// Previous is the class of the last token that was no comment. Semicolon insertion reads
-	// it, so a comment must not replace it or a comment at the end of a line would suppress
-	// the semicolon that line owes.
-	Previous Kind
-	// Newline reports whether a line feed stands between Previous and Offset. A general
-	// comment holding a line feed sets it, because such a comment closes its line.
-	Newline Boolean
-	// Blanks is the count of line feeds the last space skip crossed. Scan reads it, drops the
-	// one that ended the line before, and hands the rest to the token it emits.
-	Blanks Blank_Count
+  // Source is the text this cursor reads. The caller owns the bytes and the scanner never
+  // writes them.
+  Source Source
+  // Offset is the position of the byte that the next scan reads.
+  Offset Offset
+  // Previous is the class of the last token that was no comment. Semicolon insertion reads
+  // it, so a comment must not replace it or a comment at the end of a line would suppress
+  // the semicolon that line owes.
+  Previous Kind
+  // Newline reports whether a line feed stands between Previous and Offset. A general
+  // comment holding a line feed sets it, because such a comment closes its line.
+  Newline Boolean
+  // Blanks is the count of line feeds the last space skip crossed. Scan reads it, drops the
+  // one that ended the line before, and hands the rest to the token it emits.
+  Blanks Blank_Count
 }
 
 // Scanner_Invariants composes text, position, and insertion state of one cursor.
-func Scanner_Invariants(value Scanner, namespace aver.Namespace) {
-	Source_Invariants(value.Source, namespace)
-	Offset_Invariants(value.Offset, namespace)
-	Kind_Invariants(value.Previous, namespace)
-	Boolean_Invariants(value.Newline, namespace)
-	Blank_Count_Invariants(value.Blanks, namespace)
+func Scanner_Invariants(value *Scanner, namespace aver.Namespace) {
+  Source_Invariants(value.Source, namespace)
+  Offset_Invariants(value.Offset, namespace)
+  Kind_Invariants(value.Previous, namespace)
+  Boolean_Invariants(value.Newline, namespace)
+  Blank_Count_Invariants(value.Blanks, namespace)
 }
 
 // Scanner_Handle gives caller-owned scan state one identity.
@@ -836,779 +865,792 @@ type Scanner_Handle *Scanner
 
 // Scanner_Handle_Invariants composes present caller scan state.
 func Scanner_Handle_Invariants(value Scanner_Handle, namespace aver.Namespace) {
-	if value == nil {
-		return
-	}
-	Scanner_Invariants(*value, namespace)
+  if value == nil {
+    return
+  }
+  Scanner_Invariants(value, namespace)
 }
 
 // Scan reads the token at the cursor and advances the cursor past it. An exhausted source scans
 // to KIND_END_OF_FILE forever, thus a caller loop needs no stop test beyond that kind.
 func Scan(subject Scanner_Handle) (token Token) {
-	defer func() { Token_Invariants(token, "scan.token") }()
-	Scanner_Handle_Invariants(subject, "scan.subject")
-	aver.Always(subject != nil, "Scan receives caller-owned cursor state.")
-	// A comment leaves the previous kind standing, thus the opening of the source is what the
-	// count reads rather than the kind the end of a source carries.
-	opening := subject.Offset == OFFSET_MINIMUM
-	skip_space(subject)
-	// The empty line count and the statement test stand here rather than in bodies of their
-	// own, because a body of a few lines costs one call for every token a file spends.
-	blanks := subject.Blanks
-	if !opening {
-		if blanks != BLANK_COUNT_MINIMUM {
-			blanks = blanks - 1
-		}
-	}
-	closes := false
-	switch subject.Previous {
-	case KIND_IDENTIFIER, KIND_INTEGER, KIND_FLOAT, KIND_IMAGINARY, KIND_CHARACTER,
-		KIND_STRING, KIND_BREAK, KIND_CONTINUE, KIND_FALLTHROUGH, KIND_RETURN,
-		KIND_INCREMENT, KIND_DECREMENT, KIND_PARENTHESIS_RIGHT, KIND_BRACKET_RIGHT,
-		KIND_BRACE_RIGHT:
-		closes = true
-	}
-	if bool(subject.Newline) {
-		if closes {
-			subject.Previous = KIND_SEMICOLON
-			subject.Newline = false
-			return Token{
-				Kind:   KIND_SEMICOLON,
-				Offset: subject.Offset,
-				Size:   SIZE_MINIMUM,
-				Blanks: blanks,
-			}
-		}
-	}
-	if int(subject.Offset) == len(subject.Source) {
-		subject.Previous = KIND_END_OF_FILE
-		return Token{
-			Kind:   KIND_END_OF_FILE,
-			Offset: subject.Offset,
-			Size:   SIZE_MINIMUM,
-			Blanks: blanks,
-		}
-	}
-	start := subject.Offset
-	result := scan_token(Tail(subject.Source[start:]))
-	subject.Offset = start + Offset(result.Size)
-	if result.Kind != Scanned_Kind(KIND_COMMENT) {
-		subject.Previous = Kind(result.Kind)
-		subject.Newline = false
-	}
-	if bool(result.Newline) {
-		subject.Newline = true
-	}
-	return Token{
-		Kind:   Kind(result.Kind),
-		Offset: start,
-		Size:   Size(result.Size),
-		Blanks: blanks,
-	}
+  defer func() { Token_Invariants(&token, "scan.token") }()
+  Scanner_Handle_Invariants(subject, "scan.subject")
+  aver.Always(subject != nil, "Scan receives caller-owned cursor state.")
+  // A comment leaves the previous kind standing, thus the opening of the source is what the
+  // count reads rather than the kind the end of a source carries.
+  opening := subject.Offset == OFFSET_MINIMUM
+  skip_space(subject)
+  // The empty line count and the statement test stand here rather than in bodies of their
+  // own, because a body of a few lines costs one call for every token a file spends.
+  blanks := subject.Blanks
+  if !opening {
+    if blanks != BLANK_COUNT_MINIMUM {
+      blanks = blanks - 1
+    }
+  }
+  closes := false
+  switch subject.Previous {
+  case KIND_IDENTIFIER, KIND_INTEGER, KIND_FLOAT, KIND_IMAGINARY, KIND_CHARACTER,
+    KIND_STRING, KIND_BREAK, KIND_CONTINUE, KIND_FALLTHROUGH, KIND_RETURN,
+    KIND_INCREMENT, KIND_DECREMENT, KIND_PARENTHESIS_RIGHT, KIND_BRACKET_RIGHT,
+    KIND_BRACE_RIGHT:
+    closes = true
+  }
+  if bool(subject.Newline) {
+    if closes {
+      subject.Previous = KIND_SEMICOLON
+      subject.Newline = false
+      return Token{
+        Kind:   KIND_SEMICOLON,
+        Offset: subject.Offset,
+        Size:   SIZE_MINIMUM,
+        Blanks: blanks,
+      }
+    }
+  }
+  if int(subject.Offset) == len(subject.Source) {
+    subject.Previous = KIND_END_OF_FILE
+    return Token{
+      Kind:   KIND_END_OF_FILE,
+      Offset: subject.Offset,
+      Size:   SIZE_MINIMUM,
+      Blanks: blanks,
+    }
+  }
+  start := subject.Offset
+  result := scan_token(Tail(subject.Source[start:]))
+  subject.Offset = start + Offset(result.Size)
+  if result.Kind != Scanned_Kind(KIND_COMMENT) {
+    subject.Previous = Kind(result.Kind)
+    subject.Newline = false
+  }
+  if bool(result.Newline) {
+    subject.Newline = true
+  }
+  return Token{
+    Kind:   Kind(result.Kind),
+    Offset: start,
+    Size:   Size(result.Size),
+    Blanks: blanks,
+  }
 }
 
 // Text returns the bytes one token spans. An inserted semicolon spans none, thus it returns an
 // empty view rather than a semicolon the source never held.
 func Text(source Source, one Token) (text Source) {
-	defer func() { Source_Invariants(text, "text.text") }()
-	Source_Invariants(source, "text.source")
-	Token_Invariants(one, "text.one")
-	return source[one.Offset : int(one.Offset)+int(one.Size)]
+  defer func() { Source_Invariants(text, "text.text") }()
+  Source_Invariants(source, "text.source")
+  Token_Invariants(&one, "text.one")
+  return source[one.Offset : int(one.Offset)+int(one.Size)]
 }
 
 // Advances the cursor past every separator byte, recording whether a line feed was among them.
 // The exhausted source counts as a line feed, because the end of a source closes its final line.
 func skip_space(subject Scanner_Handle) {
-	Scanner_Handle_Invariants(subject, "skip_space.subject")
-	aver.Always(subject != nil, "Space skipping receives caller-owned cursor state.")
-	subject.Blanks = BLANK_COUNT_MINIMUM
-	for int(subject.Offset) < len(subject.Source) {
-		value := subject.Source[subject.Offset]
-		switch value {
-		case ' ', '\t', '\r':
-			subject.Offset++
-		case '\n':
-			subject.Newline = true
-			if subject.Blanks < BLANK_COUNT_MAXIMUM {
-				subject.Blanks++
-			}
-			subject.Offset++
-		default:
-			return
-		}
-	}
-	subject.Newline = true
+  Scanner_Handle_Invariants(subject, "skip_space.subject")
+  aver.Always(subject != nil, "Space skipping receives caller-owned cursor state.")
+  subject.Blanks = BLANK_COUNT_MINIMUM
+  for int(subject.Offset) < len(subject.Source) {
+    value := subject.Source[subject.Offset]
+    switch value {
+    case ' ', '\t', '\r':
+      subject.Offset++
+    case '\n':
+      subject.Newline = true
+      if subject.Blanks < BLANK_COUNT_MAXIMUM {
+        subject.Blanks++
+      }
+      subject.Offset++
+    default:
+      return
+    }
+  }
+  subject.Newline = true
 }
 
 // Scan_Token_Result keeps lexical class, width, and line state at one output boundary.
 type Scan_Token_Result struct {
-	// Kind keeps scanner-only classification separate from published token kind.
-	Kind Scanned_Kind
-	// Size advances cursor without retaining source suffix.
-	Size Token_Size
-	// Newline preserves line state carried by general comments.
-	Newline Boolean
+  // Kind keeps scanner-only classification separate from published token kind.
+  Kind Scanned_Kind
+  // Size advances cursor without retaining source suffix.
+  Size Token_Size
+  // Newline preserves line state carried by general comments.
+  Newline Boolean
 }
 
 // Scan_Token_Result_Invariants composes one lexical step.
-func Scan_Token_Result_Invariants(value Scan_Token_Result, namespace aver.Namespace) {
-	Scanned_Kind_Invariants(value.Kind, namespace)
-	Token_Size_Invariants(value.Size, namespace)
-	Boolean_Invariants(value.Newline, namespace)
+func Scan_Token_Result_Invariants(value *Scan_Token_Result, namespace aver.Namespace) {
+  Scanned_Kind_Invariants(value.Kind, namespace)
+  Token_Size_Invariants(value.Size, namespace)
+  Boolean_Invariants(value.Newline, namespace)
 }
 
 // Scans the one token that opens a tail. Every byte that opens no other token opens KIND_ILLEGAL
 // of width one, thus a hostile source advances the cursor and never stalls a scan.
 func scan_token(tail Tail) (result Scan_Token_Result) {
-	defer func() { Scan_Token_Result_Invariants(result, "scan_token.result") }()
-	Tail_Invariants(tail, "scan_token.tail")
-	first := tail[0]
-	switch {
-	case first == '_', first >= 'a' && first <= 'z', first >= 'A' && first <= 'Z':
-		word := scan_identifier(tail)
-		return Scan_Token_Result{
-			Kind: Scanned_Kind(word.Kind), Size: word.Size, Newline: false,
-		}
-	case first >= '0' && first <= '9':
-		number := scan_number(tail)
-		return Scan_Token_Result{
-			Kind: Scanned_Kind(number.Kind), Size: number.Size, Newline: false,
-		}
-	case first == '.':
-		if bool(starts_fraction(tail)) {
-			number := scan_number(tail)
-			return Scan_Token_Result{
-				Kind: Scanned_Kind(number.Kind), Size: number.Size, Newline: false,
-			}
-		}
-	case first == '\'', first == '"', first == '`':
-		quoted := scan_quoted_token(tail)
-		return Scan_Token_Result{
-			Kind: Scanned_Kind(quoted.Kind), Size: quoted.Size, Newline: false,
-		}
-	case first == '/':
-		if bool(starts_comment(tail)) {
-			comment := scan_comment(Comment_Tail(tail))
-			return Scan_Token_Result{
-				Kind: Scanned_Kind(KIND_COMMENT), Size: Token_Size(comment.Size),
-				Newline: comment.Newline,
-			}
-		}
-	}
-	operator := scan_operator(tail)
-	if bool(operator.Found) {
-		return Scan_Token_Result{
-			Kind: Scanned_Kind(operator.Kind), Size: Token_Size(operator.Size),
-			Newline: false,
-		}
-	}
-	return Scan_Token_Result{
-		Kind: Scanned_Kind(KIND_ILLEGAL), Size: TOKEN_SIZE_MINIMUM, Newline: false,
-	}
+  defer func() { Scan_Token_Result_Invariants(&result, "scan_token.result") }()
+  Tail_Invariants(tail, "scan_token.tail")
+  first := tail[0]
+  switch {
+  case first == '_', first-'a' < 'z'-'a'+1, first-'A' < 'Z'-'A'+1:
+    word := scan_identifier(tail)
+    return Scan_Token_Result{
+      Kind: Scanned_Kind(word.Kind), Size: word.Size, Newline: false,
+    }
+  case first-'0' < '9'-'0'+1:
+    number := scan_number(tail)
+    return Scan_Token_Result{
+      Kind: Scanned_Kind(number.Kind), Size: number.Size, Newline: false,
+    }
+  case first == '.':
+    if bool(starts_fraction(tail)) {
+      number := scan_number(tail)
+      return Scan_Token_Result{
+        Kind: Scanned_Kind(number.Kind), Size: number.Size, Newline: false,
+      }
+    }
+  case first == '\'', first == '"', first == '`':
+    quoted := scan_quoted_token(tail)
+    return Scan_Token_Result{
+      Kind: Scanned_Kind(quoted.Kind), Size: quoted.Size, Newline: false,
+    }
+  case first == '/':
+    if bool(starts_comment(tail)) {
+      comment := scan_comment(Comment_Tail(tail))
+      return Scan_Token_Result{
+        Kind:    Scanned_Kind(KIND_COMMENT),
+        Size:    Token_Size(comment.Size),
+        Newline: comment.Newline,
+      }
+    }
+  }
+  operator := scan_operator(tail)
+  if bool(operator.Found) {
+    return Scan_Token_Result{
+      Kind:    Scanned_Kind(operator.Kind),
+      Size:    Token_Size(operator.Size),
+      Newline: false,
+    }
+  }
+  return Scan_Token_Result{
+    Kind:    Scanned_Kind(KIND_ILLEGAL),
+    Size:    TOKEN_SIZE_MINIMUM,
+    Newline: false,
+  }
 }
 
 // Scan_Quoted_Token_Result keeps literal class and width at one output boundary.
 type Scan_Quoted_Token_Result struct {
-	// Kind distinguishes characters, strings, and refused literals.
-	Kind Quoted_Kind
-	// Size advances cursor through accepted or refused quote text.
-	Size Token_Size
+  // Kind distinguishes characters, strings, and refused literals.
+  Kind Quoted_Kind
+  // Size advances cursor through accepted or refused quote text.
+  Size Token_Size
 }
 
 // Scan_Quoted_Token_Result_Invariants composes one quoted-token reading.
 func Scan_Quoted_Token_Result_Invariants(
-	value Scan_Quoted_Token_Result, namespace aver.Namespace,
+  value *Scan_Quoted_Token_Result,
+  namespace aver.Namespace,
 ) {
-	Quoted_Kind_Invariants(value.Kind, namespace)
-	Token_Size_Invariants(value.Size, namespace)
+  Quoted_Kind_Invariants(value.Kind, namespace)
+  Token_Size_Invariants(value.Size, namespace)
 }
 
 // Scans one quoted literal and names its class. An unclosed literal is KIND_ILLEGAL, because a
 // source that never closes a quote gives the parser no literal to read.
 func scan_quoted_token(tail Tail) (result Scan_Quoted_Token_Result) {
-	defer func() { Scan_Quoted_Token_Result_Invariants(result, "scan_quoted_token.result") }()
-	Tail_Invariants(tail, "scan_quoted_token.tail")
-	quoted := scan_quoted(tail)
-	if !bool(quoted.Closed) {
-		return Scan_Quoted_Token_Result{Kind: Quoted_Kind(KIND_ILLEGAL), Size: quoted.Size}
-	}
-	if tail[0] == '\'' {
-		return Scan_Quoted_Token_Result{
-			Kind: Quoted_Kind(KIND_CHARACTER), Size: quoted.Size,
-		}
-	}
-	return Scan_Quoted_Token_Result{Kind: Quoted_Kind(KIND_STRING), Size: quoted.Size}
+  defer func() { Scan_Quoted_Token_Result_Invariants(&result, "scan_quoted_token.result") }()
+  Tail_Invariants(tail, "scan_quoted_token.tail")
+  quoted := scan_quoted(tail)
+  if !bool(quoted.Closed) {
+    return Scan_Quoted_Token_Result{Kind: Quoted_Kind(KIND_ILLEGAL), Size: quoted.Size}
+  }
+  if tail[0] == '\'' {
+    return Scan_Quoted_Token_Result{
+      Kind: Quoted_Kind(KIND_CHARACTER), Size: quoted.Size,
+    }
+  }
+  return Scan_Quoted_Token_Result{Kind: Quoted_Kind(KIND_STRING), Size: quoted.Size}
 }
 
 // Reports whether a period opens a fraction, the one form that starts a number with no digit.
 func starts_fraction(tail Tail) (yes Boolean) {
-	defer func() { Boolean_Invariants(yes, "starts_fraction.yes") }()
-	Tail_Invariants(tail, "starts_fraction.tail")
-	if len(tail) < FRACTION_TAIL_SIZE_MINIMUM {
-		return false
-	}
-	switch tail[1] {
-	case '0', '1', '2', '3', '4', '5', '6', '7', '8', '9':
-		return true
-	}
-	return false
+  defer func() { Boolean_Invariants(yes, "starts_fraction.yes") }()
+  Tail_Invariants(tail, "starts_fraction.tail")
+  if len(tail) < FRACTION_TAIL_SIZE_MINIMUM {
+    return false
+  }
+  switch tail[1] {
+  case '0', '1', '2', '3', '4', '5', '6', '7', '8', '9':
+    return true
+  }
+  return false
 }
 
 // Reports whether a slash opens a comment rather than a division operator.
 func starts_comment(tail Tail) (yes Boolean) {
-	defer func() { Boolean_Invariants(yes, "starts_comment.yes") }()
-	Tail_Invariants(tail, "starts_comment.tail")
-	if len(tail) < COMMENT_TAIL_SIZE_MINIMUM {
-		return false
-	}
-	switch tail[1] {
-	case '/', '*':
-		return true
-	}
-	return false
+  defer func() { Boolean_Invariants(yes, "starts_comment.yes") }()
+  Tail_Invariants(tail, "starts_comment.tail")
+  if len(tail) < COMMENT_TAIL_SIZE_MINIMUM {
+    return false
+  }
+  switch tail[1] {
+  case '/', '*':
+    return true
+  }
+  return false
 }
 
 // Scan_Identifier_Result keeps word class and width at one output boundary.
 type Scan_Identifier_Result struct {
-	// Kind distinguishes identifiers from keywords without another lookup.
-	Kind Word_Kind
-	// Size advances cursor past complete word.
-	Size Token_Size
+  // Kind distinguishes identifiers from keywords without another lookup.
+  Kind Word_Kind
+  // Size advances cursor past complete word.
+  Size Token_Size
 }
 
 // Scan_Identifier_Result_Invariants composes one word reading.
-func Scan_Identifier_Result_Invariants(value Scan_Identifier_Result, namespace aver.Namespace) {
-	Word_Kind_Invariants(value.Kind, namespace)
-	Token_Size_Invariants(value.Size, namespace)
+func Scan_Identifier_Result_Invariants(value *Scan_Identifier_Result, namespace aver.Namespace) {
+  Word_Kind_Invariants(value.Kind, namespace)
+  Token_Size_Invariants(value.Size, namespace)
 }
 
 // Scans one letter run and names it, so a keyword never reaches the parser as an identifier.
 func scan_identifier(tail Tail) (result Scan_Identifier_Result) {
-	defer func() { Scan_Identifier_Result_Invariants(result, "scan_identifier.result") }()
-	Tail_Invariants(tail, "scan_identifier.tail")
-	// The run width stands in a local, because a defined width behind a conversion is a value
-	// the compiler reloads and rechecks at every step of the run.
-	width := 0
+  defer func() { Scan_Identifier_Result_Invariants(&result, "scan_identifier.result") }()
+  Tail_Invariants(tail, "scan_identifier.tail")
+  // The run width stands in a local, because a defined width behind a conversion is a value
+  // the compiler reloads and rechecks at every step of the run.
+  width := 0
 Word:
-	for width < len(tail) {
-		value := tail[width]
-		switch {
-		case value == '_', value >= 'a' && value <= 'z',
-			value >= 'A' && value <= 'Z', value >= '0' && value <= '9':
-			width++
-		default:
-			break Word
-		}
-	}
-	// The keyword table stands here rather than behind a body of its own, because every word a
-	// file spells reaches it and a body of three lines costs one call for each of them.
-	keyword := keyword_lookup(Token_Text(tail[:width]))
-	kind := Word_Kind(KIND_IDENTIFIER)
-	if bool(keyword.Found) {
-		kind = Word_Kind(keyword.Kind)
-	}
-	return Scan_Identifier_Result{Kind: kind, Size: Token_Size(width)}
+  for width < len(tail) {
+    value := tail[width]
+    switch {
+    case value == '_', value-'a' < 'z'-'a'+1,
+      value-'A' < 'Z'-'A'+1, value-'0' < '9'-'0'+1:
+      width++
+    default:
+      break Word
+    }
+  }
+  // The keyword table stands here rather than behind a body of its own, because every word a
+  // file spells reaches it and a body of three lines costs one call for each of them.
+  keyword := keyword_lookup(Token_Text(tail[:width]))
+  kind := Word_Kind(KIND_IDENTIFIER)
+  if bool(keyword.Found) {
+    kind = Word_Kind(keyword.Kind)
+  }
+  return Scan_Identifier_Result{Kind: kind, Size: Token_Size(width)}
 }
 
 // Keyword_Result keeps keyword class and presence at one output boundary.
 type Keyword_Result struct {
-	// Kind stays minimum when word names no keyword.
-	Kind Keyword_Kind
-	// Found distinguishes minimum keyword from absent lookup.
-	Found Boolean
+  // Kind stays minimum when word names no keyword.
+  Kind Keyword_Kind
+  // Found distinguishes minimum keyword from absent lookup.
+  Found Boolean
 }
 
 // Keyword_Result_Invariants composes one keyword lookup.
-func Keyword_Result_Invariants(value Keyword_Result, namespace aver.Namespace) {
-	Keyword_Kind_Invariants(value.Kind, namespace)
-	Boolean_Invariants(value.Found, namespace)
+func Keyword_Result_Invariants(value *Keyword_Result, namespace aver.Namespace) {
+  Keyword_Kind_Invariants(value.Kind, namespace)
+  Boolean_Invariants(value.Found, namespace)
 }
 
 // Looks one letter run up in the twenty-five Go keywords.
 func keyword_lookup(text Token_Text) (result Keyword_Result) {
-	defer func() { Keyword_Result_Invariants(result, "keyword_lookup.result") }()
-	Token_Text_Invariants(text, "keyword_lookup.text")
-	// The lookup states one exit, because a body of twenty-five exits puts its defer on the
-	// stack and pays the runtime for each one.
-	kind := Keyword_Kind(KEYWORD_KIND_MINIMUM)
-	found := Boolean(false)
-	switch string(text) {
-	case "break":
-		kind, found = Keyword_Kind(KIND_BREAK), true
-	case "case":
-		kind, found = Keyword_Kind(KIND_CASE), true
-	case "chan":
-		kind, found = Keyword_Kind(KIND_CHANNEL), true
-	case "const":
-		kind, found = Keyword_Kind(KIND_CONSTANT), true
-	case "continue":
-		kind, found = Keyword_Kind(KIND_CONTINUE), true
-	case "default":
-		kind, found = Keyword_Kind(KIND_DEFAULT), true
-	case "defer":
-		kind, found = Keyword_Kind(KIND_DEFER), true
-	case "else":
-		kind, found = Keyword_Kind(KIND_ELSE), true
-	case "fallthrough":
-		kind, found = Keyword_Kind(KIND_FALLTHROUGH), true
-	case "for":
-		kind, found = Keyword_Kind(KIND_FOR), true
-	case "func":
-		kind, found = Keyword_Kind(KIND_FUNCTION), true
-	case "go":
-		kind, found = Keyword_Kind(KIND_GO), true
-	case "goto":
-		kind, found = Keyword_Kind(KIND_GOTO), true
-	case "if":
-		kind, found = Keyword_Kind(KIND_IF), true
-	case "import":
-		kind, found = Keyword_Kind(KIND_IMPORT), true
-	case "interface":
-		kind, found = Keyword_Kind(KIND_INTERFACE), true
-	case "map":
-		kind, found = Keyword_Kind(KIND_MAP), true
-	case "package":
-		kind, found = Keyword_Kind(KIND_PACKAGE), true
-	case "range":
-		kind, found = Keyword_Kind(KIND_RANGE), true
-	case "return":
-		kind, found = Keyword_Kind(KIND_RETURN), true
-	case "select":
-		kind, found = Keyword_Kind(KIND_SELECT), true
-	case "struct":
-		kind, found = Keyword_Kind(KIND_STRUCTURE), true
-	case "switch":
-		kind, found = Keyword_Kind(KIND_SWITCH), true
-	case "type":
-		kind, found = Keyword_Kind(KIND_TYPE), true
-	case "var":
-		kind, found = Keyword_Kind(KIND_VARIABLE), true
-	}
-	return Keyword_Result{Kind: kind, Found: found}
+  defer func() { Keyword_Result_Invariants(&result, "keyword_lookup.result") }()
+  Token_Text_Invariants(text, "keyword_lookup.text")
+  // The lookup states one exit, because a body of twenty-five exits puts its defer on the
+  // stack and pays the runtime for each one.
+  kind := Keyword_Kind(KEYWORD_KIND_MINIMUM)
+  found := Boolean(false)
+  switch string(text) {
+  case "break":
+    kind, found = Keyword_Kind(KIND_BREAK), true
+  case "case":
+    kind, found = Keyword_Kind(KIND_CASE), true
+  case "chan":
+    kind, found = Keyword_Kind(KIND_CHANNEL), true
+  case "const":
+    kind, found = Keyword_Kind(KIND_CONSTANT), true
+  case "continue":
+    kind, found = Keyword_Kind(KIND_CONTINUE), true
+  case "default":
+    kind, found = Keyword_Kind(KIND_DEFAULT), true
+  case "defer":
+    kind, found = Keyword_Kind(KIND_DEFER), true
+  case "else":
+    kind, found = Keyword_Kind(KIND_ELSE), true
+  case "fallthrough":
+    kind, found = Keyword_Kind(KIND_FALLTHROUGH), true
+  case "for":
+    kind, found = Keyword_Kind(KIND_FOR), true
+  case "func":
+    kind, found = Keyword_Kind(KIND_FUNCTION), true
+  case "go":
+    kind, found = Keyword_Kind(KIND_GO), true
+  case "goto":
+    kind, found = Keyword_Kind(KIND_GOTO), true
+  case "if":
+    kind, found = Keyword_Kind(KIND_IF), true
+  case "import":
+    kind, found = Keyword_Kind(KIND_IMPORT), true
+  case "interface":
+    kind, found = Keyword_Kind(KIND_INTERFACE), true
+  case "map":
+    kind, found = Keyword_Kind(KIND_MAP), true
+  case "package":
+    kind, found = Keyword_Kind(KIND_PACKAGE), true
+  case "range":
+    kind, found = Keyword_Kind(KIND_RANGE), true
+  case "return":
+    kind, found = Keyword_Kind(KIND_RETURN), true
+  case "select":
+    kind, found = Keyword_Kind(KIND_SELECT), true
+  case "struct":
+    kind, found = Keyword_Kind(KIND_STRUCTURE), true
+  case "switch":
+    kind, found = Keyword_Kind(KIND_SWITCH), true
+  case "type":
+    kind, found = Keyword_Kind(KIND_TYPE), true
+  case "var":
+    kind, found = Keyword_Kind(KIND_VARIABLE), true
+  }
+  return Keyword_Result{Kind: kind, Found: found}
 }
 
 // Scan_Number_Result keeps numeric class and width at one output boundary.
 type Scan_Number_Result struct {
-	// Kind carries integer, float, or imaginary classification.
-	Kind Number_Kind
-	// Size advances cursor past complete literal.
-	Size Token_Size
+  // Kind carries integer, float, or imaginary classification.
+  Kind Number_Kind
+  // Size advances cursor past complete literal.
+  Size Token_Size
 }
 
 // Scan_Number_Result_Invariants composes one numeric reading.
-func Scan_Number_Result_Invariants(value Scan_Number_Result, namespace aver.Namespace) {
-	Number_Kind_Invariants(value.Kind, namespace)
-	Token_Size_Invariants(value.Size, namespace)
+func Scan_Number_Result_Invariants(value *Scan_Number_Result, namespace aver.Namespace) {
+  Number_Kind_Invariants(value.Kind, namespace)
+  Token_Size_Invariants(value.Size, namespace)
 }
 
 // Scans one numeric literal whole. A malformed literal still scans whole, because the parser
 // reports a bad literal with more context than a scanner holds.
 func scan_number(tail Tail) (result Scan_Number_Result) {
-	defer func() { Scan_Number_Result_Invariants(result, "scan_number.result") }()
-	Tail_Invariants(tail, "scan_number.tail")
-	hexadecimal := false
-	if tail[0] == '0' {
-		if len(tail) > TOKEN_SIZE_MINIMUM {
-			switch tail[TOKEN_SIZE_MINIMUM] {
-			case 'x', 'X':
-				hexadecimal = true
-			}
-		}
-	}
-	size := Token_Size(TOKEN_SIZE_MINIMUM)
+  defer func() { Scan_Number_Result_Invariants(&result, "scan_number.result") }()
+  Tail_Invariants(tail, "scan_number.tail")
+  hexadecimal := false
+  if tail[0] == '0' {
+    if len(tail) > TOKEN_SIZE_MINIMUM {
+      switch tail[TOKEN_SIZE_MINIMUM] {
+      case 'x', 'X':
+        hexadecimal = true
+      }
+    }
+  }
+  size := Token_Size(TOKEN_SIZE_MINIMUM)
 Digits:
-	for int(size) < len(tail) {
-		value := tail[size]
-		switch {
-		case value == '_', value == '.', value >= '0' && value <= '9',
-			value >= 'a' && value <= 'z', value >= 'A' && value <= 'Z':
-			size++
-		case value == '+', value == '-':
-			letter := Exponent_Text{Letter: Exponent_Letter(tail[size-1])}
-			if !bool(after_exponent(letter, Boolean(hexadecimal))) {
-				break Digits
-			}
-			size++
-		default:
-			break Digits
-		}
-	}
-	return Scan_Number_Result{
-		Kind: number_kind(Token_Text(tail[:size]), Boolean(hexadecimal)), Size: size,
-	}
+  for int(size) < len(tail) {
+    value := tail[size]
+    switch {
+    case value == '_', value == '.', value-'0' < '9'-'0'+1,
+      value-'a' < 'z'-'a'+1, value-'A' < 'Z'-'A'+1:
+      size++
+    case value == '+', value == '-':
+      letter := Exponent_Text{Letter: Exponent_Letter(tail[size-1])}
+      if !bool(after_exponent(letter, Boolean(hexadecimal))) {
+        break Digits
+      }
+      size++
+    default:
+      break Digits
+    }
+  }
+  return Scan_Number_Result{
+    Kind: number_kind(Token_Text(tail[:size]), Boolean(hexadecimal)),
+    Size: size,
+  }
 }
 
 // Reports whether a sign follows an exponent letter, the one place a sign joins a number.
 func after_exponent(text Exponent_Text, hexadecimal Boolean) (yes Boolean) {
-	defer func() { Boolean_Invariants(yes, "after_exponent.yes") }()
-	Exponent_Text_Invariants(text, "after_exponent.text")
-	Boolean_Invariants(hexadecimal, "after_exponent.hexadecimal")
-	switch text.Letter {
-	case 'e', 'E':
-		return !hexadecimal
-	case 'p', 'P':
-		return hexadecimal
-	}
-	return false
+  defer func() { Boolean_Invariants(yes, "after_exponent.yes") }()
+  Exponent_Text_Invariants(&text, "after_exponent.text")
+  Boolean_Invariants(hexadecimal, "after_exponent.hexadecimal")
+  switch text.Letter {
+  case 'e', 'E':
+    return !hexadecimal
+  case 'p', 'P':
+    return hexadecimal
+  }
+  return false
 }
 
 // Names one complete numeric literal. A period or an exponent makes it a float and a trailing i
 // makes it imaginary, and the imaginary suffix wins because it may follow either form.
 func number_kind(text Token_Text, hexadecimal Boolean) (kind Number_Kind) {
-	defer func() { Number_Kind_Invariants(kind, "number_kind.kind") }()
-	Token_Text_Invariants(text, "number_kind.text")
-	Boolean_Invariants(hexadecimal, "number_kind.hexadecimal")
-	kind = Number_Kind(KIND_INTEGER)
-	for index := range text {
-		switch text[index] {
-		case '.':
-			kind = Number_Kind(KIND_FLOAT)
-		case 'e', 'E':
-			if !bool(hexadecimal) {
-				kind = Number_Kind(KIND_FLOAT)
-			}
-		case 'p', 'P':
-			if bool(hexadecimal) {
-				kind = Number_Kind(KIND_FLOAT)
-			}
-		}
-	}
-	if text[len(text)-1] == 'i' {
-		return Number_Kind(KIND_IMAGINARY)
-	}
-	return kind
+  defer func() { Number_Kind_Invariants(kind, "number_kind.kind") }()
+  Token_Text_Invariants(text, "number_kind.text")
+  Boolean_Invariants(hexadecimal, "number_kind.hexadecimal")
+  kind = Number_Kind(KIND_INTEGER)
+  for index := range text {
+    switch text[index] {
+    case '.':
+      kind = Number_Kind(KIND_FLOAT)
+    case 'e', 'E':
+      if !bool(hexadecimal) {
+        kind = Number_Kind(KIND_FLOAT)
+      }
+    case 'p', 'P':
+      if bool(hexadecimal) {
+        kind = Number_Kind(KIND_FLOAT)
+      }
+    }
+  }
+  if text[len(text)-1] == 'i' {
+    return Number_Kind(KIND_IMAGINARY)
+  }
+  return kind
 }
 
 // Scan_Quoted_Result keeps closure and consumed width at one output boundary.
 type Scan_Quoted_Result struct {
-	// Closed distinguishes complete literal from bounded refused prefix.
-	Closed Boolean
-	// Size advances cursor without rereading escape sequences.
-	Size Token_Size
+  // Closed distinguishes complete literal from bounded refused prefix.
+  Closed Boolean
+  // Size advances cursor without rereading escape sequences.
+  Size Token_Size
 }
 
 // Scan_Quoted_Result_Invariants composes one quoted run.
-func Scan_Quoted_Result_Invariants(value Scan_Quoted_Result, namespace aver.Namespace) {
-	Boolean_Invariants(value.Closed, namespace)
-	Token_Size_Invariants(value.Size, namespace)
+func Scan_Quoted_Result_Invariants(value *Scan_Quoted_Result, namespace aver.Namespace) {
+  Boolean_Invariants(value.Closed, namespace)
+  Token_Size_Invariants(value.Size, namespace)
 }
 
 // Scans one quoted literal from its opening quote through the quote that closes it. A raw
 // literal takes no escape and may hold line feeds; the other two forms end at the line feed that
 // no quote closed, because Go admits no literal that spans a line.
 func scan_quoted(tail Tail) (result Scan_Quoted_Result) {
-	defer func() { Scan_Quoted_Result_Invariants(result, "scan_quoted.result") }()
-	Tail_Invariants(tail, "scan_quoted.tail")
-	quote := tail[0]
-	raw := false
-	if quote == '`' {
-		raw = true
-	}
-	size := Token_Size(TOKEN_SIZE_MINIMUM)
-	for int(size) < len(tail) {
-		value := tail[size]
-		size++
-		if value == quote {
-			return Scan_Quoted_Result{Closed: true, Size: size}
-		}
-		if raw {
-			continue
-		}
-		if value == '\n' {
-			// The line feed opens the next line, thus the literal stops before it.
-			size--
-			return Scan_Quoted_Result{Closed: false, Size: size}
-		}
-		if value == '\\' {
-			if int(size) < len(tail) {
-				size++
-			}
-		}
-	}
-	return Scan_Quoted_Result{Closed: false, Size: size}
+  defer func() { Scan_Quoted_Result_Invariants(&result, "scan_quoted.result") }()
+  Tail_Invariants(tail, "scan_quoted.tail")
+  quote := tail[0]
+  raw := false
+  if quote == '`' {
+    raw = true
+  }
+  size := Token_Size(TOKEN_SIZE_MINIMUM)
+  for int(size) < len(tail) {
+    value := tail[size]
+    size++
+    if value == quote {
+      return Scan_Quoted_Result{Closed: true, Size: size}
+    }
+    if raw {
+      continue
+    }
+    if value == '\n' {
+      // The line feed opens the next line, thus the literal stops before it.
+      size--
+      return Scan_Quoted_Result{Closed: false, Size: size}
+    }
+    if value == '\\' {
+      if int(size) < len(tail) {
+        size++
+      }
+    }
+  }
+  return Scan_Quoted_Result{Closed: false, Size: size}
 }
 
 // Scan_Comment_Result keeps line state and consumed width at one output boundary.
 type Scan_Comment_Result struct {
-	// Newline preserves semicolon insertion state across general comments.
-	Newline Boolean
-	// Size advances cursor through complete or open comment.
-	Size Comment_Size
+  // Newline preserves semicolon insertion state across general comments.
+  Newline Boolean
+  // Size advances cursor through complete or open comment.
+  Size Comment_Size
 }
 
 // Scan_Comment_Result_Invariants composes one comment reading.
-func Scan_Comment_Result_Invariants(value Scan_Comment_Result, namespace aver.Namespace) {
-	Boolean_Invariants(value.Newline, namespace)
-	Comment_Size_Invariants(value.Size, namespace)
+func Scan_Comment_Result_Invariants(value *Scan_Comment_Result, namespace aver.Namespace) {
+  Boolean_Invariants(value.Newline, namespace)
+  Comment_Size_Invariants(value.Size, namespace)
 }
 
 // Scans one comment. A line comment stops before the line feed that ends it, so the cursor still
 // sees that line feed and the line it closes still gets its inserted semicolon.
 func scan_comment(tail Comment_Tail) (result Scan_Comment_Result) {
-	defer func() { Scan_Comment_Result_Invariants(result, "scan_comment.result") }()
-	Comment_Tail_Invariants(tail, "scan_comment.tail")
-	newline := Boolean(false)
-	size := Comment_Size(COMMENT_SIZE_MINIMUM)
-	if tail[1] == '/' {
-		for int(size) < len(tail) {
-			if tail[size] == '\n' {
-				return Scan_Comment_Result{Newline: false, Size: size}
-			}
-			size++
-		}
-		return Scan_Comment_Result{Newline: false, Size: size}
-	}
-	for int(size) < len(tail) {
-		value := tail[size]
-		size++
-		if value == '\n' {
-			newline = true
-		}
-		if value == '*' {
-			if int(size) < len(tail) {
-				if tail[size] == '/' {
-					size++
-					return Scan_Comment_Result{Newline: newline, Size: size}
-				}
-			}
-		}
-	}
-	return Scan_Comment_Result{Newline: newline, Size: size}
+  defer func() { Scan_Comment_Result_Invariants(&result, "scan_comment.result") }()
+  Comment_Tail_Invariants(tail, "scan_comment.tail")
+  newline := Boolean(false)
+  size := Comment_Size(COMMENT_SIZE_MINIMUM)
+  if tail[1] == '/' {
+    for int(size) < len(tail) {
+      if tail[size] == '\n' {
+        return Scan_Comment_Result{Newline: false, Size: size}
+      }
+      size++
+    }
+    return Scan_Comment_Result{Newline: false, Size: size}
+  }
+  for int(size) < len(tail) {
+    value := tail[size]
+    size++
+    if value == '\n' {
+      newline = true
+    }
+    if value == '*' {
+      if int(size) < len(tail) {
+        if tail[size] == '/' {
+          size++
+          return Scan_Comment_Result{Newline: newline, Size: size}
+        }
+      }
+    }
+  }
+  return Scan_Comment_Result{Newline: newline, Size: size}
 }
 
 // Scan_Operator_Result keeps operator class, width, and presence at one output boundary.
 type Scan_Operator_Result struct {
-	// Kind stays minimum when byte opens no operator.
-	Kind Operator_Kind
-	// Size keeps longest-match width with chosen kind.
-	Size Operator_Size
-	// Found distinguishes minimum operator from illegal byte.
-	Found Boolean
+  // Kind stays minimum when byte opens no operator.
+  Kind Operator_Kind
+  // Size keeps longest-match width with chosen kind.
+  Size Operator_Size
+  // Found distinguishes minimum operator from illegal byte.
+  Found Boolean
 }
 
 // Scan_Operator_Result_Invariants composes one operator reading.
-func Scan_Operator_Result_Invariants(value Scan_Operator_Result, namespace aver.Namespace) {
-	Operator_Kind_Invariants(value.Kind, namespace)
-	Operator_Size_Invariants(value.Size, namespace)
-	Boolean_Invariants(value.Found, namespace)
+func Scan_Operator_Result_Invariants(value *Scan_Operator_Result, namespace aver.Namespace) {
+  Operator_Kind_Invariants(value.Kind, namespace)
+  Operator_Size_Invariants(value.Size, namespace)
+  Boolean_Invariants(value.Found, namespace)
 }
 
 // Scans one operator, longest match first, so an and-not assignment never scans as an and.
 func scan_operator(tail Tail) (result Scan_Operator_Result) {
-	defer func() { Scan_Operator_Result_Invariants(result, "scan_operator.result") }()
-	Tail_Invariants(tail, "scan_operator.tail")
-	// A byte that opens no wider operator skips both wider tables. A brace, a bracket, a
-	// parenthesis, a comma, and a semicolon are the tokens source spends most, thus the common
-	// byte reaches its own table at once.
-	wider := false
-	switch tail[0] {
-	case '<', '>', '&', '|', '^', '+', '-', '*', '/', '%', '=', '!', ':', '.':
-		wider = true
-	}
-	if wider {
-		if len(tail) >= OPERATOR_SIZE_THREE {
-			three := operator_lookup_3(Operator_Tail_3(tail))
-			if bool(three.Found) {
-				return Scan_Operator_Result{
-					Kind: Operator_Kind(three.Kind), Size: OPERATOR_SIZE_THREE,
-					Found: true,
-				}
-			}
-		}
-		if len(tail) >= OPERATOR_SIZE_TWO {
-			two := operator_lookup_2(Operator_Tail_2(tail))
-			if bool(two.Found) {
-				return Scan_Operator_Result{
-					Kind: Operator_Kind(two.Kind), Size: OPERATOR_SIZE_TWO,
-					Found: true,
-				}
-			}
-		}
-	}
-	one := operator_lookup_1(tail)
-	if bool(one.Found) {
-		return Scan_Operator_Result{
-			Kind: Operator_Kind(one.Kind), Size: OPERATOR_SIZE_ONE, Found: true,
-		}
-	}
-	return Scan_Operator_Result{
-		Kind: Operator_Kind(OPERATOR_KIND_MINIMUM), Size: OPERATOR_SIZE_ONE, Found: false,
-	}
+  defer func() { Scan_Operator_Result_Invariants(&result, "scan_operator.result") }()
+  Tail_Invariants(tail, "scan_operator.tail")
+  // A byte that opens no wider operator skips both wider tables. A brace, a bracket, a
+  // parenthesis, a comma, and a semicolon are the tokens source spends most, thus the common
+  // byte reaches its own table at once.
+  wider := false
+  switch tail[0] {
+  case '<', '>', '&', '|', '^', '+', '-', '*', '/', '%', '=', '!', ':', '.':
+    wider = true
+  }
+  if wider {
+    if !(len(tail) < OPERATOR_SIZE_THREE) {
+      three := operator_lookup_3(Operator_Tail_3(tail))
+      if bool(three.Found) {
+        return Scan_Operator_Result{
+          Kind:  Operator_Kind(three.Kind),
+          Size:  OPERATOR_SIZE_THREE,
+          Found: true,
+        }
+      }
+    }
+    if !(len(tail) < OPERATOR_SIZE_TWO) {
+      two := operator_lookup_2(Operator_Tail_2(tail))
+      if bool(two.Found) {
+        return Scan_Operator_Result{
+          Kind:  Operator_Kind(two.Kind),
+          Size:  OPERATOR_SIZE_TWO,
+          Found: true,
+        }
+      }
+    }
+  }
+  one := operator_lookup_1(tail)
+  if bool(one.Found) {
+    return Scan_Operator_Result{
+      Kind: Operator_Kind(one.Kind), Size: OPERATOR_SIZE_ONE, Found: true,
+    }
+  }
+  return Scan_Operator_Result{
+    Kind:  Operator_Kind(OPERATOR_KIND_MINIMUM),
+    Size:  OPERATOR_SIZE_ONE,
+    Found: false,
+  }
 }
 
 // Operator_Lookup_3_Result keeps three-byte kind and presence at one output boundary.
 type Operator_Lookup_3_Result struct {
-	// Kind stays default where bytes name no three-byte operator.
-	Kind Operator_Kind_3
-	// Found distinguishes default kind from matching spelling.
-	Found Boolean
+  // Kind stays default where bytes name no three-byte operator.
+  Kind Operator_Kind_3
+  // Found distinguishes default kind from matching spelling.
+  Found Boolean
 }
 
 // Operator_Lookup_3_Result_Invariants composes one three-byte lookup.
 func Operator_Lookup_3_Result_Invariants(
-	value Operator_Lookup_3_Result, namespace aver.Namespace,
+  value *Operator_Lookup_3_Result,
+  namespace aver.Namespace,
 ) {
-	Operator_Kind_3_Invariants(value.Kind, namespace)
-	Boolean_Invariants(value.Found, namespace)
+  Operator_Kind_3_Invariants(value.Kind, namespace)
+  Boolean_Invariants(value.Found, namespace)
 }
 
 // Looks the first three bytes up in the four three-byte Go operators.
 func operator_lookup_3(tail Operator_Tail_3) (result Operator_Lookup_3_Result) {
-	defer func() { Operator_Lookup_3_Result_Invariants(result, "operator_lookup_3.result") }()
-	Operator_Tail_3_Invariants(tail, "operator_lookup_3.tail")
-	kind := Operator_Kind_3(KIND_SHIFT_LEFT_ASSIGN)
-	found := Boolean(false)
-	switch string(tail[:OPERATOR_SIZE_THREE]) {
-	case "<<=":
-		kind, found = Operator_Kind_3(KIND_SHIFT_LEFT_ASSIGN), true
-	case ">>=":
-		kind, found = Operator_Kind_3(KIND_SHIFT_RIGHT_ASSIGN), true
-	case "&^=":
-		kind, found = Operator_Kind_3(KIND_AND_NOT_ASSIGN), true
-	case "...":
-		kind, found = Operator_Kind_3(KIND_ELLIPSIS), true
-	}
-	return Operator_Lookup_3_Result{Kind: kind, Found: found}
+  defer func() { Operator_Lookup_3_Result_Invariants(&result, "operator_lookup_3.result") }()
+  Operator_Tail_3_Invariants(tail, "operator_lookup_3.tail")
+  kind := Operator_Kind_3(KIND_SHIFT_LEFT_ASSIGN)
+  found := Boolean(false)
+  switch string(tail[:OPERATOR_SIZE_THREE]) {
+  case "<<=":
+    kind, found = Operator_Kind_3(KIND_SHIFT_LEFT_ASSIGN), true
+  case ">>=":
+    kind, found = Operator_Kind_3(KIND_SHIFT_RIGHT_ASSIGN), true
+  case "&^=":
+    kind, found = Operator_Kind_3(KIND_AND_NOT_ASSIGN), true
+  case "...":
+    kind, found = Operator_Kind_3(KIND_ELLIPSIS), true
+  }
+  return Operator_Lookup_3_Result{Kind: kind, Found: found}
 }
 
 // Operator_Lookup_2_Result keeps two-byte kind and presence at one output boundary.
 type Operator_Lookup_2_Result struct {
-	// Kind stays default where bytes name no two-byte operator.
-	Kind Operator_Kind_2
-	// Found distinguishes default kind from matching spelling.
-	Found Boolean
+  // Kind stays default where bytes name no two-byte operator.
+  Kind Operator_Kind_2
+  // Found distinguishes default kind from matching spelling.
+  Found Boolean
 }
 
 // Operator_Lookup_2_Result_Invariants composes one two-byte lookup.
 func Operator_Lookup_2_Result_Invariants(
-	value Operator_Lookup_2_Result, namespace aver.Namespace,
+  value *Operator_Lookup_2_Result,
+  namespace aver.Namespace,
 ) {
-	Operator_Kind_2_Invariants(value.Kind, namespace)
-	Boolean_Invariants(value.Found, namespace)
+  Operator_Kind_2_Invariants(value.Kind, namespace)
+  Boolean_Invariants(value.Found, namespace)
 }
 
 // Looks the first two bytes up in the twenty-one two-byte Go operators.
 func operator_lookup_2(tail Operator_Tail_2) (result Operator_Lookup_2_Result) {
-	defer func() { Operator_Lookup_2_Result_Invariants(result, "operator_lookup_2.result") }()
-	Operator_Tail_2_Invariants(tail, "operator_lookup_2.tail")
-	kind := Operator_Kind_2(OPERATOR_KIND_2_MINIMUM)
-	found := Boolean(false)
-	switch string(tail[:OPERATOR_SIZE_TWO]) {
-	case "+=":
-		kind, found = Operator_Kind_2(KIND_PLUS_ASSIGN), true
-	case "-=":
-		kind, found = Operator_Kind_2(KIND_MINUS_ASSIGN), true
-	case "*=":
-		kind, found = Operator_Kind_2(KIND_STAR_ASSIGN), true
-	case "/=":
-		kind, found = Operator_Kind_2(KIND_SLASH_ASSIGN), true
-	case "%=":
-		kind, found = Operator_Kind_2(KIND_PERCENT_ASSIGN), true
-	case "&=":
-		kind, found = Operator_Kind_2(KIND_AND_ASSIGN), true
-	case "|=":
-		kind, found = Operator_Kind_2(KIND_OR_ASSIGN), true
-	case "^=":
-		kind, found = Operator_Kind_2(KIND_EXCLUSIVE_OR_ASSIGN), true
-	case "<<":
-		kind, found = Operator_Kind_2(KIND_SHIFT_LEFT), true
-	case ">>":
-		kind, found = Operator_Kind_2(KIND_SHIFT_RIGHT), true
-	case "&^":
-		kind, found = Operator_Kind_2(KIND_AND_NOT), true
-	case "&&":
-		kind, found = Operator_Kind_2(KIND_LOGICAL_AND), true
-	case "||":
-		kind, found = Operator_Kind_2(KIND_LOGICAL_OR), true
-	case "<-":
-		kind, found = Operator_Kind_2(KIND_ARROW), true
-	case "++":
-		kind, found = Operator_Kind_2(KIND_INCREMENT), true
-	case "--":
-		kind, found = Operator_Kind_2(KIND_DECREMENT), true
-	case "==":
-		kind, found = Operator_Kind_2(KIND_EQUAL), true
-	case "!=":
-		kind, found = Operator_Kind_2(KIND_NOT_EQUAL), true
-	case "<=":
-		kind, found = Operator_Kind_2(KIND_LESS_EQUAL), true
-	case ">=":
-		kind, found = Operator_Kind_2(KIND_GREATER_EQUAL), true
-	case ":=":
-		kind, found = Operator_Kind_2(KIND_DEFINE), true
-	}
-	return Operator_Lookup_2_Result{Kind: kind, Found: found}
+  defer func() { Operator_Lookup_2_Result_Invariants(&result, "operator_lookup_2.result") }()
+  Operator_Tail_2_Invariants(tail, "operator_lookup_2.tail")
+  kind := Operator_Kind_2(OPERATOR_KIND_2_MINIMUM)
+  found := Boolean(false)
+  switch string(tail[:OPERATOR_SIZE_TWO]) {
+  case "+=":
+    kind, found = Operator_Kind_2(KIND_PLUS_ASSIGN), true
+  case "-=":
+    kind, found = Operator_Kind_2(KIND_MINUS_ASSIGN), true
+  case "*=":
+    kind, found = Operator_Kind_2(KIND_STAR_ASSIGN), true
+  case "/=":
+    kind, found = Operator_Kind_2(KIND_SLASH_ASSIGN), true
+  case "%=":
+    kind, found = Operator_Kind_2(KIND_PERCENT_ASSIGN), true
+  case "&=":
+    kind, found = Operator_Kind_2(KIND_AND_ASSIGN), true
+  case "|=":
+    kind, found = Operator_Kind_2(KIND_OR_ASSIGN), true
+  case "^=":
+    kind, found = Operator_Kind_2(KIND_EXCLUSIVE_OR_ASSIGN), true
+  case "<<":
+    kind, found = Operator_Kind_2(KIND_SHIFT_LEFT), true
+  case ">>":
+    kind, found = Operator_Kind_2(KIND_SHIFT_RIGHT), true
+  case "&^":
+    kind, found = Operator_Kind_2(KIND_AND_NOT), true
+  case "&&":
+    kind, found = Operator_Kind_2(KIND_LOGICAL_AND), true
+  case "||":
+    kind, found = Operator_Kind_2(KIND_LOGICAL_OR), true
+  case "<-":
+    kind, found = Operator_Kind_2(KIND_ARROW), true
+  case "++":
+    kind, found = Operator_Kind_2(KIND_INCREMENT), true
+  case "--":
+    kind, found = Operator_Kind_2(KIND_DECREMENT), true
+  case "==":
+    kind, found = Operator_Kind_2(KIND_EQUAL), true
+  case "!=":
+    kind, found = Operator_Kind_2(KIND_NOT_EQUAL), true
+  case "<=":
+    kind, found = Operator_Kind_2(KIND_LESS_EQUAL), true
+  case ">=":
+    kind, found = Operator_Kind_2(KIND_GREATER_EQUAL), true
+  case ":=":
+    kind, found = Operator_Kind_2(KIND_DEFINE), true
+  }
+  return Operator_Lookup_2_Result{Kind: kind, Found: found}
 }
 
 // Operator_Lookup_1_Result keeps one-byte kind and presence at one output boundary.
 type Operator_Lookup_1_Result struct {
-	// Kind stays default where byte names no operator.
-	Kind Operator_Kind_1
-	// Found distinguishes default kind from matching byte.
-	Found Boolean
+  // Kind stays default where byte names no operator.
+  Kind Operator_Kind_1
+  // Found distinguishes default kind from matching byte.
+  Found Boolean
 }
 
 // Operator_Lookup_1_Result_Invariants composes one one-byte lookup.
 func Operator_Lookup_1_Result_Invariants(
-	value Operator_Lookup_1_Result, namespace aver.Namespace,
+  value *Operator_Lookup_1_Result,
+  namespace aver.Namespace,
 ) {
-	Operator_Kind_1_Invariants(value.Kind, namespace)
-	Boolean_Invariants(value.Found, namespace)
+  Operator_Kind_1_Invariants(value.Kind, namespace)
+  Boolean_Invariants(value.Found, namespace)
 }
 
 // Looks the first byte up in the twenty-three one-byte Go operators and delimiters.
 func operator_lookup_1(tail Tail) (result Operator_Lookup_1_Result) {
-	defer func() { Operator_Lookup_1_Result_Invariants(result, "operator_lookup_1.result") }()
-	Tail_Invariants(tail, "operator_lookup_1.tail")
-	kind := Operator_Kind_1(OPERATOR_KIND_1_MINIMUM)
-	found := Boolean(false)
-	switch tail[0] {
-	case '+':
-		kind, found = Operator_Kind_1(KIND_PLUS), true
-	case '-':
-		kind, found = Operator_Kind_1(KIND_MINUS), true
-	case '*':
-		kind, found = Operator_Kind_1(KIND_STAR), true
-	case '/':
-		kind, found = Operator_Kind_1(KIND_SLASH), true
-	case '%':
-		kind, found = Operator_Kind_1(KIND_PERCENT), true
-	case '&':
-		kind, found = Operator_Kind_1(KIND_AND), true
-	case '|':
-		kind, found = Operator_Kind_1(KIND_OR), true
-	case '^':
-		kind, found = Operator_Kind_1(KIND_EXCLUSIVE_OR), true
-	case '<':
-		kind, found = Operator_Kind_1(KIND_LESS), true
-	case '>':
-		kind, found = Operator_Kind_1(KIND_GREATER), true
-	case '=':
-		kind, found = Operator_Kind_1(KIND_ASSIGN), true
-	case '!':
-		kind, found = Operator_Kind_1(KIND_NOT), true
-	case '(':
-		kind, found = Operator_Kind_1(KIND_PARENTHESIS_LEFT), true
-	case ')':
-		kind, found = Operator_Kind_1(KIND_PARENTHESIS_RIGHT), true
-	case '[':
-		kind, found = Operator_Kind_1(KIND_BRACKET_LEFT), true
-	case ']':
-		kind, found = Operator_Kind_1(KIND_BRACKET_RIGHT), true
-	case '{':
-		kind, found = Operator_Kind_1(KIND_BRACE_LEFT), true
-	case '}':
-		kind, found = Operator_Kind_1(KIND_BRACE_RIGHT), true
-	case ',':
-		kind, found = Operator_Kind_1(KIND_COMMA), true
-	case '.':
-		kind, found = Operator_Kind_1(KIND_PERIOD), true
-	case ';':
-		kind, found = Operator_Kind_1(KIND_SEMICOLON), true
-	case ':':
-		kind, found = Operator_Kind_1(KIND_COLON), true
-	case '~':
-		kind, found = Operator_Kind_1(KIND_TILDE), true
-	}
-	return Operator_Lookup_1_Result{Kind: kind, Found: found}
+  defer func() { Operator_Lookup_1_Result_Invariants(&result, "operator_lookup_1.result") }()
+  Tail_Invariants(tail, "operator_lookup_1.tail")
+  kind := Operator_Kind_1(OPERATOR_KIND_1_MINIMUM)
+  found := Boolean(false)
+  switch tail[0] {
+  case '+':
+    kind, found = Operator_Kind_1(KIND_PLUS), true
+  case '-':
+    kind, found = Operator_Kind_1(KIND_MINUS), true
+  case '*':
+    kind, found = Operator_Kind_1(KIND_STAR), true
+  case '/':
+    kind, found = Operator_Kind_1(KIND_SLASH), true
+  case '%':
+    kind, found = Operator_Kind_1(KIND_PERCENT), true
+  case '&':
+    kind, found = Operator_Kind_1(KIND_AND), true
+  case '|':
+    kind, found = Operator_Kind_1(KIND_OR), true
+  case '^':
+    kind, found = Operator_Kind_1(KIND_EXCLUSIVE_OR), true
+  case '<':
+    kind, found = Operator_Kind_1(KIND_LESS), true
+  case '>':
+    kind, found = Operator_Kind_1(KIND_GREATER), true
+  case '=':
+    kind, found = Operator_Kind_1(KIND_ASSIGN), true
+  case '!':
+    kind, found = Operator_Kind_1(KIND_NOT), true
+  case '(':
+    kind, found = Operator_Kind_1(KIND_PARENTHESIS_LEFT), true
+  case ')':
+    kind, found = Operator_Kind_1(KIND_PARENTHESIS_RIGHT), true
+  case '[':
+    kind, found = Operator_Kind_1(KIND_BRACKET_LEFT), true
+  case ']':
+    kind, found = Operator_Kind_1(KIND_BRACKET_RIGHT), true
+  case '{':
+    kind, found = Operator_Kind_1(KIND_BRACE_LEFT), true
+  case '}':
+    kind, found = Operator_Kind_1(KIND_BRACE_RIGHT), true
+  case ',':
+    kind, found = Operator_Kind_1(KIND_COMMA), true
+  case '.':
+    kind, found = Operator_Kind_1(KIND_PERIOD), true
+  case ';':
+    kind, found = Operator_Kind_1(KIND_SEMICOLON), true
+  case ':':
+    kind, found = Operator_Kind_1(KIND_COLON), true
+  case '~':
+    kind, found = Operator_Kind_1(KIND_TILDE), true
+  }
+  return Operator_Lookup_1_Result{Kind: kind, Found: found}
 }

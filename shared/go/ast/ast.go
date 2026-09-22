@@ -5,10 +5,8 @@
 // every read position and every arena count at a call site that never meets most of them.
 package ast
 
-import (
-	"local/james-orcales/shared/go/token"
-	"local/james-orcales/shared/sim/aver/default"
-)
+import "local/james-orcales/shared/go/token"
+import "local/james-orcales/shared/sim/aver/default"
 
 // TOKEN_COUNT_MAXIMUM caps the token run. The densest first-party file in this repository
 // spends 50,875 tokens, so this is two and a half times the largest run measured, and a source
@@ -429,9 +427,9 @@ type Failure_Code uint8
 
 // Failure_Code_Invariants states the clean parse and every cause.
 func Failure_Code_Invariants(value Failure_Code, namespace aver.Namespace) {
-	aver.Tree(value, namespace).
-		Range_Uint8(uint8(value), FAILURE_CODE_MINIMUM, FAILURE_CODE_MAXIMUM).
-		Ensure()
+  aver.Tree(value, namespace).
+    Range_Uint8(uint8(value), FAILURE_CODE_MINIMUM, FAILURE_CODE_MAXIMUM).
+    Ensure()
 }
 
 // Message is the sentence one failure code reads as. Each is a compile-time constant, thus
@@ -440,9 +438,9 @@ type Message string
 
 // Message_Invariants states the band every failure sentence spans.
 func Message_Invariants(value Message, namespace aver.Namespace) {
-	aver.Tree(value, namespace).
-		Range_Int(len(value), MESSAGE_SIZE_MINIMUM, MESSAGE_SIZE_MAXIMUM).
-		Ensure()
+  aver.Tree(value, namespace).
+    Range_Int(len(value), MESSAGE_SIZE_MINIMUM, MESSAGE_SIZE_MAXIMUM).
+    Ensure()
 }
 
 // Node_Kind is the syntactic class of one node.
@@ -450,9 +448,9 @@ type Node_Kind uint8
 
 // Node_Kind_Invariants states the complete syntactic class domain.
 func Node_Kind_Invariants(value Node_Kind, namespace aver.Namespace) {
-	aver.Tree(value, namespace).
-		Range_Uint8(uint8(value), NODE_KIND_MINIMUM, NODE_KIND_MAXIMUM).
-		Ensure()
+  aver.Tree(value, namespace).
+    Range_Uint8(uint8(value), NODE_KIND_MINIMUM, NODE_KIND_MAXIMUM).
+    Ensure()
 }
 
 // Index is one slot of the node arena, or INDEX_ABSENT for no node.
@@ -460,9 +458,9 @@ type Index int32
 
 // Index_Invariants admits the absent slot, because a missing child is a slot number of its own.
 func Index_Invariants(value Index, namespace aver.Namespace) {
-	aver.Tree(value, namespace).
-		Range_Int32(int32(value), INDEX_MINIMUM, INDEX_MAXIMUM).
-		Ensure()
+  aver.Tree(value, namespace).
+    Range_Int32(int32(value), INDEX_MINIMUM, INDEX_MAXIMUM).
+    Ensure()
 }
 
 // Token_Index is one slot of the token run.
@@ -470,9 +468,9 @@ type Token_Index int32
 
 // Token_Index_Invariants states the complete token run domain.
 func Token_Index_Invariants(value Token_Index, namespace aver.Namespace) {
-	aver.Tree(value, namespace).
-		Range_Int32(int32(value), TOKEN_INDEX_MINIMUM, TOKEN_INDEX_MAXIMUM).
-		Ensure()
+  aver.Tree(value, namespace).
+    Range_Int32(int32(value), TOKEN_INDEX_MINIMUM, TOKEN_INDEX_MAXIMUM).
+    Ensure()
 }
 
 // Token_Run is the borrowed token prefix one parse wrote.
@@ -480,9 +478,9 @@ type Token_Run []token.Token
 
 // Token_Run_Invariants bounds the borrowed prefix inside Parse_State storage.
 func Token_Run_Invariants(value Token_Run, namespace aver.Namespace) {
-	aver.Tree(value, namespace).
-		Range_Int(len(value), TOKEN_RUN_SIZE_MINIMUM, TOKEN_COUNT_MAXIMUM).
-		Ensure()
+  aver.Tree(value, namespace).
+    Range_Int(len(value), TOKEN_RUN_SIZE_MINIMUM, TOKEN_COUNT_MAXIMUM).
+    Ensure()
 }
 
 // Ancestor is the slot that holds one node as a child, or INDEX_ABSENT for a root. A parent
@@ -492,12 +490,17 @@ type Ancestor int32
 // Ancestor_Invariants excludes the final slot, which no node can hold as its parent, and the
 // slot after the file, which opens the child chain and therefore holds no child of its own.
 func Ancestor_Invariants(value Ancestor, namespace aver.Namespace) {
-	aver.Tree(value, namespace).
-		Range_Holed_Int32(
-			int32(value), INDEX_MINIMUM, ANCESTOR_MAXIMUM,
-			LINK_HOLE_FIRST, LINK_HOLE_FIRST, LINK_HOLE_FIRST, LINK_HOLE_FIRST,
-		).
-		Ensure()
+  aver.Tree(value, namespace).
+    Range_Holed_Int32(
+    int32(value),
+    INDEX_MINIMUM,
+    ANCESTOR_MAXIMUM,
+    LINK_HOLE_FIRST,
+    LINK_HOLE_FIRST,
+    LINK_HOLE_FIRST,
+    LINK_HOLE_FIRST,
+  ).
+    Ensure()
 }
 
 // Head is the first child of one node, or INDEX_ABSENT when it has none.
@@ -505,12 +508,17 @@ type Head int32
 
 // Head_Invariants holes the file slot, which is the root and therefore no node's child.
 func Head_Invariants(value Head, namespace aver.Namespace) {
-	aver.Tree(value, namespace).
-		Range_Holed_Int32(
-			int32(value), INDEX_MINIMUM, INDEX_MAXIMUM,
-			LINK_HOLE_ROOT, LINK_HOLE_ROOT, LINK_HOLE_ROOT, LINK_HOLE_ROOT,
-		).
-		Ensure()
+  aver.Tree(value, namespace).
+    Range_Holed_Int32(
+    int32(value),
+    INDEX_MINIMUM,
+    INDEX_MAXIMUM,
+    LINK_HOLE_ROOT,
+    LINK_HOLE_ROOT,
+    LINK_HOLE_ROOT,
+    LINK_HOLE_ROOT,
+  ).
+    Ensure()
 }
 
 // Successor is the sibling after one node, or INDEX_ABSENT when it is the final child.
@@ -519,12 +527,17 @@ type Successor int32
 // Successor_Invariants holes the file slot and the slot after it: the first opens no chain it
 // belongs to and the second opens the chain of the file, so neither follows a sibling.
 func Successor_Invariants(value Successor, namespace aver.Namespace) {
-	aver.Tree(value, namespace).
-		Range_Holed_Int32(
-			int32(value), INDEX_MINIMUM, INDEX_MAXIMUM,
-			LINK_HOLE_ROOT, LINK_HOLE_FIRST, LINK_HOLE_FIRST, LINK_HOLE_FIRST,
-		).
-		Ensure()
+  aver.Tree(value, namespace).
+    Range_Holed_Int32(
+    int32(value),
+    INDEX_MINIMUM,
+    INDEX_MAXIMUM,
+    LINK_HOLE_ROOT,
+    LINK_HOLE_FIRST,
+    LINK_HOLE_FIRST,
+    LINK_HOLE_FIRST,
+  ).
+    Ensure()
 }
 
 // Root is the file node one parse builds, or INDEX_ABSENT when the scan refused the source.
@@ -532,9 +545,9 @@ type Root int32
 
 // Root_Invariants states the two slots a parse can return.
 func Root_Invariants(value Root, namespace aver.Namespace) {
-	aver.Tree(value, namespace).
-		Enum_Int32(int32(value), INDEX_MINIMUM, int32(INDEX_FIRST)).
-		Ensure()
+  aver.Tree(value, namespace).
+    Enum_Int32(int32(value), INDEX_MINIMUM, int32(INDEX_FIRST)).
+    Ensure()
 }
 
 // Clause_Kind is the class of one simple statement.
@@ -542,9 +555,9 @@ type Clause_Kind int
 
 // Clause_Kind_Invariants states the block of simple statement kinds.
 func Clause_Kind_Invariants(value Clause_Kind, namespace aver.Namespace) {
-	aver.Tree(value, namespace).
-		Range_Int(int(value), CLAUSE_KIND_MINIMUM, CLAUSE_KIND_MAXIMUM).
-		Ensure()
+  aver.Tree(value, namespace).
+    Range_Int(int(value), CLAUSE_KIND_MINIMUM, CLAUSE_KIND_MAXIMUM).
+    Ensure()
 }
 
 // Literal_Kind is the class of one literal token.
@@ -552,9 +565,9 @@ type Literal_Kind int
 
 // Literal_Kind_Invariants states the block of literal kinds.
 func Literal_Kind_Invariants(value Literal_Kind, namespace aver.Namespace) {
-	aver.Tree(value, namespace).
-		Range_Int(int(value), LITERAL_KIND_MINIMUM, LITERAL_KIND_MAXIMUM).
-		Ensure()
+  aver.Tree(value, namespace).
+    Range_Int(int(value), LITERAL_KIND_MINIMUM, LITERAL_KIND_MAXIMUM).
+    Ensure()
 }
 
 // Suffix_Kind is the class a bracket suffix opens.
@@ -562,9 +575,14 @@ type Suffix_Kind int
 
 // Suffix_Kind_Invariants states the three classes a bracket suffix can open.
 func Suffix_Kind_Invariants(value Suffix_Kind, namespace aver.Namespace) {
-	aver.Tree(value, namespace).
-		Enum_3_Int(int(value), SUFFIX_KIND_GENERIC, SUFFIX_KIND_INDEX, SUFFIX_KIND_SLICE).
-		Ensure()
+  aver.Tree(value, namespace).
+    Enum_3_Int(
+    int(value),
+    SUFFIX_KIND_GENERIC,
+    SUFFIX_KIND_INDEX,
+    SUFFIX_KIND_SLICE,
+  ).
+    Ensure()
 }
 
 // Precedence is the binding level of a binary operator.
@@ -573,11 +591,15 @@ type Precedence int
 // Precedence_Invariants admits the level of a token that binds nothing and the three levels this
 // dialect states.
 func Precedence_Invariants(value Precedence, namespace aver.Namespace) {
-	aver.Tree(value, namespace).
-		Enum_4_Int(
-			int(value), int(PRECEDENCE_NONE), int(PRECEDENCE_COMPARISON),
-			int(PRECEDENCE_ADDITION), int(PRECEDENCE_MULTIPLICATION)).
-		Ensure()
+  aver.Tree(value, namespace).
+    Enum_4_Int(
+    int(value),
+    int(PRECEDENCE_NONE),
+    int(PRECEDENCE_COMPARISON),
+    int(PRECEDENCE_ADDITION),
+    int(PRECEDENCE_MULTIPLICATION),
+  ).
+    Ensure()
 }
 
 // Boolean is a true or false report about one parse step.
@@ -585,9 +607,9 @@ type Boolean bool
 
 // Boolean_Invariants states both parse reports as obligations.
 func Boolean_Invariants(value Boolean, namespace aver.Namespace) {
-	aver.Tree(value, namespace).
-		Sometimes(bool(value), "The parse step report is true.").
-		Ensure()
+  aver.Tree(value, namespace).
+    Sometimes(bool(value), "The parse step report is true.").
+    Ensure()
 }
 
 // Node is one slot of the arena: a syntactic class, the token that names it, and its place in
@@ -596,27 +618,27 @@ func Boolean_Invariants(value Boolean, namespace aver.Namespace) {
 // integers and the class over one byte, which is the whole reason a whole-file arena fits in
 // single-digit megabytes; the class stands last so the six wide fields pack ahead of it.
 type Node struct {
-	// Token is the run position of the token that names this node.
-	Token Token_Index
-	// Parent is the slot that holds this node as a child, or INDEX_ABSENT for the root.
-	Parent Ancestor
-	// First_Child is the first child of this node, or INDEX_ABSENT when it has none.
-	First_Child Head
-	// Next is the sibling after this node, or INDEX_ABSENT when it is the final child.
-	Next Successor
-	// Kind is the syntactic class this node belongs to.
-	Kind Node_Kind
+  // Token is the run position of the token that names this node.
+  Token Token_Index
+  // Parent is the slot that holds this node as a child, or INDEX_ABSENT for the root.
+  Parent Ancestor
+  // First_Child is the first child of this node, or INDEX_ABSENT when it has none.
+  First_Child Head
+  // Next is the sibling after this node, or INDEX_ABSENT when it is the final child.
+  Next Successor
+  // Kind is the syntactic class this node belongs to.
+  Kind Node_Kind
 }
 
 // Node_Invariants composes the class, the naming token, and the five tree links of one node.
 // Each link carries a type of its own, because one assertion tree holds one type at one
 // position and five links of one type would give five paths one identity.
-func Node_Invariants(value Node, namespace aver.Namespace) {
-	Node_Kind_Invariants(value.Kind, namespace)
-	Token_Index_Invariants(value.Token, namespace)
-	Ancestor_Invariants(value.Parent, namespace)
-	Head_Invariants(value.First_Child, namespace)
-	Successor_Invariants(value.Next, namespace)
+func Node_Invariants(value *Node, namespace aver.Namespace) {
+  Node_Kind_Invariants(value.Kind, namespace)
+  Token_Index_Invariants(value.Token, namespace)
+  Ancestor_Invariants(value.Parent, namespace)
+  Head_Invariants(value.First_Child, namespace)
+  Successor_Invariants(value.Next, namespace)
 }
 
 // Tokens keeps complete lexical storage caller-owned and unable to grow.
@@ -624,19 +646,19 @@ type Tokens []token.Token
 
 // Tokens_Invariants fixes lexical storage to parser bound.
 func Tokens_Invariants(value Tokens, _ aver.Namespace) {
-	aver.Always(len(value) == TOKEN_COUNT_MAXIMUM, "Token storage has complete length.")
-	aver.Always(cap(value) == TOKEN_COUNT_MAXIMUM, "Token storage cannot grow.")
+  aver.Always(len(value) == TOKEN_COUNT_MAXIMUM, "Token storage has complete length.")
+  aver.Always(cap(value) == TOKEN_COUNT_MAXIMUM, "Token storage cannot grow.")
 }
 
 // Token_Storage keeps token slice representation composable under parse state.
 type Token_Storage struct {
-	// Values stays wrapped because validated state inherits this field.
-	Values Tokens
+  // Values stays wrapped because validated state inherits this field.
+  Values Tokens
 }
 
 // Token_Storage_Invariants fixes caller token memory.
-func Token_Storage_Invariants(value Token_Storage, namespace aver.Namespace) {
-	Tokens_Invariants(value.Values, namespace)
+func Token_Storage_Invariants(value *Token_Storage, namespace aver.Namespace) {
+  Tokens_Invariants(value.Values, namespace)
 }
 
 // Nodes keeps complete syntax arena caller-owned and unable to grow.
@@ -644,19 +666,19 @@ type Nodes []Node
 
 // Nodes_Invariants fixes syntax storage to parser bound.
 func Nodes_Invariants(value Nodes, _ aver.Namespace) {
-	aver.Always(len(value) == NODE_COUNT_MAXIMUM, "Node storage has complete length.")
-	aver.Always(cap(value) == NODE_COUNT_MAXIMUM, "Node storage cannot grow.")
+  aver.Always(len(value) == NODE_COUNT_MAXIMUM, "Node storage has complete length.")
+  aver.Always(cap(value) == NODE_COUNT_MAXIMUM, "Node storage cannot grow.")
 }
 
 // Node_Storage keeps arena slice representation composable under parse state.
 type Node_Storage struct {
-	// Values stays wrapped because validated state inherits this field.
-	Values Nodes
+  // Values stays wrapped because validated state inherits this field.
+  Values Nodes
 }
 
 // Node_Storage_Invariants fixes caller arena memory.
-func Node_Storage_Invariants(value Node_Storage, namespace aver.Namespace) {
-	Nodes_Invariants(value.Values, namespace)
+func Node_Storage_Invariants(value *Node_Storage, namespace aver.Namespace) {
+  Nodes_Invariants(value.Values, namespace)
 }
 
 // Parents keeps open-node ancestry caller-owned and unable to grow.
@@ -664,19 +686,19 @@ type Parents []Index
 
 // Parents_Invariants fixes ancestry storage to nesting bound.
 func Parents_Invariants(value Parents, _ aver.Namespace) {
-	aver.Always(len(value) == DEPTH_MAXIMUM, "Parent storage has complete length.")
-	aver.Always(cap(value) == DEPTH_MAXIMUM, "Parent storage cannot grow.")
+  aver.Always(len(value) == DEPTH_MAXIMUM, "Parent storage has complete length.")
+  aver.Always(cap(value) == DEPTH_MAXIMUM, "Parent storage cannot grow.")
 }
 
 // Parent_Storage keeps ancestry slice representation composable under parse state.
 type Parent_Storage struct {
-	// Values stays wrapped because validated state inherits this field.
-	Values Parents
+  // Values stays wrapped because validated state inherits this field.
+  Values Parents
 }
 
 // Parent_Storage_Invariants fixes caller ancestry memory.
-func Parent_Storage_Invariants(value Parent_Storage, namespace aver.Namespace) {
-	Parents_Invariants(value.Values, namespace)
+func Parent_Storage_Invariants(value *Parent_Storage, namespace aver.Namespace) {
+  Parents_Invariants(value.Values, namespace)
 }
 
 // Last_Children keeps active sibling tails caller-owned and unable to grow.
@@ -684,19 +706,19 @@ type Last_Children []Index
 
 // Last_Children_Invariants fixes sibling-tail storage to nesting bound.
 func Last_Children_Invariants(value Last_Children, _ aver.Namespace) {
-	aver.Always(len(value) == DEPTH_MAXIMUM, "Last-child storage has complete length.")
-	aver.Always(cap(value) == DEPTH_MAXIMUM, "Last-child storage cannot grow.")
+  aver.Always(len(value) == DEPTH_MAXIMUM, "Last-child storage has complete length.")
+  aver.Always(cap(value) == DEPTH_MAXIMUM, "Last-child storage cannot grow.")
 }
 
 // Last_Child_Storage keeps sibling-tail slice representation composable under parse state.
 type Last_Child_Storage struct {
-	// Values stays wrapped because validated state inherits this field.
-	Values Last_Children
+  // Values stays wrapped because validated state inherits this field.
+  Values Last_Children
 }
 
 // Last_Child_Storage_Invariants fixes caller sibling-tail memory.
-func Last_Child_Storage_Invariants(value Last_Child_Storage, namespace aver.Namespace) {
-	Last_Children_Invariants(value.Values, namespace)
+func Last_Child_Storage_Invariants(value *Last_Child_Storage, namespace aver.Namespace) {
+  Last_Children_Invariants(value.Values, namespace)
 }
 
 // Earlier_Children keeps prior sibling tails caller-owned and unable to grow.
@@ -704,48 +726,48 @@ type Earlier_Children []Index
 
 // Earlier_Children_Invariants fixes prior-tail storage to nesting bound.
 func Earlier_Children_Invariants(value Earlier_Children, _ aver.Namespace) {
-	aver.Always(len(value) == DEPTH_MAXIMUM, "Earlier-child storage has complete length.")
-	aver.Always(cap(value) == DEPTH_MAXIMUM, "Earlier-child storage cannot grow.")
+  aver.Always(len(value) == DEPTH_MAXIMUM, "Earlier-child storage has complete length.")
+  aver.Always(cap(value) == DEPTH_MAXIMUM, "Earlier-child storage cannot grow.")
 }
 
 // Earlier_Child_Storage keeps prior-tail slice representation composable under parse state.
 type Earlier_Child_Storage struct {
-	// Values stays wrapped because validated state inherits this field.
-	Values Earlier_Children
+  // Values stays wrapped because validated state inherits this field.
+  Values Earlier_Children
 }
 
 // Earlier_Child_Storage_Invariants fixes caller prior-tail memory.
 func Earlier_Child_Storage_Invariants(
-	value Earlier_Child_Storage, namespace aver.Namespace,
+  value *Earlier_Child_Storage, namespace aver.Namespace,
 ) {
-	Earlier_Children_Invariants(value.Values, namespace)
+  Earlier_Children_Invariants(value.Values, namespace)
 }
 
 // Syntax_Tree is the token run and the node arena one parse writes, which is all a reader of the
 // tree walks.
 type Syntax_Tree struct {
-	// Tokens is the token run of the source, ending in one end-of-file token.
-	Tokens Token_Storage
-	// Nodes is the node arena. Slot zero holds no node.
-	Nodes Node_Storage
-	// Parents holds the node left open at each nesting depth.
-	Parents Parent_Storage
-	// Last_Children holds the final child of the open node at each nesting depth. It stands
-	// here rather than in every node, because only an open node ever gains a child and a
-	// field of its own would cost four bytes for every slot of the arena.
-	Last_Children Last_Child_Storage
-	// Earlier_Children holds the child before the final one at each nesting depth, which is
-	// what an operator needs to unlink the operand it takes back.
-	Earlier_Children Earlier_Child_Storage
+  // Tokens is the token run of the source, ending in one end-of-file token.
+  Tokens Token_Storage
+  // Nodes is the node arena. Slot zero holds no node.
+  Nodes Node_Storage
+  // Parents holds the node left open at each nesting depth.
+  Parents Parent_Storage
+  // Last_Children holds the final child of the open node at each nesting depth. It stands
+  // here rather than in every node, because only an open node ever gains a child and a
+  // field of its own would cost four bytes for every slot of the arena.
+  Last_Children Last_Child_Storage
+  // Earlier_Children holds the child before the final one at each nesting depth, which is
+  // what an operator needs to unlink the operand it takes back.
+  Earlier_Children Earlier_Child_Storage
 }
 
 // Syntax_Tree_Invariants composes every store the caller supplies.
-func Syntax_Tree_Invariants(value Syntax_Tree, namespace aver.Namespace) {
-	Token_Storage_Invariants(value.Tokens, namespace)
-	Node_Storage_Invariants(value.Nodes, namespace)
-	Parent_Storage_Invariants(value.Parents, namespace)
-	Last_Child_Storage_Invariants(value.Last_Children, namespace)
-	Earlier_Child_Storage_Invariants(value.Earlier_Children, namespace)
+func Syntax_Tree_Invariants(value *Syntax_Tree, namespace aver.Namespace) {
+  Token_Storage_Invariants(&value.Tokens, namespace)
+  Node_Storage_Invariants(&value.Nodes, namespace)
+  Parent_Storage_Invariants(&value.Parents, namespace)
+  Last_Child_Storage_Invariants(&value.Last_Children, namespace)
+  Earlier_Child_Storage_Invariants(&value.Earlier_Children, namespace)
 }
 
 // Syntax_Tree_Handle gives the caller-owned tree storage one identity.
@@ -753,28 +775,28 @@ type Syntax_Tree_Handle *Syntax_Tree
 
 // Syntax_Tree_Handle_Invariants composes present tree storage.
 func Syntax_Tree_Handle_Invariants(value Syntax_Tree_Handle, namespace aver.Namespace) {
-	if value == nil {
-		return
-	}
-	Syntax_Tree_Invariants(*value, namespace)
+  if value == nil {
+    return
+  }
+  Syntax_Tree_Invariants(value, namespace)
 }
 
 // Parse_State is the caller-owned parser storage.
 type Parse_State struct {
-	// Syntax_Tree is the tree the parse writes.
-	Syntax_Tree
-	// Failure is why the last parse stopped, or FAILURE_NONE when it ran clean.
-	Failure Failure_Code
-	// Failure_Token is the run position of the token the last parse refused. It carries no
-	// meaning while Failure reads FAILURE_NONE.
-	Failure_Token Token_Index
+  // Syntax_Tree is the tree the parse writes.
+  Syntax_Tree
+  // Failure is why the last parse stopped, or FAILURE_NONE when it ran clean.
+  Failure Failure_Code
+  // Failure_Token is the run position of the token the last parse refused. It carries no
+  // meaning while Failure reads FAILURE_NONE.
+  Failure_Token Token_Index
 }
 
 // Parse_State_Invariants composes the tree and the report.
-func Parse_State_Invariants(value Parse_State, namespace aver.Namespace) {
-	Syntax_Tree_Invariants(value.Syntax_Tree, namespace)
-	Failure_Code_Invariants(value.Failure, namespace)
-	Token_Index_Invariants(value.Failure_Token, namespace)
+func Parse_State_Invariants(value *Parse_State, namespace aver.Namespace) {
+  Syntax_Tree_Invariants(&value.Syntax_Tree, namespace)
+  Failure_Code_Invariants(value.Failure, namespace)
+  Token_Index_Invariants(value.Failure_Token, namespace)
 }
 
 // Parse_State_Handle gives caller-owned parse storage one identity.
@@ -782,10 +804,10 @@ type Parse_State_Handle *Parse_State
 
 // Parse_State_Handle_Invariants composes present parse storage.
 func Parse_State_Handle_Invariants(value Parse_State_Handle, namespace aver.Namespace) {
-	if value == nil {
-		return
-	}
-	Parse_State_Invariants(*value, namespace)
+  if value == nil {
+    return
+  }
+  Parse_State_Invariants(value, namespace)
 }
 
 // Token_Count is how many tokens one scan wrote, the end token among them.
@@ -793,9 +815,9 @@ type Token_Count Token_Index
 
 // Token_Count_Invariants states every run from the end token alone to the widest run.
 func Token_Count_Invariants(value Token_Count, namespace aver.Namespace) {
-	aver.Tree(value, namespace).
-		Range_Int32(int32(value), TOKEN_RUN_SIZE_MINIMUM, TOKEN_COUNT_MAXIMUM).
-		Ensure()
+  aver.Tree(value, namespace).
+    Range_Int32(int32(value), TOKEN_RUN_SIZE_MINIMUM, TOKEN_COUNT_MAXIMUM).
+    Ensure()
 }
 
 // Token_Position is the token the read stands on.
@@ -803,9 +825,9 @@ type Token_Position Token_Index
 
 // Token_Position_Invariants states every token of the run.
 func Token_Position_Invariants(value Token_Position, namespace aver.Namespace) {
-	aver.Tree(value, namespace).
-		Range_Int32(int32(value), TOKEN_INDEX_MINIMUM, TOKEN_INDEX_MAXIMUM).
-		Ensure()
+  aver.Tree(value, namespace).
+    Range_Int32(int32(value), TOKEN_INDEX_MINIMUM, TOKEN_INDEX_MAXIMUM).
+    Ensure()
 }
 
 // Blank_Token is one past the final token whose run of empty lines the tree already holds.
@@ -813,27 +835,27 @@ type Blank_Token Token_Index
 
 // Blank_Token_Invariants states one position past every token of the run.
 func Blank_Token_Invariants(value Blank_Token, namespace aver.Namespace) {
-	aver.Tree(value, namespace).
-		Range_Int32(int32(value), TOKEN_INDEX_MINIMUM, TOKEN_COUNT_MAXIMUM).
-		Ensure()
+  aver.Tree(value, namespace).
+    Range_Int32(int32(value), TOKEN_INDEX_MINIMUM, TOKEN_COUNT_MAXIMUM).
+    Ensure()
 }
 
 // Run_Cursors names each place the read of the run stands at.
 type Run_Cursors struct {
-	// Count bounds every read, because the run ends at the token the scan wrote last.
-	Count Token_Count
-	// Position is the token the next step reads.
-	Position Token_Position
-	// Blank keeps a run of empty lines out of the tree twice, because a step may ask for the
-	// trivia at one token more than once.
-	Blank Blank_Token
+  // Count bounds every read, because the run ends at the token the scan wrote last.
+  Count Token_Count
+  // Position is the token the next step reads.
+  Position Token_Position
+  // Blank keeps a run of empty lines out of the tree twice, because a step may ask for the
+  // trivia at one token more than once.
+  Blank Blank_Token
 }
 
 // Run_Cursors_Invariants composes each place the read stands at.
-func Run_Cursors_Invariants(value Run_Cursors, namespace aver.Namespace) {
-	Token_Count_Invariants(value.Count, namespace)
-	Token_Position_Invariants(value.Position, namespace)
-	Blank_Token_Invariants(value.Blank, namespace)
+func Run_Cursors_Invariants(value *Run_Cursors, namespace aver.Namespace) {
+  Token_Count_Invariants(value.Count, namespace)
+  Token_Position_Invariants(value.Position, namespace)
+  Blank_Token_Invariants(value.Blank, namespace)
 }
 
 // Arena_Count is how many slots the arena holds, the absent slot among them.
@@ -841,9 +863,13 @@ type Arena_Count Index
 
 // Arena_Count_Invariants states every arena from the absent slot alone to the widest arena.
 func Arena_Count_Invariants(value Arena_Count, namespace aver.Namespace) {
-	aver.Tree(value, namespace).
-		Range_Int32(int32(value), int32(ARENA_COUNT_MINIMUM), NODE_COUNT_MAXIMUM).
-		Ensure()
+  aver.Tree(value, namespace).
+    Range_Int32(
+    int32(value),
+    int32(ARENA_COUNT_MINIMUM),
+    NODE_COUNT_MAXIMUM,
+  ).
+    Ensure()
 }
 
 // ARENA_COUNT_MINIMUM is the absent slot and the file. The file opens ahead of the program, thus
@@ -860,23 +886,23 @@ type Parse_Depth Index
 // Parse_Depth_Invariants states every depth the parent stack holds. An open past the stack fails
 // the parse before it counts, thus the count never passes the stack.
 func Parse_Depth_Invariants(value Parse_Depth, namespace aver.Namespace) {
-	aver.Tree(value, namespace).
-		Range_Int32(int32(value), int32(DEPTH_MINIMUM), DEPTH_MAXIMUM).
-		Ensure()
+  aver.Tree(value, namespace).
+    Range_Int32(int32(value), int32(DEPTH_MINIMUM), DEPTH_MAXIMUM).
+    Ensure()
 }
 
 // Arena_Cursors names the extent of the arena and the depth of the open nodes.
 type Arena_Cursors struct {
-	// Count bounds every write, because the arena ends at the slot the parse took last.
-	Count Arena_Count
-	// Depth bounds the parent stack.
-	Depth Parse_Depth
+  // Count bounds every write, because the arena ends at the slot the parse took last.
+  Count Arena_Count
+  // Depth bounds the parent stack.
+  Depth Parse_Depth
 }
 
 // Arena_Cursors_Invariants composes the arena extent and the open depth.
-func Arena_Cursors_Invariants(value Arena_Cursors, namespace aver.Namespace) {
-	Arena_Count_Invariants(value.Count, namespace)
-	Parse_Depth_Invariants(value.Depth, namespace)
+func Arena_Cursors_Invariants(value *Arena_Cursors, namespace aver.Namespace) {
+  Arena_Count_Invariants(value.Count, namespace)
+  Parse_Depth_Invariants(value.Depth, namespace)
 }
 
 // Plain_Brace marks a control clause, where an open brace starts a block rather than a composite
@@ -885,9 +911,9 @@ type Plain_Brace Boolean
 
 // Plain_Brace_Invariants states both brace readings.
 func Plain_Brace_Invariants(value Plain_Brace, namespace aver.Namespace) {
-	aver.Tree(value, namespace).
-		Sometimes(bool(value), "Brace opens plain block.").
-		Ensure()
+  aver.Tree(value, namespace).
+    Sometimes(bool(value), "Brace opens plain block.").
+    Ensure()
 }
 
 // Type_Assertion marks a switch head holding a type assertion over the type keyword, which is
@@ -896,47 +922,47 @@ type Type_Assertion Boolean
 
 // Type_Assertion_Invariants states both assertion readings.
 func Type_Assertion_Invariants(value Type_Assertion, namespace aver.Namespace) {
-	aver.Tree(value, namespace).
-		Sometimes(bool(value), "Clause holds type assertion.").
-		Ensure()
+  aver.Tree(value, namespace).
+    Sometimes(bool(value), "Clause holds type assertion.").
+    Ensure()
 }
 
 // Machine_Flags names each reading the grammar carries across its rules.
 type Machine_Flags struct {
-	// Plain_Brace stands alone because control clauses own this ambiguity.
-	Plain_Brace Plain_Brace
-	// Type_Assertion stands alone because switch classification owns this ambiguity.
-	Type_Assertion Type_Assertion
+  // Plain_Brace stands alone because control clauses own this ambiguity.
+  Plain_Brace Plain_Brace
+  // Type_Assertion stands alone because switch classification owns this ambiguity.
+  Type_Assertion Type_Assertion
 }
 
 // Machine_Flags_Invariants composes each reading.
-func Machine_Flags_Invariants(value Machine_Flags, namespace aver.Namespace) {
-	Plain_Brace_Invariants(value.Plain_Brace, namespace)
-	Type_Assertion_Invariants(value.Type_Assertion, namespace)
+func Machine_Flags_Invariants(value *Machine_Flags, namespace aver.Namespace) {
+  Plain_Brace_Invariants(value.Plain_Brace, namespace)
+  Type_Assertion_Invariants(value.Type_Assertion, namespace)
 }
 
 // Arena is the tree one run writes: the slots, the open nodes, and their extent. It stands apart
 // from the read of the run, because a write into the tree owes no place the read stands at.
 type Arena struct {
-	// Nodes is the arena the run writes.
-	Nodes Node_Storage
-	// Parents holds the node left open at each depth.
-	Parents Parent_Storage
-	// Last_Children holds the final child of the open node at each depth.
-	Last_Children Last_Child_Storage
-	// Earlier_Children holds the child before the final one at each depth.
-	Earlier_Children Earlier_Child_Storage
-	// Cursors holds the extent of the arena and the depth of the open nodes.
-	Cursors Arena_Cursors
+  // Nodes is the arena the run writes.
+  Nodes Node_Storage
+  // Parents holds the node left open at each depth.
+  Parents Parent_Storage
+  // Last_Children holds the final child of the open node at each depth.
+  Last_Children Last_Child_Storage
+  // Earlier_Children holds the child before the final one at each depth.
+  Earlier_Children Earlier_Child_Storage
+  // Cursors holds the extent of the arena and the depth of the open nodes.
+  Cursors Arena_Cursors
 }
 
 // Arena_Invariants composes every store and both cursors of the tree one run writes.
-func Arena_Invariants(value Arena, namespace aver.Namespace) {
-	Node_Storage_Invariants(value.Nodes, namespace)
-	Parent_Storage_Invariants(value.Parents, namespace)
-	Last_Child_Storage_Invariants(value.Last_Children, namespace)
-	Earlier_Child_Storage_Invariants(value.Earlier_Children, namespace)
-	Arena_Cursors_Invariants(value.Cursors, namespace)
+func Arena_Invariants(value *Arena, namespace aver.Namespace) {
+  Node_Storage_Invariants(&value.Nodes, namespace)
+  Parent_Storage_Invariants(&value.Parents, namespace)
+  Last_Child_Storage_Invariants(&value.Last_Children, namespace)
+  Earlier_Child_Storage_Invariants(&value.Earlier_Children, namespace)
+  Arena_Cursors_Invariants(&value.Cursors, namespace)
 }
 
 // Arena_Handle gives the tree one run writes one identity.
@@ -944,10 +970,10 @@ type Arena_Handle *Arena
 
 // Arena_Handle_Invariants composes a present tree.
 func Arena_Handle_Invariants(value Arena_Handle, namespace aver.Namespace) {
-	if value == nil {
-		return
-	}
-	Arena_Invariants(*value, namespace)
+  if value == nil {
+    return
+  }
+  Arena_Invariants(value, namespace)
 }
 
 // Opened_Index is the slot a step of the program opened, or INDEX_ABSENT where it opened none.
@@ -956,12 +982,17 @@ type Opened_Index Index
 
 // Opened_Index_Invariants states every slot a step opens.
 func Opened_Index_Invariants(value Opened_Index, namespace aver.Namespace) {
-	aver.Tree(value, namespace).
-		Range_Holed_Int32(
-			int32(value), INDEX_MINIMUM, INDEX_MAXIMUM,
-			LINK_HOLE_ROOT, LINK_HOLE_ROOT, LINK_HOLE_ROOT, LINK_HOLE_ROOT,
-		).
-		Ensure()
+  aver.Tree(value, namespace).
+    Range_Holed_Int32(
+    int32(value),
+    INDEX_MINIMUM,
+    INDEX_MAXIMUM,
+    LINK_HOLE_ROOT,
+    LINK_HOLE_ROOT,
+    LINK_HOLE_ROOT,
+    LINK_HOLE_ROOT,
+  ).
+    Ensure()
 }
 
 // Machine_Flags_Handle gives the readings of one run one identity.
@@ -969,32 +1000,32 @@ type Machine_Flags_Handle *Machine_Flags
 
 // Machine_Flags_Handle_Invariants composes present readings.
 func Machine_Flags_Handle_Invariants(value Machine_Flags_Handle, namespace aver.Namespace) {
-	if value == nil {
-		return
-	}
-	Machine_Flags_Invariants(*value, namespace)
+  if value == nil {
+    return
+  }
+  Machine_Flags_Invariants(value, namespace)
 }
 
 // Machine is one run of the grammar program over one scanned source. It lives in the frame of
 // the parse that runs it, thus its cursors never outlive the parse and a reader of the tree owes
 // none of them.
 type Machine struct {
-	// Tokens is the run the scan wrote.
-	Tokens Token_Storage
-	// Run holds the places the read stands at.
-	Run Run_Cursors
-	// Arena holds the tree the run writes.
-	Arena Arena
-	// Flags holds the readings the grammar carries across its rules.
-	Flags Machine_Flags
+  // Tokens is the run the scan wrote.
+  Tokens Token_Storage
+  // Run holds the places the read stands at.
+  Run Run_Cursors
+  // Arena holds the tree the run writes.
+  Arena Arena
+  // Flags holds the readings the grammar carries across its rules.
+  Flags Machine_Flags
 }
 
 // Machine_Invariants composes every store and every cursor of one run.
-func Machine_Invariants(value Machine, namespace aver.Namespace) {
-	Token_Storage_Invariants(value.Tokens, namespace)
-	Run_Cursors_Invariants(value.Run, namespace)
-	Arena_Invariants(value.Arena, namespace)
-	Machine_Flags_Invariants(value.Flags, namespace)
+func Machine_Invariants(value *Machine, namespace aver.Namespace) {
+  Token_Storage_Invariants(&value.Tokens, namespace)
+  Run_Cursors_Invariants(&value.Run, namespace)
+  Arena_Invariants(&value.Arena, namespace)
+  Machine_Flags_Invariants(&value.Flags, namespace)
 }
 
 // Machine_Handle gives one run of the grammar program one identity.
@@ -1002,10 +1033,10 @@ type Machine_Handle *Machine
 
 // Machine_Handle_Invariants composes a present run.
 func Machine_Handle_Invariants(value Machine_Handle, namespace aver.Namespace) {
-	if value == nil {
-		return
-	}
-	Machine_Invariants(*value, namespace)
+  if value == nil {
+    return
+  }
+  Machine_Invariants(value, namespace)
 }
 
 // Node_Count is how many slots one parse wrote, the absent slot among them.
@@ -1015,55 +1046,60 @@ type Node_Count Index
 // parse that runs writes the file and the first token of its clause, thus no parse returns the
 // file node alone.
 func Node_Count_Invariants(value Node_Count, namespace aver.Namespace) {
-	aver.Tree(value, namespace).
-		Range_Holed_Int32(
-			int32(value), int32(INDEX_FIRST), NODE_COUNT_MAXIMUM,
-			NODE_COUNT_BARE, NODE_COUNT_BARE, NODE_COUNT_BARE, NODE_COUNT_BARE,
-		).
-		Ensure()
+  aver.Tree(value, namespace).
+    Range_Holed_Int32(
+    int32(value),
+    int32(INDEX_FIRST),
+    NODE_COUNT_MAXIMUM,
+    NODE_COUNT_BARE,
+    NODE_COUNT_BARE,
+    NODE_COUNT_BARE,
+    NODE_COUNT_BARE,
+  ).
+    Ensure()
 }
 
 // Parse_Result is what one parse returns: the root it built, the extent of the run and the arena it
 // wrote, and why it stopped. It stands apart from the caller storage, because a reader of the
 // storage walks the tree by its links and never owes a count one parse wrote.
 type Parse_Result struct {
-	// Root is the file node, or INDEX_ABSENT when the scan refused the source.
-	Root Root
-	// Token_Count bounds the run the scan wrote.
-	Token_Count Token_Count
-	// Node_Count bounds the arena the parse wrote.
-	Node_Count Node_Count
-	// Failure is why the parse stopped, or FAILURE_NONE when it ran clean.
-	Failure Failure_Code
-	// Failure_Token is the run position of the token the parse refused. It carries no meaning
-	// while Failure reads FAILURE_NONE.
-	Failure_Token Token_Index
-	// OK reports whether the parse ran clean, which is Failure reading FAILURE_NONE.
-	OK Boolean
+  // Root is the file node, or INDEX_ABSENT when the scan refused the source.
+  Root Root
+  // Token_Count bounds the run the scan wrote.
+  Token_Count Token_Count
+  // Node_Count bounds the arena the parse wrote.
+  Node_Count Node_Count
+  // Failure is why the parse stopped, or FAILURE_NONE when it ran clean.
+  Failure Failure_Code
+  // Failure_Token is the run position of the token the parse refused. It carries no meaning
+  // while Failure reads FAILURE_NONE.
+  Failure_Token Token_Index
+  // OK reports whether the parse ran clean, which is Failure reading FAILURE_NONE.
+  OK Boolean
 }
 
 // Parse_Result_Invariants composes one parse outcome.
-func Parse_Result_Invariants(value Parse_Result, namespace aver.Namespace) {
-	Root_Invariants(value.Root, namespace)
-	Token_Count_Invariants(value.Token_Count, namespace)
-	Node_Count_Invariants(value.Node_Count, namespace)
-	Failure_Code_Invariants(value.Failure, namespace)
-	Token_Index_Invariants(value.Failure_Token, namespace)
-	Boolean_Invariants(value.OK, namespace)
+func Parse_Result_Invariants(value *Parse_Result, namespace aver.Namespace) {
+  Root_Invariants(value.Root, namespace)
+  Token_Count_Invariants(value.Token_Count, namespace)
+  Node_Count_Invariants(value.Node_Count, namespace)
+  Failure_Code_Invariants(value.Failure, namespace)
+  Token_Index_Invariants(value.Failure_Token, namespace)
+  Boolean_Invariants(value.OK, namespace)
 }
 
 // Refusal is why one run of the grammar stopped, and the token it stopped at.
 type Refusal struct {
-	// Cause is why the run stopped, or FAILURE_NONE when it returned.
-	Cause Failure_Code
-	// Token is the token the run stood on when it stopped.
-	Token Token_Index
+  // Cause is why the run stopped, or FAILURE_NONE when it returned.
+  Cause Failure_Code
+  // Token is the token the run stood on when it stopped.
+  Token Token_Index
 }
 
 // Refusal_Invariants composes one stop.
-func Refusal_Invariants(value Refusal, namespace aver.Namespace) {
-	Failure_Code_Invariants(value.Cause, namespace)
-	Token_Index_Invariants(value.Token, namespace)
+func Refusal_Invariants(value *Refusal, namespace aver.Namespace) {
+  Failure_Code_Invariants(value.Cause, namespace)
+  Token_Index_Invariants(value.Token, namespace)
 }
 
 // Opened_Kind is the class of a node one step of the program opens. The file opens ahead of the
@@ -1072,9 +1108,9 @@ type Opened_Kind Node_Kind
 
 // Opened_Kind_Invariants states every class a step opens.
 func Opened_Kind_Invariants(value Opened_Kind, namespace aver.Namespace) {
-	aver.Tree(value, namespace).
-		Range_Uint8(uint8(value), uint8(NODE_COMMENT), NODE_KIND_MAXIMUM).
-		Ensure()
+  aver.Tree(value, namespace).
+    Range_Uint8(uint8(value), uint8(NODE_COMMENT), NODE_KIND_MAXIMUM).
+    Ensure()
 }
 
 // Arena_Failure is why one write into the arena stopped: the arena ran out, the parent stack ran
@@ -1084,11 +1120,14 @@ type Arena_Failure Failure_Code
 // Arena_Failure_Invariants states the two bounds one write can overrun and the write that
 // overran neither.
 func Arena_Failure_Invariants(value Arena_Failure, namespace aver.Namespace) {
-	aver.Tree(value, namespace).
-		Enum_3_Uint8(
-			uint8(value), uint8(FAILURE_NONE), uint8(FAILURE_NODE_COUNT),
-			uint8(FAILURE_NESTING_DEPTH)).
-		Ensure()
+  aver.Tree(value, namespace).
+    Enum_3_Uint8(
+    uint8(value),
+    uint8(FAILURE_NONE),
+    uint8(FAILURE_NODE_COUNT),
+    uint8(FAILURE_NESTING_DEPTH),
+  ).
+    Ensure()
 }
 
 // ARENA_INTACT is a write that overran neither bound.
@@ -1100,11 +1139,15 @@ type Name_Failure Failure_Code
 
 // Name_Failure_Invariants states the four ways a run of names ends.
 func Name_Failure_Invariants(value Name_Failure, namespace aver.Namespace) {
-	aver.Tree(value, namespace).
-		Enum_4_Uint8(
-			uint8(value), uint8(FAILURE_NONE), uint8(FAILURE_SYNTAX),
-			uint8(FAILURE_NODE_COUNT), uint8(FAILURE_NESTING_DEPTH)).
-		Ensure()
+  aver.Tree(value, namespace).
+    Enum_4_Uint8(
+    uint8(value),
+    uint8(FAILURE_NONE),
+    uint8(FAILURE_SYNTAX),
+    uint8(FAILURE_NODE_COUNT),
+    uint8(FAILURE_NESTING_DEPTH),
+  ).
+    Ensure()
 }
 
 // Wrap_Failure is why one wrap stopped: the arena ran out, or it did not.
@@ -1112,9 +1155,13 @@ type Wrap_Failure Failure_Code
 
 // Wrap_Failure_Invariants states the one bound a wrap can overrun and the wrap that overran none.
 func Wrap_Failure_Invariants(value Wrap_Failure, namespace aver.Namespace) {
-	aver.Tree(value, namespace).
-		Enum_Uint8(uint8(value), uint8(FAILURE_NONE), uint8(FAILURE_NODE_COUNT)).
-		Ensure()
+  aver.Tree(value, namespace).
+    Enum_Uint8(
+    uint8(value),
+    uint8(FAILURE_NONE),
+    uint8(FAILURE_NODE_COUNT),
+  ).
+    Ensure()
 }
 
 // WRAP_INTACT is a wrap that overran no bound.
@@ -1126,9 +1173,9 @@ type Child Index
 
 // Child_Invariants states every slot a link can name.
 func Child_Invariants(value Child, namespace aver.Namespace) {
-	aver.Tree(value, namespace).
-		Range_Int32(int32(value), LINK_HOLE_FIRST, INDEX_MAXIMUM).
-		Ensure()
+  aver.Tree(value, namespace).
+    Range_Int32(int32(value), LINK_HOLE_FIRST, INDEX_MAXIMUM).
+    Ensure()
 }
 
 // OPCODE_RETURN ends the rule that runs and hands the read back to the rule that called it.
@@ -1306,9 +1353,9 @@ type Opcode uint8
 
 // Opcode_Invariants states every action the program holds.
 func Opcode_Invariants(value Opcode, namespace aver.Namespace) {
-	aver.Tree(value, namespace).
-		Range_Uint8(uint8(value), OPCODE_MINIMUM, OPCODE_MAXIMUM).
-		Ensure()
+  aver.Tree(value, namespace).
+    Range_Uint8(uint8(value), OPCODE_MINIMUM, OPCODE_MAXIMUM).
+    Ensure()
 }
 
 // OPERAND_MINIMUM is the end-of-file kind, the smallest operand.
@@ -1324,9 +1371,9 @@ type Operand uint8
 
 // Operand_Invariants states every operand the program holds.
 func Operand_Invariants(value Operand, namespace aver.Namespace) {
-	aver.Tree(value, namespace).
-		Range_Uint8(uint8(value), OPERAND_MINIMUM, OPERAND_MAXIMUM).
-		Ensure()
+  aver.Tree(value, namespace).
+    Range_Uint8(uint8(value), OPERAND_MINIMUM, OPERAND_MAXIMUM).
+    Ensure()
 }
 
 // PRODUCTION_MINIMUM is the file, the smallest rule.
@@ -1340,9 +1387,9 @@ type Production uint8
 
 // Production_Invariants states every rule the program holds.
 func Production_Invariants(value Production, namespace aver.Namespace) {
-	aver.Tree(value, namespace).
-		Range_Uint8(uint8(value), PRODUCTION_MINIMUM, PRODUCTION_MAXIMUM).
-		Ensure()
+  aver.Tree(value, namespace).
+    Range_Uint8(uint8(value), PRODUCTION_MINIMUM, PRODUCTION_MAXIMUM).
+    Ensure()
 }
 
 // STEP_SIZE is the byte count of one step of the program: its action and its operand.
@@ -1363,9 +1410,9 @@ type Program_Place int32
 
 // Program_Place_Invariants states every step of the program.
 func Program_Place_Invariants(value Program_Place, namespace aver.Namespace) {
-	aver.Tree(value, namespace).
-		Range_Int32(int32(value), PLACE_MINIMUM, int32(PLACE_MAXIMUM)).
-		Ensure()
+  aver.Tree(value, namespace).
+    Range_Int32(int32(value), PLACE_MINIMUM, int32(PLACE_MAXIMUM)).
+    Ensure()
 }
 
 // ENTRY_PLACE_SECOND is the step behind the file's first one, which opens no rule.
@@ -1380,12 +1427,17 @@ type Entry_Place int32
 // Entry_Place_Invariants states the step each rule opens at. The file rule runs longer than two
 // steps, thus the rule behind it opens past the second and the third step of the program.
 func Entry_Place_Invariants(value Entry_Place, namespace aver.Namespace) {
-	aver.Tree(value, namespace).
-		Range_Holed_Int32(
-			int32(value), ENTRY_FILE, int32(ENTRY_MAXIMUM),
-			ENTRY_PLACE_SECOND, ENTRY_PLACE_THIRD, ENTRY_PLACE_THIRD, ENTRY_PLACE_THIRD,
-		).
-		Ensure()
+  aver.Tree(value, namespace).
+    Range_Holed_Int32(
+    int32(value),
+    ENTRY_FILE,
+    int32(ENTRY_MAXIMUM),
+    ENTRY_PLACE_SECOND,
+    ENTRY_PLACE_THIRD,
+    ENTRY_PLACE_THIRD,
+    ENTRY_PLACE_THIRD,
+  ).
+    Ensure()
 }
 
 // FRAME_MINIMUM is the file rule, which stands beneath no other.
@@ -1396,9 +1448,9 @@ type Frame_Depth int32
 
 // Frame_Depth_Invariants states every depth the program may call itself to.
 func Frame_Depth_Invariants(value Frame_Depth, namespace aver.Namespace) {
-	aver.Tree(value, namespace).
-		Range_Int32(int32(value), FRAME_MINIMUM, FRAME_MAXIMUM).
-		Ensure()
+  aver.Tree(value, namespace).
+    Range_Int32(int32(value), FRAME_MINIMUM, FRAME_MAXIMUM).
+    Ensure()
 }
 
 // Held_Level is the level of the operator one binary rule stepped past.
@@ -1407,11 +1459,15 @@ type Held_Level Precedence
 // Held_Level_Invariants admits the level of a token that binds nothing and the three levels this
 // dialect states.
 func Held_Level_Invariants(value Held_Level, namespace aver.Namespace) {
-	aver.Tree(value, namespace).
-		Enum_4_Int(
-			int(value), int(PRECEDENCE_NONE), int(PRECEDENCE_COMPARISON),
-			int(PRECEDENCE_ADDITION), int(PRECEDENCE_MULTIPLICATION)).
-		Ensure()
+  aver.Tree(value, namespace).
+    Enum_4_Int(
+    int(value),
+    int(PRECEDENCE_NONE),
+    int(PRECEDENCE_COMPARISON),
+    int(PRECEDENCE_ADDITION),
+    int(PRECEDENCE_MULTIPLICATION),
+  ).
+    Ensure()
 }
 
 // Callee_Level is the level the rule one step calls runs at.
@@ -1420,11 +1476,15 @@ type Callee_Level Precedence
 // Callee_Level_Invariants admits the level of a rule that holds no operator and the three levels
 // this dialect states.
 func Callee_Level_Invariants(value Callee_Level, namespace aver.Namespace) {
-	aver.Tree(value, namespace).
-		Enum_4_Int(
-			int(value), int(PRECEDENCE_NONE), int(PRECEDENCE_COMPARISON),
-			int(PRECEDENCE_ADDITION), int(PRECEDENCE_MULTIPLICATION)).
-		Ensure()
+  aver.Tree(value, namespace).
+    Enum_4_Int(
+    int(value),
+    int(PRECEDENCE_NONE),
+    int(PRECEDENCE_COMPARISON),
+    int(PRECEDENCE_ADDITION),
+    int(PRECEDENCE_MULTIPLICATION),
+  ).
+    Ensure()
 }
 
 // CONTROL_CONTINUE reads the next step of the rule that runs.
@@ -1444,47 +1504,51 @@ type Control uint8
 
 // Control_Invariants states the four things a rule does next.
 func Control_Invariants(value Control, namespace aver.Namespace) {
-	aver.Tree(value, namespace).
-		Enum_4_Uint8(
-			uint8(value), uint8(CONTROL_CONTINUE), uint8(CONTROL_RETURN),
-			uint8(CONTROL_CALL), uint8(CONTROL_REFUSE)).
-		Ensure()
+  aver.Tree(value, namespace).
+    Enum_4_Uint8(
+    uint8(value),
+    uint8(CONTROL_CONTINUE),
+    uint8(CONTROL_RETURN),
+    uint8(CONTROL_CALL),
+    uint8(CONTROL_REFUSE),
+  ).
+    Ensure()
 }
 
 // Frame is the state one rule keeps for itself while it runs. It lives in the frame of the rule,
 // thus a rule it calls holds a frame of its own and hands this one back untouched.
 type Frame struct {
-	// Place is the step the rule reads next.
-	Place Program_Place
-	// Holds is whether the last test held.
-	Holds Boolean
-	// Opened is the node the rule opened last, which a later step may give another kind.
-	Opened Opened_Index
-	// Plain is the control clause reading the rule kept.
-	Plain Plain_Brace
-	// Held is the level of the operator the rule stepped past last.
-	Held Held_Level
-	// Level is the level the rule runs at, which only a binary rule reads.
-	Level Precedence
-	// Depth is how many rules stand open beneath this one.
-	Depth Frame_Depth
-	// Callee is the rule a call step named.
-	Callee Production
-	// Callee_Level is the level the rule a call step named runs at.
-	Callee_Level Callee_Level
+  // Place is the step the rule reads next.
+  Place Program_Place
+  // Holds is whether the last test held.
+  Holds Boolean
+  // Opened is the node the rule opened last, which a later step may give another kind.
+  Opened Opened_Index
+  // Plain is the control clause reading the rule kept.
+  Plain Plain_Brace
+  // Held is the level of the operator the rule stepped past last.
+  Held Held_Level
+  // Level is the level the rule runs at, which only a binary rule reads.
+  Level Precedence
+  // Depth is how many rules stand open beneath this one.
+  Depth Frame_Depth
+  // Callee is the rule a call step named.
+  Callee Production
+  // Callee_Level is the level the rule a call step named runs at.
+  Callee_Level Callee_Level
 }
 
 // Frame_Invariants composes the state of one rule.
-func Frame_Invariants(value Frame, namespace aver.Namespace) {
-	Program_Place_Invariants(value.Place, namespace)
-	Boolean_Invariants(value.Holds, namespace)
-	Opened_Index_Invariants(value.Opened, namespace)
-	Plain_Brace_Invariants(value.Plain, namespace)
-	Held_Level_Invariants(value.Held, namespace)
-	Precedence_Invariants(value.Level, namespace)
-	Frame_Depth_Invariants(value.Depth, namespace)
-	Production_Invariants(value.Callee, namespace)
-	Callee_Level_Invariants(value.Callee_Level, namespace)
+func Frame_Invariants(value *Frame, namespace aver.Namespace) {
+  Program_Place_Invariants(value.Place, namespace)
+  Boolean_Invariants(value.Holds, namespace)
+  Opened_Index_Invariants(value.Opened, namespace)
+  Plain_Brace_Invariants(value.Plain, namespace)
+  Held_Level_Invariants(value.Held, namespace)
+  Precedence_Invariants(value.Level, namespace)
+  Frame_Depth_Invariants(value.Depth, namespace)
+  Production_Invariants(value.Callee, namespace)
+  Callee_Level_Invariants(value.Callee_Level, namespace)
 }
 
 // Frame_Handle gives the state of one rule one identity.
@@ -1492,10 +1556,10 @@ type Frame_Handle *Frame
 
 // Frame_Handle_Invariants composes a present rule state.
 func Frame_Handle_Invariants(value Frame_Handle, namespace aver.Namespace) {
-	if value == nil {
-		return
-	}
-	Frame_Invariants(*value, namespace)
+  if value == nil {
+    return
+  }
+  Frame_Invariants(value, namespace)
 }
 
 // STEP_BUDGET caps the steps one rule runs. Every rule steps the read or returns within a bounded
@@ -1507,492 +1571,527 @@ const STEP_BUDGET = TOKEN_COUNT_MAXIMUM * 64
 // source the grammar rejects still returns the tree that was built, with an error node at the
 // token that failed, because a linter reads more from a partial tree than from nothing.
 func Parse(subject Parse_State_Handle, source token.Source) (tree Parse_Result) {
-	defer func() { Parse_Result_Invariants(tree, "parse.tree") }()
-	Parse_State_Handle_Invariants(subject, "parse.subject")
-	token.Source_Invariants(source, "parse.source")
-	// Slot zero carries the error kind so a stray read of the absent slot is loud rather than a
-	// plausible node.
-	subject.Nodes.Values[INDEX_ABSENT] = Node{
-		Kind: NODE_ERROR, Token: 0, Parent: Ancestor(INDEX_ABSENT),
-		First_Child: Head(INDEX_ABSENT), Next: Successor(INDEX_ABSENT),
-	}
-	held := &subject.Syntax_Tree
-	count, scanned := scan_source(held, source)
-	tree = Parse_Result{
-		Root: Root(INDEX_ABSENT), Token_Count: count, Node_Count: Node_Count(INDEX_FIRST),
-		Failure: FAILURE_TOKEN_COUNT, Failure_Token: 0,
-	}
-	opened := Arena_Cursors{Count: ARENA_COUNT_MINIMUM, Depth: DEPTH_MINIMUM}
-	machine := Machine{
-		Tokens: subject.Tokens,
-		Run:    Run_Cursors{Count: count, Position: 0, Blank: 0},
-		Arena: Arena{
-			Nodes: subject.Nodes, Parents: subject.Parents,
-			Last_Children:    subject.Last_Children,
-			Earlier_Children: subject.Earlier_Children,
-			Cursors:          opened,
-		},
-		Flags: Machine_Flags{Plain_Brace: false, Type_Assertion: false},
-	}
-	if bool(scanned) {
-		// The file opens ahead of the program, thus every step of it reads an arena that
-		// holds the file and stands inside it.
-		subject.Nodes.Values[INDEX_FIRST] = Node{
-			Kind: NODE_FILE, Token: 0, Parent: Ancestor(INDEX_ABSENT),
-			First_Child: Head(INDEX_ABSENT), Next: Successor(INDEX_ABSENT),
-		}
-		subject.Parents.Values[0] = INDEX_FIRST
-		subject.Last_Children.Values[0] = INDEX_ABSENT
-		subject.Earlier_Children.Values[0] = INDEX_ABSENT
-		refusal := descend(&machine, PRODUCTION_FILE, PRECEDENCE_NONE, 0)
-		tree.Root = Root(INDEX_FIRST)
-		tree.Node_Count = Node_Count(machine.Arena.Cursors.Count)
-		tree.Failure = refusal.Cause
-		tree.Failure_Token = refusal.Token
-		tree.OK = Boolean(refusal.Cause == FAILURE_NONE)
-	}
-	tree = name_wide_identifier(held, tree, source)
-	// The import pass runs first, because an import stands ahead of every declaration and the
-	// failure a caller reads should be the one its author meets first.
-	tree = name_blank_import(held, tree, source)
-	tree = name_constant_case(held, tree, source)
-	tree = name_bare_loop(held, tree, source)
-	tree = name_fallthrough(held, tree)
-	tree = name_unnamed_result(held, tree)
-	tree = name_closure_statement(held, tree)
-	tree = name_closure_call(held, tree)
-	tree = name_banned_identifier(held, tree, source)
-	subject.Failure = tree.Failure
-	subject.Failure_Token = tree.Failure_Token
-	empty_tokens(held, tree.Token_Count)
-	empty_nodes(held, tree.Node_Count)
-	return tree
+  defer func() { Parse_Result_Invariants(&tree, "parse.tree") }()
+  Parse_State_Handle_Invariants(subject, "parse.subject")
+  token.Source_Invariants(source, "parse.source")
+  // Slot zero carries the error kind so a stray read of the absent slot is loud rather than a
+  // plausible node.
+  subject.Nodes.Values[INDEX_ABSENT] = Node{
+    Kind:        NODE_ERROR,
+    Token:       0,
+    Parent:      Ancestor(INDEX_ABSENT),
+    First_Child: Head(INDEX_ABSENT),
+    Next:        Successor(INDEX_ABSENT),
+  }
+  held := &subject.Syntax_Tree
+  count, scanned := scan_source(held, source)
+  tree = Parse_Result{
+    Root:          Root(INDEX_ABSENT),
+    Token_Count:   count,
+    Node_Count:    Node_Count(INDEX_FIRST),
+    Failure:       FAILURE_TOKEN_COUNT,
+    Failure_Token: 0,
+  }
+  opened := Arena_Cursors{Count: ARENA_COUNT_MINIMUM, Depth: DEPTH_MINIMUM}
+  machine := Machine{
+    Tokens: subject.Tokens,
+    Run:    Run_Cursors{Count: count, Position: 0, Blank: 0},
+    Arena: Arena{
+      Nodes:            subject.Nodes,
+      Parents:          subject.Parents,
+      Last_Children:    subject.Last_Children,
+      Earlier_Children: subject.Earlier_Children,
+      Cursors:          opened,
+    },
+    Flags: Machine_Flags{Plain_Brace: false, Type_Assertion: false},
+  }
+  if bool(scanned) {
+    // The file opens ahead of the program, thus every step of it reads an arena that
+    // holds the file and stands inside it.
+    subject.Nodes.Values[INDEX_FIRST] = Node{
+      Kind:        NODE_FILE,
+      Token:       0,
+      Parent:      Ancestor(INDEX_ABSENT),
+      First_Child: Head(INDEX_ABSENT),
+      Next:        Successor(INDEX_ABSENT),
+    }
+    subject.Parents.Values[0] = INDEX_FIRST
+    subject.Last_Children.Values[0] = INDEX_ABSENT
+    subject.Earlier_Children.Values[0] = INDEX_ABSENT
+    refusal := descend(&machine, PRODUCTION_FILE, PRECEDENCE_NONE, 0)
+    tree.Root = Root(INDEX_FIRST)
+    tree.Node_Count = Node_Count(machine.Arena.Cursors.Count)
+    tree.Failure = refusal.Cause
+    tree.Failure_Token = refusal.Token
+    tree.OK = Boolean(refusal.Cause == FAILURE_NONE)
+  }
+  tree = name_wide_identifier(held, tree, source)
+  // The import pass runs first, because an import stands ahead of every declaration and the
+  // failure a caller reads should be the one its author meets first.
+  tree = name_blank_import(held, tree, source)
+  tree = name_constant_case(held, tree, source)
+  tree = name_bare_loop(held, tree, source)
+  tree = name_fallthrough(held, tree)
+  tree = name_unnamed_result(held, tree)
+  tree = name_closure_statement(held, tree)
+  tree = name_closure_call(held, tree)
+  tree = name_banned_identifier(held, tree, source)
+  subject.Failure = tree.Failure
+  subject.Failure_Token = tree.Failure_Token
+  empty_tokens(held, tree.Token_Count)
+  empty_nodes(held, tree.Node_Count)
+  return tree
 }
 
 // Empties every token past the run one parse wrote, up to the first slot no parse wrote. A parse
 // before this one may have written a longer run, and a token it left would read as part of this
 // one.
 func empty_tokens(subject Syntax_Tree_Handle, count Token_Count) {
-	Syntax_Tree_Handle_Invariants(subject, "empty_tokens.subject")
-	Token_Count_Invariants(count, "empty_tokens.count")
-	for slot := int(count); slot < TOKEN_COUNT_MAXIMUM; slot++ {
-		if subject.Tokens.Values[slot] == (token.Token{}) {
-			return
-		}
-		subject.Tokens.Values[slot] = token.Token{}
-	}
+  Syntax_Tree_Handle_Invariants(subject, "empty_tokens.subject")
+  Token_Count_Invariants(count, "empty_tokens.count")
+  for slot := int(count); slot < TOKEN_COUNT_MAXIMUM; slot++ {
+    if subject.Tokens.Values[slot] == (token.Token{}) {
+      return
+    }
+    subject.Tokens.Values[slot] = token.Token{}
+  }
 }
 
 // Empties every slot past the arena one parse wrote, up to the first slot no parse wrote. A parse
 // before this one may have written a wider arena, and a slot it left would read as a node of this
 // one.
 func empty_nodes(subject Syntax_Tree_Handle, count Node_Count) {
-	Syntax_Tree_Handle_Invariants(subject, "empty_nodes.subject")
-	Node_Count_Invariants(count, "empty_nodes.count")
-	for slot := int(count); slot < NODE_COUNT_MAXIMUM; slot++ {
-		if subject.Nodes.Values[slot] == (Node{}) {
-			return
-		}
-		subject.Nodes.Values[slot] = Node{}
-	}
+  Syntax_Tree_Handle_Invariants(subject, "empty_nodes.subject")
+  Node_Count_Invariants(count, "empty_nodes.count")
+  for slot := int(count); slot < NODE_COUNT_MAXIMUM; slot++ {
+    if subject.Nodes.Values[slot] == (Node{}) {
+      return
+    }
+    subject.Nodes.Values[slot] = Node{}
+  }
 }
 
 // Node_At returns one slot of the arena. The parse writes every slot it counts, thus a slot the
 // count does not reach is no node and reading it is a caller defect.
 func Node_At(subject Parse_State_Handle, index Index) (node Node) {
-	defer func() { Node_Invariants(node, "node_at.node") }()
-	Parse_State_Handle_Invariants(subject, "node_at.subject")
-	Index_Invariants(index, "node_at.index")
-	return Syntax_Node_At(&subject.Syntax_Tree, index)
+  defer func() { Node_Invariants(&node, "node_at.node") }()
+  Parse_State_Handle_Invariants(subject, "node_at.subject")
+  Index_Invariants(index, "node_at.index")
+  return Syntax_Node_At(&subject.Syntax_Tree, index)
 }
 
 // Token_At returns one token of the run, the token that names a node.
 func Token_At(subject Parse_State_Handle, index Token_Index) (one token.Token) {
-	defer func() { token.Token_Invariants(one, "token_at.one") }()
-	Parse_State_Handle_Invariants(subject, "token_at.subject")
-	Token_Index_Invariants(index, "token_at.index")
-	return Syntax_Token_At(&subject.Syntax_Tree, index)
+  defer func() { token.Token_Invariants(&one, "token_at.one") }()
+  Parse_State_Handle_Invariants(subject, "token_at.subject")
+  Token_Index_Invariants(index, "token_at.index")
+  return Syntax_Token_At(&subject.Syntax_Tree, index)
 }
 
 // Syntax_Node_At returns one slot of the arena for a reader that holds the tree alone.
 func Syntax_Node_At(subject Syntax_Tree_Handle, index Index) (node Node) {
-	defer func() { Node_Invariants(node, "syntax_node_at.node") }()
-	Syntax_Tree_Handle_Invariants(subject, "syntax_node_at.subject")
-	Index_Invariants(index, "syntax_node_at.index")
-	// Parse empties every slot past the arena it wrote, and no slot it wrote is empty.
-	aver.Always(
-		subject.Nodes.Values[index] != (Node{}),
-		"A read node lies inside the count the parse wrote.",
-	)
-	return subject.Nodes.Values[index]
+  defer func() { Node_Invariants(&node, "syntax_node_at.node") }()
+  Syntax_Tree_Handle_Invariants(subject, "syntax_node_at.subject")
+  Index_Invariants(index, "syntax_node_at.index")
+  // Parse empties every slot past the arena it wrote, and no slot it wrote is empty.
+  aver.Always(
+    subject.Nodes.Values[index] != (Node{}),
+    "A read node lies inside the count the parse wrote.",
+  )
+  return subject.Nodes.Values[index]
 }
 
 // Syntax_Token_At returns one token of the run for a reader that holds the tree alone.
 func Syntax_Token_At(subject Syntax_Tree_Handle, index Token_Index) (one token.Token) {
-	defer func() { token.Token_Invariants(one, "syntax_token_at.one") }()
-	Syntax_Tree_Handle_Invariants(subject, "syntax_token_at.subject")
-	Token_Index_Invariants(index, "syntax_token_at.index")
-	// The run closes at its end token, and Parse empties every token past it, thus a token
-	// that stands behind an end token lies past the run.
-	inside := index == 0
-	if !inside {
-		inside = subject.Tokens.Values[index-1].Kind != token.KIND_END_OF_FILE
-	}
-	aver.Always(inside, "A read token lies inside the count the scan wrote.")
-	return subject.Tokens.Values[index]
+  defer func() { token.Token_Invariants(&one, "syntax_token_at.one") }()
+  Syntax_Tree_Handle_Invariants(subject, "syntax_token_at.subject")
+  Token_Index_Invariants(index, "syntax_token_at.index")
+  // The run closes at its end token, and Parse empties every token past it, thus a token
+  // that stands behind an end token lies past the run.
+  inside := index == 0
+  if !inside {
+    inside = subject.Tokens.Values[index-1].Kind != token.KIND_END_OF_FILE
+  }
+  aver.Always(inside, "A read token lies inside the count the scan wrote.")
+  return subject.Tokens.Values[index]
 }
 
 // Parse_State_Token_Run borrows the token run the last parse wrote. The run closes at its end
 // token, or fills the whole storage where the scan ran past the bound, thus a caller that holds
 // the state alone reads it.
 func Parse_State_Token_Run(subject Parse_State_Handle) (run Token_Run) {
-	defer func() { Token_Run_Invariants(run, "parse_state_token_run.run") }()
-	Parse_State_Handle_Invariants(subject, "parse_state_token_run.subject")
-	for index := range TOKEN_COUNT_MAXIMUM {
-		if subject.Tokens.Values[index].Kind == token.KIND_END_OF_FILE {
-			return Token_Run(subject.Tokens.Values[:index+1])
-		}
-	}
-	return Token_Run(subject.Tokens.Values)
+  defer func() { Token_Run_Invariants(run, "parse_state_token_run.run") }()
+  Parse_State_Handle_Invariants(subject, "parse_state_token_run.subject")
+  for index := range TOKEN_COUNT_MAXIMUM {
+    if subject.Tokens.Values[index].Kind == token.KIND_END_OF_FILE {
+      return Token_Run(subject.Tokens.Values[:index+1])
+    }
+  }
+  return Token_Run(subject.Tokens.Values)
 }
 
 // Failure names why the last parse on the state stopped, or FAILURE_NONE when it ran clean.
 func Failure(subject Parse_State_Handle) (code Failure_Code) {
-	defer func() { Failure_Code_Invariants(code, "failure.code") }()
-	Parse_State_Handle_Invariants(subject, "failure.subject")
-	return subject.Failure
+  defer func() { Failure_Code_Invariants(code, "failure.code") }()
+  Parse_State_Handle_Invariants(subject, "failure.subject")
+  return subject.Failure
 }
 
 // Failure_Token names the run position of the token the last parse on the state refused. It
 // carries no meaning while Failure reads FAILURE_NONE.
 func Failure_Token(subject Parse_State_Handle) (position Token_Index) {
-	defer func() { Token_Index_Invariants(position, "failure_token.position") }()
-	Parse_State_Handle_Invariants(subject, "failure_token.subject")
-	return subject.Failure_Token
+  defer func() { Token_Index_Invariants(position, "failure_token.position") }()
+  Parse_State_Handle_Invariants(subject, "failure_token.subject")
+  return subject.Failure_Token
 }
 
 // Fills the token run from the source and reports how many tokens it wrote. A run past the bound
 // fails the parse rather than writing outside the array, and the run it wrote stays readable, so a
 // caller that reads the failure token finds a token there.
 func scan_source(
-	subject Syntax_Tree_Handle, source token.Source,
+  subject Syntax_Tree_Handle,
+  source token.Source,
 ) (count Token_Count, scanned Boolean) {
-	defer func() {
-		Token_Count_Invariants(count, "scan_source.count")
-		Boolean_Invariants(scanned, "scan_source.scanned")
-	}()
-	Syntax_Tree_Handle_Invariants(subject, "scan_source.subject")
-	token.Source_Invariants(source, "scan_source.source")
-	scanner := token.Scanner{
-		Source: source, Offset: 0, Previous: token.KIND_END_OF_FILE, Newline: false,
-	}
-	for written := range TOKEN_COUNT_MAXIMUM {
-		one := token.Scan(&scanner)
-		subject.Tokens.Values[written] = one
-		if one.Kind == token.KIND_END_OF_FILE {
-			return Token_Count(written + 1), true
-		}
-	}
-	return TOKEN_COUNT_MAXIMUM, false
+  defer func() {
+    Token_Count_Invariants(count, "scan_source.count")
+    Boolean_Invariants(scanned, "scan_source.scanned")
+  }()
+  Syntax_Tree_Handle_Invariants(subject, "scan_source.subject")
+  token.Source_Invariants(source, "scan_source.source")
+  scanner := token.Scanner{
+    Source:   source,
+    Offset:   0,
+    Previous: token.KIND_END_OF_FILE,
+    Newline:  false,
+  }
+  for written := range TOKEN_COUNT_MAXIMUM {
+    one := token.Scan(&scanner)
+    subject.Tokens.Values[written] = one
+    if one.Kind == token.KIND_END_OF_FILE {
+      return Token_Count(written + 1), true
+    }
+  }
+  return TOKEN_COUNT_MAXIMUM, false
 }
 
 // Runs one rule of the grammar program until it returns, and reports why the run stopped, with the
 // token it stopped at, or FAILURE_NONE when the rule returned.
 func descend(
-	machine Machine_Handle, production Production, level Precedence, depth Frame_Depth,
+  machine Machine_Handle,
+  production Production,
+  level Precedence,
+  depth Frame_Depth,
 ) (refusal Refusal) {
-	defer func() { Refusal_Invariants(refusal, "descend.refusal") }()
-	Machine_Handle_Invariants(machine, "descend.machine")
-	Production_Invariants(production, "descend.production")
-	Precedence_Invariants(level, "descend.level")
-	Frame_Depth_Invariants(depth, "descend.depth")
-	frame := Frame{
-		Place: Program_Place(production_entry(production)), Holds: false,
-		Opened: Opened_Index(INDEX_ABSENT), Plain: machine.Flags.Plain_Brace, Held: 0,
-		Level: level,
-		Depth: depth, Callee: PRODUCTION_FILE, Callee_Level: 0,
-	}
-	for range STEP_BUDGET {
-		frame.Place = guarded(frame.Place, frame.Holds)
-		control, stopped := step(machine, &frame)
-		if control == CONTROL_REFUSE {
-			return stopped
-		}
-		if control == CONTROL_RETURN {
-			return Refusal{Cause: FAILURE_NONE, Token: 0}
-		}
-		if control == CONTROL_CALL {
-			callee := Precedence(frame.Callee_Level)
-			inner := descend(machine, frame.Callee, callee, frame.Depth+1)
-			if inner.Cause != FAILURE_NONE {
-				return inner
-			}
-		}
-	}
-	return Refusal{Cause: FAILURE_SYNTAX, Token: Token_Index(machine.Run.Position)}
+  defer func() { Refusal_Invariants(&refusal, "descend.refusal") }()
+  Machine_Handle_Invariants(machine, "descend.machine")
+  Production_Invariants(production, "descend.production")
+  Precedence_Invariants(level, "descend.level")
+  Frame_Depth_Invariants(depth, "descend.depth")
+  frame := Frame{
+    Place:        Program_Place(production_entry(production)),
+    Holds:        false,
+    Opened:       Opened_Index(INDEX_ABSENT),
+    Plain:        machine.Flags.Plain_Brace,
+    Held:         0,
+    Level:        level,
+    Depth:        depth,
+    Callee:       PRODUCTION_FILE,
+    Callee_Level: 0,
+  }
+  for range STEP_BUDGET {
+    frame.Place = guarded(frame.Place, frame.Holds)
+    control, stopped := step(machine, &frame)
+    if control == CONTROL_REFUSE {
+      return stopped
+    }
+    if control == CONTROL_RETURN {
+      return Refusal{Cause: FAILURE_NONE, Token: 0}
+    }
+    if control == CONTROL_CALL {
+      callee := Precedence(frame.Callee_Level)
+      inner := descend(machine, frame.Callee, callee, frame.Depth+1)
+      if inner.Cause != FAILURE_NONE {
+        return inner
+      }
+    }
+  }
+  return Refusal{Cause: FAILURE_SYNTAX, Token: Token_Index(machine.Run.Position)}
 }
 
 // Runs one step of the rule a frame holds and names what the rule does next. Every step runs
 // through every unit and each unit acts on its own actions alone, because a unit that ran for its
 // own actions alone would owe every place the read stands at where it never stands.
 func step(machine Machine_Handle, frame Frame_Handle) (control Control, refusal Refusal) {
-	defer func() {
-		Control_Invariants(control, "step.control")
-		Refusal_Invariants(refusal, "step.refusal")
-	}()
-	Machine_Handle_Invariants(machine, "step.machine")
-	Frame_Handle_Invariants(frame, "step.frame")
-	op, operand := decode(frame.Place)
-	position := Token_Index(machine.Run.Position)
-	at, after, second := window(machine.Tokens, machine.Run)
-	closes := closes_field(machine.Tokens, machine.Run)
-	barred := barred_brace(
-		machine.Arena.Nodes, machine.Arena.Last_Children, machine.Arena.Cursors,
-		machine.Flags.Plain_Brace,
-	)
-	asserted := machine.Flags.Type_Assertion
-	frame.Holds = test(op, operand, frame.Holds, frame.Level, at, after, asserted)
-	frame.Holds = test_scan(op, frame.Holds, at, after, second, closes, barred)
-	frame.Held = hold(op, frame.Held, at)
-	frame.Plain = keep_plain(&machine.Flags, op, frame.Plain)
-	suffix := bracket_kind(machine.Tokens, machine.Run, op)
-	// A leaf stands at the token the step reads, thus the shape runs ahead of the move that
-	// steps past that token.
-	cause := Failure_Code(reshape(machine, op, operand, suffix))
-	named := take_names(machine, op, operand)
-	starred, run := open_stars(machine, op, frame.Opened)
-	opened, shaped := shape(machine, op, operand, starred)
-	frame.Opened = opened
-	moved := move(machine, op, frame.Holds)
-	if cause == FAILURE_NONE {
-		cause = shaped
-	}
-	if cause == FAILURE_NONE {
-		cause = Failure_Code(named)
-	}
-	if cause == FAILURE_NONE {
-		cause = Failure_Code(run)
-	}
-	if cause == FAILURE_NONE {
-		cause = Failure_Code(moved)
-	}
-	if cause != FAILURE_NONE {
-		return CONTROL_REFUSE, Refusal{Cause: cause, Token: position}
-	}
-	calls := op == OPCODE_CALL
-	switch op {
-	case OPCODE_RETURN:
-		return CONTROL_RETURN, Refusal{Cause: FAILURE_NONE, Token: 0}
-	case OPCODE_TAIL:
-		frame.Place = Program_Place(production_entry(Production(operand)))
-		return CONTROL_CONTINUE, Refusal{Cause: FAILURE_NONE, Token: 0}
-	case OPCODE_CALL:
-		frame.Callee = Production(operand)
-		frame.Callee_Level = Callee_Level(PRECEDENCE_NONE)
-	case OPCODE_CALL_HELD:
-		calls = true
-		frame.Callee = PRODUCTION_BINARY
-		frame.Callee_Level = Callee_Level(frame.Held)
-	}
-	frame.Place = frame.Place + 1
-	if !calls {
-		return CONTROL_CONTINUE, Refusal{Cause: FAILURE_NONE, Token: 0}
-	}
-	// A grouped type opens no node, thus the tree depth alone never bounds the calls.
-	if frame.Depth == FRAME_MAXIMUM {
-		return CONTROL_REFUSE, Refusal{Cause: FAILURE_NESTING_DEPTH, Token: position}
-	}
-	return CONTROL_CALL, Refusal{Cause: FAILURE_NONE, Token: 0}
+  defer func() {
+    Control_Invariants(control, "step.control")
+    Refusal_Invariants(&refusal, "step.refusal")
+  }()
+  Machine_Handle_Invariants(machine, "step.machine")
+  Frame_Handle_Invariants(frame, "step.frame")
+  op, operand := decode(frame.Place)
+  position := Token_Index(machine.Run.Position)
+  at, after, second := window(machine.Tokens, machine.Run)
+  closes := closes_field(machine.Tokens, machine.Run)
+  barred := barred_brace(
+    machine.Arena.Nodes,
+    machine.Arena.Last_Children,
+    machine.Arena.Cursors,
+    machine.Flags.Plain_Brace,
+  )
+  asserted := machine.Flags.Type_Assertion
+  frame.Holds = test(op, operand, frame.Holds, frame.Level, at, after, asserted)
+  frame.Holds = test_scan(op, frame.Holds, at, after, second, closes, barred)
+  frame.Held = hold(op, frame.Held, at)
+  frame.Plain = keep_plain(&machine.Flags, op, frame.Plain)
+  suffix := bracket_kind(machine.Tokens, machine.Run, op)
+  // A leaf stands at the token the step reads, thus the shape runs ahead of the move that
+  // steps past that token.
+  cause := Failure_Code(reshape(machine, op, operand, suffix))
+  named := take_names(machine, op, operand)
+  starred, run := open_stars(machine, op, frame.Opened)
+  opened, shaped := shape(machine, op, operand, starred)
+  frame.Opened = opened
+  moved := move(machine, op, frame.Holds)
+  if cause == FAILURE_NONE {
+    cause = shaped
+  }
+  if cause == FAILURE_NONE {
+    cause = Failure_Code(named)
+  }
+  if cause == FAILURE_NONE {
+    cause = Failure_Code(run)
+  }
+  if cause == FAILURE_NONE {
+    cause = Failure_Code(moved)
+  }
+  if cause != FAILURE_NONE {
+    return CONTROL_REFUSE, Refusal{Cause: cause, Token: position}
+  }
+  calls := op == OPCODE_CALL
+  switch op {
+  case OPCODE_RETURN:
+    return CONTROL_RETURN, Refusal{Cause: FAILURE_NONE, Token: 0}
+  case OPCODE_TAIL:
+    frame.Place = Program_Place(production_entry(Production(operand)))
+    return CONTROL_CONTINUE, Refusal{Cause: FAILURE_NONE, Token: 0}
+  case OPCODE_CALL:
+    frame.Callee = Production(operand)
+    frame.Callee_Level = Callee_Level(PRECEDENCE_NONE)
+  case OPCODE_CALL_HELD:
+    calls = true
+    frame.Callee = PRODUCTION_BINARY
+    frame.Callee_Level = Callee_Level(frame.Held)
+  }
+  frame.Place = frame.Place + 1
+  if !calls {
+    return CONTROL_CONTINUE, Refusal{Cause: FAILURE_NONE, Token: 0}
+  }
+  // A grouped type opens no node, thus the tree depth alone never bounds the calls.
+  if frame.Depth == FRAME_MAXIMUM {
+    return CONTROL_REFUSE, Refusal{Cause: FAILURE_NESTING_DEPTH, Token: position}
+  }
+  return CONTROL_CALL, Refusal{Cause: FAILURE_NONE, Token: 0}
 }
 
 // Names the step a rule runs next: the one it stands at, or where a guard stands there, the step
 // behind the guard or the one past it as the test the guard reads says. A guard only chooses, thus
 // it runs inside the step it chooses rather than as one of its own.
 func guarded(place Program_Place, holds Boolean) (next Program_Place) {
-	defer func() { Program_Place_Invariants(next, "guarded.next") }()
-	Program_Place_Invariants(place, "guarded.place")
-	Boolean_Invariants(holds, "guarded.holds")
-	next = place
-	// No rule stacks more than a few guards, and the program closes with a step that is no
-	// guard, thus the walk stops inside the program.
-	for range STEP_COUNT {
-		op := Opcode(PROGRAM[int(next)*STEP_SIZE])
-		runs := bool(holds)
-		if op == OPCODE_UNLESS {
-			runs = !runs
-		} else if op != OPCODE_WHEN {
-			return next
-		}
-		next = next + 1
-		if !runs {
-			next = next + 1
-		}
-	}
-	return next
+  defer func() { Program_Place_Invariants(next, "guarded.next") }()
+  Program_Place_Invariants(place, "guarded.place")
+  Boolean_Invariants(holds, "guarded.holds")
+  next = place
+  // No rule stacks more than a few guards, and the program closes with a step that is no
+  // guard, thus the walk stops inside the program.
+  for range STEP_COUNT {
+    op := Opcode(PROGRAM[int(next)*STEP_SIZE])
+    runs := bool(holds)
+    if op == OPCODE_UNLESS {
+      runs = !runs
+    } else if op != OPCODE_WHEN {
+      return next
+    }
+    next = next + 1
+    if !runs {
+      next = next + 1
+    }
+  }
+  return next
 }
 
 // Reads the action and the operand of one step of the program.
 func decode(place Program_Place) (op Opcode, operand Operand) {
-	defer func() {
-		Opcode_Invariants(op, "decode.op")
-		Operand_Invariants(operand, "decode.operand")
-	}()
-	Program_Place_Invariants(place, "decode.place")
-	offset := int(place) * STEP_SIZE
-	return Opcode(PROGRAM[offset]), Operand(PROGRAM[offset+1])
+  defer func() {
+    Opcode_Invariants(op, "decode.op")
+    Operand_Invariants(operand, "decode.operand")
+  }()
+  Program_Place_Invariants(place, "decode.place")
+  offset := int(place) * STEP_SIZE
+  return Opcode(PROGRAM[offset]), Operand(PROGRAM[offset+1])
 }
 
 // Names the step one rule opens at. Each entry spans two bytes of seven bits, because a byte of a
 // constant string above that width would be written as two.
 func production_entry(production Production) (place Entry_Place) {
-	defer func() { Entry_Place_Invariants(place, "production_entry.place") }()
-	Production_Invariants(production, "production_entry.production")
-	offset := int(production) * STEP_SIZE
-	high := int32(ENTRIES[offset])
-	low := int32(ENTRIES[offset+1])
-	return Entry_Place(high*ENTRY_BASE + low)
+  defer func() { Entry_Place_Invariants(place, "production_entry.place") }()
+  Production_Invariants(production, "production_entry.production")
+  offset := int(production) * STEP_SIZE
+  high := int32(ENTRIES[offset])
+  low := int32(ENTRIES[offset+1])
+  return Entry_Place(high*ENTRY_BASE + low)
 }
 
 // Reads the token at the read, the token behind it, and the token behind that one. A read past
 // the run names the end token, which is what the run holds there.
 func window(
-	tokens Token_Storage, run Run_Cursors,
+  tokens Token_Storage,
+  run Run_Cursors,
 ) (at token.Kind, after token.Kind, second token.Kind) {
-	defer func() {
-		token.Kind_Invariants(at, "window.at")
-		token.Kind_Invariants(after, "window.after")
-		token.Kind_Invariants(second, "window.second")
-	}()
-	Token_Storage_Invariants(tokens, "window.tokens")
-	Run_Cursors_Invariants(run, "window.run")
-	position := int(run.Position)
-	count := int(run.Count)
-	at = tokens.Values[position].Kind
-	after = token.KIND_END_OF_FILE
-	if position+1 < count {
-		after = tokens.Values[position+1].Kind
-	}
-	second = token.KIND_END_OF_FILE
-	if position+2 < count {
-		second = tokens.Values[position+2].Kind
-	}
-	return at, after, second
+  defer func() {
+    token.Kind_Invariants(at, "window.at")
+    token.Kind_Invariants(after, "window.after")
+    token.Kind_Invariants(second, "window.second")
+  }()
+  Token_Storage_Invariants(&tokens, "window.tokens")
+  Run_Cursors_Invariants(&run, "window.run")
+  position := int(run.Position)
+  count := int(run.Count)
+  at = tokens.Values[position].Kind
+  after = token.KIND_END_OF_FILE
+  if position+1 < count {
+    after = tokens.Values[position+1].Kind
+  }
+  second = token.KIND_END_OF_FILE
+  if position+2 < count {
+    second = tokens.Values[position+2].Kind
+  }
+  return at, after, second
 }
 
 // Runs one test over the token at the read, the token behind it, and the readings the grammar
 // carries, and reports whether it held. A step that tests nothing hands the last answer on.
 func test(
-	op Opcode, operand Operand, holds Boolean, level Precedence, at token.Kind,
-	after token.Kind, asserted Type_Assertion,
+  op Opcode,
+  operand Operand,
+  holds Boolean,
+  level Precedence,
+  at token.Kind,
+  after token.Kind,
+  asserted Type_Assertion,
 ) (result Boolean) {
-	defer func() { Boolean_Invariants(result, "test.result") }()
-	Opcode_Invariants(op, "test.op")
-	Operand_Invariants(operand, "test.operand")
-	Boolean_Invariants(holds, "test.holds")
-	Precedence_Invariants(level, "test.level")
-	token.Kind_Invariants(at, "test.at")
-	token.Kind_Invariants(after, "test.after")
-	Type_Assertion_Invariants(asserted, "test.asserted")
-	kind := token.Kind(operand)
-	opens := opens_type(at)
-	follows := opens_type(after)
-	binds := binary_precedence(at)
-	clause := clause_kind(at)
-	refused := refuses_sign(at)
-	switch op {
-	case OPCODE_AT, OPCODE_ACCEPT:
-		return Boolean(at == kind)
-	case OPCODE_OR_AT:
-		if bool(holds) {
-			return true
-		}
-		return Boolean(at == kind)
-	case OPCODE_AFTER:
-		return Boolean(after == kind)
-	case OPCODE_OR_AFTER:
-		if bool(holds) {
-			return true
-		}
-		return Boolean(after == kind)
-	case OPCODE_AND_AFTER:
-		if !bool(holds) {
-			return false
-		}
-		return Boolean(after == kind)
-	case OPCODE_OPENS_TYPE:
-		return opens
-	case OPCODE_AFTER_OPENS_TYPE:
-		return follows
-	case OPCODE_ASSERTED:
-		return Boolean(asserted)
-	case OPCODE_REFUSES_SIGN:
-		return refused
-	case OPCODE_ABOVE:
-		return Boolean(int(binds) > int(level))
-	case OPCODE_CLAUSE_OPERATOR:
-		return Boolean(int(clause) != CLAUSE_KIND_MINIMUM)
-	}
-	return holds
+  defer func() { Boolean_Invariants(result, "test.result") }()
+  Opcode_Invariants(op, "test.op")
+  Operand_Invariants(operand, "test.operand")
+  Boolean_Invariants(holds, "test.holds")
+  Precedence_Invariants(level, "test.level")
+  token.Kind_Invariants(at, "test.at")
+  token.Kind_Invariants(after, "test.after")
+  Type_Assertion_Invariants(asserted, "test.asserted")
+  kind := token.Kind(operand)
+  opens := opens_type(at)
+  follows := opens_type(after)
+  binds := binary_precedence(at)
+  clause := clause_kind(at)
+  refused := refuses_sign(at)
+  switch op {
+  case OPCODE_AT, OPCODE_ACCEPT:
+    return Boolean(at == kind)
+  case OPCODE_OR_AT:
+    if bool(holds) {
+      return true
+    }
+    return Boolean(at == kind)
+  case OPCODE_AFTER:
+    return Boolean(after == kind)
+  case OPCODE_OR_AFTER:
+    if bool(holds) {
+      return true
+    }
+    return Boolean(after == kind)
+  case OPCODE_AND_AFTER:
+    if !bool(holds) {
+      return false
+    }
+    return Boolean(after == kind)
+  case OPCODE_OPENS_TYPE:
+    return opens
+  case OPCODE_AFTER_OPENS_TYPE:
+    return follows
+  case OPCODE_ASSERTED:
+    return Boolean(asserted)
+  case OPCODE_REFUSES_SIGN:
+    return refused
+  case OPCODE_ABOVE:
+    return Boolean(int(binds) > int(level))
+  case OPCODE_CLAUSE_OPERATOR:
+    return Boolean(int(clause) != CLAUSE_KIND_MINIMUM)
+  }
+  return holds
 }
 
 // Runs one test that reads further than the token behind the read: past a bracket, past a comma,
 // or back to the node the open parent holds last. A step that tests nothing hands the last answer
 // on.
 func test_scan(
-	op Opcode, holds Boolean, at token.Kind, after token.Kind, second token.Kind,
-	closes Boolean, barred Boolean,
+  op Opcode,
+  holds Boolean,
+  at token.Kind,
+  after token.Kind,
+  second token.Kind,
+  closes Boolean,
+  barred Boolean,
 ) (result Boolean) {
-	defer func() { Boolean_Invariants(result, "test_scan.result") }()
-	Opcode_Invariants(op, "test_scan.op")
-	Boolean_Invariants(holds, "test_scan.holds")
-	token.Kind_Invariants(at, "test_scan.at")
-	token.Kind_Invariants(after, "test_scan.after")
-	token.Kind_Invariants(second, "test_scan.second")
-	Boolean_Invariants(closes, "test_scan.closes")
-	Boolean_Invariants(barred, "test_scan.barred")
-	follows := opens_type(after)
-	later := opens_type(second)
-	unary := unary_sign(at)
-	suffixed := suffix_sign(at)
-	switch op {
-	case OPCODE_UNARY_SIGN:
-		return unary
-	case OPCODE_SUFFIX_SIGN:
-		return suffixed
-	case OPCODE_TYPE_PARAMETERS:
-		// A comma behind the first name says a type parameter list, because an array
-		// capacity holds one expression and never a list.
-		if at != token.KIND_BRACKET_LEFT {
-			return false
-		}
-		if after != token.KIND_IDENTIFIER {
-			return false
-		}
-		if second == token.KIND_COMMA {
-			return true
-		}
-		return later
-	case OPCODE_QUALIFIES:
-		switch second {
-		case token.KIND_PERIOD, token.KIND_BRACKET_LEFT:
-			return true
-		}
-		return false
-	case OPCODE_FIELD_NAMED:
-		if at != token.KIND_IDENTIFIER {
-			return false
-		}
-		if after == token.KIND_COMMA {
-			return true
-		}
-		if after != token.KIND_BRACKET_LEFT {
-			return follows
-		}
-		return !closes
-	case OPCODE_BARRED_BRACE:
-		return barred
-	}
-	return holds
+  defer func() { Boolean_Invariants(result, "test_scan.result") }()
+  Opcode_Invariants(op, "test_scan.op")
+  Boolean_Invariants(holds, "test_scan.holds")
+  token.Kind_Invariants(at, "test_scan.at")
+  token.Kind_Invariants(after, "test_scan.after")
+  token.Kind_Invariants(second, "test_scan.second")
+  Boolean_Invariants(closes, "test_scan.closes")
+  Boolean_Invariants(barred, "test_scan.barred")
+  follows := opens_type(after)
+  later := opens_type(second)
+  unary := unary_sign(at)
+  suffixed := suffix_sign(at)
+  switch op {
+  case OPCODE_UNARY_SIGN:
+    return unary
+  case OPCODE_SUFFIX_SIGN:
+    return suffixed
+  case OPCODE_TYPE_PARAMETERS:
+    // A comma behind the first name says a type parameter list, because an array
+    // capacity holds one expression and never a list.
+    if at != token.KIND_BRACKET_LEFT {
+      return false
+    }
+    if after != token.KIND_IDENTIFIER {
+      return false
+    }
+    if second == token.KIND_COMMA {
+      return true
+    }
+    return later
+  case OPCODE_QUALIFIES:
+    switch second {
+    case token.KIND_PERIOD, token.KIND_BRACKET_LEFT:
+      return true
+    }
+    return false
+  case OPCODE_FIELD_NAMED:
+    if at != token.KIND_IDENTIFIER {
+      return false
+    }
+    if after == token.KIND_COMMA {
+      return true
+    }
+    if after != token.KIND_BRACKET_LEFT {
+      return follows
+    }
+    return !closes
+  case OPCODE_BARRED_BRACE:
+    return barred
+  }
+  return holds
 }
 
 // Reports whether the bracket run behind the name at the read ends the field. An identifier ahead
@@ -2000,452 +2099,462 @@ func test_scan(
 // embeds. The token behind the closing bracket tells them apart, because a field that ends there
 // embedded a type and one that reads on named it.
 func closes_field(tokens Token_Storage, run Run_Cursors) (yes Boolean) {
-	defer func() { Boolean_Invariants(yes, "closes_field.yes") }()
-	Token_Storage_Invariants(tokens, "closes_field.tokens")
-	Run_Cursors_Invariants(run, "closes_field.run")
-	values := tokens.Values
-	position := int(run.Position)
-	count := int(run.Count)
-	if values[position].Kind != token.KIND_IDENTIFIER {
-		return false
-	}
-	if position+1 >= count {
-		return false
-	}
-	if values[position+1].Kind != token.KIND_BRACKET_LEFT {
-		return false
-	}
-	depth := 0
-	for place := position + 1; place < count; place++ {
-		switch values[place].Kind {
-		case token.KIND_BRACKET_LEFT:
-			depth++
-		case token.KIND_BRACKET_RIGHT:
-			depth--
-			if depth == 0 {
-				// A closing bracket always draws a token behind it, the end
-				// token at the least, thus the read stays inside the run.
-				switch values[place+1].Kind {
-				case token.KIND_SEMICOLON, token.KIND_BRACE_RIGHT:
-					return true
-				case token.KIND_STRING, token.KIND_COMMENT:
-					return true
-				}
-				return false
-			}
-		}
-	}
-	return false
+  defer func() { Boolean_Invariants(yes, "closes_field.yes") }()
+  Token_Storage_Invariants(&tokens, "closes_field.tokens")
+  Run_Cursors_Invariants(&run, "closes_field.run")
+  values := tokens.Values
+  position := int(run.Position)
+  count := int(run.Count)
+  if values[position].Kind != token.KIND_IDENTIFIER {
+    return false
+  }
+  if !(position+1 < count) {
+    return false
+  }
+  if values[position+1].Kind != token.KIND_BRACKET_LEFT {
+    return false
+  }
+  depth := 0
+  for place := position + 1; place < count; place++ {
+    switch values[place].Kind {
+    case token.KIND_BRACKET_LEFT:
+      depth++
+    case token.KIND_BRACKET_RIGHT:
+      depth--
+      if depth == 0 {
+        // A closing bracket always draws a token behind it, the end
+        // token at the least, thus the read stays inside the run.
+        switch values[place+1].Kind {
+        case token.KIND_SEMICOLON, token.KIND_BRACE_RIGHT:
+          return true
+        case token.KIND_STRING, token.KIND_COMMENT:
+          return true
+        }
+        return false
+      }
+    }
+  }
+  return false
 }
 
 // Reports whether a control clause bars the brace at the read from opening a composite literal. A
 // clause bars a literal whose type is a bare name, because `for x {` opens a body and never a
 // literal of type x, but `for range []T{...} {` reads only one way and Go admits it.
 func barred_brace(
-	nodes Node_Storage, last_children Last_Child_Storage, arena Arena_Cursors,
-	plain Plain_Brace,
+  nodes Node_Storage,
+  last_children Last_Child_Storage,
+  arena Arena_Cursors,
+  plain Plain_Brace,
 ) (yes Boolean) {
-	defer func() { Boolean_Invariants(yes, "barred_brace.yes") }()
-	Node_Storage_Invariants(nodes, "barred_brace.nodes")
-	Last_Child_Storage_Invariants(last_children, "barred_brace.last_children")
-	Arena_Cursors_Invariants(arena, "barred_brace.arena")
-	Plain_Brace_Invariants(plain, "barred_brace.plain")
-	if !bool(plain) {
-		return false
-	}
-	depth := arena.Depth
-	last := last_children.Values[depth-1]
-	switch nodes.Values[last].Kind {
-	case NODE_SLICE_TYPE, NODE_ARRAY_TYPE, NODE_MAP_TYPE, NODE_STRUCTURE_TYPE:
-		return false
-	}
-	return true
+  defer func() { Boolean_Invariants(yes, "barred_brace.yes") }()
+  Node_Storage_Invariants(&nodes, "barred_brace.nodes")
+  Last_Child_Storage_Invariants(&last_children, "barred_brace.last_children")
+  Arena_Cursors_Invariants(&arena, "barred_brace.arena")
+  Plain_Brace_Invariants(plain, "barred_brace.plain")
+  if !bool(plain) {
+    return false
+  }
+  depth := arena.Depth
+  last := last_children.Values[depth-1]
+  switch nodes.Values[last].Kind {
+  case NODE_SLICE_TYPE, NODE_ARRAY_TYPE, NODE_MAP_TYPE, NODE_STRUCTURE_TYPE:
+    return false
+  }
+  return true
 }
 
 // Keeps the level the operator at the read binds at, where the step asks for it.
 func hold(op Opcode, held Held_Level, at token.Kind) (level Held_Level) {
-	defer func() { Held_Level_Invariants(level, "hold.level") }()
-	Opcode_Invariants(op, "hold.op")
-	Held_Level_Invariants(held, "hold.held")
-	token.Kind_Invariants(at, "hold.at")
-	binds := binary_precedence(at)
-	if op == OPCODE_HOLD {
-		return Held_Level(binds)
-	}
-	return held
+  defer func() { Held_Level_Invariants(level, "hold.level") }()
+  Opcode_Invariants(op, "hold.op")
+  Held_Level_Invariants(held, "hold.held")
+  token.Kind_Invariants(at, "hold.at")
+  binds := binary_precedence(at)
+  if op == OPCODE_HOLD {
+    return Held_Level(binds)
+  }
+  return held
 }
 
 // Sets, clears, keeps, and restores the readings the grammar carries across its rules, and hands
 // back the control clause reading the rule keeps.
 func keep_plain(flags Machine_Flags_Handle, op Opcode, plain Plain_Brace) (kept Plain_Brace) {
-	defer func() { Plain_Brace_Invariants(kept, "keep_plain.kept") }()
-	Machine_Flags_Handle_Invariants(flags, "keep_plain.flags")
-	Opcode_Invariants(op, "keep_plain.op")
-	Plain_Brace_Invariants(plain, "keep_plain.plain")
-	switch op {
-	case OPCODE_SET_PLAIN:
-		flags.Plain_Brace = true
-	case OPCODE_CLEAR_PLAIN:
-		flags.Plain_Brace = false
-	case OPCODE_SAVE_PLAIN:
-		return flags.Plain_Brace
-	case OPCODE_RESTORE_PLAIN:
-		flags.Plain_Brace = plain
-	case OPCODE_SET_ASSERTION:
-		flags.Type_Assertion = true
-	case OPCODE_CLEAR_ASSERTION:
-		flags.Type_Assertion = false
-	}
-	return plain
+  defer func() { Plain_Brace_Invariants(kept, "keep_plain.kept") }()
+  Machine_Flags_Handle_Invariants(flags, "keep_plain.flags")
+  Opcode_Invariants(op, "keep_plain.op")
+  Plain_Brace_Invariants(plain, "keep_plain.plain")
+  switch op {
+  case OPCODE_SET_PLAIN:
+    flags.Plain_Brace = true
+  case OPCODE_CLEAR_PLAIN:
+    flags.Plain_Brace = false
+  case OPCODE_SAVE_PLAIN:
+    return flags.Plain_Brace
+  case OPCODE_RESTORE_PLAIN:
+    flags.Plain_Brace = plain
+  case OPCODE_SET_ASSERTION:
+    flags.Type_Assertion = true
+  case OPCODE_CLEAR_ASSERTION:
+    flags.Type_Assertion = false
+  }
+  return plain
 }
 
 // Reads ahead to the bracket that closes the suffix at the read and names what it opens. A colon
 // inside makes a slice and a comma makes an instantiation, so the class is known before the node
 // is taken rather than written over it afterwards.
 func bracket_kind(tokens Token_Storage, run Run_Cursors, op Opcode) (kind Suffix_Kind) {
-	defer func() { Suffix_Kind_Invariants(kind, "bracket_kind.kind") }()
-	Token_Storage_Invariants(tokens, "bracket_kind.tokens")
-	Run_Cursors_Invariants(run, "bracket_kind.run")
-	Opcode_Invariants(op, "bracket_kind.op")
-	kind = Suffix_Kind(NODE_INDEX)
-	if op != OPCODE_WRAP_SUFFIX {
-		return kind
-	}
-	depth := 0
-	count := int(run.Count)
-	for place := int(run.Position); place < count; place++ {
-		switch tokens.Values[place].Kind {
-		case token.KIND_BRACKET_LEFT, token.KIND_PARENTHESIS_LEFT, token.KIND_BRACE_LEFT:
-			depth++
-		case token.KIND_PARENTHESIS_RIGHT, token.KIND_BRACE_RIGHT:
-			depth--
-		case token.KIND_BRACKET_RIGHT:
-			depth--
-			if depth == 0 {
-				return kind
-			}
-		case token.KIND_COLON:
-			if depth == 1 {
-				kind = Suffix_Kind(NODE_SLICE_EXPRESSION)
-			}
-		case token.KIND_COMMA:
-			if depth == 1 {
-				kind = Suffix_Kind(NODE_GENERIC)
-			}
-		}
-	}
-	return kind
+  defer func() { Suffix_Kind_Invariants(kind, "bracket_kind.kind") }()
+  Token_Storage_Invariants(&tokens, "bracket_kind.tokens")
+  Run_Cursors_Invariants(&run, "bracket_kind.run")
+  Opcode_Invariants(op, "bracket_kind.op")
+  kind = Suffix_Kind(NODE_INDEX)
+  if op != OPCODE_WRAP_SUFFIX {
+    return kind
+  }
+  depth := 0
+  count := int(run.Count)
+  for place := int(run.Position); place < count; place++ {
+    switch tokens.Values[place].Kind {
+    case token.KIND_BRACKET_LEFT, token.KIND_PARENTHESIS_LEFT, token.KIND_BRACE_LEFT:
+      depth++
+    case token.KIND_PARENTHESIS_RIGHT, token.KIND_BRACE_RIGHT:
+      depth--
+    case token.KIND_BRACKET_RIGHT:
+      depth--
+      if depth == 0 {
+        return kind
+      }
+    case token.KIND_COLON:
+      if depth == 1 {
+        kind = Suffix_Kind(NODE_SLICE_EXPRESSION)
+      }
+    case token.KIND_COMMA:
+      if depth == 1 {
+        kind = Suffix_Kind(NODE_GENERIC)
+      }
+    }
+  }
+  return kind
 }
 
 // Reports whether one step moves the read past the token it stands at. A name the shape refused
 // stands where it stood, because the run stops there.
 func steps_past(op Opcode, holds Boolean, at token.Kind) (yes Boolean) {
-	defer func() { Boolean_Invariants(yes, "steps_past.yes") }()
-	Opcode_Invariants(op, "steps_past.op")
-	Boolean_Invariants(holds, "steps_past.holds")
-	token.Kind_Invariants(at, "steps_past.at")
-	switch op {
-	case OPCODE_ADVANCE, OPCODE_TAKE, OPCODE_LITERAL:
-		return true
-	case OPCODE_ACCEPT:
-		return holds
-	case OPCODE_NAME:
-		return Boolean(at == token.KIND_IDENTIFIER)
-	}
-	return false
+  defer func() { Boolean_Invariants(yes, "steps_past.yes") }()
+  Opcode_Invariants(op, "steps_past.op")
+  Boolean_Invariants(holds, "steps_past.holds")
+  token.Kind_Invariants(at, "steps_past.at")
+  switch op {
+  case OPCODE_ADVANCE, OPCODE_TAKE, OPCODE_LITERAL:
+    return true
+  case OPCODE_ACCEPT:
+    return holds
+  case OPCODE_NAME:
+    return Boolean(at == token.KIND_IDENTIFIER)
+  }
+  return false
 }
 
 // Moves the read through the source: past one token, past the trivia at the read, or past a run
 // of empty statements. A run of trivia opens nodes, thus an exhausted arena stops the move.
 func move(machine Machine_Handle, op Opcode, holds Boolean) (cause Arena_Failure) {
-	defer func() { Arena_Failure_Invariants(cause, "move.cause") }()
-	Machine_Handle_Invariants(machine, "move.machine")
-	Opcode_Invariants(op, "move.op")
-	Boolean_Invariants(holds, "move.holds")
-	stepped := steps_past(op, holds, machine.Tokens.Values[machine.Run.Position].Kind)
-	trivia := stepped
-	if op == OPCODE_SKIP_COMMENTS {
-		trivia = true
-	}
-	empty := Boolean(op == OPCODE_SKIP_EMPTY)
-	if bool(empty) {
-		trivia = true
-	}
-	// The run ends in one end-of-file token that the read never passes, thus a step that
-	// misreads the grammar stalls there instead of running off.
-	if stepped {
-		if int(machine.Run.Position)+1 < int(machine.Run.Count) {
-			machine.Run.Position = machine.Run.Position + 1
-		}
-	}
-	if !trivia {
-		return ARENA_INTACT
-	}
-	return take_trivia(machine, empty)
+  defer func() { Arena_Failure_Invariants(cause, "move.cause") }()
+  Machine_Handle_Invariants(machine, "move.machine")
+  Opcode_Invariants(op, "move.op")
+  Boolean_Invariants(holds, "move.holds")
+  stepped := steps_past(op, holds, machine.Tokens.Values[machine.Run.Position].Kind)
+  trivia := stepped
+  if op == OPCODE_SKIP_COMMENTS {
+    trivia = true
+  }
+  empty := Boolean(op == OPCODE_SKIP_EMPTY)
+  if bool(empty) {
+    trivia = true
+  }
+  // The run ends in one end-of-file token that the read never passes, thus a step that
+  // misreads the grammar stalls there instead of running off.
+  if stepped {
+    if int(machine.Run.Position)+1 < int(machine.Run.Count) {
+      machine.Run.Position = machine.Run.Position + 1
+    }
+  }
+  if !trivia {
+    return ARENA_INTACT
+  }
+  return take_trivia(machine, empty)
 }
 
 // Takes the trivia at the read into the open node: each comment, each run of empty lines, and
 // where the step asks for it, each empty statement among them. The walk is a loop and never a
 // descent, because a file may hold a run of comments or of empty statements as long as it likes.
 func take_trivia(machine Machine_Handle, empty Boolean) (cause Arena_Failure) {
-	defer func() { Arena_Failure_Invariants(cause, "take_trivia.cause") }()
-	Machine_Handle_Invariants(machine, "take_trivia.machine")
-	Boolean_Invariants(empty, "take_trivia.empty")
-	tokens := machine.Tokens.Values
-	for range TOKEN_COUNT_MAXIMUM {
-		position := machine.Run.Position
-		// The read only ever moves forward, thus one mark of how far the tree already holds
-		// is enough to keep a run of empty lines out of the tree twice.
-		if Token_Index(machine.Run.Blank) <= Token_Index(position) {
-			machine.Run.Blank = Blank_Token(position + 1)
-			if tokens[position].Blanks != 0 {
-				span := Opened_Kind(NODE_BLANK)
-				_, blank := open_node(&machine.Arena, machine.Run.Position, span)
-				if blank != ARENA_INTACT {
-					return blank
-				}
-				machine.Arena.Cursors.Depth = machine.Arena.Cursors.Depth - 1
-			}
-		}
-		kind := tokens[position].Kind
-		passed := kind == token.KIND_COMMENT
-		if bool(empty) {
-			if kind == token.KIND_SEMICOLON {
-				passed = true
-			}
-		}
-		if !passed {
-			return ARENA_INTACT
-		}
-		if kind == token.KIND_COMMENT {
-			note := Opened_Kind(NODE_COMMENT)
-			_, comment := open_node(&machine.Arena, machine.Run.Position, note)
-			if comment != ARENA_INTACT {
-				return comment
-			}
-			machine.Arena.Cursors.Depth = machine.Arena.Cursors.Depth - 1
-		}
-		if int(position)+1 < int(machine.Run.Count) {
-			machine.Run.Position = position + 1
-		}
-	}
-	return ARENA_INTACT
+  defer func() { Arena_Failure_Invariants(cause, "take_trivia.cause") }()
+  Machine_Handle_Invariants(machine, "take_trivia.machine")
+  Boolean_Invariants(empty, "take_trivia.empty")
+  tokens := machine.Tokens.Values
+  for range TOKEN_COUNT_MAXIMUM {
+    position := machine.Run.Position
+    // The read only ever moves forward, thus one mark of how far the tree already holds
+    // is enough to keep a run of empty lines out of the tree twice.
+    if !(Token_Index(machine.Run.Blank) > Token_Index(position)) {
+      machine.Run.Blank = Blank_Token(position + 1)
+      if tokens[position].Blanks != 0 {
+        span := Opened_Kind(NODE_BLANK)
+        _, blank := open_node(&machine.Arena, machine.Run.Position, span)
+        if blank != ARENA_INTACT {
+          return blank
+        }
+        machine.Arena.Cursors.Depth = machine.Arena.Cursors.Depth - 1
+      }
+    }
+    kind := tokens[position].Kind
+    passed := kind == token.KIND_COMMENT
+    if bool(empty) {
+      if kind == token.KIND_SEMICOLON {
+        passed = true
+      }
+    }
+    if !passed {
+      return ARENA_INTACT
+    }
+    if kind == token.KIND_COMMENT {
+      note := Opened_Kind(NODE_COMMENT)
+      _, comment := open_node(&machine.Arena, machine.Run.Position, note)
+      if comment != ARENA_INTACT {
+        return comment
+      }
+      machine.Arena.Cursors.Depth = machine.Arena.Cursors.Depth - 1
+    }
+    if int(position)+1 < int(machine.Run.Count) {
+      machine.Run.Position = position + 1
+    }
+  }
+  return ARENA_INTACT
 }
 
 // Takes each name of one comma-joined run as a node of the kind the operand names. A run of
 // names is how a file spends its name storage, thus it costs one step rather than one rule for
 // each name.
 func take_names(machine Machine_Handle, op Opcode, operand Operand) (cause Name_Failure) {
-	defer func() { Name_Failure_Invariants(cause, "take_names.cause") }()
-	Machine_Handle_Invariants(machine, "take_names.machine")
-	Opcode_Invariants(op, "take_names.op")
-	Operand_Invariants(operand, "take_names.operand")
-	if op != OPCODE_NAMES {
-		return Name_Failure(FAILURE_NONE)
-	}
-	tokens := machine.Tokens.Values
-	for range TOKEN_COUNT_MAXIMUM {
-		kind := Opened_Kind(operand)
-		if tokens[machine.Run.Position].Kind != token.KIND_IDENTIFIER {
-			kind = Opened_Kind(NODE_ERROR)
-		}
-		_, failure := open_node(&machine.Arena, machine.Run.Position, kind)
-		if failure != ARENA_INTACT {
-			return Name_Failure(failure)
-		}
-		machine.Arena.Cursors.Depth = machine.Arena.Cursors.Depth - 1
-		if kind == Opened_Kind(NODE_ERROR) {
-			return Name_Failure(FAILURE_SYNTAX)
-		}
-		if int(machine.Run.Position)+1 < int(machine.Run.Count) {
-			machine.Run.Position = machine.Run.Position + 1
-		}
-		passed := take_trivia(machine, false)
-		if passed != ARENA_INTACT {
-			return Name_Failure(passed)
-		}
-		if tokens[machine.Run.Position].Kind != token.KIND_COMMA {
-			return Name_Failure(FAILURE_NONE)
-		}
-		if int(machine.Run.Position)+1 < int(machine.Run.Count) {
-			machine.Run.Position = machine.Run.Position + 1
-		}
-		passed = take_trivia(machine, false)
-		if passed != ARENA_INTACT {
-			return Name_Failure(passed)
-		}
-	}
-	return Name_Failure(FAILURE_NONE)
+  defer func() { Name_Failure_Invariants(cause, "take_names.cause") }()
+  Machine_Handle_Invariants(machine, "take_names.machine")
+  Opcode_Invariants(op, "take_names.op")
+  Operand_Invariants(operand, "take_names.operand")
+  if op != OPCODE_NAMES {
+    return Name_Failure(FAILURE_NONE)
+  }
+  tokens := machine.Tokens.Values
+  for range TOKEN_COUNT_MAXIMUM {
+    kind := Opened_Kind(operand)
+    if tokens[machine.Run.Position].Kind != token.KIND_IDENTIFIER {
+      kind = Opened_Kind(NODE_ERROR)
+    }
+    _, failure := open_node(&machine.Arena, machine.Run.Position, kind)
+    if failure != ARENA_INTACT {
+      return Name_Failure(failure)
+    }
+    machine.Arena.Cursors.Depth = machine.Arena.Cursors.Depth - 1
+    if kind == Opened_Kind(NODE_ERROR) {
+      return Name_Failure(FAILURE_SYNTAX)
+    }
+    if int(machine.Run.Position)+1 < int(machine.Run.Count) {
+      machine.Run.Position = machine.Run.Position + 1
+    }
+    passed := take_trivia(machine, false)
+    if passed != ARENA_INTACT {
+      return Name_Failure(passed)
+    }
+    if tokens[machine.Run.Position].Kind != token.KIND_COMMA {
+      return Name_Failure(FAILURE_NONE)
+    }
+    if int(machine.Run.Position)+1 < int(machine.Run.Count) {
+      machine.Run.Position = machine.Run.Position + 1
+    }
+    passed = take_trivia(machine, false)
+    if passed != ARENA_INTACT {
+      return Name_Failure(passed)
+    }
+  }
+  return Name_Failure(FAILURE_NONE)
 }
 
 // Opens a pointer type at each star of one run and hands back the first node it opened, which the
 // close of the run closes down to. A star the channel keyword stands behind takes that keyword
 // too, as one prefix type does.
 func open_stars(
-	machine Machine_Handle, op Opcode, opened Opened_Index,
+  machine Machine_Handle,
+  op Opcode,
+  opened Opened_Index,
 ) (first Opened_Index, cause Arena_Failure) {
-	defer func() {
-		Opened_Index_Invariants(first, "open_stars.first")
-		Arena_Failure_Invariants(cause, "open_stars.cause")
-	}()
-	Machine_Handle_Invariants(machine, "open_stars.machine")
-	Opcode_Invariants(op, "open_stars.op")
-	Opened_Index_Invariants(opened, "open_stars.opened")
-	if op != OPCODE_STARS {
-		return opened, ARENA_INTACT
-	}
-	tokens := machine.Tokens.Values
-	first = Opened_Index(INDEX_ABSENT)
-	for range TOKEN_COUNT_MAXIMUM {
-		if tokens[machine.Run.Position].Kind != token.KIND_STAR {
-			return first, ARENA_INTACT
-		}
-		pointer := Opened_Kind(NODE_POINTER_TYPE)
-		index, failure := open_node(&machine.Arena, machine.Run.Position, pointer)
-		if failure != ARENA_INTACT {
-			return first, failure
-		}
-		if first == Opened_Index(INDEX_ABSENT) {
-			first = index
-		}
-		if int(machine.Run.Position)+1 < int(machine.Run.Count) {
-			machine.Run.Position = machine.Run.Position + 1
-		}
-		passed := take_trivia(machine, false)
-		if passed != ARENA_INTACT {
-			return first, passed
-		}
-		if tokens[machine.Run.Position].Kind == token.KIND_CHANNEL {
-			if int(machine.Run.Position)+1 < int(machine.Run.Count) {
-				machine.Run.Position = machine.Run.Position + 1
-			}
-			passed = take_trivia(machine, false)
-			if passed != ARENA_INTACT {
-				return first, passed
-			}
-		}
-	}
-	return first, ARENA_INTACT
+  defer func() {
+    Opened_Index_Invariants(first, "open_stars.first")
+    Arena_Failure_Invariants(cause, "open_stars.cause")
+  }()
+  Machine_Handle_Invariants(machine, "open_stars.machine")
+  Opcode_Invariants(op, "open_stars.op")
+  Opened_Index_Invariants(opened, "open_stars.opened")
+  if op != OPCODE_STARS {
+    return opened, ARENA_INTACT
+  }
+  tokens := machine.Tokens.Values
+  first = Opened_Index(INDEX_ABSENT)
+  for range TOKEN_COUNT_MAXIMUM {
+    if tokens[machine.Run.Position].Kind != token.KIND_STAR {
+      return first, ARENA_INTACT
+    }
+    pointer := Opened_Kind(NODE_POINTER_TYPE)
+    index, failure := open_node(&machine.Arena, machine.Run.Position, pointer)
+    if failure != ARENA_INTACT {
+      return first, failure
+    }
+    if first == Opened_Index(INDEX_ABSENT) {
+      first = index
+    }
+    if int(machine.Run.Position)+1 < int(machine.Run.Count) {
+      machine.Run.Position = machine.Run.Position + 1
+    }
+    passed := take_trivia(machine, false)
+    if passed != ARENA_INTACT {
+      return first, passed
+    }
+    if tokens[machine.Run.Position].Kind == token.KIND_CHANNEL {
+      if int(machine.Run.Position)+1 < int(machine.Run.Count) {
+        machine.Run.Position = machine.Run.Position + 1
+      }
+      passed = take_trivia(machine, false)
+      if passed != ARENA_INTACT {
+        return first, passed
+      }
+    }
+  }
+  return first, ARENA_INTACT
 }
 
 // Opens, closes, writes, and retypes nodes as one step asks, and hands back the node the rule
 // opened last. A refusal writes its error node here and names its own cause, because the first
 // cause stands and an arena the error node overran is no reason the source was refused.
 func shape(
-	machine Machine_Handle, op Opcode, operand Operand, opened Opened_Index,
+  machine Machine_Handle,
+  op Opcode,
+  operand Operand,
+  opened Opened_Index,
 ) (index Opened_Index, cause Failure_Code) {
-	defer func() {
-		Opened_Index_Invariants(index, "shape.index")
-		Failure_Code_Invariants(cause, "shape.cause")
-	}()
-	Machine_Handle_Invariants(machine, "shape.machine")
-	Opcode_Invariants(op, "shape.op")
-	Operand_Invariants(operand, "shape.operand")
-	Opened_Index_Invariants(opened, "shape.opened")
-	at := machine.Tokens.Values[machine.Run.Position].Kind
-	literal := literal_kind(at)
-	clause := clause_kind(at)
-	kind := Node_Kind(operand)
-	switch op {
-	case OPCODE_OPEN:
-		node, failure := open_node(&machine.Arena, machine.Run.Position, Opened_Kind(kind))
-		return node, Failure_Code(failure)
-	case OPCODE_CLOSE:
-		machine.Arena.Cursors.Depth = machine.Arena.Cursors.Depth - 1
-		return opened, FAILURE_NONE
-	case OPCODE_LEAF, OPCODE_TAKE, OPCODE_NAME, OPCODE_LITERAL, OPCODE_REJECT:
-		if op == OPCODE_LITERAL {
-			kind = Node_Kind(literal)
-		}
-		if op == OPCODE_NAME {
-			if at != token.KIND_IDENTIFIER {
-				op = OPCODE_REJECT
-				operand = Operand(FAILURE_SYNTAX)
-			}
-		}
-		if op == OPCODE_REJECT {
-			kind = NODE_ERROR
-		}
-		leaf, failure := open_node(&machine.Arena, machine.Run.Position, Opened_Kind(kind))
-		if failure == ARENA_INTACT {
-			machine.Arena.Cursors.Depth = machine.Arena.Cursors.Depth - 1
-		}
-		if op == OPCODE_REJECT {
-			return opened, Failure_Code(operand)
-		}
-		// A leaf is what a later retype of the rule would name, thus it
-		// stands as the node the rule opened last.
-		return leaf, Failure_Code(failure)
-	case OPCODE_CLOSE_STARS:
-		for range DEPTH_MAXIMUM {
-			depth := machine.Arena.Cursors.Depth
-			top := machine.Arena.Parents.Values[depth-1]
-			machine.Arena.Cursors.Depth = depth - 1
-			if Opened_Index(top) == opened {
-				break
-			}
-		}
-	case OPCODE_RETYPE:
-		machine.Arena.Nodes.Values[opened].Kind = kind
-	case OPCODE_RETYPE_CLAUSE:
-		machine.Arena.Nodes.Values[opened].Kind = Node_Kind(clause)
-	}
-	return opened, FAILURE_NONE
+  defer func() {
+    Opened_Index_Invariants(index, "shape.index")
+    Failure_Code_Invariants(cause, "shape.cause")
+  }()
+  Machine_Handle_Invariants(machine, "shape.machine")
+  Opcode_Invariants(op, "shape.op")
+  Operand_Invariants(operand, "shape.operand")
+  Opened_Index_Invariants(opened, "shape.opened")
+  at := machine.Tokens.Values[machine.Run.Position].Kind
+  literal := literal_kind(at)
+  clause := clause_kind(at)
+  kind := Node_Kind(operand)
+  switch op {
+  case OPCODE_OPEN:
+    node, failure := open_node(&machine.Arena, machine.Run.Position, Opened_Kind(kind))
+    return node, Failure_Code(failure)
+  case OPCODE_CLOSE:
+    machine.Arena.Cursors.Depth = machine.Arena.Cursors.Depth - 1
+    return opened, FAILURE_NONE
+  case OPCODE_LEAF, OPCODE_TAKE, OPCODE_NAME, OPCODE_LITERAL, OPCODE_REJECT:
+    if op == OPCODE_LITERAL {
+      kind = Node_Kind(literal)
+    }
+    if op == OPCODE_NAME {
+      if at != token.KIND_IDENTIFIER {
+        op = OPCODE_REJECT
+        operand = Operand(FAILURE_SYNTAX)
+      }
+    }
+    if op == OPCODE_REJECT {
+      kind = NODE_ERROR
+    }
+    leaf, failure := open_node(&machine.Arena, machine.Run.Position, Opened_Kind(kind))
+    if failure == ARENA_INTACT {
+      machine.Arena.Cursors.Depth = machine.Arena.Cursors.Depth - 1
+    }
+    if op == OPCODE_REJECT {
+      return opened, Failure_Code(operand)
+    }
+    // A leaf is what a later retype of the rule would name, thus it
+    // stands as the node the rule opened last.
+    return leaf, Failure_Code(failure)
+  case OPCODE_CLOSE_STARS:
+    for range DEPTH_MAXIMUM {
+      depth := machine.Arena.Cursors.Depth
+      top := machine.Arena.Parents.Values[depth-1]
+      machine.Arena.Cursors.Depth = depth - 1
+      if Opened_Index(top) == opened {
+        break
+      }
+    }
+  case OPCODE_RETYPE:
+    machine.Arena.Nodes.Values[opened].Kind = kind
+  case OPCODE_RETYPE_CLAUSE:
+    machine.Arena.Nodes.Values[opened].Kind = Node_Kind(clause)
+  }
+  return opened, FAILURE_NONE
 }
 
 // Takes back the final child of the open node into a node opened in its place, or reads every
 // name of the open node back to an identifier. A binary operator adopts the operand parsed before
 // the operator was seen, and this is the one place the tree runs backward.
 func reshape(
-	machine Machine_Handle, op Opcode, operand Operand, suffix Suffix_Kind,
+  machine Machine_Handle,
+  op Opcode,
+  operand Operand,
+  suffix Suffix_Kind,
 ) (cause Wrap_Failure) {
-	defer func() { Wrap_Failure_Invariants(cause, "reshape.cause") }()
-	Machine_Handle_Invariants(machine, "reshape.machine")
-	Opcode_Invariants(op, "reshape.op")
-	Operand_Invariants(operand, "reshape.operand")
-	Suffix_Kind_Invariants(suffix, "reshape.suffix")
-	nodes := machine.Arena.Nodes.Values
-	depth := machine.Arena.Cursors.Depth
-	if op == OPCODE_UNNAME {
-		// A run of bare names with no type behind it was a run of types all along, and
-		// only the token after the final name tells the two apart.
-		child := Index(nodes[machine.Arena.Parents.Values[depth-1]].First_Child)
-		for range TOKEN_COUNT_MAXIMUM {
-			if child == INDEX_ABSENT {
-				return WRAP_INTACT
-			}
-			if nodes[child].Kind == NODE_PARAMETER_NAME {
-				nodes[child].Kind = NODE_IDENTIFIER
-			}
-			child = Index(nodes[child].Next)
-		}
-		return WRAP_INTACT
-	}
-	kind := Node_Kind(operand)
-	if op == OPCODE_WRAP_SUFFIX {
-		kind = Node_Kind(suffix)
-	} else if op != OPCODE_WRAP {
-		return WRAP_INTACT
-	}
-	parent := machine.Arena.Parents.Values[depth-1]
-	last := machine.Arena.Last_Children.Values[depth-1]
-	previous := machine.Arena.Earlier_Children.Values[depth-1]
-	machine.Arena.Last_Children.Values[depth-1] = previous
-	if previous == INDEX_ABSENT {
-		nodes[parent].First_Child = Head(INDEX_ABSENT)
-	} else {
-		nodes[previous].Next = Successor(INDEX_ABSENT)
-	}
-	nodes[last].Parent = Ancestor(INDEX_ABSENT)
-	nodes[last].Next = Successor(INDEX_ABSENT)
-	_, failure := open_node(&machine.Arena, machine.Run.Position, Opened_Kind(kind))
-	// The operand a wrap adopts opened at the depth the wrap opens at, thus a depth that
-	// admitted the operand admits the wrap and only the arena can run out here.
-	if failure != ARENA_INTACT {
-		return Wrap_Failure(failure)
-	}
-	attach(&machine.Arena, Child(last))
-	return WRAP_INTACT
+  defer func() { Wrap_Failure_Invariants(cause, "reshape.cause") }()
+  Machine_Handle_Invariants(machine, "reshape.machine")
+  Opcode_Invariants(op, "reshape.op")
+  Operand_Invariants(operand, "reshape.operand")
+  Suffix_Kind_Invariants(suffix, "reshape.suffix")
+  nodes := machine.Arena.Nodes.Values
+  depth := machine.Arena.Cursors.Depth
+  if op == OPCODE_UNNAME {
+    // A run of bare names with no type behind it was a run of types all along, and
+    // only the token after the final name tells the two apart.
+    child := Index(nodes[machine.Arena.Parents.Values[depth-1]].First_Child)
+    for range TOKEN_COUNT_MAXIMUM {
+      if child == INDEX_ABSENT {
+        return WRAP_INTACT
+      }
+      if nodes[child].Kind == NODE_PARAMETER_NAME {
+        nodes[child].Kind = NODE_IDENTIFIER
+      }
+      child = Index(nodes[child].Next)
+    }
+    return WRAP_INTACT
+  }
+  kind := Node_Kind(operand)
+  if op == OPCODE_WRAP_SUFFIX {
+    kind = Node_Kind(suffix)
+  } else if op != OPCODE_WRAP {
+    return WRAP_INTACT
+  }
+  parent := machine.Arena.Parents.Values[depth-1]
+  last := machine.Arena.Last_Children.Values[depth-1]
+  previous := machine.Arena.Earlier_Children.Values[depth-1]
+  machine.Arena.Last_Children.Values[depth-1] = previous
+  if previous == INDEX_ABSENT {
+    nodes[parent].First_Child = Head(INDEX_ABSENT)
+  } else {
+    nodes[previous].Next = Successor(INDEX_ABSENT)
+  }
+  nodes[last].Parent = Ancestor(INDEX_ABSENT)
+  nodes[last].Next = Successor(INDEX_ABSENT)
+  _, failure := open_node(&machine.Arena, machine.Run.Position, Opened_Kind(kind))
+  // The operand a wrap adopts opened at the depth the wrap opens at, thus a depth that
+  // admitted the operand admits the wrap and only the arena can run out here.
+  if failure != ARENA_INTACT {
+    return Wrap_Failure(failure)
+  }
+  attach(&machine.Arena, Child(last))
+  return WRAP_INTACT
 }
 
 // Takes one slot for a node of this kind at the read, links it under the open node, and opens it
@@ -2454,556 +2563,571 @@ func reshape(
 // its slot and its link, because it stands in the tree its parent holds and only its own children
 // have no room.
 func open_node(
-	arena Arena_Handle, position Token_Position, kind Opened_Kind,
+  arena Arena_Handle,
+  position Token_Position,
+  kind Opened_Kind,
 ) (index Opened_Index, cause Arena_Failure) {
-	defer func() {
-		Opened_Index_Invariants(index, "open_node.index")
-		Arena_Failure_Invariants(cause, "open_node.cause")
-	}()
-	Arena_Handle_Invariants(arena, "open_node.arena")
-	Token_Position_Invariants(position, "open_node.position")
-	Opened_Kind_Invariants(kind, "open_node.kind")
-	count := arena.Cursors.Count
-	if int(count) > INDEX_MAXIMUM {
-		return Opened_Index(INDEX_ABSENT), Arena_Failure(FAILURE_NODE_COUNT)
-	}
-	arena.Nodes.Values[count] = Node{
-		Kind: Node_Kind(kind), Token: Token_Index(position),
-		Parent: Ancestor(INDEX_ABSENT), First_Child: Head(INDEX_ABSENT),
-		Next: Successor(INDEX_ABSENT),
-	}
-	attach(arena, Child(count))
-	arena.Cursors.Count = count + 1
-	depth := arena.Cursors.Depth
-	if int(depth) >= DEPTH_MAXIMUM {
-		return Opened_Index(count), Arena_Failure(FAILURE_NESTING_DEPTH)
-	}
-	arena.Parents.Values[depth] = Index(count)
-	arena.Last_Children.Values[depth] = INDEX_ABSENT
-	arena.Earlier_Children.Values[depth] = INDEX_ABSENT
-	arena.Cursors.Depth = depth + 1
-	return Opened_Index(count), ARENA_INTACT
+  defer func() {
+    Opened_Index_Invariants(index, "open_node.index")
+    Arena_Failure_Invariants(cause, "open_node.cause")
+  }()
+  Arena_Handle_Invariants(arena, "open_node.arena")
+  Token_Position_Invariants(position, "open_node.position")
+  Opened_Kind_Invariants(kind, "open_node.kind")
+  count := arena.Cursors.Count
+  if int(count) > INDEX_MAXIMUM {
+    return Opened_Index(INDEX_ABSENT), Arena_Failure(FAILURE_NODE_COUNT)
+  }
+  arena.Nodes.Values[count] = Node{
+    Kind:        Node_Kind(kind),
+    Token:       Token_Index(position),
+    Parent:      Ancestor(INDEX_ABSENT),
+    First_Child: Head(INDEX_ABSENT),
+    Next:        Successor(INDEX_ABSENT),
+  }
+  attach(arena, Child(count))
+  arena.Cursors.Count = count + 1
+  depth := arena.Cursors.Depth
+  if !(int(depth) < DEPTH_MAXIMUM) {
+    return Opened_Index(count), Arena_Failure(FAILURE_NESTING_DEPTH)
+  }
+  arena.Parents.Values[depth] = Index(count)
+  arena.Last_Children.Values[depth] = INDEX_ABSENT
+  arena.Earlier_Children.Values[depth] = INDEX_ABSENT
+  arena.Cursors.Depth = depth + 1
+  return Opened_Index(count), ARENA_INTACT
 }
 
 // Links one node under the open node as its final child.
 func attach(arena Arena_Handle, child Child) {
-	Arena_Handle_Invariants(arena, "attach.arena")
-	Child_Invariants(child, "attach.child")
-	depth := arena.Cursors.Depth
-	nodes := arena.Nodes.Values
-	parent := arena.Parents.Values[depth-1]
-	previous := arena.Last_Children.Values[depth-1]
-	nodes[child].Parent = Ancestor(parent)
-	if previous == INDEX_ABSENT {
-		nodes[parent].First_Child = Head(child)
-	} else {
-		nodes[previous].Next = Successor(child)
-	}
-	arena.Earlier_Children.Values[depth-1] = previous
-	arena.Last_Children.Values[depth-1] = Index(child)
+  Arena_Handle_Invariants(arena, "attach.arena")
+  Child_Invariants(child, "attach.child")
+  depth := arena.Cursors.Depth
+  nodes := arena.Nodes.Values
+  parent := arena.Parents.Values[depth-1]
+  previous := arena.Last_Children.Values[depth-1]
+  nodes[child].Parent = Ancestor(parent)
+  if previous == INDEX_ABSENT {
+    nodes[parent].First_Child = Head(child)
+  } else {
+    nodes[previous].Next = Successor(child)
+  }
+  arena.Earlier_Children.Values[depth-1] = previous
+  arena.Last_Children.Values[depth-1] = Index(child)
 }
 
 // Reports whether this kind can open a type, which is what tells a named parameter from a bare
 // one and a named struct field from an embedded one.
 func opens_type(kind token.Kind) (yes Boolean) {
-	defer func() { Boolean_Invariants(yes, "opens_type.yes") }()
-	token.Kind_Invariants(kind, "opens_type.kind")
-	switch kind {
-	case token.KIND_IDENTIFIER, token.KIND_STAR, token.KIND_BRACKET_LEFT, token.KIND_MAP,
-		token.KIND_CHANNEL, token.KIND_FUNCTION, token.KIND_STRUCTURE, token.KIND_TILDE,
-		token.KIND_INTERFACE, token.KIND_ARROW, token.KIND_ELLIPSIS,
-		token.KIND_PARENTHESIS_LEFT:
-		return true
-	}
-	return false
+  defer func() { Boolean_Invariants(yes, "opens_type.yes") }()
+  token.Kind_Invariants(kind, "opens_type.kind")
+  switch kind {
+  case token.KIND_IDENTIFIER, token.KIND_STAR, token.KIND_BRACKET_LEFT, token.KIND_MAP,
+    token.KIND_CHANNEL, token.KIND_FUNCTION, token.KIND_STRUCTURE, token.KIND_TILDE,
+    token.KIND_INTERFACE, token.KIND_ARROW, token.KIND_ELLIPSIS,
+    token.KIND_PARENTHESIS_LEFT:
+    return true
+  }
+  return false
 }
 
 // Reports whether this kind is a sign a unary expression opens with.
 func unary_sign(kind token.Kind) (yes Boolean) {
-	defer func() { Boolean_Invariants(yes, "unary_sign.yes") }()
-	token.Kind_Invariants(kind, "unary_sign.kind")
-	switch kind {
-	case token.KIND_PLUS, token.KIND_MINUS, token.KIND_NOT, token.KIND_EXCLUSIVE_OR,
-		token.KIND_STAR, token.KIND_AND, token.KIND_ARROW:
-		return true
-	}
-	return false
+  defer func() { Boolean_Invariants(yes, "unary_sign.yes") }()
+  token.Kind_Invariants(kind, "unary_sign.kind")
+  switch kind {
+  case token.KIND_PLUS, token.KIND_MINUS, token.KIND_NOT, token.KIND_EXCLUSIVE_OR,
+    token.KIND_STAR, token.KIND_AND, token.KIND_ARROW:
+    return true
+  }
+  return false
 }
 
 // Reports whether this kind opens a suffix over the operand already read.
 func suffix_sign(kind token.Kind) (yes Boolean) {
-	defer func() { Boolean_Invariants(yes, "suffix_sign.yes") }()
-	token.Kind_Invariants(kind, "suffix_sign.kind")
-	switch kind {
-	case token.KIND_PERIOD, token.KIND_BRACKET_LEFT, token.KIND_PARENTHESIS_LEFT,
-		token.KIND_BRACE_LEFT:
-		return true
-	}
-	return false
+  defer func() { Boolean_Invariants(yes, "suffix_sign.yes") }()
+  token.Kind_Invariants(kind, "suffix_sign.kind")
+  switch kind {
+  case token.KIND_PERIOD, token.KIND_BRACKET_LEFT, token.KIND_PARENTHESIS_LEFT,
+    token.KIND_BRACE_LEFT:
+    return true
+  }
+  return false
 }
 
 // Reports whether this kind is a sign this dialect refuses: the two signs that join conditions,
 // which are nested ifs written flat, and the two order signs that hold equality, which a strict
 // comparison states.
 func refuses_sign(kind token.Kind) (yes Boolean) {
-	defer func() { Boolean_Invariants(yes, "refuses_sign.yes") }()
-	token.Kind_Invariants(kind, "refuses_sign.kind")
-	switch kind {
-	case token.KIND_LOGICAL_AND, token.KIND_LOGICAL_OR, token.KIND_LESS_EQUAL,
-		token.KIND_GREATER_EQUAL:
-		return true
-	}
-	return false
+  defer func() { Boolean_Invariants(yes, "refuses_sign.yes") }()
+  token.Kind_Invariants(kind, "refuses_sign.kind")
+  switch kind {
+  case token.KIND_LOGICAL_AND, token.KIND_LOGICAL_OR, token.KIND_LESS_EQUAL,
+    token.KIND_GREATER_EQUAL:
+    return true
+  }
+  return false
 }
 
 // Reports the level at which this operator binds, or PRECEDENCE_NONE when it binds nothing.
 func binary_precedence(kind token.Kind) (level Precedence) {
-	defer func() { Precedence_Invariants(level, "binary_precedence.level") }()
-	token.Kind_Invariants(kind, "binary_precedence.kind")
-	switch kind {
-	case token.KIND_EQUAL, token.KIND_NOT_EQUAL, token.KIND_LESS, token.KIND_GREATER:
-		return PRECEDENCE_COMPARISON
-	case token.KIND_PLUS, token.KIND_MINUS, token.KIND_OR, token.KIND_EXCLUSIVE_OR:
-		return PRECEDENCE_ADDITION
-	case token.KIND_STAR, token.KIND_SLASH, token.KIND_PERCENT, token.KIND_SHIFT_LEFT,
-		token.KIND_SHIFT_RIGHT, token.KIND_AND, token.KIND_AND_NOT:
-		return PRECEDENCE_MULTIPLICATION
-	}
-	return PRECEDENCE_NONE
+  defer func() { Precedence_Invariants(level, "binary_precedence.level") }()
+  token.Kind_Invariants(kind, "binary_precedence.kind")
+  switch kind {
+  case token.KIND_EQUAL, token.KIND_NOT_EQUAL, token.KIND_LESS, token.KIND_GREATER:
+    return PRECEDENCE_COMPARISON
+  case token.KIND_PLUS, token.KIND_MINUS, token.KIND_OR, token.KIND_EXCLUSIVE_OR:
+    return PRECEDENCE_ADDITION
+  case token.KIND_STAR, token.KIND_SLASH, token.KIND_PERCENT, token.KIND_SHIFT_LEFT,
+    token.KIND_SHIFT_RIGHT, token.KIND_AND, token.KIND_AND_NOT:
+    return PRECEDENCE_MULTIPLICATION
+  }
+  return PRECEDENCE_NONE
 }
 
 // Names the statement form the operator after the left side opens.
 func clause_kind(kind token.Kind) (result Clause_Kind) {
-	defer func() { Clause_Kind_Invariants(result, "clause_kind.result") }()
-	token.Kind_Invariants(kind, "clause_kind.kind")
-	switch kind {
-	case token.KIND_ASSIGN:
-		return Clause_Kind(NODE_ASSIGN)
-	case token.KIND_DEFINE:
-		return Clause_Kind(NODE_DEFINE)
-	case token.KIND_INCREMENT:
-		return Clause_Kind(NODE_INCREMENT)
-	case token.KIND_DECREMENT:
-		return Clause_Kind(NODE_DECREMENT)
-	case token.KIND_ARROW:
-		return Clause_Kind(NODE_SEND)
-	case token.KIND_PLUS_ASSIGN, token.KIND_MINUS_ASSIGN, token.KIND_STAR_ASSIGN,
-		token.KIND_SLASH_ASSIGN, token.KIND_PERCENT_ASSIGN, token.KIND_AND_ASSIGN,
-		token.KIND_OR_ASSIGN, token.KIND_EXCLUSIVE_OR_ASSIGN, token.KIND_SHIFT_LEFT_ASSIGN,
-		token.KIND_SHIFT_RIGHT_ASSIGN, token.KIND_AND_NOT_ASSIGN:
-		return Clause_Kind(NODE_OPERATION_ASSIGN)
-	}
-	return Clause_Kind(NODE_EXPRESSION_STATEMENT)
+  defer func() { Clause_Kind_Invariants(result, "clause_kind.result") }()
+  token.Kind_Invariants(kind, "clause_kind.kind")
+  switch kind {
+  case token.KIND_ASSIGN:
+    return Clause_Kind(NODE_ASSIGN)
+  case token.KIND_DEFINE:
+    return Clause_Kind(NODE_DEFINE)
+  case token.KIND_INCREMENT:
+    return Clause_Kind(NODE_INCREMENT)
+  case token.KIND_DECREMENT:
+    return Clause_Kind(NODE_DECREMENT)
+  case token.KIND_ARROW:
+    return Clause_Kind(NODE_SEND)
+  case token.KIND_PLUS_ASSIGN, token.KIND_MINUS_ASSIGN, token.KIND_STAR_ASSIGN,
+    token.KIND_SLASH_ASSIGN, token.KIND_PERCENT_ASSIGN, token.KIND_AND_ASSIGN,
+    token.KIND_OR_ASSIGN, token.KIND_EXCLUSIVE_OR_ASSIGN, token.KIND_SHIFT_LEFT_ASSIGN,
+    token.KIND_SHIFT_RIGHT_ASSIGN, token.KIND_AND_NOT_ASSIGN:
+    return Clause_Kind(NODE_OPERATION_ASSIGN)
+  }
+  return Clause_Kind(NODE_EXPRESSION_STATEMENT)
 }
 
 // Names the node kind a literal token opens. A token that is no literal names the integer kind,
 // which no step asks of it.
 func literal_kind(kind token.Kind) (literal Literal_Kind) {
-	defer func() { Literal_Kind_Invariants(literal, "literal_kind.literal") }()
-	token.Kind_Invariants(kind, "literal_kind.kind")
-	switch kind {
-	case token.KIND_FLOAT:
-		return Literal_Kind(NODE_FLOAT)
-	case token.KIND_IMAGINARY:
-		return Literal_Kind(NODE_IMAGINARY)
-	case token.KIND_CHARACTER:
-		return Literal_Kind(NODE_CHARACTER)
-	case token.KIND_STRING:
-		return Literal_Kind(NODE_STRING)
-	}
-	return Literal_Kind(NODE_INTEGER)
+  defer func() { Literal_Kind_Invariants(literal, "literal_kind.literal") }()
+  token.Kind_Invariants(kind, "literal_kind.kind")
+  switch kind {
+  case token.KIND_FLOAT:
+    return Literal_Kind(NODE_FLOAT)
+  case token.KIND_IMAGINARY:
+    return Literal_Kind(NODE_IMAGINARY)
+  case token.KIND_CHARACTER:
+    return Literal_Kind(NODE_CHARACTER)
+  case token.KIND_STRING:
+    return Literal_Kind(NODE_STRING)
+  }
+  return Literal_Kind(NODE_INTEGER)
 }
 
 // Failure_Message reads one failure code as a sentence that says what to do about it. Each
 // sentence is a constant, thus naming a failure allocates nothing.
 func Failure_Message(code Failure_Code) (text Message) {
-	defer func() { Message_Invariants(text, "failure_message.text") }()
-	Failure_Code_Invariants(code, "failure_message.code")
-	switch code {
-	case FAILURE_SYNTAX:
-		return "Fix the syntax at this token."
-	case FAILURE_INTERFACE_METHOD:
-		return "Declare no interface; a generic constraint is the one exception."
-	case FAILURE_WIDE_IDENTIFIER:
-		return "Spell the name with ASCII letters, digits, and underscores."
-	case FAILURE_IOTA:
-		return "Spell the value out; iota ties it to declaration order."
-	case FAILURE_REFUSED_SIGN:
-		return "Write nested if statements."
-	case FAILURE_DOT_IMPORT:
-		return "Name the package; a dot import hides where a name came from."
-	case FAILURE_BLANK_IMPORT:
-		return "Call the package by name; a blank import hides an effect."
-	case FAILURE_CONSTANT_CASE:
-		return "Spell the constant name in SCREAMING_SNAKE_CASE."
-	case FAILURE_BARE_LOOP:
-		return "Give the loop a condition, a range, or a post clause."
-	case FAILURE_UNNAMED_RESULT:
-		return "Name every result the signature sends back."
-	case FAILURE_TYPE_ALIAS:
-		return "Declare a type of its own instead of an alias."
-	case FAILURE_CLOSURE_BODY:
-		return "Move closure logic into a named function; keep only calls."
-	case FAILURE_PACKAGE_CLAUSE:
-		return "Open the file with the package keyword and one name."
-	case FAILURE_TOKEN_COUNT:
-		return "Split the file; it holds more tokens than one parse admits."
-	case FAILURE_NODE_COUNT:
-		return "Split the file; it holds more syntax than one parse arena admits."
-	case FAILURE_NESTING_DEPTH:
-		return "Flatten the nesting; it runs deeper than one parse admits."
-	case FAILURE_FALLTHROUGH:
-		return "State each case on its own; a fallthrough hides the flow."
-	}
-	return "Read the tree."
+  defer func() { Message_Invariants(text, "failure_message.text") }()
+  Failure_Code_Invariants(code, "failure_message.code")
+  switch code {
+  case FAILURE_SYNTAX:
+    return "Fix the syntax at this token."
+  case FAILURE_INTERFACE_METHOD:
+    return "Declare no interface; a generic constraint is the one exception."
+  case FAILURE_WIDE_IDENTIFIER:
+    return "Spell the name with ASCII letters, digits, and underscores."
+  case FAILURE_IOTA:
+    return "Spell the value out; iota ties it to declaration order."
+  case FAILURE_REFUSED_SIGN:
+    return "Write nested if statements."
+  case FAILURE_DOT_IMPORT:
+    return "Name the package; a dot import hides where a name came from."
+  case FAILURE_BLANK_IMPORT:
+    return "Call the package by name; a blank import hides an effect."
+  case FAILURE_CONSTANT_CASE:
+    return "Spell the constant name in SCREAMING_SNAKE_CASE."
+  case FAILURE_BARE_LOOP:
+    return "Give the loop a condition, a range, or a post clause."
+  case FAILURE_UNNAMED_RESULT:
+    return "Name every result the signature sends back."
+  case FAILURE_TYPE_ALIAS:
+    return "Declare a type of its own instead of an alias."
+  case FAILURE_CLOSURE_BODY:
+    return "Move closure logic into a named function; keep only calls."
+  case FAILURE_PACKAGE_CLAUSE:
+    return "Open the file with the package keyword and one name."
+  case FAILURE_TOKEN_COUNT:
+    return "Split the file; it holds more tokens than one parse admits."
+  case FAILURE_NODE_COUNT:
+    return "Split the file; it holds more syntax than one parse arena admits."
+  case FAILURE_NESTING_DEPTH:
+    return "Flatten the nesting; it runs deeper than one parse admits."
+  case FAILURE_FALLTHROUGH:
+    return "State each case on its own; a fallthrough hides the flow."
+  }
+  return "Read the tree."
 }
 
 // Names a refused byte at or above 128 for what it is. The scanner calls such a byte illegal,
 // and only the source tells a stray byte apart from a name Go would have taken, thus the reading
 // happens here where the source is still in reach.
 func name_wide_identifier(
-	subject Syntax_Tree_Handle, tree Parse_Result, source token.Source,
+  subject Syntax_Tree_Handle,
+  tree Parse_Result,
+  source token.Source,
 ) (named Parse_Result) {
-	defer func() { Parse_Result_Invariants(named, "name_wide_identifier.named") }()
-	Syntax_Tree_Handle_Invariants(subject, "name_wide_identifier.subject")
-	Parse_Result_Invariants(tree, "name_wide_identifier.tree")
-	token.Source_Invariants(source, "name_wide_identifier.source")
-	if tree.Failure != FAILURE_SYNTAX {
-		return tree
-	}
-	one := subject.Tokens.Values[tree.Failure_Token]
-	if one.Kind != token.KIND_ILLEGAL {
-		return tree
-	}
-	if int(one.Offset) >= len(source) {
-		return tree
-	}
-	if source[one.Offset] < WIDE_BYTE_MINIMUM {
-		return tree
-	}
-	tree.Failure = FAILURE_WIDE_IDENTIFIER
-	tree.OK = false
-	return tree
+  defer func() { Parse_Result_Invariants(&named, "name_wide_identifier.named") }()
+  Syntax_Tree_Handle_Invariants(subject, "name_wide_identifier.subject")
+  Parse_Result_Invariants(&tree, "name_wide_identifier.tree")
+  token.Source_Invariants(source, "name_wide_identifier.source")
+  if tree.Failure != FAILURE_SYNTAX {
+    return tree
+  }
+  one := subject.Tokens.Values[tree.Failure_Token]
+  if one.Kind != token.KIND_ILLEGAL {
+    return tree
+  }
+  if !(int(one.Offset) < len(source)) {
+    return tree
+  }
+  if source[one.Offset] < WIDE_BYTE_MINIMUM {
+    return tree
+  }
+  tree.Failure = FAILURE_WIDE_IDENTIFIER
+  tree.OK = false
+  return tree
 }
 
 // Names an import bound to the blank name. The name reads from the source, which no parse step
 // carries, thus the pass runs here where the source is still in reach.
 func name_blank_import(
-	subject Syntax_Tree_Handle, tree Parse_Result, source token.Source,
+  subject Syntax_Tree_Handle,
+  tree Parse_Result,
+  source token.Source,
 ) (named Parse_Result) {
-	defer func() { Parse_Result_Invariants(named, "name_blank_import.named") }()
-	Syntax_Tree_Handle_Invariants(subject, "name_blank_import.subject")
-	Parse_Result_Invariants(tree, "name_blank_import.tree")
-	token.Source_Invariants(source, "name_blank_import.source")
-	if tree.Failure != FAILURE_NONE {
-		return tree
-	}
-	count := tree.Node_Count
-	for slot := INDEX_FIRST; slot < Index(count); slot++ {
-		if subject.Nodes.Values[slot].Kind != NODE_IMPORT_NAME {
-			continue
-		}
-		one := subject.Tokens.Values[subject.Nodes.Values[slot].Token]
-		name := source[one.Offset : int(one.Offset)+int(one.Size)]
-		if string(name) != BLANK_NAME {
-			continue
-		}
-		tree.Failure = FAILURE_BLANK_IMPORT
-		tree.OK = false
-		tree.Failure_Token = Token_Index(subject.Nodes.Values[slot].Token)
-		return tree
-	}
-	return tree
+  defer func() { Parse_Result_Invariants(&named, "name_blank_import.named") }()
+  Syntax_Tree_Handle_Invariants(subject, "name_blank_import.subject")
+  Parse_Result_Invariants(&tree, "name_blank_import.tree")
+  token.Source_Invariants(source, "name_blank_import.source")
+  if tree.Failure != FAILURE_NONE {
+    return tree
+  }
+  count := tree.Node_Count
+  for slot := INDEX_FIRST; slot < Index(count); slot++ {
+    if subject.Nodes.Values[slot].Kind != NODE_IMPORT_NAME {
+      continue
+    }
+    one := subject.Tokens.Values[subject.Nodes.Values[slot].Token]
+    name := source[one.Offset : int(one.Offset)+int(one.Size)]
+    if string(name) != BLANK_NAME {
+      continue
+    }
+    tree.Failure = FAILURE_BLANK_IMPORT
+    tree.OK = false
+    tree.Failure_Token = Token_Index(subject.Nodes.Values[slot].Token)
+    return tree
+  }
+  return tree
 }
 
 // Names a constant that is no run of uppercase words joined by single underscores. The name
 // reads from the source, which no parse step carries, thus the pass runs here.
 func name_constant_case(
-	subject Syntax_Tree_Handle, tree Parse_Result, source token.Source,
+  subject Syntax_Tree_Handle,
+  tree Parse_Result,
+  source token.Source,
 ) (named Parse_Result) {
-	defer func() { Parse_Result_Invariants(named, "name_constant_case.named") }()
-	Syntax_Tree_Handle_Invariants(subject, "name_constant_case.subject")
-	Parse_Result_Invariants(tree, "name_constant_case.tree")
-	token.Source_Invariants(source, "name_constant_case.source")
-	if tree.Failure != FAILURE_NONE {
-		return tree
-	}
-	count := tree.Node_Count
-	for slot := INDEX_FIRST; slot < Index(count); slot++ {
-		if subject.Nodes.Values[slot].Kind != NODE_CONSTANT_NAME {
-			continue
-		}
-		one := subject.Tokens.Values[subject.Nodes.Values[slot].Token]
-		name := source[one.Offset : int(one.Offset)+int(one.Size)]
-		screams := true
-		if name[0] < 'A' {
-			screams = false
-		}
-		if name[0] > 'Z' {
-			screams = false
-		}
-		// The byte test stays inline, because a step taking the name would owe every
-		// source length at one call site and a constant name is never a whole file.
-		for index := 1; index < len(name); index++ {
-			value := name[index]
-			if value == '_' {
-				if index+1 == len(name) {
-					screams = false
-				}
-				if name[index-1] == '_' {
-					screams = false
-				}
-				continue
-			}
-			if value >= 'A' {
-				if value <= 'Z' {
-					continue
-				}
-			}
-			if value >= '0' {
-				if value <= '9' {
-					continue
-				}
-			}
-			screams = false
-		}
-		if screams {
-			continue
-		}
-		tree.Failure = FAILURE_CONSTANT_CASE
-		tree.OK = false
-		tree.Failure_Token = Token_Index(subject.Nodes.Values[slot].Token)
-		return tree
-	}
-	return tree
+  defer func() { Parse_Result_Invariants(&named, "name_constant_case.named") }()
+  Syntax_Tree_Handle_Invariants(subject, "name_constant_case.subject")
+  Parse_Result_Invariants(&tree, "name_constant_case.tree")
+  token.Source_Invariants(source, "name_constant_case.source")
+  if tree.Failure != FAILURE_NONE {
+    return tree
+  }
+  count := tree.Node_Count
+  for slot := INDEX_FIRST; slot < Index(count); slot++ {
+    if subject.Nodes.Values[slot].Kind != NODE_CONSTANT_NAME {
+      continue
+    }
+    one := subject.Tokens.Values[subject.Nodes.Values[slot].Token]
+    name := source[one.Offset : int(one.Offset)+int(one.Size)]
+    screams := true
+    if name[0] < 'A' {
+      screams = false
+    }
+    if name[0] > 'Z' {
+      screams = false
+    }
+    // The byte test stays inline, because a step taking the name would owe every
+    // source length at one call site and a constant name is never a whole file.
+    for index := 1; index < len(name); index++ {
+      value := name[index]
+      if value == '_' {
+        if index+1 == len(name) {
+          screams = false
+        }
+        if name[index-1] == '_' {
+          screams = false
+        }
+        continue
+      }
+      if !(value < 'A') {
+        if !(value > 'Z') {
+          continue
+        }
+      }
+      if !(value < '0') {
+        if !(value > '9') {
+          continue
+        }
+      }
+      screams = false
+    }
+    if screams {
+      continue
+    }
+    tree.Failure = FAILURE_CONSTANT_CASE
+    tree.OK = false
+    tree.Failure_Token = Token_Index(subject.Nodes.Values[slot].Token)
+    return tree
+  }
+  return tree
 }
 
 // Names a loop that no clause constrains: a bare for, a three-clause for with every clause
 // empty, and a for whose only condition is the true literal. A source that means to run forever
 // says so with a range, which is a form of its own and reads as the assertion it is.
 func name_bare_loop(
-	subject Syntax_Tree_Handle, tree Parse_Result, source token.Source,
+  subject Syntax_Tree_Handle,
+  tree Parse_Result,
+  source token.Source,
 ) (named Parse_Result) {
-	defer func() { Parse_Result_Invariants(named, "name_bare_loop.named") }()
-	Syntax_Tree_Handle_Invariants(subject, "name_bare_loop.subject")
-	Parse_Result_Invariants(tree, "name_bare_loop.tree")
-	token.Source_Invariants(source, "name_bare_loop.source")
-	if tree.Failure != FAILURE_NONE {
-		return tree
-	}
-	count := tree.Node_Count
-	for slot := INDEX_FIRST; slot < Index(count); slot++ {
-		if subject.Nodes.Values[slot].Kind != NODE_FOR {
-			continue
-		}
-		head := Index(subject.Nodes.Values[slot].First_Child)
-		if head == INDEX_ABSENT {
-			continue
-		}
-		bare := subject.Nodes.Values[head].Kind == NODE_BLOCK
-		if subject.Nodes.Values[head].Kind == NODE_EXPRESSION_STATEMENT {
-			inner := Index(subject.Nodes.Values[head].First_Child)
-			if inner != INDEX_ABSENT {
-				if subject.Nodes.Values[inner].Kind == NODE_IDENTIFIER {
-					name_token := subject.Nodes.Values[inner].Token
-					one := subject.Tokens.Values[name_token]
-					name := source[one.Offset : int(one.Offset)+int(one.Size)]
-					bare = string(name) == TRUE_NAME
-				}
-			}
-		}
-		if !bare {
-			continue
-		}
-		tree.Failure = FAILURE_BARE_LOOP
-		tree.OK = false
-		tree.Failure_Token = Token_Index(subject.Nodes.Values[slot].Token)
-		return tree
-	}
-	return tree
+  defer func() { Parse_Result_Invariants(&named, "name_bare_loop.named") }()
+  Syntax_Tree_Handle_Invariants(subject, "name_bare_loop.subject")
+  Parse_Result_Invariants(&tree, "name_bare_loop.tree")
+  token.Source_Invariants(source, "name_bare_loop.source")
+  if tree.Failure != FAILURE_NONE {
+    return tree
+  }
+  count := tree.Node_Count
+  for slot := INDEX_FIRST; slot < Index(count); slot++ {
+    if subject.Nodes.Values[slot].Kind != NODE_FOR {
+      continue
+    }
+    head := Index(subject.Nodes.Values[slot].First_Child)
+    if head == INDEX_ABSENT {
+      continue
+    }
+    bare := subject.Nodes.Values[head].Kind == NODE_BLOCK
+    if subject.Nodes.Values[head].Kind == NODE_EXPRESSION_STATEMENT {
+      inner := Index(subject.Nodes.Values[head].First_Child)
+      if inner != INDEX_ABSENT {
+        if subject.Nodes.Values[inner].Kind == NODE_IDENTIFIER {
+          name_token := subject.Nodes.Values[inner].Token
+          one := subject.Tokens.Values[name_token]
+          name := source[one.Offset : int(one.Offset)+int(one.Size)]
+          bare = string(name) == TRUE_NAME
+        }
+      }
+    }
+    if !bare {
+      continue
+    }
+    tree.Failure = FAILURE_BARE_LOOP
+    tree.OK = false
+    tree.Failure_Token = Token_Index(subject.Nodes.Values[slot].Token)
+    return tree
+  }
+  return tree
 }
 
 // Names a signature result that carries no name. A result that names itself holds its name and
 // its type, thus a result holding one child alone is a type standing on its own.
 func name_unnamed_result(subject Syntax_Tree_Handle, tree Parse_Result) (named Parse_Result) {
-	defer func() { Parse_Result_Invariants(named, "name_unnamed_result.named") }()
-	Syntax_Tree_Handle_Invariants(subject, "name_unnamed_result.subject")
-	Parse_Result_Invariants(tree, "name_unnamed_result.tree")
-	if tree.Failure != FAILURE_NONE {
-		return tree
-	}
-	count := tree.Node_Count
-	for slot := INDEX_FIRST; slot < Index(count); slot++ {
-		if subject.Nodes.Values[slot].Kind != NODE_RESULT {
-			continue
-		}
-		child := Index(subject.Nodes.Values[slot].First_Child)
-		carries_name := false
-		for range TOKEN_COUNT_MAXIMUM {
-			if child == INDEX_ABSENT {
-				break
-			}
-			if subject.Nodes.Values[child].Kind == NODE_PARAMETER_NAME {
-				carries_name = true
-				break
-			}
-			child = Index(subject.Nodes.Values[child].Next)
-		}
-		if carries_name {
-			continue
-		}
-		tree.Failure = FAILURE_UNNAMED_RESULT
-		tree.OK = false
-		tree.Failure_Token = Token_Index(subject.Nodes.Values[slot].Token)
-		return tree
-	}
-	return tree
+  defer func() { Parse_Result_Invariants(&named, "name_unnamed_result.named") }()
+  Syntax_Tree_Handle_Invariants(subject, "name_unnamed_result.subject")
+  Parse_Result_Invariants(&tree, "name_unnamed_result.tree")
+  if tree.Failure != FAILURE_NONE {
+    return tree
+  }
+  count := tree.Node_Count
+  for slot := INDEX_FIRST; slot < Index(count); slot++ {
+    if subject.Nodes.Values[slot].Kind != NODE_RESULT {
+      continue
+    }
+    child := Index(subject.Nodes.Values[slot].First_Child)
+    carries_name := false
+    for range TOKEN_COUNT_MAXIMUM {
+      if child == INDEX_ABSENT {
+        break
+      }
+      if subject.Nodes.Values[child].Kind == NODE_PARAMETER_NAME {
+        carries_name = true
+        break
+      }
+      child = Index(subject.Nodes.Values[child].Next)
+    }
+    if carries_name {
+      continue
+    }
+    tree.Failure = FAILURE_UNNAMED_RESULT
+    tree.OK = false
+    tree.Failure_Token = Token_Index(subject.Nodes.Values[slot].Token)
+    return tree
+  }
+  return tree
 }
 
 // Names a statement of a function literal that is no call and no return, and a return that
 // stands ahead of another statement, because a call behind a return never runs. Trivia states
 // nothing the closure runs, thus a comment or an empty line between calls passes.
 func name_closure_statement(subject Syntax_Tree_Handle, tree Parse_Result) (named Parse_Result) {
-	defer func() { Parse_Result_Invariants(named, "name_closure_statement.named") }()
-	Syntax_Tree_Handle_Invariants(subject, "name_closure_statement.subject")
-	Parse_Result_Invariants(tree, "name_closure_statement.tree")
-	if tree.Failure != FAILURE_NONE {
-		return tree
-	}
-	nodes := subject.Nodes.Values
-	count := tree.Node_Count
-	for slot := INDEX_FIRST; slot < Index(count); slot++ {
-		block := Index(nodes[slot].Parent)
-		if nodes[block].Kind != NODE_BLOCK {
-			continue
-		}
-		if nodes[nodes[block].Parent].Kind != NODE_FUNCTION_LITERAL {
-			continue
-		}
-		kind := nodes[slot].Kind
-		if kind == NODE_COMMENT {
-			continue
-		}
-		if kind == NODE_BLANK {
-			continue
-		}
-		refused := kind != NODE_EXPRESSION_STATEMENT
-		if kind == NODE_RETURN {
-			refused = false
-			for sibling := Index(nodes[slot].Next); sibling != INDEX_ABSENT; {
-				if nodes[sibling].Kind != NODE_COMMENT {
-					if nodes[sibling].Kind != NODE_BLANK {
-						refused = true
-						break
-					}
-				}
-				sibling = Index(nodes[sibling].Next)
-			}
-		}
-		if !refused {
-			continue
-		}
-		tree.Failure = FAILURE_CLOSURE_BODY
-		tree.OK = false
-		tree.Failure_Token = Token_Index(nodes[slot].Token)
-		return tree
-	}
-	return tree
+  defer func() { Parse_Result_Invariants(&named, "name_closure_statement.named") }()
+  Syntax_Tree_Handle_Invariants(subject, "name_closure_statement.subject")
+  Parse_Result_Invariants(&tree, "name_closure_statement.tree")
+  if tree.Failure != FAILURE_NONE {
+    return tree
+  }
+  nodes := subject.Nodes.Values
+  count := tree.Node_Count
+  for slot := INDEX_FIRST; slot < Index(count); slot++ {
+    block := Index(nodes[slot].Parent)
+    if nodes[block].Kind != NODE_BLOCK {
+      continue
+    }
+    if nodes[nodes[block].Parent].Kind != NODE_FUNCTION_LITERAL {
+      continue
+    }
+    kind := nodes[slot].Kind
+    if kind == NODE_COMMENT {
+      continue
+    }
+    if kind == NODE_BLANK {
+      continue
+    }
+    refused := kind != NODE_EXPRESSION_STATEMENT
+    if kind == NODE_RETURN {
+      refused = false
+      for sibling := Index(nodes[slot].Next); sibling != INDEX_ABSENT; {
+        if nodes[sibling].Kind != NODE_COMMENT {
+          if nodes[sibling].Kind != NODE_BLANK {
+            refused = true
+            break
+          }
+        }
+        sibling = Index(nodes[sibling].Next)
+      }
+    }
+    if !refused {
+      continue
+    }
+    tree.Failure = FAILURE_CLOSURE_BODY
+    tree.OK = false
+    tree.Failure_Token = Token_Index(nodes[slot].Token)
+    return tree
+  }
+  return tree
 }
 
 // Names a statement of a function literal, or a grouping inside one, that holds anything but one
 // call or one grouping. A return of two values holds two children, thus it fails here too, and
 // a grouping climbs to the statement it stands in, because only that statement says it is judged.
 func name_closure_call(subject Syntax_Tree_Handle, tree Parse_Result) (named Parse_Result) {
-	defer func() { Parse_Result_Invariants(named, "name_closure_call.named") }()
-	Syntax_Tree_Handle_Invariants(subject, "name_closure_call.subject")
-	Parse_Result_Invariants(tree, "name_closure_call.tree")
-	if tree.Failure != FAILURE_NONE {
-		return tree
-	}
-	nodes := subject.Nodes.Values
-	count := tree.Node_Count
-	for slot := INDEX_FIRST; slot < Index(count); slot++ {
-		// The statement pass refuses every other statement kind, and trivia holds no
-		// child, thus only these three stand to be judged.
-		kind := nodes[slot].Kind
-		judged := kind == NODE_EXPRESSION_STATEMENT
-		if kind == NODE_RETURN {
-			judged = true
-		}
-		if kind == NODE_PARENTHESIS {
-			judged = true
-		}
-		if !judged {
-			continue
-		}
-		statement := slot
-		for nodes[statement].Kind == NODE_PARENTHESIS {
-			statement = Index(nodes[statement].Parent)
-		}
-		block := Index(nodes[statement].Parent)
-		if nodes[block].Kind != NODE_BLOCK {
-			continue
-		}
-		if nodes[nodes[block].Parent].Kind != NODE_FUNCTION_LITERAL {
-			continue
-		}
-		held := 0
-		call := false
-		for child := Index(nodes[slot].First_Child); child != INDEX_ABSENT; {
-			child_kind := nodes[child].Kind
-			if child_kind != NODE_COMMENT {
-				if child_kind != NODE_BLANK {
-					held++
-					call = child_kind == NODE_CALL
-					if child_kind == NODE_PARENTHESIS {
-						call = true
-					}
-				}
-			}
-			child = Index(nodes[child].Next)
-		}
-		if held == 1 {
-			if call {
-				continue
-			}
-		}
-		tree.Failure = FAILURE_CLOSURE_BODY
-		tree.OK = false
-		tree.Failure_Token = Token_Index(nodes[slot].Token)
-		return tree
-	}
-	return tree
+  defer func() { Parse_Result_Invariants(&named, "name_closure_call.named") }()
+  Syntax_Tree_Handle_Invariants(subject, "name_closure_call.subject")
+  Parse_Result_Invariants(&tree, "name_closure_call.tree")
+  if tree.Failure != FAILURE_NONE {
+    return tree
+  }
+  nodes := subject.Nodes.Values
+  count := tree.Node_Count
+  for slot := INDEX_FIRST; slot < Index(count); slot++ {
+    // The statement pass refuses every other statement kind, and trivia holds no
+    // child, thus only these three stand to be judged.
+    kind := nodes[slot].Kind
+    judged := kind == NODE_EXPRESSION_STATEMENT
+    if kind == NODE_RETURN {
+      judged = true
+    }
+    if kind == NODE_PARENTHESIS {
+      judged = true
+    }
+    if !judged {
+      continue
+    }
+    statement := slot
+    for nodes[statement].Kind == NODE_PARENTHESIS {
+      statement = Index(nodes[statement].Parent)
+    }
+    block := Index(nodes[statement].Parent)
+    if nodes[block].Kind != NODE_BLOCK {
+      continue
+    }
+    if nodes[nodes[block].Parent].Kind != NODE_FUNCTION_LITERAL {
+      continue
+    }
+    held := 0
+    call := false
+    for child := Index(nodes[slot].First_Child); child != INDEX_ABSENT; {
+      child_kind := nodes[child].Kind
+      if child_kind != NODE_COMMENT {
+        if child_kind != NODE_BLANK {
+          held++
+          call = child_kind == NODE_CALL
+          if child_kind == NODE_PARENTHESIS {
+            call = true
+          }
+        }
+      }
+      child = Index(nodes[child].Next)
+    }
+    if held == 1 {
+      if call {
+        continue
+      }
+    }
+    tree.Failure = FAILURE_CLOSURE_BODY
+    tree.OK = false
+    tree.Failure_Token = Token_Index(nodes[slot].Token)
+    return tree
+  }
+  return tree
 }
 
 // Names the banned identifier a clean parse still holds. It reads the source, which no parse step
 // carries, thus the pass runs here where the source is still in reach.
 func name_banned_identifier(
-	subject Syntax_Tree_Handle, tree Parse_Result, source token.Source,
+  subject Syntax_Tree_Handle,
+  tree Parse_Result,
+  source token.Source,
 ) (named Parse_Result) {
-	defer func() { Parse_Result_Invariants(named, "name_banned_identifier.named") }()
-	Syntax_Tree_Handle_Invariants(subject, "name_banned_identifier.subject")
-	Parse_Result_Invariants(tree, "name_banned_identifier.tree")
-	token.Source_Invariants(source, "name_banned_identifier.source")
-	if tree.Failure != FAILURE_NONE {
-		return tree
-	}
-	count := tree.Node_Count
-	for slot := INDEX_FIRST; slot < Index(count); slot++ {
-		if subject.Nodes.Values[slot].Kind != NODE_IDENTIFIER {
-			continue
-		}
-		one := subject.Tokens.Values[subject.Nodes.Values[slot].Token]
-		constant := source[one.Offset : int(one.Offset)+int(one.Size)]
-		if string(constant) == IOTA_NAME {
-			tree.Failure = FAILURE_IOTA
-			tree.OK = false
-			tree.Failure_Token = Token_Index(
-				subject.Nodes.Values[slot].Token)
-			return tree
-		}
-	}
-	return tree
+  defer func() { Parse_Result_Invariants(&named, "name_banned_identifier.named") }()
+  Syntax_Tree_Handle_Invariants(subject, "name_banned_identifier.subject")
+  Parse_Result_Invariants(&tree, "name_banned_identifier.tree")
+  token.Source_Invariants(source, "name_banned_identifier.source")
+  if tree.Failure != FAILURE_NONE {
+    return tree
+  }
+  count := tree.Node_Count
+  for slot := INDEX_FIRST; slot < Index(count); slot++ {
+    if subject.Nodes.Values[slot].Kind != NODE_IDENTIFIER {
+      continue
+    }
+    one := subject.Tokens.Values[subject.Nodes.Values[slot].Token]
+    constant := source[one.Offset : int(one.Offset)+int(one.Size)]
+    if string(constant) == IOTA_NAME {
+      tree.Failure = FAILURE_IOTA
+      tree.OK = false
+      tree.Failure_Token = Token_Index(
+        subject.Nodes.Values[slot].Token,
+      )
+      return tree
+    }
+  }
+  return tree
 }
 
 // ENTRY_BASE is one more than the widest seven-bit byte. A byte of a constant string above
@@ -4111,403 +4235,403 @@ const ENTRY_FILE = 0
 
 // ENTRY_PACKAGE_CLAUSE is the step PRODUCTION_PACKAGE_CLAUSE opens at.
 const ENTRY_PACKAGE_CLAUSE = ENTRY_FILE +
-	len(FILE_PROGRAM)/STEP_SIZE
+  len(FILE_PROGRAM)/STEP_SIZE
 
 // ENTRY_NAME is the step PRODUCTION_NAME opens at.
 const ENTRY_NAME = ENTRY_PACKAGE_CLAUSE +
-	len(PACKAGE_CLAUSE_PROGRAM)/STEP_SIZE
+  len(PACKAGE_CLAUSE_PROGRAM)/STEP_SIZE
 
 // ENTRY_DECLARATIONS is the step PRODUCTION_DECLARATIONS opens at.
 const ENTRY_DECLARATIONS = ENTRY_NAME +
-	len(NAME_PROGRAM)/STEP_SIZE
+  len(NAME_PROGRAM)/STEP_SIZE
 
 // ENTRY_DECLARATION is the step PRODUCTION_DECLARATION opens at.
 const ENTRY_DECLARATION = ENTRY_DECLARATIONS +
-	len(DECLARATIONS_PROGRAM)/STEP_SIZE
+  len(DECLARATIONS_PROGRAM)/STEP_SIZE
 
 // ENTRY_END_LINE is the step PRODUCTION_END_LINE opens at.
 const ENTRY_END_LINE = ENTRY_DECLARATION +
-	len(DECLARATION_PROGRAM)/STEP_SIZE
+  len(DECLARATION_PROGRAM)/STEP_SIZE
 
 // ENTRY_IMPORT is the step PRODUCTION_IMPORT opens at.
 const ENTRY_IMPORT = ENTRY_END_LINE +
-	len(END_LINE_PROGRAM)/STEP_SIZE
+  len(END_LINE_PROGRAM)/STEP_SIZE
 
 // ENTRY_IMPORT_PATH is the step PRODUCTION_IMPORT_PATH opens at.
 const ENTRY_IMPORT_PATH = ENTRY_IMPORT +
-	len(IMPORT_PROGRAM)/STEP_SIZE
+  len(IMPORT_PROGRAM)/STEP_SIZE
 
 // ENTRY_VALUE_DECLARATION is the step PRODUCTION_VALUE_DECLARATION opens at.
 const ENTRY_VALUE_DECLARATION = ENTRY_IMPORT_PATH +
-	len(IMPORT_PATH_PROGRAM)/STEP_SIZE
+  len(IMPORT_PATH_PROGRAM)/STEP_SIZE
 
 // ENTRY_CONSTANT_DECLARATION is the step PRODUCTION_CONSTANT_DECLARATION opens at.
 const ENTRY_CONSTANT_DECLARATION = ENTRY_VALUE_DECLARATION +
-	len(VALUE_DECLARATION_PROGRAM)/STEP_SIZE
+  len(VALUE_DECLARATION_PROGRAM)/STEP_SIZE
 
 // ENTRY_VARIABLE_DECLARATION is the step PRODUCTION_VARIABLE_DECLARATION opens at.
 const ENTRY_VARIABLE_DECLARATION = ENTRY_CONSTANT_DECLARATION +
-	len(CONSTANT_DECLARATION_PROGRAM)/STEP_SIZE
+  len(CONSTANT_DECLARATION_PROGRAM)/STEP_SIZE
 
 // ENTRY_VALUE_TAIL is the step PRODUCTION_VALUE_TAIL opens at.
 const ENTRY_VALUE_TAIL = ENTRY_VARIABLE_DECLARATION +
-	len(VARIABLE_DECLARATION_PROGRAM)/STEP_SIZE
+  len(VARIABLE_DECLARATION_PROGRAM)/STEP_SIZE
 
 // ENTRY_TYPE_DECLARATION is the step PRODUCTION_TYPE_DECLARATION opens at.
 const ENTRY_TYPE_DECLARATION = ENTRY_VALUE_TAIL +
-	len(VALUE_TAIL_PROGRAM)/STEP_SIZE
+  len(VALUE_TAIL_PROGRAM)/STEP_SIZE
 
 // ENTRY_FUNCTION_DECLARATION is the step PRODUCTION_FUNCTION_DECLARATION opens at.
 const ENTRY_FUNCTION_DECLARATION = ENTRY_TYPE_DECLARATION +
-	len(TYPE_DECLARATION_PROGRAM)/STEP_SIZE
+  len(TYPE_DECLARATION_PROGRAM)/STEP_SIZE
 
 // ENTRY_RECEIVER is the step PRODUCTION_RECEIVER opens at.
 const ENTRY_RECEIVER = ENTRY_FUNCTION_DECLARATION +
-	len(FUNCTION_DECLARATION_PROGRAM)/STEP_SIZE
+  len(FUNCTION_DECLARATION_PROGRAM)/STEP_SIZE
 
 // ENTRY_TYPE_PARAMETER_LIST is the step PRODUCTION_TYPE_PARAMETER_LIST opens at.
 const ENTRY_TYPE_PARAMETER_LIST = ENTRY_RECEIVER +
-	len(RECEIVER_PROGRAM)/STEP_SIZE
+  len(RECEIVER_PROGRAM)/STEP_SIZE
 
 // ENTRY_TYPE_PARAMETER_ITEMS is the step PRODUCTION_TYPE_PARAMETER_ITEMS opens at.
 const ENTRY_TYPE_PARAMETER_ITEMS = ENTRY_TYPE_PARAMETER_LIST +
-	len(TYPE_PARAMETER_LIST_PROGRAM)/STEP_SIZE
+  len(TYPE_PARAMETER_LIST_PROGRAM)/STEP_SIZE
 
 // ENTRY_TYPE_PARAMETER_NAMES is the step PRODUCTION_TYPE_PARAMETER_NAMES opens at.
 const ENTRY_TYPE_PARAMETER_NAMES = ENTRY_TYPE_PARAMETER_ITEMS +
-	len(TYPE_PARAMETER_ITEMS_PROGRAM)/STEP_SIZE
+  len(TYPE_PARAMETER_ITEMS_PROGRAM)/STEP_SIZE
 
 // ENTRY_CONSTRAINT is the step PRODUCTION_CONSTRAINT opens at.
 const ENTRY_CONSTRAINT = ENTRY_TYPE_PARAMETER_NAMES +
-	len(TYPE_PARAMETER_NAMES_PROGRAM)/STEP_SIZE
+  len(TYPE_PARAMETER_NAMES_PROGRAM)/STEP_SIZE
 
 // ENTRY_UNION_TERMS is the step PRODUCTION_UNION_TERMS opens at.
 const ENTRY_UNION_TERMS = ENTRY_CONSTRAINT +
-	len(CONSTRAINT_PROGRAM)/STEP_SIZE
+  len(CONSTRAINT_PROGRAM)/STEP_SIZE
 
 // ENTRY_TERM is the step PRODUCTION_TERM opens at.
 const ENTRY_TERM = ENTRY_UNION_TERMS +
-	len(UNION_TERMS_PROGRAM)/STEP_SIZE
+  len(UNION_TERMS_PROGRAM)/STEP_SIZE
 
 // ENTRY_SIGNATURE is the step PRODUCTION_SIGNATURE opens at.
 const ENTRY_SIGNATURE = ENTRY_TERM +
-	len(TERM_PROGRAM)/STEP_SIZE
+  len(TERM_PROGRAM)/STEP_SIZE
 
 // ENTRY_PARAMETERS is the step PRODUCTION_PARAMETERS opens at.
 const ENTRY_PARAMETERS = ENTRY_SIGNATURE +
-	len(SIGNATURE_PROGRAM)/STEP_SIZE
+  len(SIGNATURE_PROGRAM)/STEP_SIZE
 
 // ENTRY_PARAMETER_ITEMS is the step PRODUCTION_PARAMETER_ITEMS opens at.
 const ENTRY_PARAMETER_ITEMS = ENTRY_PARAMETERS +
-	len(PARAMETERS_PROGRAM)/STEP_SIZE
+  len(PARAMETERS_PROGRAM)/STEP_SIZE
 
 // ENTRY_RESULTS is the step PRODUCTION_RESULTS opens at.
 const ENTRY_RESULTS = ENTRY_PARAMETER_ITEMS +
-	len(PARAMETER_ITEMS_PROGRAM)/STEP_SIZE
+  len(PARAMETER_ITEMS_PROGRAM)/STEP_SIZE
 
 // ENTRY_RESULT_ITEMS is the step PRODUCTION_RESULT_ITEMS opens at.
 const ENTRY_RESULT_ITEMS = ENTRY_RESULTS +
-	len(RESULTS_PROGRAM)/STEP_SIZE
+  len(RESULTS_PROGRAM)/STEP_SIZE
 
 // ENTRY_PARAMETER is the step PRODUCTION_PARAMETER opens at.
 const ENTRY_PARAMETER = ENTRY_RESULT_ITEMS +
-	len(RESULT_ITEMS_PROGRAM)/STEP_SIZE
+  len(RESULT_ITEMS_PROGRAM)/STEP_SIZE
 
 // ENTRY_RESULT_PARAMETER is the step PRODUCTION_RESULT_PARAMETER opens at.
 const ENTRY_RESULT_PARAMETER = ENTRY_PARAMETER +
-	len(PARAMETER_PROGRAM)/STEP_SIZE
+  len(PARAMETER_PROGRAM)/STEP_SIZE
 
 // ENTRY_PARAMETER_BODY is the step PRODUCTION_PARAMETER_BODY opens at.
 const ENTRY_PARAMETER_BODY = ENTRY_RESULT_PARAMETER +
-	len(RESULT_PARAMETER_PROGRAM)/STEP_SIZE
+  len(RESULT_PARAMETER_PROGRAM)/STEP_SIZE
 
 // ENTRY_PARAMETER_NAMES is the step PRODUCTION_PARAMETER_NAMES opens at.
 const ENTRY_PARAMETER_NAMES = ENTRY_PARAMETER_BODY +
-	len(PARAMETER_BODY_PROGRAM)/STEP_SIZE
+  len(PARAMETER_BODY_PROGRAM)/STEP_SIZE
 
 // ENTRY_PARAMETER_TYPE is the step PRODUCTION_PARAMETER_TYPE opens at.
 const ENTRY_PARAMETER_TYPE = ENTRY_PARAMETER_NAMES +
-	len(PARAMETER_NAMES_PROGRAM)/STEP_SIZE
+  len(PARAMETER_NAMES_PROGRAM)/STEP_SIZE
 
 // ENTRY_PARAMETER_NAME is the step PRODUCTION_PARAMETER_NAME opens at.
 const ENTRY_PARAMETER_NAME = ENTRY_PARAMETER_TYPE +
-	len(PARAMETER_TYPE_PROGRAM)/STEP_SIZE
+  len(PARAMETER_TYPE_PROGRAM)/STEP_SIZE
 
 // ENTRY_TYPE is the step PRODUCTION_TYPE opens at.
 const ENTRY_TYPE = ENTRY_PARAMETER_NAME +
-	len(PARAMETER_NAME_PROGRAM)/STEP_SIZE
+  len(PARAMETER_NAME_PROGRAM)/STEP_SIZE
 
 // ENTRY_POINTERS is the step PRODUCTION_POINTERS opens at.
 const ENTRY_POINTERS = ENTRY_TYPE +
-	len(TYPE_PROGRAM)/STEP_SIZE
+  len(TYPE_PROGRAM)/STEP_SIZE
 
 // ENTRY_PREFIX_TYPE is the step PRODUCTION_PREFIX_TYPE opens at.
 const ENTRY_PREFIX_TYPE = ENTRY_POINTERS +
-	len(POINTERS_PROGRAM)/STEP_SIZE
+  len(POINTERS_PROGRAM)/STEP_SIZE
 
 // ENTRY_GROUPED_TYPE is the step PRODUCTION_GROUPED_TYPE opens at.
 const ENTRY_GROUPED_TYPE = ENTRY_PREFIX_TYPE +
-	len(PREFIX_TYPE_PROGRAM)/STEP_SIZE
+  len(PREFIX_TYPE_PROGRAM)/STEP_SIZE
 
 // ENTRY_TYPE_NAME is the step PRODUCTION_TYPE_NAME opens at.
 const ENTRY_TYPE_NAME = ENTRY_GROUPED_TYPE +
-	len(GROUPED_TYPE_PROGRAM)/STEP_SIZE
+  len(GROUPED_TYPE_PROGRAM)/STEP_SIZE
 
 // ENTRY_QUALIFIED_NAME is the step PRODUCTION_QUALIFIED_NAME opens at.
 const ENTRY_QUALIFIED_NAME = ENTRY_TYPE_NAME +
-	len(TYPE_NAME_PROGRAM)/STEP_SIZE
+  len(TYPE_NAME_PROGRAM)/STEP_SIZE
 
 // ENTRY_GENERIC_ARGUMENTS is the step PRODUCTION_GENERIC_ARGUMENTS opens at.
 const ENTRY_GENERIC_ARGUMENTS = ENTRY_QUALIFIED_NAME +
-	len(QUALIFIED_NAME_PROGRAM)/STEP_SIZE
+  len(QUALIFIED_NAME_PROGRAM)/STEP_SIZE
 
 // ENTRY_ARRAY_TYPE is the step PRODUCTION_ARRAY_TYPE opens at.
 const ENTRY_ARRAY_TYPE = ENTRY_GENERIC_ARGUMENTS +
-	len(GENERIC_ARGUMENTS_PROGRAM)/STEP_SIZE
+  len(GENERIC_ARGUMENTS_PROGRAM)/STEP_SIZE
 
 // ENTRY_ELEMENT_TYPE is the step PRODUCTION_ELEMENT_TYPE opens at.
 const ENTRY_ELEMENT_TYPE = ENTRY_ARRAY_TYPE +
-	len(ARRAY_TYPE_PROGRAM)/STEP_SIZE
+  len(ARRAY_TYPE_PROGRAM)/STEP_SIZE
 
 // ENTRY_CHANNEL_TYPE is the step PRODUCTION_CHANNEL_TYPE opens at.
 const ENTRY_CHANNEL_TYPE = ENTRY_ELEMENT_TYPE +
-	len(ELEMENT_TYPE_PROGRAM)/STEP_SIZE
+  len(ELEMENT_TYPE_PROGRAM)/STEP_SIZE
 
 // ENTRY_MAP_TYPE is the step PRODUCTION_MAP_TYPE opens at.
 const ENTRY_MAP_TYPE = ENTRY_CHANNEL_TYPE +
-	len(CHANNEL_TYPE_PROGRAM)/STEP_SIZE
+  len(CHANNEL_TYPE_PROGRAM)/STEP_SIZE
 
 // ENTRY_FUNCTION_TYPE is the step PRODUCTION_FUNCTION_TYPE opens at.
 const ENTRY_FUNCTION_TYPE = ENTRY_MAP_TYPE +
-	len(MAP_TYPE_PROGRAM)/STEP_SIZE
+  len(MAP_TYPE_PROGRAM)/STEP_SIZE
 
 // ENTRY_STRUCTURE_TYPE is the step PRODUCTION_STRUCTURE_TYPE opens at.
 const ENTRY_STRUCTURE_TYPE = ENTRY_FUNCTION_TYPE +
-	len(FUNCTION_TYPE_PROGRAM)/STEP_SIZE
+  len(FUNCTION_TYPE_PROGRAM)/STEP_SIZE
 
 // ENTRY_FIELDS is the step PRODUCTION_FIELDS opens at.
 const ENTRY_FIELDS = ENTRY_STRUCTURE_TYPE +
-	len(STRUCTURE_TYPE_PROGRAM)/STEP_SIZE
+  len(STRUCTURE_TYPE_PROGRAM)/STEP_SIZE
 
 // ENTRY_FIELD is the step PRODUCTION_FIELD opens at.
 const ENTRY_FIELD = ENTRY_FIELDS +
-	len(FIELDS_PROGRAM)/STEP_SIZE
+  len(FIELDS_PROGRAM)/STEP_SIZE
 
 // ENTRY_FIELD_TYPE is the step PRODUCTION_FIELD_TYPE opens at.
 const ENTRY_FIELD_TYPE = ENTRY_FIELD +
-	len(FIELD_PROGRAM)/STEP_SIZE
+  len(FIELD_PROGRAM)/STEP_SIZE
 
 // ENTRY_INTERFACE_TYPE is the step PRODUCTION_INTERFACE_TYPE opens at.
 const ENTRY_INTERFACE_TYPE = ENTRY_FIELD_TYPE +
-	len(FIELD_TYPE_PROGRAM)/STEP_SIZE
+  len(FIELD_TYPE_PROGRAM)/STEP_SIZE
 
 // ENTRY_ELEMENTS is the step PRODUCTION_ELEMENTS opens at.
 const ENTRY_ELEMENTS = ENTRY_INTERFACE_TYPE +
-	len(INTERFACE_TYPE_PROGRAM)/STEP_SIZE
+  len(INTERFACE_TYPE_PROGRAM)/STEP_SIZE
 
 // ENTRY_BLOCK is the step PRODUCTION_BLOCK opens at.
 const ENTRY_BLOCK = ENTRY_ELEMENTS +
-	len(ELEMENTS_PROGRAM)/STEP_SIZE
+  len(ELEMENTS_PROGRAM)/STEP_SIZE
 
 // ENTRY_STATEMENTS is the step PRODUCTION_STATEMENTS opens at.
 const ENTRY_STATEMENTS = ENTRY_BLOCK +
-	len(BLOCK_PROGRAM)/STEP_SIZE
+  len(BLOCK_PROGRAM)/STEP_SIZE
 
 // ENTRY_STATEMENT is the step PRODUCTION_STATEMENT opens at.
 const ENTRY_STATEMENT = ENTRY_STATEMENTS +
-	len(STATEMENTS_PROGRAM)/STEP_SIZE
+  len(STATEMENTS_PROGRAM)/STEP_SIZE
 
 // ENTRY_DECLARATION_STATEMENT is the step PRODUCTION_DECLARATION_STATEMENT opens at.
 const ENTRY_DECLARATION_STATEMENT = ENTRY_STATEMENT +
-	len(STATEMENT_PROGRAM)/STEP_SIZE
+  len(STATEMENT_PROGRAM)/STEP_SIZE
 
 // ENTRY_LABEL is the step PRODUCTION_LABEL opens at.
 const ENTRY_LABEL = ENTRY_DECLARATION_STATEMENT +
-	len(DECLARATION_STATEMENT_PROGRAM)/STEP_SIZE
+  len(DECLARATION_STATEMENT_PROGRAM)/STEP_SIZE
 
 // ENTRY_RETURN_STATEMENT is the step PRODUCTION_RETURN_STATEMENT opens at.
 const ENTRY_RETURN_STATEMENT = ENTRY_LABEL +
-	len(LABEL_PROGRAM)/STEP_SIZE
+  len(LABEL_PROGRAM)/STEP_SIZE
 
 // ENTRY_LAUNCH is the step PRODUCTION_LAUNCH opens at.
 const ENTRY_LAUNCH = ENTRY_RETURN_STATEMENT +
-	len(RETURN_STATEMENT_PROGRAM)/STEP_SIZE
+  len(RETURN_STATEMENT_PROGRAM)/STEP_SIZE
 
 // ENTRY_JUMP is the step PRODUCTION_JUMP opens at.
 const ENTRY_JUMP = ENTRY_LAUNCH +
-	len(LAUNCH_PROGRAM)/STEP_SIZE
+  len(LAUNCH_PROGRAM)/STEP_SIZE
 
 // ENTRY_IF_STATEMENT is the step PRODUCTION_IF_STATEMENT opens at.
 const ENTRY_IF_STATEMENT = ENTRY_JUMP +
-	len(JUMP_PROGRAM)/STEP_SIZE
+  len(JUMP_PROGRAM)/STEP_SIZE
 
 // ENTRY_IF_END is the step PRODUCTION_IF_END opens at.
 const ENTRY_IF_END = ENTRY_IF_STATEMENT +
-	len(IF_STATEMENT_PROGRAM)/STEP_SIZE
+  len(IF_STATEMENT_PROGRAM)/STEP_SIZE
 
 // ENTRY_FOR_STATEMENT is the step PRODUCTION_FOR_STATEMENT opens at.
 const ENTRY_FOR_STATEMENT = ENTRY_IF_END +
-	len(IF_END_PROGRAM)/STEP_SIZE
+  len(IF_END_PROGRAM)/STEP_SIZE
 
 // ENTRY_FOR_HEAD is the step PRODUCTION_FOR_HEAD opens at.
 const ENTRY_FOR_HEAD = ENTRY_FOR_STATEMENT +
-	len(FOR_STATEMENT_PROGRAM)/STEP_SIZE
+  len(FOR_STATEMENT_PROGRAM)/STEP_SIZE
 
 // ENTRY_RANGE_CLAUSE is the step PRODUCTION_RANGE_CLAUSE opens at.
 const ENTRY_RANGE_CLAUSE = ENTRY_FOR_HEAD +
-	len(FOR_HEAD_PROGRAM)/STEP_SIZE
+  len(FOR_HEAD_PROGRAM)/STEP_SIZE
 
 // ENTRY_SWITCH_STATEMENT is the step PRODUCTION_SWITCH_STATEMENT opens at.
 const ENTRY_SWITCH_STATEMENT = ENTRY_RANGE_CLAUSE +
-	len(RANGE_CLAUSE_PROGRAM)/STEP_SIZE
+  len(RANGE_CLAUSE_PROGRAM)/STEP_SIZE
 
 // ENTRY_SWITCH_HEAD is the step PRODUCTION_SWITCH_HEAD opens at.
 const ENTRY_SWITCH_HEAD = ENTRY_SWITCH_STATEMENT +
-	len(SWITCH_STATEMENT_PROGRAM)/STEP_SIZE
+  len(SWITCH_STATEMENT_PROGRAM)/STEP_SIZE
 
 // ENTRY_SELECT_STATEMENT is the step PRODUCTION_SELECT_STATEMENT opens at.
 const ENTRY_SELECT_STATEMENT = ENTRY_SWITCH_HEAD +
-	len(SWITCH_HEAD_PROGRAM)/STEP_SIZE
+  len(SWITCH_HEAD_PROGRAM)/STEP_SIZE
 
 // ENTRY_CASE_BLOCK is the step PRODUCTION_CASE_BLOCK opens at.
 const ENTRY_CASE_BLOCK = ENTRY_SELECT_STATEMENT +
-	len(SELECT_STATEMENT_PROGRAM)/STEP_SIZE
+  len(SELECT_STATEMENT_PROGRAM)/STEP_SIZE
 
 // ENTRY_CASES is the step PRODUCTION_CASES opens at.
 const ENTRY_CASES = ENTRY_CASE_BLOCK +
-	len(CASE_BLOCK_PROGRAM)/STEP_SIZE
+  len(CASE_BLOCK_PROGRAM)/STEP_SIZE
 
 // ENTRY_CASE is the step PRODUCTION_CASE opens at.
 const ENTRY_CASE = ENTRY_CASES +
-	len(CASES_PROGRAM)/STEP_SIZE
+  len(CASES_PROGRAM)/STEP_SIZE
 
 // ENTRY_CASE_COLON is the step PRODUCTION_CASE_COLON opens at.
 const ENTRY_CASE_COLON = ENTRY_CASE +
-	len(CASE_PROGRAM)/STEP_SIZE
+  len(CASE_PROGRAM)/STEP_SIZE
 
 // ENTRY_CASE_BODY is the step PRODUCTION_CASE_BODY opens at.
 const ENTRY_CASE_BODY = ENTRY_CASE_COLON +
-	len(CASE_COLON_PROGRAM)/STEP_SIZE
+  len(CASE_COLON_PROGRAM)/STEP_SIZE
 
 // ENTRY_CLAUSE is the step PRODUCTION_CLAUSE opens at.
 const ENTRY_CLAUSE = ENTRY_CASE_BODY +
-	len(CASE_BODY_PROGRAM)/STEP_SIZE
+  len(CASE_BODY_PROGRAM)/STEP_SIZE
 
 // ENTRY_EXPRESSION_LIST is the step PRODUCTION_EXPRESSION_LIST opens at.
 const ENTRY_EXPRESSION_LIST = ENTRY_CLAUSE +
-	len(CLAUSE_PROGRAM)/STEP_SIZE
+  len(CLAUSE_PROGRAM)/STEP_SIZE
 
 // ENTRY_BINARY is the step PRODUCTION_BINARY opens at.
 const ENTRY_BINARY = ENTRY_EXPRESSION_LIST +
-	len(EXPRESSION_LIST_PROGRAM)/STEP_SIZE
+  len(EXPRESSION_LIST_PROGRAM)/STEP_SIZE
 
 // ENTRY_BINARY_OPERATORS is the step PRODUCTION_BINARY_OPERATORS opens at.
 const ENTRY_BINARY_OPERATORS = ENTRY_BINARY +
-	len(BINARY_PROGRAM)/STEP_SIZE
+  len(BINARY_PROGRAM)/STEP_SIZE
 
 // ENTRY_UNARY is the step PRODUCTION_UNARY opens at.
 const ENTRY_UNARY = ENTRY_BINARY_OPERATORS +
-	len(BINARY_OPERATORS_PROGRAM)/STEP_SIZE
+  len(BINARY_OPERATORS_PROGRAM)/STEP_SIZE
 
 // ENTRY_PRIMARY is the step PRODUCTION_PRIMARY opens at.
 const ENTRY_PRIMARY = ENTRY_UNARY +
-	len(UNARY_PROGRAM)/STEP_SIZE
+  len(UNARY_PROGRAM)/STEP_SIZE
 
 // ENTRY_SUFFIXES is the step PRODUCTION_SUFFIXES opens at.
 const ENTRY_SUFFIXES = ENTRY_PRIMARY +
-	len(PRIMARY_PROGRAM)/STEP_SIZE
+  len(PRIMARY_PROGRAM)/STEP_SIZE
 
 // ENTRY_OPERAND is the step PRODUCTION_OPERAND opens at.
 const ENTRY_OPERAND = ENTRY_SUFFIXES +
-	len(SUFFIXES_PROGRAM)/STEP_SIZE
+  len(SUFFIXES_PROGRAM)/STEP_SIZE
 
 // ENTRY_GROUPING is the step PRODUCTION_GROUPING opens at.
 const ENTRY_GROUPING = ENTRY_OPERAND +
-	len(OPERAND_PROGRAM)/STEP_SIZE
+  len(OPERAND_PROGRAM)/STEP_SIZE
 
 // ENTRY_FUNCTION_LITERAL is the step PRODUCTION_FUNCTION_LITERAL opens at.
 const ENTRY_FUNCTION_LITERAL = ENTRY_GROUPING +
-	len(GROUPING_PROGRAM)/STEP_SIZE
+  len(GROUPING_PROGRAM)/STEP_SIZE
 
 // ENTRY_SELECTOR_SUFFIX is the step PRODUCTION_SELECTOR_SUFFIX opens at.
 const ENTRY_SELECTOR_SUFFIX = ENTRY_FUNCTION_LITERAL +
-	len(FUNCTION_LITERAL_PROGRAM)/STEP_SIZE
+  len(FUNCTION_LITERAL_PROGRAM)/STEP_SIZE
 
 // ENTRY_ASSERTION_SUFFIX is the step PRODUCTION_ASSERTION_SUFFIX opens at.
 const ENTRY_ASSERTION_SUFFIX = ENTRY_SELECTOR_SUFFIX +
-	len(SELECTOR_SUFFIX_PROGRAM)/STEP_SIZE
+  len(SELECTOR_SUFFIX_PROGRAM)/STEP_SIZE
 
 // ENTRY_INDEX_SUFFIX is the step PRODUCTION_INDEX_SUFFIX opens at.
 const ENTRY_INDEX_SUFFIX = ENTRY_ASSERTION_SUFFIX +
-	len(ASSERTION_SUFFIX_PROGRAM)/STEP_SIZE
+  len(ASSERTION_SUFFIX_PROGRAM)/STEP_SIZE
 
 // ENTRY_INDEX_ITEMS is the step PRODUCTION_INDEX_ITEMS opens at.
 const ENTRY_INDEX_ITEMS = ENTRY_INDEX_SUFFIX +
-	len(INDEX_SUFFIX_PROGRAM)/STEP_SIZE
+  len(INDEX_SUFFIX_PROGRAM)/STEP_SIZE
 
 // ENTRY_CALL_SUFFIX is the step PRODUCTION_CALL_SUFFIX opens at.
 const ENTRY_CALL_SUFFIX = ENTRY_INDEX_ITEMS +
-	len(INDEX_ITEMS_PROGRAM)/STEP_SIZE
+  len(INDEX_ITEMS_PROGRAM)/STEP_SIZE
 
 // ENTRY_ARGUMENTS is the step PRODUCTION_ARGUMENTS opens at.
 const ENTRY_ARGUMENTS = ENTRY_CALL_SUFFIX +
-	len(CALL_SUFFIX_PROGRAM)/STEP_SIZE
+  len(CALL_SUFFIX_PROGRAM)/STEP_SIZE
 
 // ENTRY_COMPOSITE_SUFFIX is the step PRODUCTION_COMPOSITE_SUFFIX opens at.
 const ENTRY_COMPOSITE_SUFFIX = ENTRY_ARGUMENTS +
-	len(ARGUMENTS_PROGRAM)/STEP_SIZE
+  len(ARGUMENTS_PROGRAM)/STEP_SIZE
 
 // ENTRY_COMPOSITE_BODY is the step PRODUCTION_COMPOSITE_BODY opens at.
 const ENTRY_COMPOSITE_BODY = ENTRY_COMPOSITE_SUFFIX +
-	len(COMPOSITE_SUFFIX_PROGRAM)/STEP_SIZE
+  len(COMPOSITE_SUFFIX_PROGRAM)/STEP_SIZE
 
 // ENTRY_COMPOSITE_ITEMS is the step PRODUCTION_COMPOSITE_ITEMS opens at.
 const ENTRY_COMPOSITE_ITEMS = ENTRY_COMPOSITE_BODY +
-	len(COMPOSITE_BODY_PROGRAM)/STEP_SIZE
+  len(COMPOSITE_BODY_PROGRAM)/STEP_SIZE
 
 // ENTRY_ELEMENT is the step PRODUCTION_ELEMENT opens at.
 const ENTRY_ELEMENT = ENTRY_COMPOSITE_ITEMS +
-	len(COMPOSITE_ITEMS_PROGRAM)/STEP_SIZE
+  len(COMPOSITE_ITEMS_PROGRAM)/STEP_SIZE
 
 // ENTRY_ELEMENT_VALUE is the step PRODUCTION_ELEMENT_VALUE opens at.
 const ENTRY_ELEMENT_VALUE = ENTRY_ELEMENT +
-	len(ELEMENT_PROGRAM)/STEP_SIZE
+  len(ELEMENT_PROGRAM)/STEP_SIZE
 
 // ENTRY_CONSTANT_GROUP is the step PRODUCTION_CONSTANT_GROUP opens at.
 const ENTRY_CONSTANT_GROUP = ENTRY_ELEMENT_VALUE +
-	len(ELEMENT_VALUE_PROGRAM)/STEP_SIZE
+  len(ELEMENT_VALUE_PROGRAM)/STEP_SIZE
 
 // ENTRY_CONSTANT_MEMBERS is the step PRODUCTION_CONSTANT_MEMBERS opens at.
 const ENTRY_CONSTANT_MEMBERS = ENTRY_CONSTANT_GROUP +
-	len(CONSTANT_GROUP_PROGRAM)/STEP_SIZE
+  len(CONSTANT_GROUP_PROGRAM)/STEP_SIZE
 
 // ENTRY_GROUP_VALUE_TAIL is the step PRODUCTION_GROUP_VALUE_TAIL opens at.
 const ENTRY_GROUP_VALUE_TAIL = ENTRY_CONSTANT_MEMBERS +
-	len(CONSTANT_MEMBERS_PROGRAM)/STEP_SIZE
+  len(CONSTANT_MEMBERS_PROGRAM)/STEP_SIZE
 
 // ENTRY_VARIABLE_GROUP is the step PRODUCTION_VARIABLE_GROUP opens at.
 const ENTRY_VARIABLE_GROUP = ENTRY_GROUP_VALUE_TAIL +
-	len(GROUP_VALUE_TAIL_PROGRAM)/STEP_SIZE
+  len(GROUP_VALUE_TAIL_PROGRAM)/STEP_SIZE
 
 // ENTRY_VARIABLE_MEMBERS is the step PRODUCTION_VARIABLE_MEMBERS opens at.
 const ENTRY_VARIABLE_MEMBERS = ENTRY_VARIABLE_GROUP +
-	len(VARIABLE_GROUP_PROGRAM)/STEP_SIZE
+  len(VARIABLE_GROUP_PROGRAM)/STEP_SIZE
 
 // ENTRY_TYPE_GROUP is the step PRODUCTION_TYPE_GROUP opens at.
 const ENTRY_TYPE_GROUP = ENTRY_VARIABLE_MEMBERS +
-	len(VARIABLE_MEMBERS_PROGRAM)/STEP_SIZE
+  len(VARIABLE_MEMBERS_PROGRAM)/STEP_SIZE
 
 // ENTRY_TYPE_MEMBERS is the step PRODUCTION_TYPE_MEMBERS opens at.
 const ENTRY_TYPE_MEMBERS = ENTRY_TYPE_GROUP +
-	len(TYPE_GROUP_PROGRAM)/STEP_SIZE
+  len(TYPE_GROUP_PROGRAM)/STEP_SIZE
 
 // ENTRY_IMPORT_GROUP is the step PRODUCTION_IMPORT_GROUP opens at.
 const ENTRY_IMPORT_GROUP = ENTRY_TYPE_MEMBERS +
-	len(TYPE_MEMBERS_PROGRAM)/STEP_SIZE
+  len(TYPE_MEMBERS_PROGRAM)/STEP_SIZE
 
 // ENTRY_IMPORT_MEMBERS is the step PRODUCTION_IMPORT_MEMBERS opens at.
 const ENTRY_IMPORT_MEMBERS = ENTRY_IMPORT_GROUP +
-	len(IMPORT_GROUP_PROGRAM)/STEP_SIZE
+  len(IMPORT_GROUP_PROGRAM)/STEP_SIZE
 
 // ENTRY_MAXIMUM is the step the final rule opens at. Registration reads no length of a string,
 // thus the step is spelled out and the bounds test holds it to the program.
@@ -4515,450 +4639,658 @@ const ENTRY_MAXIMUM = 953
 
 // ENTRIES names the step each rule opens at, in the order of the rules.
 const ENTRIES = string(rune(ENTRY_FILE/ENTRY_BASE)) +
-	string(rune(ENTRY_FILE%ENTRY_BASE)) +
-	string(rune(ENTRY_PACKAGE_CLAUSE/ENTRY_BASE)) +
-	string(rune(ENTRY_PACKAGE_CLAUSE%ENTRY_BASE)) +
-	string(rune(ENTRY_NAME/ENTRY_BASE)) +
-	string(rune(ENTRY_NAME%ENTRY_BASE)) +
-	string(rune(ENTRY_DECLARATIONS/ENTRY_BASE)) +
-	string(rune(ENTRY_DECLARATIONS%ENTRY_BASE)) +
-	string(rune(ENTRY_DECLARATION/ENTRY_BASE)) +
-	string(rune(ENTRY_DECLARATION%ENTRY_BASE)) +
-	string(rune(ENTRY_END_LINE/ENTRY_BASE)) +
-	string(rune(ENTRY_END_LINE%ENTRY_BASE)) +
-	string(rune(ENTRY_IMPORT/ENTRY_BASE)) +
-	string(rune(ENTRY_IMPORT%ENTRY_BASE)) +
-	string(rune(ENTRY_IMPORT_PATH/ENTRY_BASE)) +
-	string(rune(ENTRY_IMPORT_PATH%ENTRY_BASE)) +
-	string(rune(ENTRY_VALUE_DECLARATION/ENTRY_BASE)) +
-	string(rune(ENTRY_VALUE_DECLARATION%ENTRY_BASE)) +
-	string(rune(ENTRY_CONSTANT_DECLARATION/ENTRY_BASE)) +
-	string(rune(ENTRY_CONSTANT_DECLARATION%ENTRY_BASE)) +
-	string(rune(ENTRY_VARIABLE_DECLARATION/ENTRY_BASE)) +
-	string(rune(ENTRY_VARIABLE_DECLARATION%ENTRY_BASE)) +
-	string(rune(ENTRY_VALUE_TAIL/ENTRY_BASE)) +
-	string(rune(ENTRY_VALUE_TAIL%ENTRY_BASE)) +
-	string(rune(ENTRY_TYPE_DECLARATION/ENTRY_BASE)) +
-	string(rune(ENTRY_TYPE_DECLARATION%ENTRY_BASE)) +
-	string(rune(ENTRY_FUNCTION_DECLARATION/ENTRY_BASE)) +
-	string(rune(ENTRY_FUNCTION_DECLARATION%ENTRY_BASE)) +
-	string(rune(ENTRY_RECEIVER/ENTRY_BASE)) +
-	string(rune(ENTRY_RECEIVER%ENTRY_BASE)) +
-	string(rune(ENTRY_TYPE_PARAMETER_LIST/ENTRY_BASE)) +
-	string(rune(ENTRY_TYPE_PARAMETER_LIST%ENTRY_BASE)) +
-	string(rune(ENTRY_TYPE_PARAMETER_ITEMS/ENTRY_BASE)) +
-	string(rune(ENTRY_TYPE_PARAMETER_ITEMS%ENTRY_BASE)) +
-	string(rune(ENTRY_TYPE_PARAMETER_NAMES/ENTRY_BASE)) +
-	string(rune(ENTRY_TYPE_PARAMETER_NAMES%ENTRY_BASE)) +
-	string(rune(ENTRY_CONSTRAINT/ENTRY_BASE)) +
-	string(rune(ENTRY_CONSTRAINT%ENTRY_BASE)) +
-	string(rune(ENTRY_UNION_TERMS/ENTRY_BASE)) +
-	string(rune(ENTRY_UNION_TERMS%ENTRY_BASE)) +
-	string(rune(ENTRY_TERM/ENTRY_BASE)) +
-	string(rune(ENTRY_TERM%ENTRY_BASE)) +
-	string(rune(ENTRY_SIGNATURE/ENTRY_BASE)) +
-	string(rune(ENTRY_SIGNATURE%ENTRY_BASE)) +
-	string(rune(ENTRY_PARAMETERS/ENTRY_BASE)) +
-	string(rune(ENTRY_PARAMETERS%ENTRY_BASE)) +
-	string(rune(ENTRY_PARAMETER_ITEMS/ENTRY_BASE)) +
-	string(rune(ENTRY_PARAMETER_ITEMS%ENTRY_BASE)) +
-	string(rune(ENTRY_RESULTS/ENTRY_BASE)) +
-	string(rune(ENTRY_RESULTS%ENTRY_BASE)) +
-	string(rune(ENTRY_RESULT_ITEMS/ENTRY_BASE)) +
-	string(rune(ENTRY_RESULT_ITEMS%ENTRY_BASE)) +
-	string(rune(ENTRY_PARAMETER/ENTRY_BASE)) +
-	string(rune(ENTRY_PARAMETER%ENTRY_BASE)) +
-	string(rune(ENTRY_RESULT_PARAMETER/ENTRY_BASE)) +
-	string(rune(ENTRY_RESULT_PARAMETER%ENTRY_BASE)) +
-	string(rune(ENTRY_PARAMETER_BODY/ENTRY_BASE)) +
-	string(rune(ENTRY_PARAMETER_BODY%ENTRY_BASE)) +
-	string(rune(ENTRY_PARAMETER_NAMES/ENTRY_BASE)) +
-	string(rune(ENTRY_PARAMETER_NAMES%ENTRY_BASE)) +
-	string(rune(ENTRY_PARAMETER_TYPE/ENTRY_BASE)) +
-	string(rune(ENTRY_PARAMETER_TYPE%ENTRY_BASE)) +
-	string(rune(ENTRY_PARAMETER_NAME/ENTRY_BASE)) +
-	string(rune(ENTRY_PARAMETER_NAME%ENTRY_BASE)) +
-	string(rune(ENTRY_TYPE/ENTRY_BASE)) +
-	string(rune(ENTRY_TYPE%ENTRY_BASE)) +
-	string(rune(ENTRY_POINTERS/ENTRY_BASE)) +
-	string(rune(ENTRY_POINTERS%ENTRY_BASE)) +
-	string(rune(ENTRY_PREFIX_TYPE/ENTRY_BASE)) +
-	string(rune(ENTRY_PREFIX_TYPE%ENTRY_BASE)) +
-	string(rune(ENTRY_GROUPED_TYPE/ENTRY_BASE)) +
-	string(rune(ENTRY_GROUPED_TYPE%ENTRY_BASE)) +
-	string(rune(ENTRY_TYPE_NAME/ENTRY_BASE)) +
-	string(rune(ENTRY_TYPE_NAME%ENTRY_BASE)) +
-	string(rune(ENTRY_QUALIFIED_NAME/ENTRY_BASE)) +
-	string(rune(ENTRY_QUALIFIED_NAME%ENTRY_BASE)) +
-	string(rune(ENTRY_GENERIC_ARGUMENTS/ENTRY_BASE)) +
-	string(rune(ENTRY_GENERIC_ARGUMENTS%ENTRY_BASE)) +
-	string(rune(ENTRY_ARRAY_TYPE/ENTRY_BASE)) +
-	string(rune(ENTRY_ARRAY_TYPE%ENTRY_BASE)) +
-	string(rune(ENTRY_ELEMENT_TYPE/ENTRY_BASE)) +
-	string(rune(ENTRY_ELEMENT_TYPE%ENTRY_BASE)) +
-	string(rune(ENTRY_CHANNEL_TYPE/ENTRY_BASE)) +
-	string(rune(ENTRY_CHANNEL_TYPE%ENTRY_BASE)) +
-	string(rune(ENTRY_MAP_TYPE/ENTRY_BASE)) +
-	string(rune(ENTRY_MAP_TYPE%ENTRY_BASE)) +
-	string(rune(ENTRY_FUNCTION_TYPE/ENTRY_BASE)) +
-	string(rune(ENTRY_FUNCTION_TYPE%ENTRY_BASE)) +
-	string(rune(ENTRY_STRUCTURE_TYPE/ENTRY_BASE)) +
-	string(rune(ENTRY_STRUCTURE_TYPE%ENTRY_BASE)) +
-	string(rune(ENTRY_FIELDS/ENTRY_BASE)) +
-	string(rune(ENTRY_FIELDS%ENTRY_BASE)) +
-	string(rune(ENTRY_FIELD/ENTRY_BASE)) +
-	string(rune(ENTRY_FIELD%ENTRY_BASE)) +
-	string(rune(ENTRY_FIELD_TYPE/ENTRY_BASE)) +
-	string(rune(ENTRY_FIELD_TYPE%ENTRY_BASE)) +
-	string(rune(ENTRY_INTERFACE_TYPE/ENTRY_BASE)) +
-	string(rune(ENTRY_INTERFACE_TYPE%ENTRY_BASE)) +
-	string(rune(ENTRY_ELEMENTS/ENTRY_BASE)) +
-	string(rune(ENTRY_ELEMENTS%ENTRY_BASE)) +
-	string(rune(ENTRY_BLOCK/ENTRY_BASE)) +
-	string(rune(ENTRY_BLOCK%ENTRY_BASE)) +
-	string(rune(ENTRY_STATEMENTS/ENTRY_BASE)) +
-	string(rune(ENTRY_STATEMENTS%ENTRY_BASE)) +
-	string(rune(ENTRY_STATEMENT/ENTRY_BASE)) +
-	string(rune(ENTRY_STATEMENT%ENTRY_BASE)) +
-	string(rune(ENTRY_DECLARATION_STATEMENT/ENTRY_BASE)) +
-	string(rune(ENTRY_DECLARATION_STATEMENT%ENTRY_BASE)) +
-	string(rune(ENTRY_LABEL/ENTRY_BASE)) +
-	string(rune(ENTRY_LABEL%ENTRY_BASE)) +
-	string(rune(ENTRY_RETURN_STATEMENT/ENTRY_BASE)) +
-	string(rune(ENTRY_RETURN_STATEMENT%ENTRY_BASE)) +
-	string(rune(ENTRY_LAUNCH/ENTRY_BASE)) +
-	string(rune(ENTRY_LAUNCH%ENTRY_BASE)) +
-	string(rune(ENTRY_JUMP/ENTRY_BASE)) +
-	string(rune(ENTRY_JUMP%ENTRY_BASE)) +
-	string(rune(ENTRY_IF_STATEMENT/ENTRY_BASE)) +
-	string(rune(ENTRY_IF_STATEMENT%ENTRY_BASE)) +
-	string(rune(ENTRY_IF_END/ENTRY_BASE)) +
-	string(rune(ENTRY_IF_END%ENTRY_BASE)) +
-	string(rune(ENTRY_FOR_STATEMENT/ENTRY_BASE)) +
-	string(rune(ENTRY_FOR_STATEMENT%ENTRY_BASE)) +
-	string(rune(ENTRY_FOR_HEAD/ENTRY_BASE)) +
-	string(rune(ENTRY_FOR_HEAD%ENTRY_BASE)) +
-	string(rune(ENTRY_RANGE_CLAUSE/ENTRY_BASE)) +
-	string(rune(ENTRY_RANGE_CLAUSE%ENTRY_BASE)) +
-	string(rune(ENTRY_SWITCH_STATEMENT/ENTRY_BASE)) +
-	string(rune(ENTRY_SWITCH_STATEMENT%ENTRY_BASE)) +
-	string(rune(ENTRY_SWITCH_HEAD/ENTRY_BASE)) +
-	string(rune(ENTRY_SWITCH_HEAD%ENTRY_BASE)) +
-	string(rune(ENTRY_SELECT_STATEMENT/ENTRY_BASE)) +
-	string(rune(ENTRY_SELECT_STATEMENT%ENTRY_BASE)) +
-	string(rune(ENTRY_CASE_BLOCK/ENTRY_BASE)) +
-	string(rune(ENTRY_CASE_BLOCK%ENTRY_BASE)) +
-	string(rune(ENTRY_CASES/ENTRY_BASE)) +
-	string(rune(ENTRY_CASES%ENTRY_BASE)) +
-	string(rune(ENTRY_CASE/ENTRY_BASE)) +
-	string(rune(ENTRY_CASE%ENTRY_BASE)) +
-	string(rune(ENTRY_CASE_COLON/ENTRY_BASE)) +
-	string(rune(ENTRY_CASE_COLON%ENTRY_BASE)) +
-	string(rune(ENTRY_CASE_BODY/ENTRY_BASE)) +
-	string(rune(ENTRY_CASE_BODY%ENTRY_BASE)) +
-	string(rune(ENTRY_CLAUSE/ENTRY_BASE)) +
-	string(rune(ENTRY_CLAUSE%ENTRY_BASE)) +
-	string(rune(ENTRY_EXPRESSION_LIST/ENTRY_BASE)) +
-	string(rune(ENTRY_EXPRESSION_LIST%ENTRY_BASE)) +
-	string(rune(ENTRY_BINARY/ENTRY_BASE)) +
-	string(rune(ENTRY_BINARY%ENTRY_BASE)) +
-	string(rune(ENTRY_BINARY_OPERATORS/ENTRY_BASE)) +
-	string(rune(ENTRY_BINARY_OPERATORS%ENTRY_BASE)) +
-	string(rune(ENTRY_UNARY/ENTRY_BASE)) +
-	string(rune(ENTRY_UNARY%ENTRY_BASE)) +
-	string(rune(ENTRY_PRIMARY/ENTRY_BASE)) +
-	string(rune(ENTRY_PRIMARY%ENTRY_BASE)) +
-	string(rune(ENTRY_SUFFIXES/ENTRY_BASE)) +
-	string(rune(ENTRY_SUFFIXES%ENTRY_BASE)) +
-	string(rune(ENTRY_OPERAND/ENTRY_BASE)) +
-	string(rune(ENTRY_OPERAND%ENTRY_BASE)) +
-	string(rune(ENTRY_GROUPING/ENTRY_BASE)) +
-	string(rune(ENTRY_GROUPING%ENTRY_BASE)) +
-	string(rune(ENTRY_FUNCTION_LITERAL/ENTRY_BASE)) +
-	string(rune(ENTRY_FUNCTION_LITERAL%ENTRY_BASE)) +
-	string(rune(ENTRY_SELECTOR_SUFFIX/ENTRY_BASE)) +
-	string(rune(ENTRY_SELECTOR_SUFFIX%ENTRY_BASE)) +
-	string(rune(ENTRY_ASSERTION_SUFFIX/ENTRY_BASE)) +
-	string(rune(ENTRY_ASSERTION_SUFFIX%ENTRY_BASE)) +
-	string(rune(ENTRY_INDEX_SUFFIX/ENTRY_BASE)) +
-	string(rune(ENTRY_INDEX_SUFFIX%ENTRY_BASE)) +
-	string(rune(ENTRY_INDEX_ITEMS/ENTRY_BASE)) +
-	string(rune(ENTRY_INDEX_ITEMS%ENTRY_BASE)) +
-	string(rune(ENTRY_CALL_SUFFIX/ENTRY_BASE)) +
-	string(rune(ENTRY_CALL_SUFFIX%ENTRY_BASE)) +
-	string(rune(ENTRY_ARGUMENTS/ENTRY_BASE)) +
-	string(rune(ENTRY_ARGUMENTS%ENTRY_BASE)) +
-	string(rune(ENTRY_COMPOSITE_SUFFIX/ENTRY_BASE)) +
-	string(rune(ENTRY_COMPOSITE_SUFFIX%ENTRY_BASE)) +
-	string(rune(ENTRY_COMPOSITE_BODY/ENTRY_BASE)) +
-	string(rune(ENTRY_COMPOSITE_BODY%ENTRY_BASE)) +
-	string(rune(ENTRY_COMPOSITE_ITEMS/ENTRY_BASE)) +
-	string(rune(ENTRY_COMPOSITE_ITEMS%ENTRY_BASE)) +
-	string(rune(ENTRY_ELEMENT/ENTRY_BASE)) +
-	string(rune(ENTRY_ELEMENT%ENTRY_BASE)) +
-	string(rune(ENTRY_ELEMENT_VALUE/ENTRY_BASE)) +
-	string(rune(ENTRY_ELEMENT_VALUE%ENTRY_BASE)) +
-	string(rune(ENTRY_CONSTANT_GROUP/ENTRY_BASE)) +
-	string(rune(ENTRY_CONSTANT_GROUP%ENTRY_BASE)) +
-	string(rune(ENTRY_CONSTANT_MEMBERS/ENTRY_BASE)) +
-	string(rune(ENTRY_CONSTANT_MEMBERS%ENTRY_BASE)) +
-	string(rune(ENTRY_VARIABLE_GROUP/ENTRY_BASE)) +
-	string(rune(ENTRY_VARIABLE_GROUP%ENTRY_BASE)) +
-	string(rune(ENTRY_VARIABLE_MEMBERS/ENTRY_BASE)) +
-	string(rune(ENTRY_VARIABLE_MEMBERS%ENTRY_BASE)) +
-	string(rune(ENTRY_TYPE_GROUP/ENTRY_BASE)) +
-	string(rune(ENTRY_TYPE_GROUP%ENTRY_BASE)) +
-	string(rune(ENTRY_TYPE_MEMBERS/ENTRY_BASE)) +
-	string(rune(ENTRY_TYPE_MEMBERS%ENTRY_BASE)) +
-	string(rune(ENTRY_IMPORT_GROUP/ENTRY_BASE)) +
-	string(rune(ENTRY_IMPORT_GROUP%ENTRY_BASE)) +
-	string(rune(ENTRY_IMPORT_MEMBERS/ENTRY_BASE)) +
-	string(rune(ENTRY_IMPORT_MEMBERS%ENTRY_BASE)) +
-	string(rune(ENTRY_GROUP_VALUE_TAIL/ENTRY_BASE)) +
-	string(rune(ENTRY_GROUP_VALUE_TAIL%ENTRY_BASE))
+  string(rune(ENTRY_FILE%ENTRY_BASE)) +
+  string(rune(ENTRY_PACKAGE_CLAUSE/ENTRY_BASE)) +
+  string(rune(ENTRY_PACKAGE_CLAUSE%ENTRY_BASE)) +
+  string(rune(ENTRY_NAME/ENTRY_BASE)) +
+  string(rune(ENTRY_NAME%ENTRY_BASE)) +
+  string(rune(ENTRY_DECLARATIONS/ENTRY_BASE)) +
+  string(rune(ENTRY_DECLARATIONS%ENTRY_BASE)) +
+  string(rune(ENTRY_DECLARATION/ENTRY_BASE)) +
+  string(rune(ENTRY_DECLARATION%ENTRY_BASE)) +
+  string(rune(ENTRY_END_LINE/ENTRY_BASE)) +
+  string(rune(ENTRY_END_LINE%ENTRY_BASE)) +
+  string(rune(ENTRY_IMPORT/ENTRY_BASE)) +
+  string(rune(ENTRY_IMPORT%ENTRY_BASE)) +
+  string(rune(ENTRY_IMPORT_PATH/ENTRY_BASE)) +
+  string(rune(ENTRY_IMPORT_PATH%ENTRY_BASE)) +
+  string(rune(ENTRY_VALUE_DECLARATION/ENTRY_BASE)) +
+  string(rune(ENTRY_VALUE_DECLARATION%ENTRY_BASE)) +
+  string(rune(ENTRY_CONSTANT_DECLARATION/ENTRY_BASE)) +
+  string(rune(ENTRY_CONSTANT_DECLARATION%ENTRY_BASE)) +
+  string(rune(ENTRY_VARIABLE_DECLARATION/ENTRY_BASE)) +
+  string(rune(ENTRY_VARIABLE_DECLARATION%ENTRY_BASE)) +
+  string(rune(ENTRY_VALUE_TAIL/ENTRY_BASE)) +
+  string(rune(ENTRY_VALUE_TAIL%ENTRY_BASE)) +
+  string(rune(ENTRY_TYPE_DECLARATION/ENTRY_BASE)) +
+  string(rune(ENTRY_TYPE_DECLARATION%ENTRY_BASE)) +
+  string(rune(ENTRY_FUNCTION_DECLARATION/ENTRY_BASE)) +
+  string(rune(ENTRY_FUNCTION_DECLARATION%ENTRY_BASE)) +
+  string(rune(ENTRY_RECEIVER/ENTRY_BASE)) +
+  string(rune(ENTRY_RECEIVER%ENTRY_BASE)) +
+  string(rune(ENTRY_TYPE_PARAMETER_LIST/ENTRY_BASE)) +
+  string(rune(ENTRY_TYPE_PARAMETER_LIST%ENTRY_BASE)) +
+  string(rune(ENTRY_TYPE_PARAMETER_ITEMS/ENTRY_BASE)) +
+  string(rune(ENTRY_TYPE_PARAMETER_ITEMS%ENTRY_BASE)) +
+  string(rune(ENTRY_TYPE_PARAMETER_NAMES/ENTRY_BASE)) +
+  string(rune(ENTRY_TYPE_PARAMETER_NAMES%ENTRY_BASE)) +
+  string(rune(ENTRY_CONSTRAINT/ENTRY_BASE)) +
+  string(rune(ENTRY_CONSTRAINT%ENTRY_BASE)) +
+  string(rune(ENTRY_UNION_TERMS/ENTRY_BASE)) +
+  string(rune(ENTRY_UNION_TERMS%ENTRY_BASE)) +
+  string(rune(ENTRY_TERM/ENTRY_BASE)) +
+  string(rune(ENTRY_TERM%ENTRY_BASE)) +
+  string(rune(ENTRY_SIGNATURE/ENTRY_BASE)) +
+  string(rune(ENTRY_SIGNATURE%ENTRY_BASE)) +
+  string(rune(ENTRY_PARAMETERS/ENTRY_BASE)) +
+  string(rune(ENTRY_PARAMETERS%ENTRY_BASE)) +
+  string(rune(ENTRY_PARAMETER_ITEMS/ENTRY_BASE)) +
+  string(rune(ENTRY_PARAMETER_ITEMS%ENTRY_BASE)) +
+  string(rune(ENTRY_RESULTS/ENTRY_BASE)) +
+  string(rune(ENTRY_RESULTS%ENTRY_BASE)) +
+  string(rune(ENTRY_RESULT_ITEMS/ENTRY_BASE)) +
+  string(rune(ENTRY_RESULT_ITEMS%ENTRY_BASE)) +
+  string(rune(ENTRY_PARAMETER/ENTRY_BASE)) +
+  string(rune(ENTRY_PARAMETER%ENTRY_BASE)) +
+  string(rune(ENTRY_RESULT_PARAMETER/ENTRY_BASE)) +
+  string(rune(ENTRY_RESULT_PARAMETER%ENTRY_BASE)) +
+  string(rune(ENTRY_PARAMETER_BODY/ENTRY_BASE)) +
+  string(rune(ENTRY_PARAMETER_BODY%ENTRY_BASE)) +
+  string(rune(ENTRY_PARAMETER_NAMES/ENTRY_BASE)) +
+  string(rune(ENTRY_PARAMETER_NAMES%ENTRY_BASE)) +
+  string(rune(ENTRY_PARAMETER_TYPE/ENTRY_BASE)) +
+  string(rune(ENTRY_PARAMETER_TYPE%ENTRY_BASE)) +
+  string(rune(ENTRY_PARAMETER_NAME/ENTRY_BASE)) +
+  string(rune(ENTRY_PARAMETER_NAME%ENTRY_BASE)) +
+  string(rune(ENTRY_TYPE/ENTRY_BASE)) +
+  string(rune(ENTRY_TYPE%ENTRY_BASE)) +
+  string(rune(ENTRY_POINTERS/ENTRY_BASE)) +
+  string(rune(ENTRY_POINTERS%ENTRY_BASE)) +
+  string(rune(ENTRY_PREFIX_TYPE/ENTRY_BASE)) +
+  string(rune(ENTRY_PREFIX_TYPE%ENTRY_BASE)) +
+  string(rune(ENTRY_GROUPED_TYPE/ENTRY_BASE)) +
+  string(rune(ENTRY_GROUPED_TYPE%ENTRY_BASE)) +
+  string(rune(ENTRY_TYPE_NAME/ENTRY_BASE)) +
+  string(rune(ENTRY_TYPE_NAME%ENTRY_BASE)) +
+  string(rune(ENTRY_QUALIFIED_NAME/ENTRY_BASE)) +
+  string(rune(ENTRY_QUALIFIED_NAME%ENTRY_BASE)) +
+  string(rune(ENTRY_GENERIC_ARGUMENTS/ENTRY_BASE)) +
+  string(rune(ENTRY_GENERIC_ARGUMENTS%ENTRY_BASE)) +
+  string(rune(ENTRY_ARRAY_TYPE/ENTRY_BASE)) +
+  string(rune(ENTRY_ARRAY_TYPE%ENTRY_BASE)) +
+  string(rune(ENTRY_ELEMENT_TYPE/ENTRY_BASE)) +
+  string(rune(ENTRY_ELEMENT_TYPE%ENTRY_BASE)) +
+  string(rune(ENTRY_CHANNEL_TYPE/ENTRY_BASE)) +
+  string(rune(ENTRY_CHANNEL_TYPE%ENTRY_BASE)) +
+  string(rune(ENTRY_MAP_TYPE/ENTRY_BASE)) +
+  string(rune(ENTRY_MAP_TYPE%ENTRY_BASE)) +
+  string(rune(ENTRY_FUNCTION_TYPE/ENTRY_BASE)) +
+  string(rune(ENTRY_FUNCTION_TYPE%ENTRY_BASE)) +
+  string(rune(ENTRY_STRUCTURE_TYPE/ENTRY_BASE)) +
+  string(rune(ENTRY_STRUCTURE_TYPE%ENTRY_BASE)) +
+  string(rune(ENTRY_FIELDS/ENTRY_BASE)) +
+  string(rune(ENTRY_FIELDS%ENTRY_BASE)) +
+  string(rune(ENTRY_FIELD/ENTRY_BASE)) +
+  string(rune(ENTRY_FIELD%ENTRY_BASE)) +
+  string(rune(ENTRY_FIELD_TYPE/ENTRY_BASE)) +
+  string(rune(ENTRY_FIELD_TYPE%ENTRY_BASE)) +
+  string(rune(ENTRY_INTERFACE_TYPE/ENTRY_BASE)) +
+  string(rune(ENTRY_INTERFACE_TYPE%ENTRY_BASE)) +
+  string(rune(ENTRY_ELEMENTS/ENTRY_BASE)) +
+  string(rune(ENTRY_ELEMENTS%ENTRY_BASE)) +
+  string(rune(ENTRY_BLOCK/ENTRY_BASE)) +
+  string(rune(ENTRY_BLOCK%ENTRY_BASE)) +
+  string(rune(ENTRY_STATEMENTS/ENTRY_BASE)) +
+  string(rune(ENTRY_STATEMENTS%ENTRY_BASE)) +
+  string(rune(ENTRY_STATEMENT/ENTRY_BASE)) +
+  string(rune(ENTRY_STATEMENT%ENTRY_BASE)) +
+  string(rune(ENTRY_DECLARATION_STATEMENT/ENTRY_BASE)) +
+  string(rune(ENTRY_DECLARATION_STATEMENT%ENTRY_BASE)) +
+  string(rune(ENTRY_LABEL/ENTRY_BASE)) +
+  string(rune(ENTRY_LABEL%ENTRY_BASE)) +
+  string(rune(ENTRY_RETURN_STATEMENT/ENTRY_BASE)) +
+  string(rune(ENTRY_RETURN_STATEMENT%ENTRY_BASE)) +
+  string(rune(ENTRY_LAUNCH/ENTRY_BASE)) +
+  string(rune(ENTRY_LAUNCH%ENTRY_BASE)) +
+  string(rune(ENTRY_JUMP/ENTRY_BASE)) +
+  string(rune(ENTRY_JUMP%ENTRY_BASE)) +
+  string(rune(ENTRY_IF_STATEMENT/ENTRY_BASE)) +
+  string(rune(ENTRY_IF_STATEMENT%ENTRY_BASE)) +
+  string(rune(ENTRY_IF_END/ENTRY_BASE)) +
+  string(rune(ENTRY_IF_END%ENTRY_BASE)) +
+  string(rune(ENTRY_FOR_STATEMENT/ENTRY_BASE)) +
+  string(rune(ENTRY_FOR_STATEMENT%ENTRY_BASE)) +
+  string(rune(ENTRY_FOR_HEAD/ENTRY_BASE)) +
+  string(rune(ENTRY_FOR_HEAD%ENTRY_BASE)) +
+  string(rune(ENTRY_RANGE_CLAUSE/ENTRY_BASE)) +
+  string(rune(ENTRY_RANGE_CLAUSE%ENTRY_BASE)) +
+  string(rune(ENTRY_SWITCH_STATEMENT/ENTRY_BASE)) +
+  string(rune(ENTRY_SWITCH_STATEMENT%ENTRY_BASE)) +
+  string(rune(ENTRY_SWITCH_HEAD/ENTRY_BASE)) +
+  string(rune(ENTRY_SWITCH_HEAD%ENTRY_BASE)) +
+  string(rune(ENTRY_SELECT_STATEMENT/ENTRY_BASE)) +
+  string(rune(ENTRY_SELECT_STATEMENT%ENTRY_BASE)) +
+  string(rune(ENTRY_CASE_BLOCK/ENTRY_BASE)) +
+  string(rune(ENTRY_CASE_BLOCK%ENTRY_BASE)) +
+  string(rune(ENTRY_CASES/ENTRY_BASE)) +
+  string(rune(ENTRY_CASES%ENTRY_BASE)) +
+  string(rune(ENTRY_CASE/ENTRY_BASE)) +
+  string(rune(ENTRY_CASE%ENTRY_BASE)) +
+  string(rune(ENTRY_CASE_COLON/ENTRY_BASE)) +
+  string(rune(ENTRY_CASE_COLON%ENTRY_BASE)) +
+  string(rune(ENTRY_CASE_BODY/ENTRY_BASE)) +
+  string(rune(ENTRY_CASE_BODY%ENTRY_BASE)) +
+  string(rune(ENTRY_CLAUSE/ENTRY_BASE)) +
+  string(rune(ENTRY_CLAUSE%ENTRY_BASE)) +
+  string(rune(ENTRY_EXPRESSION_LIST/ENTRY_BASE)) +
+  string(rune(ENTRY_EXPRESSION_LIST%ENTRY_BASE)) +
+  string(rune(ENTRY_BINARY/ENTRY_BASE)) +
+  string(rune(ENTRY_BINARY%ENTRY_BASE)) +
+  string(rune(ENTRY_BINARY_OPERATORS/ENTRY_BASE)) +
+  string(rune(ENTRY_BINARY_OPERATORS%ENTRY_BASE)) +
+  string(rune(ENTRY_UNARY/ENTRY_BASE)) +
+  string(rune(ENTRY_UNARY%ENTRY_BASE)) +
+  string(rune(ENTRY_PRIMARY/ENTRY_BASE)) +
+  string(rune(ENTRY_PRIMARY%ENTRY_BASE)) +
+  string(rune(ENTRY_SUFFIXES/ENTRY_BASE)) +
+  string(rune(ENTRY_SUFFIXES%ENTRY_BASE)) +
+  string(rune(ENTRY_OPERAND/ENTRY_BASE)) +
+  string(rune(ENTRY_OPERAND%ENTRY_BASE)) +
+  string(rune(ENTRY_GROUPING/ENTRY_BASE)) +
+  string(rune(ENTRY_GROUPING%ENTRY_BASE)) +
+  string(rune(ENTRY_FUNCTION_LITERAL/ENTRY_BASE)) +
+  string(rune(ENTRY_FUNCTION_LITERAL%ENTRY_BASE)) +
+  string(rune(ENTRY_SELECTOR_SUFFIX/ENTRY_BASE)) +
+  string(rune(ENTRY_SELECTOR_SUFFIX%ENTRY_BASE)) +
+  string(rune(ENTRY_ASSERTION_SUFFIX/ENTRY_BASE)) +
+  string(rune(ENTRY_ASSERTION_SUFFIX%ENTRY_BASE)) +
+  string(rune(ENTRY_INDEX_SUFFIX/ENTRY_BASE)) +
+  string(rune(ENTRY_INDEX_SUFFIX%ENTRY_BASE)) +
+  string(rune(ENTRY_INDEX_ITEMS/ENTRY_BASE)) +
+  string(rune(ENTRY_INDEX_ITEMS%ENTRY_BASE)) +
+  string(rune(ENTRY_CALL_SUFFIX/ENTRY_BASE)) +
+  string(rune(ENTRY_CALL_SUFFIX%ENTRY_BASE)) +
+  string(rune(ENTRY_ARGUMENTS/ENTRY_BASE)) +
+  string(rune(ENTRY_ARGUMENTS%ENTRY_BASE)) +
+  string(rune(ENTRY_COMPOSITE_SUFFIX/ENTRY_BASE)) +
+  string(rune(ENTRY_COMPOSITE_SUFFIX%ENTRY_BASE)) +
+  string(rune(ENTRY_COMPOSITE_BODY/ENTRY_BASE)) +
+  string(rune(ENTRY_COMPOSITE_BODY%ENTRY_BASE)) +
+  string(rune(ENTRY_COMPOSITE_ITEMS/ENTRY_BASE)) +
+  string(rune(ENTRY_COMPOSITE_ITEMS%ENTRY_BASE)) +
+  string(rune(ENTRY_ELEMENT/ENTRY_BASE)) +
+  string(rune(ENTRY_ELEMENT%ENTRY_BASE)) +
+  string(rune(ENTRY_ELEMENT_VALUE/ENTRY_BASE)) +
+  string(rune(ENTRY_ELEMENT_VALUE%ENTRY_BASE)) +
+  string(rune(ENTRY_CONSTANT_GROUP/ENTRY_BASE)) +
+  string(rune(ENTRY_CONSTANT_GROUP%ENTRY_BASE)) +
+  string(rune(ENTRY_CONSTANT_MEMBERS/ENTRY_BASE)) +
+  string(rune(ENTRY_CONSTANT_MEMBERS%ENTRY_BASE)) +
+  string(rune(ENTRY_VARIABLE_GROUP/ENTRY_BASE)) +
+  string(rune(ENTRY_VARIABLE_GROUP%ENTRY_BASE)) +
+  string(rune(ENTRY_VARIABLE_MEMBERS/ENTRY_BASE)) +
+  string(rune(ENTRY_VARIABLE_MEMBERS%ENTRY_BASE)) +
+  string(rune(ENTRY_TYPE_GROUP/ENTRY_BASE)) +
+  string(rune(ENTRY_TYPE_GROUP%ENTRY_BASE)) +
+  string(rune(ENTRY_TYPE_MEMBERS/ENTRY_BASE)) +
+  string(rune(ENTRY_TYPE_MEMBERS%ENTRY_BASE)) +
+  string(rune(ENTRY_IMPORT_GROUP/ENTRY_BASE)) +
+  string(rune(ENTRY_IMPORT_GROUP%ENTRY_BASE)) +
+  string(rune(ENTRY_IMPORT_MEMBERS/ENTRY_BASE)) +
+  string(rune(ENTRY_IMPORT_MEMBERS%ENTRY_BASE)) +
+  string(rune(ENTRY_GROUP_VALUE_TAIL/ENTRY_BASE)) +
+  string(rune(ENTRY_GROUP_VALUE_TAIL%ENTRY_BASE))
 
 // PROGRAM is the grammar: the steps of every rule, in the order of the rules.
 const PROGRAM = FILE_PROGRAM +
-	PACKAGE_CLAUSE_PROGRAM +
-	NAME_PROGRAM +
-	DECLARATIONS_PROGRAM +
-	DECLARATION_PROGRAM +
-	END_LINE_PROGRAM +
-	IMPORT_PROGRAM +
-	IMPORT_PATH_PROGRAM +
-	VALUE_DECLARATION_PROGRAM +
-	CONSTANT_DECLARATION_PROGRAM +
-	VARIABLE_DECLARATION_PROGRAM +
-	VALUE_TAIL_PROGRAM +
-	TYPE_DECLARATION_PROGRAM +
-	FUNCTION_DECLARATION_PROGRAM +
-	RECEIVER_PROGRAM +
-	TYPE_PARAMETER_LIST_PROGRAM +
-	TYPE_PARAMETER_ITEMS_PROGRAM +
-	TYPE_PARAMETER_NAMES_PROGRAM +
-	CONSTRAINT_PROGRAM +
-	UNION_TERMS_PROGRAM +
-	TERM_PROGRAM +
-	SIGNATURE_PROGRAM +
-	PARAMETERS_PROGRAM +
-	PARAMETER_ITEMS_PROGRAM +
-	RESULTS_PROGRAM +
-	RESULT_ITEMS_PROGRAM +
-	PARAMETER_PROGRAM +
-	RESULT_PARAMETER_PROGRAM +
-	PARAMETER_BODY_PROGRAM +
-	PARAMETER_NAMES_PROGRAM +
-	PARAMETER_TYPE_PROGRAM +
-	PARAMETER_NAME_PROGRAM +
-	TYPE_PROGRAM +
-	POINTERS_PROGRAM +
-	PREFIX_TYPE_PROGRAM +
-	GROUPED_TYPE_PROGRAM +
-	TYPE_NAME_PROGRAM +
-	QUALIFIED_NAME_PROGRAM +
-	GENERIC_ARGUMENTS_PROGRAM +
-	ARRAY_TYPE_PROGRAM +
-	ELEMENT_TYPE_PROGRAM +
-	CHANNEL_TYPE_PROGRAM +
-	MAP_TYPE_PROGRAM +
-	FUNCTION_TYPE_PROGRAM +
-	STRUCTURE_TYPE_PROGRAM +
-	FIELDS_PROGRAM +
-	FIELD_PROGRAM +
-	FIELD_TYPE_PROGRAM +
-	INTERFACE_TYPE_PROGRAM +
-	ELEMENTS_PROGRAM +
-	BLOCK_PROGRAM +
-	STATEMENTS_PROGRAM +
-	STATEMENT_PROGRAM +
-	DECLARATION_STATEMENT_PROGRAM +
-	LABEL_PROGRAM +
-	RETURN_STATEMENT_PROGRAM +
-	LAUNCH_PROGRAM +
-	JUMP_PROGRAM +
-	IF_STATEMENT_PROGRAM +
-	IF_END_PROGRAM +
-	FOR_STATEMENT_PROGRAM +
-	FOR_HEAD_PROGRAM +
-	RANGE_CLAUSE_PROGRAM +
-	SWITCH_STATEMENT_PROGRAM +
-	SWITCH_HEAD_PROGRAM +
-	SELECT_STATEMENT_PROGRAM +
-	CASE_BLOCK_PROGRAM +
-	CASES_PROGRAM +
-	CASE_PROGRAM +
-	CASE_COLON_PROGRAM +
-	CASE_BODY_PROGRAM +
-	CLAUSE_PROGRAM +
-	EXPRESSION_LIST_PROGRAM +
-	BINARY_PROGRAM +
-	BINARY_OPERATORS_PROGRAM +
-	UNARY_PROGRAM +
-	PRIMARY_PROGRAM +
-	SUFFIXES_PROGRAM +
-	OPERAND_PROGRAM +
-	GROUPING_PROGRAM +
-	FUNCTION_LITERAL_PROGRAM +
-	SELECTOR_SUFFIX_PROGRAM +
-	ASSERTION_SUFFIX_PROGRAM +
-	INDEX_SUFFIX_PROGRAM +
-	INDEX_ITEMS_PROGRAM +
-	CALL_SUFFIX_PROGRAM +
-	ARGUMENTS_PROGRAM +
-	COMPOSITE_SUFFIX_PROGRAM +
-	COMPOSITE_BODY_PROGRAM +
-	COMPOSITE_ITEMS_PROGRAM +
-	ELEMENT_PROGRAM +
-	ELEMENT_VALUE_PROGRAM +
-	CONSTANT_GROUP_PROGRAM +
-	CONSTANT_MEMBERS_PROGRAM +
-	GROUP_VALUE_TAIL_PROGRAM +
-	VARIABLE_GROUP_PROGRAM +
-	VARIABLE_MEMBERS_PROGRAM +
-	TYPE_GROUP_PROGRAM +
-	TYPE_MEMBERS_PROGRAM +
-	IMPORT_GROUP_PROGRAM +
-	IMPORT_MEMBERS_PROGRAM
+  PACKAGE_CLAUSE_PROGRAM +
+  NAME_PROGRAM +
+  DECLARATIONS_PROGRAM +
+  DECLARATION_PROGRAM +
+  END_LINE_PROGRAM +
+  IMPORT_PROGRAM +
+  IMPORT_PATH_PROGRAM +
+  VALUE_DECLARATION_PROGRAM +
+  CONSTANT_DECLARATION_PROGRAM +
+  VARIABLE_DECLARATION_PROGRAM +
+  VALUE_TAIL_PROGRAM +
+  TYPE_DECLARATION_PROGRAM +
+  FUNCTION_DECLARATION_PROGRAM +
+  RECEIVER_PROGRAM +
+  TYPE_PARAMETER_LIST_PROGRAM +
+  TYPE_PARAMETER_ITEMS_PROGRAM +
+  TYPE_PARAMETER_NAMES_PROGRAM +
+  CONSTRAINT_PROGRAM +
+  UNION_TERMS_PROGRAM +
+  TERM_PROGRAM +
+  SIGNATURE_PROGRAM +
+  PARAMETERS_PROGRAM +
+  PARAMETER_ITEMS_PROGRAM +
+  RESULTS_PROGRAM +
+  RESULT_ITEMS_PROGRAM +
+  PARAMETER_PROGRAM +
+  RESULT_PARAMETER_PROGRAM +
+  PARAMETER_BODY_PROGRAM +
+  PARAMETER_NAMES_PROGRAM +
+  PARAMETER_TYPE_PROGRAM +
+  PARAMETER_NAME_PROGRAM +
+  TYPE_PROGRAM +
+  POINTERS_PROGRAM +
+  PREFIX_TYPE_PROGRAM +
+  GROUPED_TYPE_PROGRAM +
+  TYPE_NAME_PROGRAM +
+  QUALIFIED_NAME_PROGRAM +
+  GENERIC_ARGUMENTS_PROGRAM +
+  ARRAY_TYPE_PROGRAM +
+  ELEMENT_TYPE_PROGRAM +
+  CHANNEL_TYPE_PROGRAM +
+  MAP_TYPE_PROGRAM +
+  FUNCTION_TYPE_PROGRAM +
+  STRUCTURE_TYPE_PROGRAM +
+  FIELDS_PROGRAM +
+  FIELD_PROGRAM +
+  FIELD_TYPE_PROGRAM +
+  INTERFACE_TYPE_PROGRAM +
+  ELEMENTS_PROGRAM +
+  BLOCK_PROGRAM +
+  STATEMENTS_PROGRAM +
+  STATEMENT_PROGRAM +
+  DECLARATION_STATEMENT_PROGRAM +
+  LABEL_PROGRAM +
+  RETURN_STATEMENT_PROGRAM +
+  LAUNCH_PROGRAM +
+  JUMP_PROGRAM +
+  IF_STATEMENT_PROGRAM +
+  IF_END_PROGRAM +
+  FOR_STATEMENT_PROGRAM +
+  FOR_HEAD_PROGRAM +
+  RANGE_CLAUSE_PROGRAM +
+  SWITCH_STATEMENT_PROGRAM +
+  SWITCH_HEAD_PROGRAM +
+  SELECT_STATEMENT_PROGRAM +
+  CASE_BLOCK_PROGRAM +
+  CASES_PROGRAM +
+  CASE_PROGRAM +
+  CASE_COLON_PROGRAM +
+  CASE_BODY_PROGRAM +
+  CLAUSE_PROGRAM +
+  EXPRESSION_LIST_PROGRAM +
+  BINARY_PROGRAM +
+  BINARY_OPERATORS_PROGRAM +
+  UNARY_PROGRAM +
+  PRIMARY_PROGRAM +
+  SUFFIXES_PROGRAM +
+  OPERAND_PROGRAM +
+  GROUPING_PROGRAM +
+  FUNCTION_LITERAL_PROGRAM +
+  SELECTOR_SUFFIX_PROGRAM +
+  ASSERTION_SUFFIX_PROGRAM +
+  INDEX_SUFFIX_PROGRAM +
+  INDEX_ITEMS_PROGRAM +
+  CALL_SUFFIX_PROGRAM +
+  ARGUMENTS_PROGRAM +
+  COMPOSITE_SUFFIX_PROGRAM +
+  COMPOSITE_BODY_PROGRAM +
+  COMPOSITE_ITEMS_PROGRAM +
+  ELEMENT_PROGRAM +
+  ELEMENT_VALUE_PROGRAM +
+  CONSTANT_GROUP_PROGRAM +
+  CONSTANT_MEMBERS_PROGRAM +
+  GROUP_VALUE_TAIL_PROGRAM +
+  VARIABLE_GROUP_PROGRAM +
+  VARIABLE_MEMBERS_PROGRAM +
+  TYPE_GROUP_PROGRAM +
+  TYPE_MEMBERS_PROGRAM +
+  IMPORT_GROUP_PROGRAM +
+  IMPORT_MEMBERS_PROGRAM
 
 // FILE_PROGRAM takes the trivia ahead of the package clause into the file, and reads the clause
 // and every declaration behind it.
 const FILE_PROGRAM = SKIP_COMMENTS +
-	CALL + PACKAGE_CLAUSE_PRODUCTION + TAIL + DECLARATIONS_PRODUCTION
+  CALL +
+  PACKAGE_CLAUSE_PRODUCTION +
+  TAIL +
+  DECLARATIONS_PRODUCTION
 
 // PACKAGE_CLAUSE_PROGRAM refuses a file that opens with anything but the package keyword, and
 // reads the one name the clause states.
-const PACKAGE_CLAUSE_PROGRAM = AT + PACKAGE_TOKEN + UNLESS + REJECT + PACKAGE_CLAUSE_CAUSE +
-	ADVANCE + CALL + NAME_PRODUCTION + TAIL + END_LINE_PRODUCTION
+const PACKAGE_CLAUSE_PROGRAM = AT +
+  PACKAGE_TOKEN +
+  UNLESS +
+  REJECT +
+  PACKAGE_CLAUSE_CAUSE +
+  ADVANCE +
+  CALL +
+  NAME_PRODUCTION +
+  TAIL +
+  END_LINE_PRODUCTION
 
 // DECLARATIONS_PROGRAM reads declarations until the end of the file. A run of empty declarations
 // writes no node, thus the run passes in one step.
 const DECLARATIONS_PROGRAM = SKIP_EMPTY +
-	ACCEPT + END_OF_FILE_TOKEN + WHEN + RETURN +
-	CALL + DECLARATION_PRODUCTION + TAIL + DECLARATIONS_PRODUCTION
+  ACCEPT +
+  END_OF_FILE_TOKEN +
+  WHEN +
+  RETURN +
+  CALL +
+  DECLARATION_PRODUCTION +
+  TAIL +
+  DECLARATIONS_PRODUCTION
 
 // DECLARATION_PROGRAM hands one declaration to the rule its keyword names.
-const DECLARATION_PROGRAM = AT + IMPORT_TOKEN + WHEN + TAIL + IMPORT_PRODUCTION +
-	AT + CONSTANT_TOKEN + OR_AT + VARIABLE_TOKEN + WHEN + TAIL + VALUE_DECLARATION_PRODUCTION +
-	AT + TYPE_TOKEN + WHEN + TAIL + TYPE_DECLARATION_PRODUCTION +
-	AT + FUNCTION_TOKEN + WHEN + TAIL + FUNCTION_DECLARATION_PRODUCTION +
-	REJECT + SYNTAX_CAUSE
+const DECLARATION_PROGRAM = AT +
+  IMPORT_TOKEN +
+  WHEN +
+  TAIL +
+  IMPORT_PRODUCTION +
+  AT +
+  CONSTANT_TOKEN +
+  OR_AT +
+  VARIABLE_TOKEN +
+  WHEN +
+  TAIL +
+  VALUE_DECLARATION_PRODUCTION +
+  AT +
+  TYPE_TOKEN +
+  WHEN +
+  TAIL +
+  TYPE_DECLARATION_PRODUCTION +
+  AT +
+  FUNCTION_TOKEN +
+  WHEN +
+  TAIL +
+  FUNCTION_DECLARATION_PRODUCTION +
+  REJECT +
+  SYNTAX_CAUSE
 
 // END_LINE_PROGRAM takes any trailing comment, then the semicolon the scanner wrote or inserted.
 // A closing bracket stands for the semicolon Go lets a source leave out.
-const END_LINE_PROGRAM = SKIP_COMMENTS + ACCEPT + SEMICOLON_TOKEN + WHEN + RETURN +
-	AT + BRACE_RIGHT_TOKEN + OR_AT + PARENTHESIS_RIGHT_TOKEN + OR_AT + BRACKET_RIGHT_TOKEN +
-	OR_AT + END_OF_FILE_TOKEN + OR_AT + CASE_TOKEN + OR_AT + DEFAULT_TOKEN +
-	OR_AT + COMMA_TOKEN + OR_AT + COLON_TOKEN + OR_AT + ELSE_TOKEN + WHEN + RETURN +
-	REJECT + SYNTAX_CAUSE
+const END_LINE_PROGRAM = SKIP_COMMENTS +
+  ACCEPT +
+  SEMICOLON_TOKEN +
+  WHEN +
+  RETURN +
+  AT +
+  BRACE_RIGHT_TOKEN +
+  OR_AT +
+  PARENTHESIS_RIGHT_TOKEN +
+  OR_AT +
+  BRACKET_RIGHT_TOKEN +
+  OR_AT +
+  END_OF_FILE_TOKEN +
+  OR_AT +
+  CASE_TOKEN +
+  OR_AT +
+  DEFAULT_TOKEN +
+  OR_AT +
+  COMMA_TOKEN +
+  OR_AT +
+  COLON_TOKEN +
+  OR_AT +
+  ELSE_TOKEN +
+  WHEN +
+  RETURN +
+  REJECT +
+  SYNTAX_CAUSE
 
 // NAME_PROGRAM takes one identifier as a node of its own.
 const NAME_PROGRAM = NAME + IDENTIFIER_NODE + RETURN
 
 // IMPORT_PROGRAM reads one import, or the run of them a group holds. The run states one import
 // for each path, thus the tree holds what the print writes.
-const IMPORT_PROGRAM = AFTER + PARENTHESIS_LEFT_TOKEN +
-	WHEN + TAIL + IMPORT_GROUP_PRODUCTION +
-	ADVANCE + CALL + IMPORT_PATH_PRODUCTION + TAIL + END_LINE_PRODUCTION
+const IMPORT_PROGRAM = AFTER +
+  PARENTHESIS_LEFT_TOKEN +
+  WHEN +
+  TAIL +
+  IMPORT_GROUP_PRODUCTION +
+  ADVANCE +
+  CALL +
+  IMPORT_PATH_PRODUCTION +
+  TAIL +
+  END_LINE_PRODUCTION
 
 // IMPORT_GROUP_PROGRAM steps past the keyword and the bracket the run opens at.
 const IMPORT_GROUP_PROGRAM = ADVANCE + ADVANCE + TAIL + IMPORT_MEMBERS_PRODUCTION
 
 // IMPORT_MEMBERS_PROGRAM reads one import of the run and the run behind it.
-const IMPORT_MEMBERS_PROGRAM = ACCEPT + PARENTHESIS_RIGHT_TOKEN +
-	WHEN + TAIL + END_LINE_PRODUCTION +
-	CALL + IMPORT_PATH_PRODUCTION + CALL + END_LINE_PRODUCTION +
-	TAIL + IMPORT_MEMBERS_PRODUCTION
+const IMPORT_MEMBERS_PROGRAM = ACCEPT +
+  PARENTHESIS_RIGHT_TOKEN +
+  WHEN +
+  TAIL +
+  END_LINE_PRODUCTION +
+  CALL +
+  IMPORT_PATH_PRODUCTION +
+  CALL +
+  END_LINE_PRODUCTION +
+  TAIL +
+  IMPORT_MEMBERS_PRODUCTION
 
 // IMPORT_PATH_PROGRAM reads one path and its optional name. A blank import parses, because the
 // linter must see the form it rejects.
-const IMPORT_PATH_PROGRAM = OPEN + IMPORT_NODE +
-	AT + IDENTIFIER_TOKEN + WHEN + TAKE + IMPORT_NAME_NODE +
-	AT + PERIOD_TOKEN + WHEN + REJECT + DOT_IMPORT_CAUSE +
-	AT + STRING_TOKEN + UNLESS + REJECT + SYNTAX_CAUSE +
-	TAKE + STRING_NODE + CLOSE + RETURN
+const IMPORT_PATH_PROGRAM = OPEN +
+  IMPORT_NODE +
+  AT +
+  IDENTIFIER_TOKEN +
+  WHEN +
+  TAKE +
+  IMPORT_NAME_NODE +
+  AT +
+  PERIOD_TOKEN +
+  WHEN +
+  REJECT +
+  DOT_IMPORT_CAUSE +
+  AT +
+  STRING_TOKEN +
+  UNLESS +
+  REJECT +
+  SYNTAX_CAUSE +
+  TAKE +
+  STRING_NODE +
+  CLOSE +
+  RETURN
 
 // VALUE_DECLARATION_PROGRAM hands one value declaration to the rule its keyword names. A constant
 // name answers to a case rule a variable name does not, thus the two read their names apart.
-const VALUE_DECLARATION_PROGRAM = AT + CONSTANT_TOKEN +
-	WHEN + TAIL + CONSTANT_DECLARATION_PRODUCTION + TAIL + VARIABLE_DECLARATION_PRODUCTION
+const VALUE_DECLARATION_PROGRAM = AT +
+  CONSTANT_TOKEN +
+  WHEN +
+  TAIL +
+  CONSTANT_DECLARATION_PRODUCTION +
+  TAIL +
+  VARIABLE_DECLARATION_PRODUCTION
 
 // CONSTANT_DECLARATION_PROGRAM reads one const declaration, or the parenthesized run of them the
 // author wrote. The run states one declaration for each name it holds, thus the tree holds what
 // the print writes and the group stands nowhere in it.
-const CONSTANT_DECLARATION_PROGRAM = AFTER + PARENTHESIS_LEFT_TOKEN +
-	WHEN + TAIL + CONSTANT_GROUP_PRODUCTION +
-	OPEN + CONSTANT_NODE + ADVANCE +
-	NAMES + CONSTANT_NAME_NODE + TAIL + VALUE_TAIL_PRODUCTION
+const CONSTANT_DECLARATION_PROGRAM = AFTER +
+  PARENTHESIS_LEFT_TOKEN +
+  WHEN +
+  TAIL +
+  CONSTANT_GROUP_PRODUCTION +
+  OPEN +
+  CONSTANT_NODE +
+  ADVANCE +
+  NAMES +
+  CONSTANT_NAME_NODE +
+  TAIL +
+  VALUE_TAIL_PRODUCTION
 
 // CONSTANT_GROUP_PROGRAM steps past the keyword and the bracket the run opens at.
 const CONSTANT_GROUP_PROGRAM = ADVANCE + ADVANCE + TAIL + CONSTANT_MEMBERS_PRODUCTION
 
 // CONSTANT_MEMBERS_PROGRAM reads one constant of the run and the run behind it. The bracket that
 // closes the run closes the line it stands on, thus the read hands back where the run ends.
-const CONSTANT_MEMBERS_PROGRAM = ACCEPT + PARENTHESIS_RIGHT_TOKEN +
-	WHEN + TAIL + END_LINE_PRODUCTION +
-	OPEN + CONSTANT_NODE + NAMES + CONSTANT_NAME_NODE +
-	CALL + GROUP_VALUE_TAIL_PRODUCTION + TAIL + CONSTANT_MEMBERS_PRODUCTION
+const CONSTANT_MEMBERS_PROGRAM = ACCEPT +
+  PARENTHESIS_RIGHT_TOKEN +
+  WHEN +
+  TAIL +
+  END_LINE_PRODUCTION +
+  OPEN +
+  CONSTANT_NODE +
+  NAMES +
+  CONSTANT_NAME_NODE +
+  CALL +
+  GROUP_VALUE_TAIL_PRODUCTION +
+  TAIL +
+  CONSTANT_MEMBERS_PRODUCTION
 
 // GROUP_VALUE_TAIL_PROGRAM reads the type and the values one member of a run states, and hands
 // the read back to the run rather than to the rule that opened it.
-const GROUP_VALUE_TAIL_PROGRAM = AT + ASSIGN_TOKEN + OR_AT + SEMICOLON_TOKEN +
-	OR_AT + END_OF_FILE_TOKEN + OR_AT + PARENTHESIS_RIGHT_TOKEN +
-	UNLESS + CALL + TYPE_PRODUCTION +
-	ACCEPT + ASSIGN_TOKEN + WHEN + CALL + EXPRESSION_LIST_PRODUCTION +
-	CLOSE + CALL + END_LINE_PRODUCTION + RETURN
+const GROUP_VALUE_TAIL_PROGRAM = AT +
+  ASSIGN_TOKEN +
+  OR_AT +
+  SEMICOLON_TOKEN +
+  OR_AT +
+  END_OF_FILE_TOKEN +
+  OR_AT +
+  PARENTHESIS_RIGHT_TOKEN +
+  UNLESS +
+  CALL +
+  TYPE_PRODUCTION +
+  ACCEPT +
+  ASSIGN_TOKEN +
+  WHEN +
+  CALL +
+  EXPRESSION_LIST_PRODUCTION +
+  CLOSE +
+  CALL +
+  END_LINE_PRODUCTION +
+  RETURN
 
 // VARIABLE_DECLARATION_PROGRAM reads one var declaration, or the run of them a group holds.
-const VARIABLE_DECLARATION_PROGRAM = AFTER + PARENTHESIS_LEFT_TOKEN +
-	WHEN + TAIL + VARIABLE_GROUP_PRODUCTION +
-	OPEN + VARIABLE_NODE + ADVANCE +
-	NAMES + IDENTIFIER_NODE + TAIL + VALUE_TAIL_PRODUCTION
+const VARIABLE_DECLARATION_PROGRAM = AFTER +
+  PARENTHESIS_LEFT_TOKEN +
+  WHEN +
+  TAIL +
+  VARIABLE_GROUP_PRODUCTION +
+  OPEN +
+  VARIABLE_NODE +
+  ADVANCE +
+  NAMES +
+  IDENTIFIER_NODE +
+  TAIL +
+  VALUE_TAIL_PRODUCTION
 
 // VARIABLE_GROUP_PROGRAM steps past the keyword and the bracket the run opens at.
 const VARIABLE_GROUP_PROGRAM = ADVANCE + ADVANCE + TAIL + VARIABLE_MEMBERS_PRODUCTION
 
 // VARIABLE_MEMBERS_PROGRAM reads one variable of the run and the run behind it.
-const VARIABLE_MEMBERS_PROGRAM = ACCEPT + PARENTHESIS_RIGHT_TOKEN +
-	WHEN + TAIL + END_LINE_PRODUCTION +
-	OPEN + VARIABLE_NODE + NAMES + IDENTIFIER_NODE +
-	CALL + GROUP_VALUE_TAIL_PRODUCTION + TAIL + VARIABLE_MEMBERS_PRODUCTION
+const VARIABLE_MEMBERS_PROGRAM = ACCEPT +
+  PARENTHESIS_RIGHT_TOKEN +
+  WHEN +
+  TAIL +
+  END_LINE_PRODUCTION +
+  OPEN +
+  VARIABLE_NODE +
+  NAMES +
+  IDENTIFIER_NODE +
+  CALL +
+  GROUP_VALUE_TAIL_PRODUCTION +
+  TAIL +
+  VARIABLE_MEMBERS_PRODUCTION
 
 // VALUE_TAIL_PROGRAM reads the optional type and the optional values behind the names.
-const VALUE_TAIL_PROGRAM = AT + ASSIGN_TOKEN + OR_AT + SEMICOLON_TOKEN +
-	OR_AT + END_OF_FILE_TOKEN + UNLESS + CALL + TYPE_PRODUCTION +
-	ACCEPT + ASSIGN_TOKEN + WHEN + CALL + EXPRESSION_LIST_PRODUCTION +
-	CLOSE + TAIL + END_LINE_PRODUCTION
+const VALUE_TAIL_PROGRAM = AT +
+  ASSIGN_TOKEN +
+  OR_AT +
+  SEMICOLON_TOKEN +
+  OR_AT +
+  END_OF_FILE_TOKEN +
+  UNLESS +
+  CALL +
+  TYPE_PRODUCTION +
+  ACCEPT +
+  ASSIGN_TOKEN +
+  WHEN +
+  CALL +
+  EXPRESSION_LIST_PRODUCTION +
+  CLOSE +
+  TAIL +
+  END_LINE_PRODUCTION
 
 // TYPE_DECLARATION_PROGRAM reads one type declaration, or the run of them a group holds, and
 // refuses an alias wherever it stands.
-const TYPE_DECLARATION_PROGRAM = AFTER + PARENTHESIS_LEFT_TOKEN +
-	WHEN + TAIL + TYPE_GROUP_PRODUCTION +
-	OPEN + TYPE_NODE + ADVANCE +
-	CALL + NAME_PRODUCTION +
-	TYPE_PARAMETERS + WHEN + CALL + TYPE_PARAMETER_LIST_PRODUCTION +
-	AT + ASSIGN_TOKEN + WHEN + REJECT + TYPE_ALIAS_CAUSE +
-	CALL + TYPE_PRODUCTION + CLOSE + TAIL + END_LINE_PRODUCTION
+const TYPE_DECLARATION_PROGRAM = AFTER +
+  PARENTHESIS_LEFT_TOKEN +
+  WHEN +
+  TAIL +
+  TYPE_GROUP_PRODUCTION +
+  OPEN +
+  TYPE_NODE +
+  ADVANCE +
+  CALL +
+  NAME_PRODUCTION +
+  TYPE_PARAMETERS +
+  WHEN +
+  CALL +
+  TYPE_PARAMETER_LIST_PRODUCTION +
+  AT +
+  ASSIGN_TOKEN +
+  WHEN +
+  REJECT +
+  TYPE_ALIAS_CAUSE +
+  CALL +
+  TYPE_PRODUCTION +
+  CLOSE +
+  TAIL +
+  END_LINE_PRODUCTION
 
 // TYPE_GROUP_PROGRAM steps past the keyword and the bracket the run opens at.
 const TYPE_GROUP_PROGRAM = ADVANCE + ADVANCE + TAIL + TYPE_MEMBERS_PRODUCTION
 
 // TYPE_MEMBERS_PROGRAM reads one type of the run and the run behind it.
-const TYPE_MEMBERS_PROGRAM = ACCEPT + PARENTHESIS_RIGHT_TOKEN +
-	WHEN + TAIL + END_LINE_PRODUCTION +
-	OPEN + TYPE_NODE + CALL + NAME_PRODUCTION +
-	TYPE_PARAMETERS + WHEN + CALL + TYPE_PARAMETER_LIST_PRODUCTION +
-	AT + ASSIGN_TOKEN + WHEN + REJECT + TYPE_ALIAS_CAUSE +
-	CALL + TYPE_PRODUCTION + CLOSE + CALL + END_LINE_PRODUCTION +
-	TAIL + TYPE_MEMBERS_PRODUCTION
+const TYPE_MEMBERS_PROGRAM = ACCEPT +
+  PARENTHESIS_RIGHT_TOKEN +
+  WHEN +
+  TAIL +
+  END_LINE_PRODUCTION +
+  OPEN +
+  TYPE_NODE +
+  CALL +
+  NAME_PRODUCTION +
+  TYPE_PARAMETERS +
+  WHEN +
+  CALL +
+  TYPE_PARAMETER_LIST_PRODUCTION +
+  AT +
+  ASSIGN_TOKEN +
+  WHEN +
+  REJECT +
+  TYPE_ALIAS_CAUSE +
+  CALL +
+  TYPE_PRODUCTION +
+  CLOSE +
+  CALL +
+  END_LINE_PRODUCTION +
+  TAIL +
+  TYPE_MEMBERS_PRODUCTION
 
 // FUNCTION_DECLARATION_PROGRAM reads one function or method declaration.
-const FUNCTION_DECLARATION_PROGRAM = OPEN + FUNCTION_NODE + ADVANCE +
-	AT + PARENTHESIS_LEFT_TOKEN + WHEN + CALL + RECEIVER_PRODUCTION +
-	CALL + NAME_PRODUCTION +
-	AT + BRACKET_LEFT_TOKEN + WHEN + CALL + TYPE_PARAMETER_LIST_PRODUCTION +
-	CALL + SIGNATURE_PRODUCTION +
-	AT + BRACE_LEFT_TOKEN + WHEN + CALL + BLOCK_PRODUCTION +
-	CLOSE + TAIL + END_LINE_PRODUCTION
+const FUNCTION_DECLARATION_PROGRAM = OPEN +
+  FUNCTION_NODE +
+  ADVANCE +
+  AT +
+  PARENTHESIS_LEFT_TOKEN +
+  WHEN +
+  CALL +
+  RECEIVER_PRODUCTION +
+  CALL +
+  NAME_PRODUCTION +
+  AT +
+  BRACKET_LEFT_TOKEN +
+  WHEN +
+  CALL +
+  TYPE_PARAMETER_LIST_PRODUCTION +
+  CALL +
+  SIGNATURE_PRODUCTION +
+  AT +
+  BRACE_LEFT_TOKEN +
+  WHEN +
+  CALL +
+  BLOCK_PRODUCTION +
+  CLOSE +
+  TAIL +
+  END_LINE_PRODUCTION
 
 // RECEIVER_PROGRAM reads the receiver of one method.
 const RECEIVER_PROGRAM = OPEN + RECEIVER_NODE + CALL + PARAMETERS_PRODUCTION + CLOSE + RETURN
@@ -4967,57 +5299,162 @@ const RECEIVER_PROGRAM = OPEN + RECEIVER_NODE + CALL + PARAMETERS_PRODUCTION + C
 const TYPE_PARAMETER_LIST_PROGRAM = ADVANCE + TAIL + TYPE_PARAMETER_ITEMS_PRODUCTION
 
 // TYPE_PARAMETER_ITEMS_PROGRAM reads each type parameter up to the closing bracket.
-const TYPE_PARAMETER_ITEMS_PROGRAM = ACCEPT + BRACKET_RIGHT_TOKEN + WHEN + RETURN +
-	OPEN + TYPE_PARAMETER_NODE + CALL + NAME_PRODUCTION +
-	CALL + TYPE_PARAMETER_NAMES_PRODUCTION +
-	AT + BRACKET_RIGHT_TOKEN + UNLESS + CALL + CONSTRAINT_PRODUCTION +
-	CLOSE + ACCEPT + COMMA_TOKEN + TAIL + TYPE_PARAMETER_ITEMS_PRODUCTION
+const TYPE_PARAMETER_ITEMS_PROGRAM = ACCEPT +
+  BRACKET_RIGHT_TOKEN +
+  WHEN +
+  RETURN +
+  OPEN +
+  TYPE_PARAMETER_NODE +
+  CALL +
+  NAME_PRODUCTION +
+  CALL +
+  TYPE_PARAMETER_NAMES_PRODUCTION +
+  AT +
+  BRACKET_RIGHT_TOKEN +
+  UNLESS +
+  CALL +
+  CONSTRAINT_PRODUCTION +
+  CLOSE +
+  ACCEPT +
+  COMMA_TOKEN +
+  TAIL +
+  TYPE_PARAMETER_ITEMS_PRODUCTION
 
 // TYPE_PARAMETER_NAMES_PROGRAM reads every name behind a comma, and stops at a comma the list
 // closes behind.
-const TYPE_PARAMETER_NAMES_PROGRAM = ACCEPT + COMMA_TOKEN + UNLESS + RETURN +
-	AT + BRACKET_RIGHT_TOKEN + WHEN + RETURN +
-	NAME + IDENTIFIER_NODE + TAIL + TYPE_PARAMETER_NAMES_PRODUCTION
+const TYPE_PARAMETER_NAMES_PROGRAM = ACCEPT +
+  COMMA_TOKEN +
+  UNLESS +
+  RETURN +
+  AT +
+  BRACKET_RIGHT_TOKEN +
+  WHEN +
+  RETURN +
+  NAME +
+  IDENTIFIER_NODE +
+  TAIL +
+  TYPE_PARAMETER_NAMES_PRODUCTION
 
 // CONSTRAINT_PROGRAM reads one term, and a union where a bar follows it.
-const CONSTRAINT_PROGRAM = CALL + TERM_PRODUCTION +
-	AT + OR_TOKEN + UNLESS + RETURN + WRAP + UNION_NODE + TAIL + UNION_TERMS_PRODUCTION
+const CONSTRAINT_PROGRAM = CALL +
+  TERM_PRODUCTION +
+  AT +
+  OR_TOKEN +
+  UNLESS +
+  RETURN +
+  WRAP +
+  UNION_NODE +
+  TAIL +
+  UNION_TERMS_PRODUCTION
 
 // UNION_TERMS_PROGRAM reads every term behind a bar.
-const UNION_TERMS_PROGRAM = ACCEPT + OR_TOKEN +
-	WHEN + CALL + TERM_PRODUCTION + WHEN + TAIL + UNION_TERMS_PRODUCTION + CLOSE + RETURN
+const UNION_TERMS_PROGRAM = ACCEPT +
+  OR_TOKEN +
+  WHEN +
+  CALL +
+  TERM_PRODUCTION +
+  WHEN +
+  TAIL +
+  UNION_TERMS_PRODUCTION +
+  CLOSE +
+  RETURN
 
 // TERM_PROGRAM reads one term. The term node names the type, because the tilde was already taken.
-const TERM_PROGRAM = ACCEPT + TILDE_TOKEN + UNLESS + TAIL + TYPE_PRODUCTION +
-	OPEN + TERM_NODE + CALL + TYPE_PRODUCTION + CLOSE + RETURN
+const TERM_PROGRAM = ACCEPT +
+  TILDE_TOKEN +
+  UNLESS +
+  TAIL +
+  TYPE_PRODUCTION +
+  OPEN +
+  TERM_NODE +
+  CALL +
+  TYPE_PRODUCTION +
+  CLOSE +
+  RETURN
 
 // SIGNATURE_PROGRAM reads the parameters and the results. A result that stands as one type opens
 // a node of its own, and a token that closes the signature leaves no result at all.
-const SIGNATURE_PROGRAM = CALL + PARAMETERS_PRODUCTION +
-	AT + PARENTHESIS_LEFT_TOKEN + WHEN + TAIL + RESULTS_PRODUCTION +
-	AT + SEMICOLON_TOKEN + OR_AT + BRACE_LEFT_TOKEN + OR_AT + COMMA_TOKEN +
-	OR_AT + STRING_TOKEN + OR_AT + PARENTHESIS_RIGHT_TOKEN + OR_AT + BRACKET_RIGHT_TOKEN +
-	OR_AT + BRACE_RIGHT_TOKEN + OR_AT + COMMENT_TOKEN + OR_AT + END_OF_FILE_TOKEN +
-	OR_AT + COLON_TOKEN + OR_AT + ASSIGN_TOKEN + WHEN + RETURN +
-	OPEN + RESULT_NODE + CALL + TYPE_PRODUCTION + CLOSE + RETURN
+const SIGNATURE_PROGRAM = CALL +
+  PARAMETERS_PRODUCTION +
+  AT +
+  PARENTHESIS_LEFT_TOKEN +
+  WHEN +
+  TAIL +
+  RESULTS_PRODUCTION +
+  AT +
+  SEMICOLON_TOKEN +
+  OR_AT +
+  BRACE_LEFT_TOKEN +
+  OR_AT +
+  COMMA_TOKEN +
+  OR_AT +
+  STRING_TOKEN +
+  OR_AT +
+  PARENTHESIS_RIGHT_TOKEN +
+  OR_AT +
+  BRACKET_RIGHT_TOKEN +
+  OR_AT +
+  BRACE_RIGHT_TOKEN +
+  OR_AT +
+  COMMENT_TOKEN +
+  OR_AT +
+  END_OF_FILE_TOKEN +
+  OR_AT +
+  COLON_TOKEN +
+  OR_AT +
+  ASSIGN_TOKEN +
+  WHEN +
+  RETURN +
+  OPEN +
+  RESULT_NODE +
+  CALL +
+  TYPE_PRODUCTION +
+  CLOSE +
+  RETURN
 
 // PARAMETERS_PROGRAM steps past the parenthesis that opens a parameter group.
-const PARAMETERS_PROGRAM = ACCEPT + PARENTHESIS_LEFT_TOKEN + UNLESS + REJECT + SYNTAX_CAUSE +
-	TAIL + PARAMETER_ITEMS_PRODUCTION
+const PARAMETERS_PROGRAM = ACCEPT +
+  PARENTHESIS_LEFT_TOKEN +
+  UNLESS +
+  REJECT +
+  SYNTAX_CAUSE +
+  TAIL +
+  PARAMETER_ITEMS_PRODUCTION
 
 // PARAMETER_ITEMS_PROGRAM reads each parameter up to the closing parenthesis.
 const PARAMETER_ITEMS_PROGRAM = SKIP_COMMENTS +
-	ACCEPT + PARENTHESIS_RIGHT_TOKEN + WHEN + RETURN +
-	CALL + PARAMETER_PRODUCTION + ACCEPT + COMMA_TOKEN + TAIL + PARAMETER_ITEMS_PRODUCTION
+  ACCEPT +
+  PARENTHESIS_RIGHT_TOKEN +
+  WHEN +
+  RETURN +
+  CALL +
+  PARAMETER_PRODUCTION +
+  ACCEPT +
+  COMMA_TOKEN +
+  TAIL +
+  PARAMETER_ITEMS_PRODUCTION
 
 // RESULTS_PROGRAM steps past the parenthesis that opens a result group.
-const RESULTS_PROGRAM = ACCEPT + PARENTHESIS_LEFT_TOKEN + UNLESS + REJECT + SYNTAX_CAUSE +
-	TAIL + RESULT_ITEMS_PRODUCTION
+const RESULTS_PROGRAM = ACCEPT +
+  PARENTHESIS_LEFT_TOKEN +
+  UNLESS +
+  REJECT +
+  SYNTAX_CAUSE +
+  TAIL +
+  RESULT_ITEMS_PRODUCTION
 
 // RESULT_ITEMS_PROGRAM reads each result up to the closing parenthesis.
 const RESULT_ITEMS_PROGRAM = SKIP_COMMENTS +
-	ACCEPT + PARENTHESIS_RIGHT_TOKEN + WHEN + RETURN +
-	CALL + RESULT_PARAMETER_PRODUCTION + ACCEPT + COMMA_TOKEN + TAIL + RESULT_ITEMS_PRODUCTION
+  ACCEPT +
+  PARENTHESIS_RIGHT_TOKEN +
+  WHEN +
+  RETURN +
+  CALL +
+  RESULT_PARAMETER_PRODUCTION +
+  ACCEPT +
+  COMMA_TOKEN +
+  TAIL +
+  RESULT_ITEMS_PRODUCTION
 
 // PARAMETER_PROGRAM opens one parameter.
 const PARAMETER_PROGRAM = OPEN + PARAMETER_NODE + TAIL + PARAMETER_BODY_PRODUCTION
@@ -5028,41 +5465,132 @@ const RESULT_PARAMETER_PROGRAM = OPEN + RESULT_NODE + TAIL + PARAMETER_BODY_PROD
 // PARAMETER_BODY_PROGRAM reads the names ahead of the type. A name is optional and only its
 // follower tells the two forms apart, so an identifier ahead of a type opener is a name and an
 // identifier ahead of anything else is the type itself.
-const PARAMETER_BODY_PROGRAM = AT + IDENTIFIER_TOKEN + UNLESS + TAIL + PARAMETER_TYPE_PRODUCTION +
-	AFTER_OPENS_TYPE + OR_AFTER + COMMA_TOKEN + UNLESS + TAIL + PARAMETER_TYPE_PRODUCTION +
-	CALL + PARAMETER_NAME_PRODUCTION + TAIL + PARAMETER_NAMES_PRODUCTION
+const PARAMETER_BODY_PROGRAM = AT +
+  IDENTIFIER_TOKEN +
+  UNLESS +
+  TAIL +
+  PARAMETER_TYPE_PRODUCTION +
+  AFTER_OPENS_TYPE +
+  OR_AFTER +
+  COMMA_TOKEN +
+  UNLESS +
+  TAIL +
+  PARAMETER_TYPE_PRODUCTION +
+  CALL +
+  PARAMETER_NAME_PRODUCTION +
+  TAIL +
+  PARAMETER_NAMES_PRODUCTION
 
 // PARAMETER_NAMES_PROGRAM reads every name behind a comma, and stops at a comma a qualified or a
 // generic type stands behind.
-const PARAMETER_NAMES_PROGRAM = AT + COMMA_TOKEN + UNLESS + TAIL + PARAMETER_TYPE_PRODUCTION +
-	AFTER + IDENTIFIER_TOKEN + UNLESS + TAIL + PARAMETER_TYPE_PRODUCTION +
-	QUALIFIES + WHEN + TAIL + PARAMETER_TYPE_PRODUCTION +
-	ADVANCE + NAME + PARAMETER_NAME_NODE + TAIL + PARAMETER_NAMES_PRODUCTION
+const PARAMETER_NAMES_PROGRAM = AT +
+  COMMA_TOKEN +
+  UNLESS +
+  TAIL +
+  PARAMETER_TYPE_PRODUCTION +
+  AFTER +
+  IDENTIFIER_TOKEN +
+  UNLESS +
+  TAIL +
+  PARAMETER_TYPE_PRODUCTION +
+  QUALIFIES +
+  WHEN +
+  TAIL +
+  PARAMETER_TYPE_PRODUCTION +
+  ADVANCE +
+  NAME +
+  PARAMETER_NAME_NODE +
+  TAIL +
+  PARAMETER_NAMES_PRODUCTION
 
 // PARAMETER_TYPE_PROGRAM reads the type behind the names. A run of bare names with no type behind
 // it was a run of types all along, and only the token after the final name tells the two apart.
-const PARAMETER_TYPE_PROGRAM = AT + COMMA_TOKEN + OR_AT + PARENTHESIS_RIGHT_TOKEN +
-	WHEN + UNNAME + WHEN + CLOSE + WHEN + RETURN +
-	CALL + TYPE_PRODUCTION + CLOSE + RETURN
+const PARAMETER_TYPE_PROGRAM = AT +
+  COMMA_TOKEN +
+  OR_AT +
+  PARENTHESIS_RIGHT_TOKEN +
+  WHEN +
+  UNNAME +
+  WHEN +
+  CLOSE +
+  WHEN +
+  RETURN +
+  CALL +
+  TYPE_PRODUCTION +
+  CLOSE +
+  RETURN
 
 // PARAMETER_NAME_PROGRAM takes one name a signature binds.
 const PARAMETER_NAME_PROGRAM = NAME + PARAMETER_NAME_NODE + RETURN
 
 // TYPE_PROGRAM hands one type to the rule its first token names.
-const TYPE_PROGRAM = OPENS_TYPE + UNLESS + REJECT + SYNTAX_CAUSE +
-	AT + IDENTIFIER_TOKEN + WHEN + TAIL + TYPE_NAME_PRODUCTION +
-	AT + STAR_TOKEN + WHEN + TAIL + POINTERS_PRODUCTION +
-	AT + ELLIPSIS_TOKEN + WHEN + OPEN + ELLIPSIS_NODE + WHEN + TAIL + PREFIX_TYPE_PRODUCTION +
-	AT + BRACKET_LEFT_TOKEN + WHEN + TAIL + ARRAY_TYPE_PRODUCTION +
-	AT + MAP_TOKEN + WHEN + TAIL + MAP_TYPE_PRODUCTION +
-	AT + CHANNEL_TOKEN + WHEN + TAIL + CHANNEL_TYPE_PRODUCTION +
-	AT + ARROW_TOKEN + WHEN + OPEN + CHANNEL_RECEIVE_NODE +
-	WHEN + TAIL + PREFIX_TYPE_PRODUCTION +
-	AT + FUNCTION_TOKEN + WHEN + TAIL + FUNCTION_TYPE_PRODUCTION +
-	AT + STRUCTURE_TOKEN + WHEN + TAIL + STRUCTURE_TYPE_PRODUCTION +
-	AT + INTERFACE_TOKEN + WHEN + TAIL + INTERFACE_TYPE_PRODUCTION +
-	AT + PARENTHESIS_LEFT_TOKEN + WHEN + TAIL + GROUPED_TYPE_PRODUCTION +
-	REJECT + SYNTAX_CAUSE
+const TYPE_PROGRAM = OPENS_TYPE +
+  UNLESS +
+  REJECT +
+  SYNTAX_CAUSE +
+  AT +
+  IDENTIFIER_TOKEN +
+  WHEN +
+  TAIL +
+  TYPE_NAME_PRODUCTION +
+  AT +
+  STAR_TOKEN +
+  WHEN +
+  TAIL +
+  POINTERS_PRODUCTION +
+  AT +
+  ELLIPSIS_TOKEN +
+  WHEN +
+  OPEN +
+  ELLIPSIS_NODE +
+  WHEN +
+  TAIL +
+  PREFIX_TYPE_PRODUCTION +
+  AT +
+  BRACKET_LEFT_TOKEN +
+  WHEN +
+  TAIL +
+  ARRAY_TYPE_PRODUCTION +
+  AT +
+  MAP_TOKEN +
+  WHEN +
+  TAIL +
+  MAP_TYPE_PRODUCTION +
+  AT +
+  CHANNEL_TOKEN +
+  WHEN +
+  TAIL +
+  CHANNEL_TYPE_PRODUCTION +
+  AT +
+  ARROW_TOKEN +
+  WHEN +
+  OPEN +
+  CHANNEL_RECEIVE_NODE +
+  WHEN +
+  TAIL +
+  PREFIX_TYPE_PRODUCTION +
+  AT +
+  FUNCTION_TOKEN +
+  WHEN +
+  TAIL +
+  FUNCTION_TYPE_PRODUCTION +
+  AT +
+  STRUCTURE_TOKEN +
+  WHEN +
+  TAIL +
+  STRUCTURE_TYPE_PRODUCTION +
+  AT +
+  INTERFACE_TOKEN +
+  WHEN +
+  TAIL +
+  INTERFACE_TYPE_PRODUCTION +
+  AT +
+  PARENTHESIS_LEFT_TOKEN +
+  WHEN +
+  TAIL +
+  GROUPED_TYPE_PRODUCTION +
+  REJECT +
+  SYNTAX_CAUSE
 
 // POINTERS_PROGRAM reads one run of pointer types in one step, the type they point at, and closes
 // the run. A long run of stars is how a file spends its type storage, thus it costs one step
@@ -5070,236 +5598,704 @@ const TYPE_PROGRAM = OPENS_TYPE + UNLESS + REJECT + SYNTAX_CAUSE +
 const POINTERS_PROGRAM = STARS + CALL + TYPE_PRODUCTION + CLOSE_STARS + RETURN
 
 // PREFIX_TYPE_PROGRAM reads the type behind the token that named the form.
-const PREFIX_TYPE_PROGRAM = ADVANCE + ACCEPT + CHANNEL_TOKEN +
-	CALL + TYPE_PRODUCTION + CLOSE + RETURN
+const PREFIX_TYPE_PROGRAM = ADVANCE +
+  ACCEPT +
+  CHANNEL_TOKEN +
+  CALL +
+  TYPE_PRODUCTION +
+  CLOSE +
+  RETURN
 
 // GROUPED_TYPE_PROGRAM reads one parenthesized type, which opens no node.
-const GROUPED_TYPE_PROGRAM = ADVANCE + CALL + TYPE_PRODUCTION +
-	ACCEPT + PARENTHESIS_RIGHT_TOKEN + UNLESS + REJECT + SYNTAX_CAUSE + RETURN
+const GROUPED_TYPE_PROGRAM = ADVANCE +
+  CALL +
+  TYPE_PRODUCTION +
+  ACCEPT +
+  PARENTHESIS_RIGHT_TOKEN +
+  UNLESS +
+  REJECT +
+  SYNTAX_CAUSE +
+  RETURN
 
 // TYPE_NAME_PROGRAM reads one named type, its qualifier, and its type arguments.
-const TYPE_NAME_PROGRAM = CALL + NAME_PRODUCTION +
-	AT + PERIOD_TOKEN + WHEN + CALL + QUALIFIED_NAME_PRODUCTION +
-	AT + BRACKET_LEFT_TOKEN + UNLESS + RETURN +
-	WRAP + GENERIC_NODE + ADVANCE + TAIL + GENERIC_ARGUMENTS_PRODUCTION
+const TYPE_NAME_PROGRAM = CALL +
+  NAME_PRODUCTION +
+  AT +
+  PERIOD_TOKEN +
+  WHEN +
+  CALL +
+  QUALIFIED_NAME_PRODUCTION +
+  AT +
+  BRACKET_LEFT_TOKEN +
+  UNLESS +
+  RETURN +
+  WRAP +
+  GENERIC_NODE +
+  ADVANCE +
+  TAIL +
+  GENERIC_ARGUMENTS_PRODUCTION
 
 // QUALIFIED_NAME_PROGRAM takes back the qualifier and reads the name behind it.
-const QUALIFIED_NAME_PROGRAM = WRAP + SELECTOR_NODE + ADVANCE +
-	CALL + NAME_PRODUCTION + CLOSE + RETURN
+const QUALIFIED_NAME_PROGRAM = WRAP +
+  SELECTOR_NODE +
+  ADVANCE +
+  CALL +
+  NAME_PRODUCTION +
+  CLOSE +
+  RETURN
 
 // GENERIC_ARGUMENTS_PROGRAM reads each type argument up to the closing bracket.
-const GENERIC_ARGUMENTS_PROGRAM = ACCEPT + BRACKET_RIGHT_TOKEN + WHEN + CLOSE + WHEN + RETURN +
-	CALL + TYPE_PRODUCTION + ACCEPT + COMMA_TOKEN + TAIL + GENERIC_ARGUMENTS_PRODUCTION
+const GENERIC_ARGUMENTS_PROGRAM = ACCEPT +
+  BRACKET_RIGHT_TOKEN +
+  WHEN +
+  CLOSE +
+  WHEN +
+  RETURN +
+  CALL +
+  TYPE_PRODUCTION +
+  ACCEPT +
+  COMMA_TOKEN +
+  TAIL +
+  GENERIC_ARGUMENTS_PRODUCTION
 
 // ARRAY_TYPE_PROGRAM reads one array or slice type. The bracket pair alone says slice, and anything
 // inside it says array, thus the kind is settled only after the capacity is read.
-const ARRAY_TYPE_PROGRAM = OPEN + SLICE_TYPE_NODE + ADVANCE +
-	ACCEPT + BRACKET_RIGHT_TOKEN + WHEN + TAIL + ELEMENT_TYPE_PRODUCTION +
-	RETYPE + ARRAY_TYPE_NODE +
-	AT + ELLIPSIS_TOKEN + WHEN + TAKE + ELLIPSIS_NODE +
-	UNLESS + CALL + BINARY_PRODUCTION +
-	ACCEPT + BRACKET_RIGHT_TOKEN + UNLESS + REJECT + SYNTAX_CAUSE +
-	TAIL + ELEMENT_TYPE_PRODUCTION
+const ARRAY_TYPE_PROGRAM = OPEN +
+  SLICE_TYPE_NODE +
+  ADVANCE +
+  ACCEPT +
+  BRACKET_RIGHT_TOKEN +
+  WHEN +
+  TAIL +
+  ELEMENT_TYPE_PRODUCTION +
+  RETYPE +
+  ARRAY_TYPE_NODE +
+  AT +
+  ELLIPSIS_TOKEN +
+  WHEN +
+  TAKE +
+  ELLIPSIS_NODE +
+  UNLESS +
+  CALL +
+  BINARY_PRODUCTION +
+  ACCEPT +
+  BRACKET_RIGHT_TOKEN +
+  UNLESS +
+  REJECT +
+  SYNTAX_CAUSE +
+  TAIL +
+  ELEMENT_TYPE_PRODUCTION
 
 // ELEMENT_TYPE_PROGRAM reads the type a composite type holds and closes that type.
 const ELEMENT_TYPE_PROGRAM = CALL + TYPE_PRODUCTION + CLOSE + RETURN
 
 // CHANNEL_TYPE_PROGRAM reads one channel type. An arrow after the keyword makes it send-only.
-const CHANNEL_TYPE_PROGRAM = OPEN + CHANNEL_TYPE_NODE + ADVANCE +
-	ACCEPT + ARROW_TOKEN + WHEN + RETYPE + CHANNEL_SEND_NODE + TAIL + ELEMENT_TYPE_PRODUCTION
+const CHANNEL_TYPE_PROGRAM = OPEN +
+  CHANNEL_TYPE_NODE +
+  ADVANCE +
+  ACCEPT +
+  ARROW_TOKEN +
+  WHEN +
+  RETYPE +
+  CHANNEL_SEND_NODE +
+  TAIL +
+  ELEMENT_TYPE_PRODUCTION
 
 // MAP_TYPE_PROGRAM reads one map type, its key, and its value.
-const MAP_TYPE_PROGRAM = OPEN + MAP_TYPE_NODE + ADVANCE +
-	ACCEPT + BRACKET_LEFT_TOKEN + UNLESS + REJECT + SYNTAX_CAUSE +
-	CALL + TYPE_PRODUCTION +
-	ACCEPT + BRACKET_RIGHT_TOKEN + UNLESS + REJECT + SYNTAX_CAUSE +
-	TAIL + ELEMENT_TYPE_PRODUCTION
+const MAP_TYPE_PROGRAM = OPEN +
+  MAP_TYPE_NODE +
+  ADVANCE +
+  ACCEPT +
+  BRACKET_LEFT_TOKEN +
+  UNLESS +
+  REJECT +
+  SYNTAX_CAUSE +
+  CALL +
+  TYPE_PRODUCTION +
+  ACCEPT +
+  BRACKET_RIGHT_TOKEN +
+  UNLESS +
+  REJECT +
+  SYNTAX_CAUSE +
+  TAIL +
+  ELEMENT_TYPE_PRODUCTION
 
 // FUNCTION_TYPE_PROGRAM reads one function type and its signature.
-const FUNCTION_TYPE_PROGRAM = OPEN + FUNCTION_TYPE_NODE + ADVANCE +
-	CALL + SIGNATURE_PRODUCTION + CLOSE + RETURN
+const FUNCTION_TYPE_PROGRAM = OPEN +
+  FUNCTION_TYPE_NODE +
+  ADVANCE +
+  CALL +
+  SIGNATURE_PRODUCTION +
+  CLOSE +
+  RETURN
 
 // STRUCTURE_TYPE_PROGRAM steps past the brace that opens a struct type.
-const STRUCTURE_TYPE_PROGRAM = OPEN + STRUCTURE_TYPE_NODE + ADVANCE +
-	ACCEPT + BRACE_LEFT_TOKEN + UNLESS + REJECT + SYNTAX_CAUSE + TAIL + FIELDS_PRODUCTION
+const STRUCTURE_TYPE_PROGRAM = OPEN +
+  STRUCTURE_TYPE_NODE +
+  ADVANCE +
+  ACCEPT +
+  BRACE_LEFT_TOKEN +
+  UNLESS +
+  REJECT +
+  SYNTAX_CAUSE +
+  TAIL +
+  FIELDS_PRODUCTION
 
 // FIELDS_PROGRAM reads each field up to the closing brace.
 const FIELDS_PROGRAM = SKIP_EMPTY +
-	ACCEPT + BRACE_RIGHT_TOKEN + WHEN + CLOSE + WHEN + RETURN +
-	CALL + FIELD_PRODUCTION + TAIL + FIELDS_PRODUCTION
+  ACCEPT +
+  BRACE_RIGHT_TOKEN +
+  WHEN +
+  CLOSE +
+  WHEN +
+  RETURN +
+  CALL +
+  FIELD_PRODUCTION +
+  TAIL +
+  FIELDS_PRODUCTION
 
 // FIELD_PROGRAM reads one struct field. An identifier ahead of a type opener is a field name, and
 // an identifier ahead of anything else is an embedded type.
-const FIELD_PROGRAM = OPEN + FIELD_NODE +
-	FIELD_NAMED + UNLESS + TAIL + FIELD_TYPE_PRODUCTION +
-	NAMES + FIELD_NAME_NODE + TAIL + FIELD_TYPE_PRODUCTION
+const FIELD_PROGRAM = OPEN +
+  FIELD_NODE +
+  FIELD_NAMED +
+  UNLESS +
+  TAIL +
+  FIELD_TYPE_PRODUCTION +
+  NAMES +
+  FIELD_NAME_NODE +
+  TAIL +
+  FIELD_TYPE_PRODUCTION
 
 // FIELD_TYPE_PROGRAM reads the type and the optional tag, and closes the field.
-const FIELD_TYPE_PROGRAM = CALL + TYPE_PRODUCTION +
-	AT + STRING_TOKEN + WHEN + TAKE + STRING_NODE +
-	CLOSE + TAIL + END_LINE_PRODUCTION
+const FIELD_TYPE_PROGRAM = CALL +
+  TYPE_PRODUCTION +
+  AT +
+  STRING_TOKEN +
+  WHEN +
+  TAKE +
+  STRING_NODE +
+  CLOSE +
+  TAIL +
+  END_LINE_PRODUCTION
 
 // INTERFACE_TYPE_PROGRAM steps past the brace that opens an interface type.
-const INTERFACE_TYPE_PROGRAM = OPEN + INTERFACE_TYPE_NODE + ADVANCE +
-	ACCEPT + BRACE_LEFT_TOKEN + UNLESS + REJECT + SYNTAX_CAUSE + TAIL + ELEMENTS_PRODUCTION
+const INTERFACE_TYPE_PROGRAM = OPEN +
+  INTERFACE_TYPE_NODE +
+  ADVANCE +
+  ACCEPT +
+  BRACE_LEFT_TOKEN +
+  UNLESS +
+  REJECT +
+  SYNTAX_CAUSE +
+  TAIL +
+  ELEMENTS_PRODUCTION
 
 // ELEMENTS_PROGRAM reads each element up to the closing brace. The linter bans a method set, thus
 // every element is a constraint.
 const ELEMENTS_PROGRAM = SKIP_EMPTY +
-	ACCEPT + BRACE_RIGHT_TOKEN + WHEN + CLOSE + WHEN + RETURN +
-	AT + IDENTIFIER_TOKEN + AND_AFTER + PARENTHESIS_LEFT_TOKEN +
-	WHEN + REJECT + INTERFACE_METHOD_CAUSE +
-	CALL + CONSTRAINT_PRODUCTION + CALL + END_LINE_PRODUCTION + TAIL + ELEMENTS_PRODUCTION
+  ACCEPT +
+  BRACE_RIGHT_TOKEN +
+  WHEN +
+  CLOSE +
+  WHEN +
+  RETURN +
+  AT +
+  IDENTIFIER_TOKEN +
+  AND_AFTER +
+  PARENTHESIS_LEFT_TOKEN +
+  WHEN +
+  REJECT +
+  INTERFACE_METHOD_CAUSE +
+  CALL +
+  CONSTRAINT_PRODUCTION +
+  CALL +
+  END_LINE_PRODUCTION +
+  TAIL +
+  ELEMENTS_PRODUCTION
 
 // BLOCK_PROGRAM steps past the brace that opens a block. The brace rule of an enclosing control
 // clause stops at the block, because a literal inside it is unambiguous again.
-const BLOCK_PROGRAM = OPEN + BLOCK_NODE +
-	ACCEPT + BRACE_LEFT_TOKEN + UNLESS + REJECT + SYNTAX_CAUSE +
-	SAVE_PLAIN + CLEAR_PLAIN + TAIL + STATEMENTS_PRODUCTION
+const BLOCK_PROGRAM = OPEN +
+  BLOCK_NODE +
+  ACCEPT +
+  BRACE_LEFT_TOKEN +
+  UNLESS +
+  REJECT +
+  SYNTAX_CAUSE +
+  SAVE_PLAIN +
+  CLEAR_PLAIN +
+  TAIL +
+  STATEMENTS_PRODUCTION
 
 // STATEMENTS_PROGRAM reads each statement up to the closing brace. An empty statement writes no
 // node, because it carries nothing a reader of the tree could want.
 const STATEMENTS_PROGRAM = SKIP_EMPTY +
-	ACCEPT + BRACE_RIGHT_TOKEN + WHEN + RESTORE_PLAIN + WHEN + CLOSE + WHEN + RETURN +
-	CALL + STATEMENT_PRODUCTION + TAIL + STATEMENTS_PRODUCTION
+  ACCEPT +
+  BRACE_RIGHT_TOKEN +
+  WHEN +
+  RESTORE_PLAIN +
+  WHEN +
+  CLOSE +
+  WHEN +
+  RETURN +
+  CALL +
+  STATEMENT_PRODUCTION +
+  TAIL +
+  STATEMENTS_PRODUCTION
 
 // STATEMENT_PROGRAM hands one statement to the rule its first token names. A statement most
 // often opens with a name, thus the rule asks that first.
-const STATEMENT_PROGRAM = AT + IDENTIFIER_TOKEN + AND_AFTER + COLON_TOKEN +
-	WHEN + TAIL + LABEL_PRODUCTION +
-	AT + IDENTIFIER_TOKEN + WHEN + CALL + CLAUSE_PRODUCTION +
-	WHEN + TAIL + END_LINE_PRODUCTION +
-	AT + CONSTANT_TOKEN + OR_AT + VARIABLE_TOKEN + OR_AT + TYPE_TOKEN +
-	WHEN + TAIL + DECLARATION_STATEMENT_PRODUCTION +
-	AT + RETURN_TOKEN + WHEN + TAIL + RETURN_STATEMENT_PRODUCTION +
-	AT + IF_TOKEN + WHEN + TAIL + IF_STATEMENT_PRODUCTION +
-	AT + FOR_TOKEN + WHEN + TAIL + FOR_STATEMENT_PRODUCTION +
-	AT + SWITCH_TOKEN + WHEN + TAIL + SWITCH_STATEMENT_PRODUCTION +
-	AT + SELECT_TOKEN + WHEN + TAIL + SELECT_STATEMENT_PRODUCTION +
-	AT + GO_TOKEN + WHEN + OPEN + GO_NODE + WHEN + TAIL + LAUNCH_PRODUCTION +
-	AT + DEFER_TOKEN + WHEN + OPEN + DEFER_NODE + WHEN + TAIL + LAUNCH_PRODUCTION +
-	AT + BREAK_TOKEN + WHEN + OPEN + BREAK_NODE + WHEN + TAIL + JUMP_PRODUCTION +
-	AT + CONTINUE_TOKEN + WHEN + OPEN + CONTINUE_NODE + WHEN + TAIL + JUMP_PRODUCTION +
-	AT + GOTO_TOKEN + WHEN + OPEN + GOTO_NODE + WHEN + TAIL + JUMP_PRODUCTION +
-	AT + FALLTHROUGH_TOKEN + WHEN + TAKE + FALLTHROUGH_NODE +
-	WHEN + TAIL + END_LINE_PRODUCTION +
-	AT + BRACE_LEFT_TOKEN + WHEN + CALL + BLOCK_PRODUCTION + WHEN + TAIL + END_LINE_PRODUCTION +
-	CALL + CLAUSE_PRODUCTION + TAIL + END_LINE_PRODUCTION
+const STATEMENT_PROGRAM = AT +
+  IDENTIFIER_TOKEN +
+  AND_AFTER +
+  COLON_TOKEN +
+  WHEN +
+  TAIL +
+  LABEL_PRODUCTION +
+  AT +
+  IDENTIFIER_TOKEN +
+  WHEN +
+  CALL +
+  CLAUSE_PRODUCTION +
+  WHEN +
+  TAIL +
+  END_LINE_PRODUCTION +
+  AT +
+  CONSTANT_TOKEN +
+  OR_AT +
+  VARIABLE_TOKEN +
+  OR_AT +
+  TYPE_TOKEN +
+  WHEN +
+  TAIL +
+  DECLARATION_STATEMENT_PRODUCTION +
+  AT +
+  RETURN_TOKEN +
+  WHEN +
+  TAIL +
+  RETURN_STATEMENT_PRODUCTION +
+  AT +
+  IF_TOKEN +
+  WHEN +
+  TAIL +
+  IF_STATEMENT_PRODUCTION +
+  AT +
+  FOR_TOKEN +
+  WHEN +
+  TAIL +
+  FOR_STATEMENT_PRODUCTION +
+  AT +
+  SWITCH_TOKEN +
+  WHEN +
+  TAIL +
+  SWITCH_STATEMENT_PRODUCTION +
+  AT +
+  SELECT_TOKEN +
+  WHEN +
+  TAIL +
+  SELECT_STATEMENT_PRODUCTION +
+  AT +
+  GO_TOKEN +
+  WHEN +
+  OPEN +
+  GO_NODE +
+  WHEN +
+  TAIL +
+  LAUNCH_PRODUCTION +
+  AT +
+  DEFER_TOKEN +
+  WHEN +
+  OPEN +
+  DEFER_NODE +
+  WHEN +
+  TAIL +
+  LAUNCH_PRODUCTION +
+  AT +
+  BREAK_TOKEN +
+  WHEN +
+  OPEN +
+  BREAK_NODE +
+  WHEN +
+  TAIL +
+  JUMP_PRODUCTION +
+  AT +
+  CONTINUE_TOKEN +
+  WHEN +
+  OPEN +
+  CONTINUE_NODE +
+  WHEN +
+  TAIL +
+  JUMP_PRODUCTION +
+  AT +
+  GOTO_TOKEN +
+  WHEN +
+  OPEN +
+  GOTO_NODE +
+  WHEN +
+  TAIL +
+  JUMP_PRODUCTION +
+  AT +
+  FALLTHROUGH_TOKEN +
+  WHEN +
+  TAKE +
+  FALLTHROUGH_NODE +
+  WHEN +
+  TAIL +
+  END_LINE_PRODUCTION +
+  AT +
+  BRACE_LEFT_TOKEN +
+  WHEN +
+  CALL +
+  BLOCK_PRODUCTION +
+  WHEN +
+  TAIL +
+  END_LINE_PRODUCTION +
+  CALL +
+  CLAUSE_PRODUCTION +
+  TAIL +
+  END_LINE_PRODUCTION
 
 // DECLARATION_STATEMENT_PROGRAM reads one const, var, or type declaration standing inside a body.
-const DECLARATION_STATEMENT_PROGRAM = OPEN + DECLARATION_STATEMENT_NODE +
-	AT + TYPE_TOKEN + WHEN + CALL + TYPE_DECLARATION_PRODUCTION +
-	UNLESS + CALL + VALUE_DECLARATION_PRODUCTION + CLOSE + RETURN
+const DECLARATION_STATEMENT_PROGRAM = OPEN +
+  DECLARATION_STATEMENT_NODE +
+  AT +
+  TYPE_TOKEN +
+  WHEN +
+  CALL +
+  TYPE_DECLARATION_PRODUCTION +
+  UNLESS +
+  CALL +
+  VALUE_DECLARATION_PRODUCTION +
+  CLOSE +
+  RETURN
 
 // LABEL_PROGRAM reads one labelled statement. A label may stand at the end of a block with nothing
 // behind it, which Go reads as a labelled empty statement.
-const LABEL_PROGRAM = OPEN + LABEL_NODE + CALL + NAME_PRODUCTION + ACCEPT + COLON_TOKEN +
-	AT + BRACE_RIGHT_TOKEN + OR_AT + END_OF_FILE_TOKEN + OR_AT + CASE_TOKEN +
-	OR_AT + DEFAULT_TOKEN + WHEN + CLOSE + WHEN + RETURN +
-	CALL + STATEMENT_PRODUCTION + CLOSE + RETURN
+const LABEL_PROGRAM = OPEN +
+  LABEL_NODE +
+  CALL +
+  NAME_PRODUCTION +
+  ACCEPT +
+  COLON_TOKEN +
+  AT +
+  BRACE_RIGHT_TOKEN +
+  OR_AT +
+  END_OF_FILE_TOKEN +
+  OR_AT +
+  CASE_TOKEN +
+  OR_AT +
+  DEFAULT_TOKEN +
+  WHEN +
+  CLOSE +
+  WHEN +
+  RETURN +
+  CALL +
+  STATEMENT_PRODUCTION +
+  CLOSE +
+  RETURN
 
 // RETURN_STATEMENT_PROGRAM reads one return statement. A return that names no value parses and
 // holds no child, because the canonical form writes the values the signature names.
-const RETURN_STATEMENT_PROGRAM = OPEN + RETURN_NODE + ADVANCE +
-	AT + SEMICOLON_TOKEN + OR_AT + BRACE_RIGHT_TOKEN + OR_AT + END_OF_FILE_TOKEN +
-	OR_AT + COMMENT_TOKEN + UNLESS + CALL + EXPRESSION_LIST_PRODUCTION +
-	CLOSE + TAIL + END_LINE_PRODUCTION
+const RETURN_STATEMENT_PROGRAM = OPEN +
+  RETURN_NODE +
+  ADVANCE +
+  AT +
+  SEMICOLON_TOKEN +
+  OR_AT +
+  BRACE_RIGHT_TOKEN +
+  OR_AT +
+  END_OF_FILE_TOKEN +
+  OR_AT +
+  COMMENT_TOKEN +
+  UNLESS +
+  CALL +
+  EXPRESSION_LIST_PRODUCTION +
+  CLOSE +
+  TAIL +
+  END_LINE_PRODUCTION
 
 // LAUNCH_PROGRAM reads the call one go or defer statement carries.
 const LAUNCH_PROGRAM = ADVANCE + CALL + BINARY_PRODUCTION + CLOSE + TAIL + END_LINE_PRODUCTION
 
 // JUMP_PROGRAM reads the optional label one jump carries.
-const JUMP_PROGRAM = ADVANCE + AT + IDENTIFIER_TOKEN + WHEN + CALL + NAME_PRODUCTION +
-	CLOSE + TAIL + END_LINE_PRODUCTION
+const JUMP_PROGRAM = ADVANCE +
+  AT +
+  IDENTIFIER_TOKEN +
+  WHEN +
+  CALL +
+  NAME_PRODUCTION +
+  CLOSE +
+  TAIL +
+  END_LINE_PRODUCTION
 
 // IF_STATEMENT_PROGRAM reads one if statement, its optional initializer, its condition, and its
 // branches. An else if closes with the if it holds.
-const IF_STATEMENT_PROGRAM = OPEN + IF_NODE + ADVANCE + SAVE_PLAIN + SET_PLAIN +
-	CALL + CLAUSE_PRODUCTION + ACCEPT + SEMICOLON_TOKEN + WHEN + CALL + CLAUSE_PRODUCTION +
-	RESTORE_PLAIN + CALL + BLOCK_PRODUCTION +
-	ACCEPT + ELSE_TOKEN + UNLESS + TAIL + IF_END_PRODUCTION +
-	AT + IF_TOKEN + WHEN + CALL + IF_STATEMENT_PRODUCTION + WHEN + CLOSE + WHEN + RETURN +
-	CALL + BLOCK_PRODUCTION + TAIL + IF_END_PRODUCTION
+const IF_STATEMENT_PROGRAM = OPEN +
+  IF_NODE +
+  ADVANCE +
+  SAVE_PLAIN +
+  SET_PLAIN +
+  CALL +
+  CLAUSE_PRODUCTION +
+  ACCEPT +
+  SEMICOLON_TOKEN +
+  WHEN +
+  CALL +
+  CLAUSE_PRODUCTION +
+  RESTORE_PLAIN +
+  CALL +
+  BLOCK_PRODUCTION +
+  ACCEPT +
+  ELSE_TOKEN +
+  UNLESS +
+  TAIL +
+  IF_END_PRODUCTION +
+  AT +
+  IF_TOKEN +
+  WHEN +
+  CALL +
+  IF_STATEMENT_PRODUCTION +
+  WHEN +
+  CLOSE +
+  WHEN +
+  RETURN +
+  CALL +
+  BLOCK_PRODUCTION +
+  TAIL +
+  IF_END_PRODUCTION
 
 // IF_END_PROGRAM closes one if statement.
 const IF_END_PROGRAM = CLOSE + TAIL + END_LINE_PRODUCTION
 
 // FOR_STATEMENT_PROGRAM reads one for statement: a bare loop, a condition, a three-clause head, or
 // a range clause.
-const FOR_STATEMENT_PROGRAM = OPEN + FOR_NODE + ADVANCE + SAVE_PLAIN + SET_PLAIN +
-	AT + BRACE_LEFT_TOKEN + UNLESS + CALL + FOR_HEAD_PRODUCTION +
-	RESTORE_PLAIN + CALL + BLOCK_PRODUCTION + CLOSE + TAIL + END_LINE_PRODUCTION
+const FOR_STATEMENT_PROGRAM = OPEN +
+  FOR_NODE +
+  ADVANCE +
+  SAVE_PLAIN +
+  SET_PLAIN +
+  AT +
+  BRACE_LEFT_TOKEN +
+  UNLESS +
+  CALL +
+  FOR_HEAD_PRODUCTION +
+  RESTORE_PLAIN +
+  CALL +
+  BLOCK_PRODUCTION +
+  CLOSE +
+  TAIL +
+  END_LINE_PRODUCTION
 
 // FOR_HEAD_PROGRAM reads the head of one for statement.
-const FOR_HEAD_PROGRAM = AT + RANGE_TOKEN + WHEN + TAIL + RANGE_CLAUSE_PRODUCTION +
-	AT + SEMICOLON_TOKEN + UNLESS + CALL + CLAUSE_PRODUCTION +
-	ACCEPT + SEMICOLON_TOKEN + UNLESS + RETURN +
-	AT + SEMICOLON_TOKEN + UNLESS + CALL + CLAUSE_PRODUCTION +
-	ACCEPT + SEMICOLON_TOKEN + UNLESS + RETURN +
-	AT + BRACE_LEFT_TOKEN + UNLESS + CALL + CLAUSE_PRODUCTION + RETURN
+const FOR_HEAD_PROGRAM = AT +
+  RANGE_TOKEN +
+  WHEN +
+  TAIL +
+  RANGE_CLAUSE_PRODUCTION +
+  AT +
+  SEMICOLON_TOKEN +
+  UNLESS +
+  CALL +
+  CLAUSE_PRODUCTION +
+  ACCEPT +
+  SEMICOLON_TOKEN +
+  UNLESS +
+  RETURN +
+  AT +
+  SEMICOLON_TOKEN +
+  UNLESS +
+  CALL +
+  CLAUSE_PRODUCTION +
+  ACCEPT +
+  SEMICOLON_TOKEN +
+  UNLESS +
+  RETURN +
+  AT +
+  BRACE_LEFT_TOKEN +
+  UNLESS +
+  CALL +
+  CLAUSE_PRODUCTION +
+  RETURN
 
 // RANGE_CLAUSE_PROGRAM reads one range clause.
 const RANGE_CLAUSE_PROGRAM = OPEN + RANGE_NODE + ADVANCE +
-	CALL + BINARY_PRODUCTION + CLOSE + RETURN
+  CALL + BINARY_PRODUCTION + CLOSE + RETURN
 
 // SWITCH_STATEMENT_PROGRAM reads one expression or type switch. A type assertion over the type
 // keyword in the head is the one mark that tells the two apart, so the kind is settled after the
 // head is read.
-const SWITCH_STATEMENT_PROGRAM = OPEN + SWITCH_NODE + ADVANCE +
-	SAVE_PLAIN + SET_PLAIN + CLEAR_ASSERTION +
-	AT + BRACE_LEFT_TOKEN + UNLESS + CALL + SWITCH_HEAD_PRODUCTION +
-	ASSERTED + WHEN + RETYPE + TYPE_SWITCH_NODE +
-	RESTORE_PLAIN + CALL + CASE_BLOCK_PRODUCTION + CLOSE + TAIL + END_LINE_PRODUCTION
+const SWITCH_STATEMENT_PROGRAM = OPEN +
+  SWITCH_NODE +
+  ADVANCE +
+  SAVE_PLAIN +
+  SET_PLAIN +
+  CLEAR_ASSERTION +
+  AT +
+  BRACE_LEFT_TOKEN +
+  UNLESS +
+  CALL +
+  SWITCH_HEAD_PRODUCTION +
+  ASSERTED +
+  WHEN +
+  RETYPE +
+  TYPE_SWITCH_NODE +
+  RESTORE_PLAIN +
+  CALL +
+  CASE_BLOCK_PRODUCTION +
+  CLOSE +
+  TAIL +
+  END_LINE_PRODUCTION
 
 // SWITCH_HEAD_PROGRAM reads the initializer and the tag of one switch.
-const SWITCH_HEAD_PROGRAM = CALL + CLAUSE_PRODUCTION +
-	ACCEPT + SEMICOLON_TOKEN + UNLESS + RETURN +
-	AT + BRACE_LEFT_TOKEN + UNLESS + CALL + CLAUSE_PRODUCTION + RETURN
+const SWITCH_HEAD_PROGRAM = CALL +
+  CLAUSE_PRODUCTION +
+  ACCEPT +
+  SEMICOLON_TOKEN +
+  UNLESS +
+  RETURN +
+  AT +
+  BRACE_LEFT_TOKEN +
+  UNLESS +
+  CALL +
+  CLAUSE_PRODUCTION +
+  RETURN
 
 // SELECT_STATEMENT_PROGRAM reads one select statement.
-const SELECT_STATEMENT_PROGRAM = OPEN + SELECT_NODE + ADVANCE +
-	CALL + CASE_BLOCK_PRODUCTION + CLOSE + TAIL + END_LINE_PRODUCTION
+const SELECT_STATEMENT_PROGRAM = OPEN +
+  SELECT_NODE +
+  ADVANCE +
+  CALL +
+  CASE_BLOCK_PRODUCTION +
+  CLOSE +
+  TAIL +
+  END_LINE_PRODUCTION
 
 // CASE_BLOCK_PROGRAM steps past the brace that opens a clause list.
-const CASE_BLOCK_PROGRAM = ACCEPT + BRACE_LEFT_TOKEN + UNLESS + REJECT + SYNTAX_CAUSE +
-	TAIL + CASES_PRODUCTION
+const CASE_BLOCK_PROGRAM = ACCEPT +
+  BRACE_LEFT_TOKEN +
+  UNLESS +
+  REJECT +
+  SYNTAX_CAUSE +
+  TAIL +
+  CASES_PRODUCTION
 
 // CASES_PROGRAM reads each clause up to the closing brace.
-const CASES_PROGRAM = SKIP_COMMENTS + ACCEPT + BRACE_RIGHT_TOKEN + WHEN + RETURN +
-	CALL + CASE_PRODUCTION + TAIL + CASES_PRODUCTION
+const CASES_PROGRAM = SKIP_COMMENTS +
+  ACCEPT +
+  BRACE_RIGHT_TOKEN +
+  WHEN +
+  RETURN +
+  CALL +
+  CASE_PRODUCTION +
+  TAIL +
+  CASES_PRODUCTION
 
 // CASE_PROGRAM opens one case or default clause. The default node stands at the token behind its
 // keyword, because the keyword is taken before the node opens.
-const CASE_PROGRAM = ACCEPT + DEFAULT_TOKEN + WHEN + OPEN + DEFAULT_NODE +
-	WHEN + TAIL + CASE_COLON_PRODUCTION +
-	OPEN + CASE_NODE + ACCEPT + CASE_TOKEN + UNLESS + REJECT + SYNTAX_CAUSE +
-	CALL + CLAUSE_PRODUCTION + TAIL + CASE_COLON_PRODUCTION
+const CASE_PROGRAM = ACCEPT +
+  DEFAULT_TOKEN +
+  WHEN +
+  OPEN +
+  DEFAULT_NODE +
+  WHEN +
+  TAIL +
+  CASE_COLON_PRODUCTION +
+  OPEN +
+  CASE_NODE +
+  ACCEPT +
+  CASE_TOKEN +
+  UNLESS +
+  REJECT +
+  SYNTAX_CAUSE +
+  CALL +
+  CLAUSE_PRODUCTION +
+  TAIL +
+  CASE_COLON_PRODUCTION
 
 // CASE_COLON_PROGRAM reads the colon and the statements of one clause, and closes it.
-const CASE_COLON_PROGRAM = ACCEPT + COLON_TOKEN + UNLESS + REJECT + SYNTAX_CAUSE +
-	CALL + CASE_BODY_PRODUCTION + CLOSE + RETURN
+const CASE_COLON_PROGRAM = ACCEPT +
+  COLON_TOKEN +
+  UNLESS +
+  REJECT +
+  SYNTAX_CAUSE +
+  CALL +
+  CASE_BODY_PRODUCTION +
+  CLOSE +
+  RETURN
 
 // CASE_BODY_PROGRAM reads the statements of one clause, which run to the next clause or the
 // closing brace.
 const CASE_BODY_PROGRAM = SKIP_EMPTY +
-	AT + CASE_TOKEN + OR_AT + DEFAULT_TOKEN + OR_AT + BRACE_RIGHT_TOKEN +
-	OR_AT + END_OF_FILE_TOKEN + WHEN + RETURN +
-	CALL + STATEMENT_PRODUCTION + TAIL + CASE_BODY_PRODUCTION
+  AT +
+  CASE_TOKEN +
+  OR_AT +
+  DEFAULT_TOKEN +
+  OR_AT +
+  BRACE_RIGHT_TOKEN +
+  OR_AT +
+  END_OF_FILE_TOKEN +
+  WHEN +
+  RETURN +
+  CALL +
+  STATEMENT_PRODUCTION +
+  TAIL +
+  CASE_BODY_PRODUCTION
 
 // CLAUSE_PROGRAM reads one simple statement. The operator that follows the left side names the
 // form, thus the kind is settled after that side is read.
-const CLAUSE_PROGRAM = OPEN + EXPRESSION_STATEMENT_NODE + CALL + EXPRESSION_LIST_PRODUCTION +
-	CLAUSE_OPERATOR + UNLESS + CLOSE + UNLESS + RETURN + RETYPE_CLAUSE +
-	AT + INCREMENT_TOKEN + OR_AT + DECREMENT_TOKEN +
-	WHEN + ADVANCE + WHEN + CLOSE + WHEN + RETURN +
-	AT + ARROW_TOKEN + WHEN + ADVANCE + WHEN + CALL + BINARY_PRODUCTION +
-	WHEN + CLOSE + WHEN + RETURN +
-	ADVANCE + AT + RANGE_TOKEN + WHEN + CALL + RANGE_CLAUSE_PRODUCTION +
-	UNLESS + CALL + EXPRESSION_LIST_PRODUCTION + CLOSE + RETURN
+const CLAUSE_PROGRAM = OPEN +
+  EXPRESSION_STATEMENT_NODE +
+  CALL +
+  EXPRESSION_LIST_PRODUCTION +
+  CLAUSE_OPERATOR +
+  UNLESS +
+  CLOSE +
+  UNLESS +
+  RETURN +
+  RETYPE_CLAUSE +
+  AT +
+  INCREMENT_TOKEN +
+  OR_AT +
+  DECREMENT_TOKEN +
+  WHEN +
+  ADVANCE +
+  WHEN +
+  CLOSE +
+  WHEN +
+  RETURN +
+  AT +
+  ARROW_TOKEN +
+  WHEN +
+  ADVANCE +
+  WHEN +
+  CALL +
+  BINARY_PRODUCTION +
+  WHEN +
+  CLOSE +
+  WHEN +
+  RETURN +
+  ADVANCE +
+  AT +
+  RANGE_TOKEN +
+  WHEN +
+  CALL +
+  RANGE_CLAUSE_PRODUCTION +
+  UNLESS +
+  CALL +
+  EXPRESSION_LIST_PRODUCTION +
+  CLOSE +
+  RETURN
 
 // EXPRESSION_LIST_PROGRAM reads one comma-separated expression list.
-const EXPRESSION_LIST_PROGRAM = CALL + BINARY_PRODUCTION +
-	ACCEPT + COMMA_TOKEN + WHEN + TAIL + EXPRESSION_LIST_PRODUCTION + RETURN
+const EXPRESSION_LIST_PROGRAM = CALL +
+  BINARY_PRODUCTION +
+  ACCEPT +
+  COMMA_TOKEN +
+  WHEN +
+  TAIL +
+  EXPRESSION_LIST_PRODUCTION +
+  RETURN
 
 // BINARY_PROGRAM reads the first operand of one binary expression.
 const BINARY_PROGRAM = CALL + UNARY_PRODUCTION + TAIL + BINARY_OPERATORS_PRODUCTION
@@ -5307,127 +6303,351 @@ const BINARY_PROGRAM = CALL + UNARY_PRODUCTION + TAIL + BINARY_OPERATORS_PRODUCT
 // BINARY_OPERATORS_PROGRAM reads each operator that binds tighter than the level the rule runs at.
 // A sign this dialect states no form for fails where it stands, thus every form that holds an
 // operation answers for it and none of them reads it.
-const BINARY_OPERATORS_PROGRAM = REFUSES_SIGN + WHEN + REJECT + REFUSED_SIGN_CAUSE +
-	ABOVE + UNLESS + RETURN +
-	HOLD + WRAP + BINARY_NODE + ADVANCE + CALL_HELD + CLOSE + TAIL + BINARY_OPERATORS_PRODUCTION
+const BINARY_OPERATORS_PROGRAM = REFUSES_SIGN +
+  WHEN +
+  REJECT +
+  REFUSED_SIGN_CAUSE +
+  ABOVE +
+  UNLESS +
+  RETURN +
+  HOLD +
+  WRAP +
+  BINARY_NODE +
+  ADVANCE +
+  CALL_HELD +
+  CLOSE +
+  TAIL +
+  BINARY_OPERATORS_PRODUCTION
 
 // UNARY_PROGRAM reads one unary expression and its operand.
-const UNARY_PROGRAM = UNARY_SIGN + UNLESS + TAIL + PRIMARY_PRODUCTION +
-	OPEN + UNARY_NODE + ADVANCE + CALL + UNARY_PRODUCTION + CLOSE + RETURN
+const UNARY_PROGRAM = UNARY_SIGN +
+  UNLESS +
+  TAIL +
+  PRIMARY_PRODUCTION +
+  OPEN +
+  UNARY_NODE +
+  ADVANCE +
+  CALL +
+  UNARY_PRODUCTION +
+  CLOSE +
+  RETURN
 
 // PRIMARY_PROGRAM reads one operand and every suffix that binds to it.
 const PRIMARY_PROGRAM = CALL + OPERAND_PRODUCTION + TAIL + SUFFIXES_PRODUCTION
 
 // SUFFIXES_PROGRAM reads each suffix that binds to the operand already read. An operand most
 // often binds none, thus the rule asks that first.
-const SUFFIXES_PROGRAM = SUFFIX_SIGN + UNLESS + RETURN + AT + PERIOD_TOKEN +
-	WHEN + CALL + SELECTOR_SUFFIX_PRODUCTION + WHEN + TAIL + SUFFIXES_PRODUCTION +
-	AT + BRACKET_LEFT_TOKEN +
-	WHEN + CALL + INDEX_SUFFIX_PRODUCTION + WHEN + TAIL + SUFFIXES_PRODUCTION +
-	AT + PARENTHESIS_LEFT_TOKEN +
-	WHEN + CALL + CALL_SUFFIX_PRODUCTION + WHEN + TAIL + SUFFIXES_PRODUCTION +
-	AT + BRACE_LEFT_TOKEN + UNLESS + RETURN + BARRED_BRACE + WHEN + RETURN +
-	CALL + COMPOSITE_SUFFIX_PRODUCTION + TAIL + SUFFIXES_PRODUCTION
+const SUFFIXES_PROGRAM = SUFFIX_SIGN +
+  UNLESS +
+  RETURN +
+  AT +
+  PERIOD_TOKEN +
+  WHEN +
+  CALL +
+  SELECTOR_SUFFIX_PRODUCTION +
+  WHEN +
+  TAIL +
+  SUFFIXES_PRODUCTION +
+  AT +
+  BRACKET_LEFT_TOKEN +
+  WHEN +
+  CALL +
+  INDEX_SUFFIX_PRODUCTION +
+  WHEN +
+  TAIL +
+  SUFFIXES_PRODUCTION +
+  AT +
+  PARENTHESIS_LEFT_TOKEN +
+  WHEN +
+  CALL +
+  CALL_SUFFIX_PRODUCTION +
+  WHEN +
+  TAIL +
+  SUFFIXES_PRODUCTION +
+  AT +
+  BRACE_LEFT_TOKEN +
+  UNLESS +
+  RETURN +
+  BARRED_BRACE +
+  WHEN +
+  RETURN +
+  CALL +
+  COMPOSITE_SUFFIX_PRODUCTION +
+  TAIL +
+  SUFFIXES_PRODUCTION
 
 // OPERAND_PROGRAM reads one operand: a name, a literal, a grouping, a function literal, or a type
 // that stands where an expression can, such as the first argument of a conversion or of make.
-const OPERAND_PROGRAM = AT + IDENTIFIER_TOKEN + WHEN + TAIL + NAME_PRODUCTION +
-	AT + INTEGER_TOKEN + OR_AT + FLOAT_TOKEN + OR_AT + IMAGINARY_TOKEN +
-	OR_AT + CHARACTER_TOKEN + OR_AT + STRING_TOKEN +
-	WHEN + LITERAL + WHEN + RETURN +
-	AT + PARENTHESIS_LEFT_TOKEN + WHEN + TAIL + GROUPING_PRODUCTION +
-	AT + FUNCTION_TOKEN + WHEN + TAIL + FUNCTION_LITERAL_PRODUCTION +
-	AT + BRACKET_LEFT_TOKEN + OR_AT + MAP_TOKEN + OR_AT + CHANNEL_TOKEN + OR_AT + ARROW_TOKEN +
-	OR_AT + STRUCTURE_TOKEN + OR_AT + INTERFACE_TOKEN + OR_AT + ELLIPSIS_TOKEN +
-	WHEN + TAIL + TYPE_PRODUCTION +
-	REJECT + SYNTAX_CAUSE
+const OPERAND_PROGRAM = AT +
+  IDENTIFIER_TOKEN +
+  WHEN +
+  TAIL +
+  NAME_PRODUCTION +
+  AT +
+  INTEGER_TOKEN +
+  OR_AT +
+  FLOAT_TOKEN +
+  OR_AT +
+  IMAGINARY_TOKEN +
+  OR_AT +
+  CHARACTER_TOKEN +
+  OR_AT +
+  STRING_TOKEN +
+  WHEN +
+  LITERAL +
+  WHEN +
+  RETURN +
+  AT +
+  PARENTHESIS_LEFT_TOKEN +
+  WHEN +
+  TAIL +
+  GROUPING_PRODUCTION +
+  AT +
+  FUNCTION_TOKEN +
+  WHEN +
+  TAIL +
+  FUNCTION_LITERAL_PRODUCTION +
+  AT +
+  BRACKET_LEFT_TOKEN +
+  OR_AT +
+  MAP_TOKEN +
+  OR_AT +
+  CHANNEL_TOKEN +
+  OR_AT +
+  ARROW_TOKEN +
+  OR_AT +
+  STRUCTURE_TOKEN +
+  OR_AT +
+  INTERFACE_TOKEN +
+  OR_AT +
+  ELLIPSIS_TOKEN +
+  WHEN +
+  TAIL +
+  TYPE_PRODUCTION +
+  REJECT +
+  SYNTAX_CAUSE
 
 // GROUPING_PROGRAM reads one parenthesized expression. The brace rule of the enclosing control
 // clause stops at the parenthesis, because a literal inside a grouping is unambiguous again.
-const GROUPING_PROGRAM = OPEN + PARENTHESIS_NODE + ADVANCE + SAVE_PLAIN + CLEAR_PLAIN +
-	CALL + BINARY_PRODUCTION + RESTORE_PLAIN +
-	ACCEPT + PARENTHESIS_RIGHT_TOKEN + UNLESS + REJECT + SYNTAX_CAUSE + CLOSE + RETURN
+const GROUPING_PROGRAM = OPEN +
+  PARENTHESIS_NODE +
+  ADVANCE +
+  SAVE_PLAIN +
+  CLEAR_PLAIN +
+  CALL +
+  BINARY_PRODUCTION +
+  RESTORE_PLAIN +
+  ACCEPT +
+  PARENTHESIS_RIGHT_TOKEN +
+  UNLESS +
+  REJECT +
+  SYNTAX_CAUSE +
+  CLOSE +
+  RETURN
 
 // FUNCTION_LITERAL_PROGRAM reads one function literal and its body.
-const FUNCTION_LITERAL_PROGRAM = OPEN + FUNCTION_LITERAL_NODE + ADVANCE +
-	CALL + SIGNATURE_PRODUCTION +
-	AT + BRACE_LEFT_TOKEN + WHEN + SAVE_PLAIN + WHEN + CLEAR_PLAIN +
-	WHEN + CALL + BLOCK_PRODUCTION + WHEN + RESTORE_PLAIN + CLOSE + RETURN
+const FUNCTION_LITERAL_PROGRAM = OPEN +
+  FUNCTION_LITERAL_NODE +
+  ADVANCE +
+  CALL +
+  SIGNATURE_PRODUCTION +
+  AT +
+  BRACE_LEFT_TOKEN +
+  WHEN +
+  SAVE_PLAIN +
+  WHEN +
+  CLEAR_PLAIN +
+  WHEN +
+  CALL +
+  BLOCK_PRODUCTION +
+  WHEN +
+  RESTORE_PLAIN +
+  CLOSE +
+  RETURN
 
 // SELECTOR_SUFFIX_PROGRAM reads one selector over the expression already read.
-const SELECTOR_SUFFIX_PROGRAM = AFTER + PARENTHESIS_LEFT_TOKEN +
-	WHEN + TAIL + ASSERTION_SUFFIX_PRODUCTION +
-	WRAP + SELECTOR_NODE + ADVANCE + CALL + NAME_PRODUCTION + CLOSE + RETURN
+const SELECTOR_SUFFIX_PROGRAM = AFTER +
+  PARENTHESIS_LEFT_TOKEN +
+  WHEN +
+  TAIL +
+  ASSERTION_SUFFIX_PRODUCTION +
+  WRAP +
+  SELECTOR_NODE +
+  ADVANCE +
+  CALL +
+  NAME_PRODUCTION +
+  CLOSE +
+  RETURN
 
 // ASSERTION_SUFFIX_PROGRAM reads one type assertion over the expression already read.
-const ASSERTION_SUFFIX_PROGRAM = WRAP + ASSERTION_NODE + ADVANCE + ADVANCE +
-	ACCEPT + TYPE_TOKEN + WHEN + SET_ASSERTION + UNLESS + CALL + TYPE_PRODUCTION +
-	ACCEPT + PARENTHESIS_RIGHT_TOKEN + UNLESS + REJECT + SYNTAX_CAUSE + CLOSE + RETURN
+const ASSERTION_SUFFIX_PROGRAM = WRAP +
+  ASSERTION_NODE +
+  ADVANCE +
+  ADVANCE +
+  ACCEPT +
+  TYPE_TOKEN +
+  WHEN +
+  SET_ASSERTION +
+  UNLESS +
+  CALL +
+  TYPE_PRODUCTION +
+  ACCEPT +
+  PARENTHESIS_RIGHT_TOKEN +
+  UNLESS +
+  REJECT +
+  SYNTAX_CAUSE +
+  CLOSE +
+  RETURN
 
 // INDEX_SUFFIX_PROGRAM reads one index, slice, or instantiation over the expression already read.
-const INDEX_SUFFIX_PROGRAM = WRAP_SUFFIX + ADVANCE + SAVE_PLAIN + CLEAR_PLAIN +
-	TAIL + INDEX_ITEMS_PRODUCTION
+const INDEX_SUFFIX_PROGRAM = WRAP_SUFFIX +
+  ADVANCE +
+  SAVE_PLAIN +
+  CLEAR_PLAIN +
+  TAIL +
+  INDEX_ITEMS_PRODUCTION
 
 // INDEX_ITEMS_PROGRAM reads each bound up to the closing bracket.
-const INDEX_ITEMS_PROGRAM = ACCEPT + BRACKET_RIGHT_TOKEN +
-	WHEN + RESTORE_PLAIN + WHEN + CLOSE + WHEN + RETURN +
-	ACCEPT + COLON_TOKEN + WHEN + TAIL + INDEX_ITEMS_PRODUCTION +
-	ACCEPT + COMMA_TOKEN + WHEN + TAIL + INDEX_ITEMS_PRODUCTION +
-	CALL + BINARY_PRODUCTION + TAIL + INDEX_ITEMS_PRODUCTION
+const INDEX_ITEMS_PROGRAM = ACCEPT +
+  BRACKET_RIGHT_TOKEN +
+  WHEN +
+  RESTORE_PLAIN +
+  WHEN +
+  CLOSE +
+  WHEN +
+  RETURN +
+  ACCEPT +
+  COLON_TOKEN +
+  WHEN +
+  TAIL +
+  INDEX_ITEMS_PRODUCTION +
+  ACCEPT +
+  COMMA_TOKEN +
+  WHEN +
+  TAIL +
+  INDEX_ITEMS_PRODUCTION +
+  CALL +
+  BINARY_PRODUCTION +
+  TAIL +
+  INDEX_ITEMS_PRODUCTION
 
 // CALL_SUFFIX_PROGRAM reads one call over the expression already read.
-const CALL_SUFFIX_PROGRAM = WRAP + CALL_NODE + ADVANCE + SAVE_PLAIN + CLEAR_PLAIN +
-	TAIL + ARGUMENTS_PRODUCTION
+const CALL_SUFFIX_PROGRAM = WRAP +
+  CALL_NODE +
+  ADVANCE +
+  SAVE_PLAIN +
+  CLEAR_PLAIN +
+  TAIL +
+  ARGUMENTS_PRODUCTION
 
 // ARGUMENTS_PROGRAM reads each argument up to the closing parenthesis.
 const ARGUMENTS_PROGRAM = SKIP_COMMENTS +
-	ACCEPT + PARENTHESIS_RIGHT_TOKEN + WHEN + RESTORE_PLAIN + WHEN + CLOSE + WHEN + RETURN +
-	CALL + BINARY_PRODUCTION + ACCEPT + ELLIPSIS_TOKEN + WHEN + LEAF + ELLIPSIS_NODE +
-	ACCEPT + COMMA_TOKEN + ACCEPT + SEMICOLON_TOKEN + TAIL + ARGUMENTS_PRODUCTION
+  ACCEPT +
+  PARENTHESIS_RIGHT_TOKEN +
+  WHEN +
+  RESTORE_PLAIN +
+  WHEN +
+  CLOSE +
+  WHEN +
+  RETURN +
+  CALL +
+  BINARY_PRODUCTION +
+  ACCEPT +
+  ELLIPSIS_TOKEN +
+  WHEN +
+  LEAF +
+  ELLIPSIS_NODE +
+  ACCEPT +
+  COMMA_TOKEN +
+  ACCEPT +
+  SEMICOLON_TOKEN +
+  TAIL +
+  ARGUMENTS_PRODUCTION
 
 // COMPOSITE_SUFFIX_PROGRAM reads one composite literal over the type already read.
-const COMPOSITE_SUFFIX_PROGRAM = WRAP + COMPOSITE_NODE +
-	CALL + COMPOSITE_BODY_PRODUCTION + CLOSE + RETURN
+const COMPOSITE_SUFFIX_PROGRAM = WRAP +
+  COMPOSITE_NODE +
+  CALL +
+  COMPOSITE_BODY_PRODUCTION +
+  CLOSE +
+  RETURN
 
 // COMPOSITE_BODY_PROGRAM steps past the brace that opens an element list.
-const COMPOSITE_BODY_PROGRAM = ACCEPT + BRACE_LEFT_TOKEN + UNLESS + REJECT + SYNTAX_CAUSE +
-	SAVE_PLAIN + CLEAR_PLAIN + TAIL + COMPOSITE_ITEMS_PRODUCTION
+const COMPOSITE_BODY_PROGRAM = ACCEPT +
+  BRACE_LEFT_TOKEN +
+  UNLESS +
+  REJECT +
+  SYNTAX_CAUSE +
+  SAVE_PLAIN +
+  CLEAR_PLAIN +
+  TAIL +
+  COMPOSITE_ITEMS_PRODUCTION
 
 // COMPOSITE_ITEMS_PROGRAM reads each element up to the closing brace.
 const COMPOSITE_ITEMS_PROGRAM = SKIP_COMMENTS +
-	ACCEPT + BRACE_RIGHT_TOKEN + WHEN + RESTORE_PLAIN + WHEN + RETURN +
-	CALL + ELEMENT_PRODUCTION + ACCEPT + COMMA_TOKEN + ACCEPT + SEMICOLON_TOKEN +
-	TAIL + COMPOSITE_ITEMS_PRODUCTION
+  ACCEPT +
+  BRACE_RIGHT_TOKEN +
+  WHEN +
+  RESTORE_PLAIN +
+  WHEN +
+  RETURN +
+  CALL +
+  ELEMENT_PRODUCTION +
+  ACCEPT +
+  COMMA_TOKEN +
+  ACCEPT +
+  SEMICOLON_TOKEN +
+  TAIL +
+  COMPOSITE_ITEMS_PRODUCTION
 
 // ELEMENT_PROGRAM reads one element and the value a colon keys to it.
-const ELEMENT_PROGRAM = CALL + ELEMENT_VALUE_PRODUCTION +
-	AT + COLON_TOKEN + UNLESS + RETURN +
-	WRAP + KEY_VALUE_NODE + ADVANCE + CALL + ELEMENT_VALUE_PRODUCTION + CLOSE + RETURN
+const ELEMENT_PROGRAM = CALL +
+  ELEMENT_VALUE_PRODUCTION +
+  AT +
+  COLON_TOKEN +
+  UNLESS +
+  RETURN +
+  WRAP +
+  KEY_VALUE_NODE +
+  ADVANCE +
+  CALL +
+  ELEMENT_VALUE_PRODUCTION +
+  CLOSE +
+  RETURN
 
 // ELEMENT_VALUE_PROGRAM reads one element value. An element may leave its type out, which is why a
 // brace can open an element of its own.
-const ELEMENT_VALUE_PROGRAM = AT + BRACE_LEFT_TOKEN + UNLESS + TAIL + BINARY_PRODUCTION +
-	OPEN + COMPOSITE_NODE + CALL + COMPOSITE_BODY_PRODUCTION + CLOSE + RETURN
+const ELEMENT_VALUE_PROGRAM = AT +
+  BRACE_LEFT_TOKEN +
+  UNLESS +
+  TAIL +
+  BINARY_PRODUCTION +
+  OPEN +
+  COMPOSITE_NODE +
+  CALL +
+  COMPOSITE_BODY_PRODUCTION +
+  CLOSE +
+  RETURN
 
 // Names a case that runs on into the case behind it. A case closes where its statements close,
 // thus a reader of one case reads the whole of what it runs, and a word that runs on states a
 // flow that reader never sees.
 func name_fallthrough(subject Syntax_Tree_Handle, tree Parse_Result) (named Parse_Result) {
-	defer func() { Parse_Result_Invariants(named, "name_fallthrough.named") }()
-	Syntax_Tree_Handle_Invariants(subject, "name_fallthrough.subject")
-	Parse_Result_Invariants(tree, "name_fallthrough.tree")
-	if tree.Failure != FAILURE_NONE {
-		return tree
-	}
-	count := tree.Node_Count
-	for slot := INDEX_FIRST; slot < Index(count); slot++ {
-		if subject.Nodes.Values[slot].Kind != NODE_FALLTHROUGH {
-			continue
-		}
-		tree.Failure = FAILURE_FALLTHROUGH
-		tree.OK = false
-		tree.Failure_Token = Token_Index(subject.Nodes.Values[slot].Token)
-		return tree
-	}
-	return tree
+  defer func() { Parse_Result_Invariants(&named, "name_fallthrough.named") }()
+  Syntax_Tree_Handle_Invariants(subject, "name_fallthrough.subject")
+  Parse_Result_Invariants(&tree, "name_fallthrough.tree")
+  if tree.Failure != FAILURE_NONE {
+    return tree
+  }
+  count := tree.Node_Count
+  for slot := INDEX_FIRST; slot < Index(count); slot++ {
+    if subject.Nodes.Values[slot].Kind != NODE_FALLTHROUGH {
+      continue
+    }
+    tree.Failure = FAILURE_FALLTHROUGH
+    tree.OK = false
+    tree.Failure_Token = Token_Index(subject.Nodes.Values[slot].Token)
+    return tree
+  }
+  return tree
 }

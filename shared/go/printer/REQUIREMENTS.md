@@ -31,9 +31,9 @@ bytes reads on one line, and two declarations that each span lines stand an empt
 
 # Bytes
 
-No line of the form closes on a space or a tab, no two empty lines stand together, and every note
-that follows a byte of its line stands behind a space. The form opens on a byte and closes on one
-line feed.
+Outside string values, no line of the form closes on a space or a tab and no two empty lines
+stand together. Raw strings preserve those bytes as part of their values. Every note that follows
+a byte of its line stands behind a space. The form opens on a byte and closes on one line feed.
 
 # Width
 
@@ -93,6 +93,12 @@ than printed without the comments the storage could not hold.
 A body closes up against its brackets, dropping the empty lines against them. An empty line inside
 the head of a declaration, inside an expression, ahead of a brace, behind the sign of an
 assignment, or ahead of a simple error check states nothing, and no two stand together.
+
+# Comparison
+
+Compare writes the canonical form and reads each byte it writes against the byte the source
+states there, stopping at the first one the two spell otherwise. It reports that byte, and
+whether the source stands in the canonical form.
 
 # Refusals
 
