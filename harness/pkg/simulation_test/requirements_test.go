@@ -23,26 +23,25 @@ import "local/james-orcales/shared/strings"
 // package, and a package holding each diagnostic.
 func Test_Simulation(t *testing.T) {
   memory, format_state, command := harness.New_Memory()
-  syntax := syntax_new()
   directory := harness.Directory{
     Current: make(harness.Current_Path, 0, filepath.PATH_SIZE_MAXIMUM),
   }
   for seed := uint64(1); seed < SEED_COUNT+1; seed++ {
-    subject := fixture_new(t, memory, syntax, format_state, command, directory, seed)
+    subject := fixture_new(t, memory, format_state, command, directory, seed)
     // A command line naming no directory is one shared/cli refuses, thus the run
     // states the refusal and exits failed rather than walks nothing.
     fixture_run(t, subject, []string{"harness"})
     fixture_refused(t, subject)
-    subject = fixture_new(t, memory, syntax, format_state, command, directory, seed)
+    subject = fixture_new(t, memory, format_state, command, directory, seed)
     // A directory that stands nowhere names nothing to walk, thus the run fails its
     // walk rather than states a package of no files.
     fixture_run(t, subject, []string{"harness", "absent"})
     fixture_failed(t, subject, "walk")
-    fixture_clean(t, memory, syntax, format_state, command, directory, seed)
-    subject = fixture_new(t, memory, syntax, format_state, command, directory, seed)
+    fixture_clean(t, memory, format_state, command, directory, seed)
+    subject = fixture_new(t, memory, format_state, command, directory, seed)
     fixture_directory(t, subject, "package")
     fixture_directory(t, subject, "package/nested")
-    fixture_file(t, subject, "package/a.go", GROUPED)
+    fixture_file(t, subject, "package/a.go", INTERFACE_DECLARATION)
     fixture_file(t, subject, "package/notes.txt", REFUSED)
     fixture_file(t, subject, "package/nested/b.go", UNFORMATTED)
     fixture_file(t, subject, "package/nested/c.go", REFUSED)
@@ -61,7 +60,7 @@ func Test_Simulation(t *testing.T) {
       t.Fatalf("a help run exited %d", subject.Runner.Status)
     }
     fixture_run(t, subject, []string{"harness", "package", "-fix"})
-    subject = fixture_new(t, memory, syntax, format_state, command, directory, seed)
+    subject = fixture_new(t, memory, format_state, command, directory, seed)
     fixture_directory(t, subject, "contract")
     fixture_directory(t, subject, "contract/main")
     fixture_file(t, subject, "contract/a.go", CLEAN)
@@ -72,16 +71,16 @@ func Test_Simulation(t *testing.T) {
     )
     fixture_run(t, subject, []string{"harness", "contract"})
     fixture_run(t, subject, []string{"harness", "contract", "-json"})
-    subject = fixture_new(t, memory, syntax, format_state, command, directory, seed)
+    subject = fixture_new(t, memory, format_state, command, directory, seed)
     fixture_directory(t, subject, "contract")
     fixture_file(t, subject, "contract/a.go", CLEAN)
     fixture_file(t, subject, "contract/REQUIREMENTS.md", "\n# Contract\n\nIt holds.\n")
     fixture_run(t, subject, []string{"harness", "contract"})
-    fixture_deterministic(t, memory, syntax, format_state, command, directory, seed)
-    fixture_generated(t, memory, syntax, format_state, command, directory, seed)
-    fixture_shaped(t, memory, syntax, format_state, command, directory, seed)
+    fixture_deterministic(t, memory, format_state, command, directory, seed)
+    fixture_generated(t, memory, format_state, command, directory, seed)
+    fixture_shaped(t, memory, format_state, command, directory, seed)
   }
-  fixture_once(t, memory, syntax, format_state, command, directory)
+  fixture_once(t, memory, format_state, command, directory)
 }
 
 // Every fixture that one seed states as well as many: a tree of one package, or one the shape of
@@ -89,77 +88,81 @@ func Test_Simulation(t *testing.T) {
 func fixture_once(
   t *testing.T,
   memory harness.Memory_Handle,
-  syntax requirements.Syntax,
   format_state harness.Format,
   command harness.Command,
   directory harness.Directory,
 ) {
   t.Helper()
-  fixture_sizes(t, memory, syntax, format_state, command, directory, 1)
-  fixture_widths(t, memory, syntax, format_state, command, directory, 1)
-  fixture_edges(t, memory, syntax, format_state, command, directory, 1)
-  fixture_counts(t, memory, syntax, format_state, command, directory, 1)
-  fixture_faults(t, memory, syntax, format_state, command, directory, 1)
-  fixture_positions(t, memory, syntax, format_state, command, directory, 1)
-  fixture_idempotent(t, memory, syntax, format_state, command, directory, 1)
-  fixture_modes(t, memory, syntax, format_state, command, directory, 1)
-  fixture_settled(t, memory, syntax, format_state, command, directory, 1)
-  fixture_exempt(t, memory, syntax, format_state, command, directory, 1)
-  fixture_untrusted(t, memory, syntax, format_state, command, directory, 1)
-  fixture_order(t, memory, syntax, format_state, command, directory, 1)
-  fixture_test_refused(t, memory, syntax, format_state, command, directory, 1)
-  fixture_literal(t, memory, syntax, format_state, command, directory, 1)
-  fixture_renamed(t, memory, syntax, format_state, command, directory, 1)
-  fixture_uptime(t, memory, syntax, format_state, command, directory, 1)
-  fixture_least(t, memory, syntax, format_state, command, directory, 1)
-  fixture_linked(t, memory, syntax, format_state, command, directory, 1)
-  fixture_orphans(t, memory, syntax, format_state, command, directory, 1)
-  fixture_conflicted(t, memory, syntax, format_state, command, directory, 1)
-  fixture_configured(t, memory, syntax, format_state, command, directory, 1)
-  fixture_surveyed(t, memory, syntax, format_state, command, directory, 1)
-  fixture_imported(t, memory, syntax, format_state, command, directory, 1)
-  fixture_shape(t, memory, syntax, format_state, command, directory, 1)
-  fixture_lines_json(t, memory, syntax, format_state, command, directory, 1)
-  fixture_kept(t, memory, syntax, format_state, command, directory, 1)
-  fixture_barred(t, memory, syntax, format_state, command, directory, 1)
-  fixture_partial(t, memory, syntax, format_state, command, directory, 1)
-  fixture_named(t, memory, syntax, format_state, command, directory, 1)
-  fixture_escaped(t, memory, syntax, format_state, command, directory, 1)
-  fixture_twice(t, memory, syntax, format_state, command, directory, 1)
-  fixture_after(t, memory, syntax, format_state, command, directory, 1)
-  fixture_pair(t, memory, syntax, format_state, command, directory, 1)
-  fixture_deep(t, memory, syntax, format_state, command, directory, 1)
-  fixture_external(t, memory, syntax, format_state, command, directory, 1)
-  fixture_kin(t, memory, syntax, format_state, command, directory, 1)
-  fixture_absent(t, memory, syntax, format_state, command, directory, 1)
-  fixture_ended(t, memory, syntax, format_state, command, directory, 1)
-  fixture_table(t, memory, syntax, format_state, command, directory, 1)
-  fixture_first(t, memory, syntax, format_state, command, directory, 1)
-  fixture_empty(t, memory, syntax, format_state, command, directory, 1)
-  fixture_bytes(t, memory, syntax, format_state, command, directory, 1)
-  fixture_fixed_json(t, memory, syntax, format_state, command, directory, 1)
-  fixture_line(t, memory, syntax, format_state, command, directory, 1)
-  fixture_outgrown(t, memory, syntax, format_state, command, directory, 1)
-  fixture_folded(t, memory, syntax, format_state, command, directory, 1)
-  fixture_unproven(t, memory, syntax, format_state, command, directory, 1)
-  fixture_forgotten(t, memory, syntax, format_state, command, directory, 1)
-  fixture_third(t, memory, syntax, format_state, command, directory, 1)
-  fixture_shuffled(t, memory, syntax, format_state, command, directory, 1)
-  fixture_lined(t, memory, syntax, format_state, command, directory, 1)
-  fixture_unprintable(t, memory, syntax, format_state, command, directory, 1)
-  fixture_filled(t, memory, syntax, format_state, command, directory, 1)
-  fixture_exact(t, memory, syntax, format_state, command, directory, 1)
-  fixture_widest_name(t, memory, syntax, format_state, command, directory, 1)
-  fixture_test_lines(t, memory, syntax, format_state, command, directory, 1)
-  fixture_full_line(t, memory, syntax, format_state, command, directory, 1)
-  fixture_wide_command(t, memory, syntax, format_state, command, directory, 1)
-  fixture_stale(t, memory, syntax, format_state, command, directory, 1)
-  fixture_test_tail(t, memory, syntax, format_state, command, directory, 1)
-  fixture_rewritten(t, memory, syntax, format_state, command, directory, 1)
-  fixture_history(t, memory, syntax, format_state, command, directory, 1)
-  fixture_shut(t, memory, syntax, format_state, command, directory, 1)
-  fixture_spelled(t, memory, syntax, format_state, command, directory, 1)
-  fixture_declared(t, memory, syntax, format_state, command, directory, 1)
+  fixture_sizes(t, memory, format_state, command, directory, 1)
+  fixture_widths(t, memory, format_state, command, directory, 1)
+  fixture_edges(t, memory, format_state, command, directory, 1)
+  fixture_counts(t, memory, format_state, command, directory, 1)
+  fixture_faults(t, memory, format_state, command, directory, 1)
+  fixture_positions(t, memory, format_state, command, directory, 1)
+  fixture_idempotent(t, memory, format_state, command, directory, 1)
+  fixture_modes(t, memory, format_state, command, directory, 1)
+  fixture_settled(t, memory, format_state, command, directory, 1)
+  fixture_exempt(t, memory, format_state, command, directory, 1)
+  fixture_untrusted(t, memory, format_state, command, directory, 1)
+  fixture_order(t, memory, format_state, command, directory, 1)
+  fixture_test_refused(t, memory, format_state, command, directory, 1)
+  fixture_literal(t, memory, format_state, command, directory, 1)
+  fixture_renamed(t, memory, format_state, command, directory, 1)
+  fixture_uptime(t, memory, format_state, command, directory, 1)
+  fixture_least(t, memory, format_state, command, directory, 1)
+  fixture_linked(t, memory, format_state, command, directory, 1)
+  fixture_orphans(t, memory, format_state, command, directory, 1)
+  fixture_conflicted(t, memory, format_state, command, directory, 1)
+  fixture_configured(t, memory, format_state, command, directory, 1)
+  fixture_surveyed(t, memory, format_state, command, directory, 1)
+  fixture_imported(t, memory, format_state, command, directory, 1)
+  fixture_names(t, memory, format_state, command, directory, 1)
+  fixture_shadowed(t, memory, format_state, command, directory, 1)
+  fixture_recursed(t, memory, format_state, command, directory, 1)
+  fixture_laid(t, memory, format_state, command, directory, 1)
+  fixture_raced(t, memory, format_state, command, directory, 1)
+  fixture_shape(t, memory, format_state, command, directory, 1)
+  fixture_lines_json(t, memory, format_state, command, directory, 1)
+  fixture_kept(t, memory, format_state, command, directory, 1)
+  fixture_barred(t, memory, format_state, command, directory, 1)
+  fixture_partial(t, memory, format_state, command, directory, 1)
+  fixture_named(t, memory, format_state, command, directory, 1)
+  fixture_escaped(t, memory, format_state, command, directory, 1)
+  fixture_twice(t, memory, format_state, command, directory, 1)
+  fixture_after(t, memory, format_state, command, directory, 1)
+  fixture_pair(t, memory, format_state, command, directory, 1)
+  fixture_deep(t, memory, format_state, command, directory, 1)
+  fixture_external(t, memory, format_state, command, directory, 1)
+  fixture_kin(t, memory, format_state, command, directory, 1)
+  fixture_absent(t, memory, format_state, command, directory, 1)
+  fixture_ended(t, memory, format_state, command, directory, 1)
+  fixture_table(t, memory, format_state, command, directory, 1)
+  fixture_first(t, memory, format_state, command, directory, 1)
+  fixture_empty(t, memory, format_state, command, directory, 1)
+  fixture_bytes(t, memory, format_state, command, directory, 1)
+  fixture_fixed_json(t, memory, format_state, command, directory, 1)
+  fixture_line(t, memory, format_state, command, directory, 1)
+  fixture_outgrown(t, memory, format_state, command, directory, 1)
+  fixture_folded(t, memory, format_state, command, directory, 1)
+  fixture_unproven(t, memory, format_state, command, directory, 1)
+  fixture_forgotten(t, memory, format_state, command, directory, 1)
+  fixture_third(t, memory, format_state, command, directory, 1)
+  fixture_shuffled(t, memory, format_state, command, directory, 1)
+  fixture_lined(t, memory, format_state, command, directory, 1)
+  fixture_unprintable(t, memory, format_state, command, directory, 1)
+  fixture_filled(t, memory, format_state, command, directory, 1)
+  fixture_exact(t, memory, format_state, command, directory, 1)
+  fixture_widest_name(t, memory, format_state, command, directory, 1)
+  fixture_test_lines(t, memory, format_state, command, directory, 1)
+  fixture_full_line(t, memory, format_state, command, directory, 1)
+  fixture_wide_command(t, memory, format_state, command, directory, 1)
+  fixture_stale(t, memory, format_state, command, directory, 1)
+  fixture_test_tail(t, memory, format_state, command, directory, 1)
+  fixture_rewritten(t, memory, format_state, command, directory, 1)
+  fixture_history(t, memory, format_state, command, directory, 1)
+  fixture_shut(t, memory, format_state, command, directory, 1)
+  fixture_spelled(t, memory, format_state, command, directory, 1)
+  fixture_declared(t, memory, format_state, command, directory, 1)
 }
 
 // TABLE_NODE_COUNT holds a full package table of one directory and one Go file each.
@@ -172,7 +175,6 @@ const TABLE_NODE_COUNT = 2*harness.PACKAGE_COUNT_MAXIMUM + TALL_NODE_COUNT
 func fixture_table(
   t *testing.T,
   memory harness.Memory_Handle,
-  syntax requirements.Syntax,
   format_state harness.Format,
   command harness.Command,
   directory harness.Directory,
@@ -183,7 +185,6 @@ func fixture_table(
   subject := fixture_sized(
     t,
     memory,
-    syntax,
     format_state,
     command,
     directory,
@@ -213,11 +214,16 @@ func fixture_table(
     }
     fixture_file(t, subject, name+"/a.go", source)
   }
+  // A branch off a clone that holds no main ref: git answers while the lanes work, and the run
+  // states the missing ref past every package, where the package cursor stands at the table's
+  // end.
+  subject.Loop.Spawn = history_spawn(History_Script{Head: "feature\n", Refs: ""})
   fixture_run(t, subject, []string{"harness", "full"})
   // Each Go file is refused or bans an import and each package owes a contract it holds none
-  // of, thus the run states one line per slot of both tables rather than stops at the first.
+  // of, thus the run states one line per slot of both tables rather than stops at the first,
+  // and one line for the history.
   packages := fixture_lines(fixture_written(subject))
-  if packages != harness.FILE_COUNT_MAXIMUM+harness.PACKAGE_COUNT_MAXIMUM {
+  if packages != harness.FILE_COUNT_MAXIMUM+harness.PACKAGE_COUNT_MAXIMUM+1 {
     t.Fatalf(
       "a full package table stated %d findings, failing %q",
       packages,
@@ -233,7 +239,6 @@ func fixture_table(
 func fixture_least(
   t *testing.T,
   memory harness.Memory_Handle,
-  syntax requirements.Syntax,
   format_state harness.Format,
   command harness.Command,
   directory harness.Directory,
@@ -244,7 +249,7 @@ func fixture_least(
   // run opens on what the run before it left, thus the stores it states carry that source
   // rather than none.
   for _, source := range []string{"p", "pa"} {
-    subject := fixture_new(t, memory, syntax, format_state, command, directory, seed)
+    subject := fixture_new(t, memory, format_state, command, directory, seed)
     fixture_directory(t, subject, "small")
     fixture_file(t, subject, "small/a.go", source)
     fixture_run(t, subject, []string{"harness", "small"})
@@ -252,7 +257,7 @@ func fixture_least(
   }
   // A package of two Go files, then a second run over it: the counts a run opens on stand at
   // two, which one file leaves at one and a wider package leaves far past.
-  subject := fixture_new(t, memory, syntax, format_state, command, directory, seed)
+  subject := fixture_new(t, memory, format_state, command, directory, seed)
   fixture_directory(t, subject, "pair")
   fixture_file(t, subject, "pair/a.go", MAIN)
   fixture_file(t, subject, "pair/b.go", CLEAN)
@@ -260,7 +265,7 @@ func fixture_least(
   fixture_run(t, subject, []string{"harness", "pair"})
   // A refusal on the second line at the second column: a position states both its numbers
   // one step in, which a refusal at a first line or a first column leaves at one.
-  subject = fixture_new(t, memory, syntax, format_state, command, directory, seed)
+  subject = fixture_new(t, memory, format_state, command, directory, seed)
   fixture_directory(t, subject, "small")
   fixture_file(t, subject, "small/a.go", "package a\n &")
   fixture_run(t, subject, []string{"harness", "small", "-json"})
@@ -272,7 +277,7 @@ func fixture_least(
   fixture_states(t, subject, "a.go:2:2:")
   // A package of two diagnostics that owes a contract: the contract read opens on a tally
   // of two, which one diagnostic leaves at one and a package owing none never states.
-  subject = fixture_new(t, memory, syntax, format_state, command, directory, seed)
+  subject = fixture_new(t, memory, format_state, command, directory, seed)
   fixture_directory(t, subject, "two")
   fixture_file(t, subject, "two/a.go", UNFORMATTED)
   fixture_file(t, subject, "two/b.go", UNFORMATTED)
@@ -285,7 +290,7 @@ func fixture_least(
   // A contract of one byte, and one of two: the check reads a markdown store holding the
   // least an open file can hold past none of it.
   for _, markdown := range []string{"#", "#\n"} {
-    subject = fixture_new(t, memory, syntax, format_state, command, directory, seed)
+    subject = fixture_new(t, memory, format_state, command, directory, seed)
     fixture_directory(t, subject, "small")
     fixture_file(t, subject, "small/a.go", CLEAN)
     fixture_file(t, subject, "small/"+requirements.MARKDOWN_NAME, markdown)
@@ -294,7 +299,7 @@ func fixture_least(
   // A test file of one byte, and one of two: the check reads a test store holding the least
   // an open file can hold past none of it.
   for _, test := range []string{"p", "pa"} {
-    subject = fixture_new(t, memory, syntax, format_state, command, directory, seed)
+    subject = fixture_new(t, memory, format_state, command, directory, seed)
     fixture_directory(t, subject, "small")
     fixture_file(t, subject, "small/a.go", CLEAN)
     fixture_file(t, subject, "small/"+requirements.MARKDOWN_NAME, CONTRACT_MARKDOWN)
@@ -336,7 +341,6 @@ func uptime_now(state time.State) (moment time.Monotonic_Moment) {
 func fixture_uptime(
   t *testing.T,
   memory harness.Memory_Handle,
-  syntax requirements.Syntax,
   format_state harness.Format,
   command harness.Command,
   directory harness.Directory,
@@ -346,7 +350,6 @@ func fixture_uptime(
   subject := fixture_uptime_twice(
     t,
     memory,
-    syntax,
     format_state,
     command,
     directory,
@@ -364,7 +367,6 @@ func fixture_uptime(
   subject = fixture_uptime_twice(
     t,
     memory,
-    syntax,
     format_state,
     command,
     directory,
@@ -376,7 +378,21 @@ func fixture_uptime(
   // seconds that summary names stand at the whole width a text holds.
   fixture_run(t, subject, []string{"harness", ""})
   fixture_failed(t, subject, "walk")
-  fixture_spans(t, memory, syntax, format_state, command, directory, seed)
+  // A run that found something closes on the same seconds, in the widest summary it writes.
+  subject = fixture_uptime_new(
+    t,
+    memory,
+    format_state,
+    command,
+    directory,
+    seed,
+    time.MONOTONIC_MOMENT_MINIMUM,
+    time.MONOTONIC_MOMENT_MAXIMUM,
+  )
+  fixture_file(t, subject, "up/a.go", UNFORMATTED)
+  fixture_run(t, subject, []string{"harness", "up", "-json"})
+  fixture_states(t, subject, `{"passed":false,"elapsed_sec":"`+UPTIME_SECONDS_TEXT+`"}`)
+  fixture_spans(t, memory, format_state, command, directory, seed)
 }
 
 // The shortest spans a clock states and the least moments a run opens at, and a fault at the open
@@ -384,7 +400,6 @@ func fixture_uptime(
 func fixture_spans(
   t *testing.T,
   memory harness.Memory_Handle,
-  syntax requirements.Syntax,
   format_state harness.Format,
   command harness.Command,
   directory harness.Directory,
@@ -399,7 +414,6 @@ func fixture_spans(
     subject := fixture_uptime_new(
       t,
       memory,
-      syntax,
       format_state,
       command,
       directory,
@@ -411,16 +425,16 @@ func fixture_spans(
     fixture_run(t, subject, []string{"harness", ""})
     fixture_failed(t, subject, "walk")
   }
-  // The open a fix makes stands past the one the declaration pass makes and the one the
-  // check makes, thus a fault there fails the fix step rather than the open step.
-  subject := fixture_new(t, memory, syntax, format_state, command, directory, seed)
+  // The open a fix makes stands past the one the declaration pass makes, thus a fault there
+  // fails the fix step rather than the open step.
+  subject := fixture_new(t, memory, format_state, command, directory, seed)
   fixture_directory(t, subject, "fault")
   fixture_file(t, subject, "fault/a.go", UNFORMATTED)
   opens := Fault_Storage{
     Inner: subject.Loop.Storage,
     Loop:  subject.Loop,
     Kind:  FAULT_OPEN,
-    Skip:  FIX_OPEN_SKIP_COUNT,
+    Skip:  FIX_OPEN_SKIP,
   }
   fault_wire(subject, &opens)
   fixture_run(t, subject, []string{"harness", "fault", "-fix"})
@@ -429,7 +443,6 @@ func fixture_spans(
     subject = fixture_uptime_new(
       t,
       memory,
-      syntax,
       format_state,
       command,
       directory,
@@ -449,7 +462,6 @@ func fixture_spans(
 func fixture_uptime_twice(
   t *testing.T,
   memory harness.Memory_Handle,
-  syntax requirements.Syntax,
   format_state harness.Format,
   command harness.Command,
   directory harness.Directory,
@@ -461,7 +473,6 @@ func fixture_uptime_twice(
   subject = fixture_uptime_new(
     t,
     memory,
-    syntax,
     format_state,
     command,
     directory,
@@ -479,7 +490,6 @@ func fixture_uptime_twice(
 func fixture_uptime_new(
   t *testing.T,
   memory harness.Memory_Handle,
-  syntax requirements.Syntax,
   format_state harness.Format,
   command harness.Command,
   directory harness.Directory,
@@ -488,7 +498,7 @@ func fixture_uptime_new(
   later time.Monotonic_Moment,
 ) (subject *fixture) {
   t.Helper()
-  subject = fixture_new(t, memory, syntax, format_state, command, directory, seed)
+  subject = fixture_new(t, memory, format_state, command, directory, seed)
   fixture_directory(t, subject, "up")
   fixture_file(t, subject, "up/m.go", MAIN)
   wrapper := uptime_clock{First: first, Later: later}
@@ -507,14 +517,13 @@ func fixture_uptime_new(
 func fixture_sizes(
   t *testing.T,
   memory harness.Memory_Handle,
-  syntax requirements.Syntax,
   format_state harness.Format,
   command harness.Command,
   directory harness.Directory,
   seed uint64,
 ) {
   t.Helper()
-  subject := fixture_new(t, memory, syntax, format_state, command, directory, seed)
+  subject := fixture_new(t, memory, format_state, command, directory, seed)
   fixture_directory(t, subject, "small")
   fixture_file(t, subject, "small/a.go", "&")
   // The package owes no contract, thus the refusal is the last report the run writes and
@@ -524,54 +533,54 @@ func fixture_sizes(
   fixture_states(t, subject, `"line":1,"column":1`)
   fixture_run(t, subject, []string{"harness", ""})
   fixture_failed(t, subject, "walk")
-  subject = fixture_new(t, memory, syntax, format_state, command, directory, seed)
+  subject = fixture_new(t, memory, format_state, command, directory, seed)
   fixture_directory(t, subject, "small")
   fixture_file(t, subject, "small/a.go", "p&")
   fixture_run(t, subject, []string{"harness", "small", "-json"})
-  subject = fixture_new(t, memory, syntax, format_state, command, directory, seed)
+  subject = fixture_new(t, memory, format_state, command, directory, seed)
   fixture_directory(t, subject, "small")
   fixture_file(t, subject, "small/a.go", "package a\n\n&\n")
   fixture_run(t, subject, []string{"harness", "small", "-json"})
-  subject = fixture_new(t, memory, syntax, format_state, command, directory, seed)
+  subject = fixture_new(t, memory, format_state, command, directory, seed)
   fixture_directory(t, subject, "small")
   fixture_file(t, subject, "small/a.go", "package a\n\n &\n")
   fixture_run(t, subject, []string{"harness", "small", "-json"})
-  subject = fixture_new(t, memory, syntax, format_state, command, directory, seed)
+  subject = fixture_new(t, memory, format_state, command, directory, seed)
   fixture_directory(t, subject, "small")
   fixture_file(t, subject, "small/a.go", "package a\n&\n")
   fixture_run(t, subject, []string{"harness", "small", "-json"})
   // A refusal on the second token, then on the third: a parse states the first slots of its
   // token run, which a refusal further in passes over.
-  subject = fixture_new(t, memory, syntax, format_state, command, directory, seed)
+  subject = fixture_new(t, memory, format_state, command, directory, seed)
   fixture_directory(t, subject, "small")
   fixture_file(t, subject, "small/a.go", "package &")
   fixture_run(t, subject, []string{"harness", "small", "-json"})
-  subject = fixture_new(t, memory, syntax, format_state, command, directory, seed)
+  subject = fixture_new(t, memory, format_state, command, directory, seed)
   fixture_directory(t, subject, "small")
   fixture_file(t, subject, "small/a.go", "package a &")
   fixture_run(t, subject, []string{"harness", "small", "-json"})
   // A file whose whole name is the suffix, and a directory whose name carries it: the walk
   // names one a Go file and the other a directory, since a name states neither.
-  subject = fixture_new(t, memory, syntax, format_state, command, directory, seed)
+  subject = fixture_new(t, memory, format_state, command, directory, seed)
   fixture_directory(t, subject, "small")
   fixture_file(t, subject, "small/.go", CLEAN)
   fixture_directory(t, subject, "small/b.go")
   fixture_file(t, subject, "small/b.go/c.go", UNFORMATTED)
   fixture_run(t, subject, []string{"harness", "small", "-json"})
-  fixture_reports(t, memory, syntax, format_state, command, directory, seed)
+  fixture_reports(t, memory, format_state, command, directory, seed)
   // An empty Go file and an empty contract: a read that moves no byte ends at once, and the
   // check states what an empty source and an empty contract hold.
-  subject = fixture_new(t, memory, syntax, format_state, command, directory, seed)
+  subject = fixture_new(t, memory, format_state, command, directory, seed)
   fixture_directory(t, subject, "small")
   fixture_file(t, subject, "small/a.go", "")
   fixture_run(t, subject, []string{"harness", "small", "-json"})
-  subject = fixture_new(t, memory, syntax, format_state, command, directory, seed)
+  subject = fixture_new(t, memory, format_state, command, directory, seed)
   fixture_directory(t, subject, "small")
   fixture_file(t, subject, "small/a.go", CLEAN)
   fixture_file(t, subject, "small/"+requirements.MARKDOWN_NAME, "")
   fixture_run(t, subject, []string{"harness", "small", "-json"})
   // Two lines exactly: the source ends on its refusal, so the index holds no third start.
-  subject = fixture_new(t, memory, syntax, format_state, command, directory, seed)
+  subject = fixture_new(t, memory, format_state, command, directory, seed)
   fixture_directory(t, subject, "small")
   fixture_file(t, subject, "small/a.go", "package a\n&")
   fixture_run(t, subject, []string{"harness", "small", "-json"})
@@ -582,14 +591,13 @@ func fixture_sizes(
 func fixture_reports(
   t *testing.T,
   memory harness.Memory_Handle,
-  syntax requirements.Syntax,
   format_state harness.Format,
   command harness.Command,
   directory harness.Directory,
   seed uint64,
 ) {
   t.Helper()
-  subject := fixture_new(t, memory, syntax, format_state, command, directory, seed)
+  subject := fixture_new(t, memory, format_state, command, directory, seed)
   fixture_directory(t, subject, "small")
   fixture_file(t, subject, "small/a.go", "&")
   fixture_file(t, subject, "small/aa.go", UNFORMATTED)
@@ -599,9 +607,9 @@ func fixture_reports(
   fixture_run(t, subject, []string{"harness", "small", "-json"})
 }
 
-// GROUPED holds one declaration group, which the parser refuses, and stands first in its package
-// so the files after it state the refusal it left behind.
-const GROUPED = "package a\n\nimport (\n\t\"os\"\n)\n"
+// INTERFACE_DECLARATION declares an interface holding a method, which the parser refuses, and
+// stands first in its package so the files after it state the refusal it left behind.
+const INTERFACE_DECLARATION = "package a\n\ntype T interface {\n\tM()\n}\n"
 
 // FAULTY_CONTRACT breaks every format rule once: a preamble, a wrong level, a heading without
 // fencing, a bad character, a repeat, an orphan, an empty leaf, a gap, and a long section.
@@ -687,17 +695,13 @@ const SHORT_WRITE_COUNT = 2
 // disk does. A negative offset would not: that is FILE_POSITION_CURRENT, an ordinary append.
 const FAULT_OFFSET int64 = 1 << 40
 
-// FIX_OPEN_SKIP is how many opens of one Go file stand before the one a fix writes.
-const FIX_OPEN_SKIP = 2
+// FIX_OPEN_SKIP is how many opens of one Go file stand before the one a fix writes: the
+// declaration pass reads the file once, and the fix writes the form that read left.
+const FIX_OPEN_SKIP = 1
 
-// CHECK_READ_SKIP is how many reads stand before the check of the second file of three: each
-// file takes one read of its bytes and one that states the end, and the declaration pass reads
-// every file before the check reads any.
-const CHECK_READ_SKIP = 8
-
-// FIX_OPEN_SKIP_COUNT is how many opens of one package stand before the one a fix makes: the
-// declaration pass reads the file, then the check reads it.
-const FIX_OPEN_SKIP_COUNT = 2
+// FIX_WRITE_SKIP is how many fix writes stand before the one a fault fails: the first file's fix
+// lands, and the second's fails.
+const FIX_WRITE_SKIP = 1
 
 // FAULT_SKIP_COUNT is how many reads of one package a sweep fails in turn: the declaration read,
 // the check read, the contract markdown, and the contract test file.
@@ -726,8 +730,8 @@ type Fault_Storage struct {
   Skip int
   // Short is how many bytes a cut write takes.
   Short int
-  // Configuration is the descriptor harness.json stands open on, which no fault reaches: the
-  // fault names a step of the check, and the configuration stands before every one of them.
+  // Configuration is the descriptor harness.json or go.mod stands open on, which no fault
+  // reaches: the fault names a step of the check, and both stand before every one of them.
   Configuration nbio.File
 }
 
@@ -823,7 +827,12 @@ func fault_open_at(
   callback nbio.Callback,
 ) {
   faults := state.(*Fault_Storage)
-  if file_path == harness.CONFIGURATION_PATH {
+  // The module file stands before every step as the configuration does, thus no fault reaches it.
+  configured := file_path == harness.CONFIGURATION_PATH
+  if file_path == harness.MODULE_PATH {
+    configured = true
+  }
+  if configured {
     deliver := func(retired nbio.Completion_Handle) {
       fault_configured(faults, callback, retired)
     }
@@ -1114,7 +1123,6 @@ type fixture struct {
 func fixture_faults(
   t *testing.T,
   memory harness.Memory_Handle,
-  syntax requirements.Syntax,
   format_state harness.Format,
   command harness.Command,
   directory harness.Directory,
@@ -1132,7 +1140,7 @@ func fixture_faults(
     "fault: " + harness.WALK_CAUSE_REFUSED,
   }
   for index, kind := range kinds {
-    subject := fixture_new(t, memory, syntax, format_state, command, directory, seed)
+    subject := fixture_new(t, memory, format_state, command, directory, seed)
     fixture_directory(t, subject, "fault")
     fixture_file(t, subject, "fault/a.go", UNFORMATTED)
     faults := Fault_Storage{Inner: subject.Loop.Storage, Loop: subject.Loop, Kind: kind}
@@ -1155,14 +1163,14 @@ func fixture_faults(
     fixture_run(t, subject, []string{"harness", ""})
     fixture_failed(t, subject, "walk")
   }
-  fixture_fix_open(t, memory, syntax, format_state, command, directory, seed)
-  fixture_short_write(t, memory, syntax, format_state, command, directory, seed)
-  fixture_shut_output(t, memory, syntax, format_state, command, directory, seed)
-  fixture_read_passes(t, memory, syntax, format_state, command, directory, seed)
+  fixture_fix_open(t, memory, format_state, command, directory, seed)
+  fixture_short_write(t, memory, format_state, command, directory, seed)
+  fixture_shut_output(t, memory, format_state, command, directory, seed)
+  fixture_read_passes(t, memory, format_state, command, directory, seed)
   // A failed read of the contract test file at the end of the widest chain: that path is
   // the widest a run reads, thus the failure line names a path of the whole width. The Go
   // file and the contract markdown stand before it, so the fault lets two reads pass.
-  subject := fixture_new(t, memory, syntax, format_state, command, directory, seed)
+  subject := fixture_new(t, memory, format_state, command, directory, seed)
   deep := fixture_chain(t, subject)
   fixture_file(t, subject, deep+"/a.go", CLEAN)
   fixture_file(t, subject, deep+"/"+requirements.MARKDOWN_NAME, CONTRACT_MARKDOWN)
@@ -1183,14 +1191,13 @@ func fixture_faults(
 func fixture_kin(
   t *testing.T,
   memory harness.Memory_Handle,
-  syntax requirements.Syntax,
   format_state harness.Format,
   command harness.Command,
   directory harness.Directory,
   seed uint64,
 ) {
   t.Helper()
-  subject := fixture_new(t, memory, syntax, format_state, command, directory, seed)
+  subject := fixture_new(t, memory, format_state, command, directory, seed)
   fixture_directory(t, subject, "kin")
   fixture_file(t, subject, "kin/a.go", CLEAN)
   fixture_file(
@@ -1207,7 +1214,7 @@ func fixture_kin(
   )
   fixture_run(t, subject, []string{"harness", "kin"})
   fixture_passed(t, subject)
-  subject = fixture_new(t, memory, syntax, format_state, command, directory, seed)
+  subject = fixture_new(t, memory, format_state, command, directory, seed)
   fixture_directory(t, subject, "kith")
   fixture_file(t, subject, "kith/a.go", CLEAN)
   fixture_file(
@@ -1231,20 +1238,19 @@ func fixture_kin(
 func fixture_external(
   t *testing.T,
   memory harness.Memory_Handle,
-  syntax requirements.Syntax,
   format_state harness.Format,
   command harness.Command,
   directory harness.Directory,
   seed uint64,
 ) {
   t.Helper()
-  subject := fixture_new(t, memory, syntax, format_state, command, directory, seed)
+  subject := fixture_new(t, memory, format_state, command, directory, seed)
   fixture_directory(t, subject, "outer")
   fixture_file(t, subject, "outer/m.go", MAIN)
   fixture_file(t, subject, "outer/m_test.go", "package main_test\n\nfunc Test_M() {}\n")
   fixture_run(t, subject, []string{"harness", "outer"})
   fixture_passed(t, subject)
-  subject = fixture_new(t, memory, syntax, format_state, command, directory, seed)
+  subject = fixture_new(t, memory, format_state, command, directory, seed)
   fixture_directory(t, subject, "lone")
   fixture_file(t, subject, "lone/m_test.go", "package main_test\n\nfunc Test_M() {}\n")
   fixture_run(t, subject, []string{"harness", "lone"})
@@ -1256,14 +1262,13 @@ func fixture_external(
 func fixture_deep(
   t *testing.T,
   memory harness.Memory_Handle,
-  syntax requirements.Syntax,
   format_state harness.Format,
   command harness.Command,
   directory harness.Directory,
   seed uint64,
 ) {
   t.Helper()
-  subject := fixture_new(t, memory, syntax, format_state, command, directory, seed)
+  subject := fixture_new(t, memory, format_state, command, directory, seed)
   deepest := fixture_chain(t, subject)
   name := make([]byte, filepath.PATH_SIZE_MAXIMUM-len(deepest))
   for index := range name {
@@ -1275,7 +1280,7 @@ func fixture_deep(
   // The same chain one byte narrower, so the walk holds that directory rather than bars
   // it: a name inside it joins a path one byte past the store, thus the pass fails where
   // the widest path a run holds is the one it stands on.
-  subject = fixture_new(t, memory, syntax, format_state, command, directory, seed)
+  subject = fixture_new(t, memory, format_state, command, directory, seed)
   deepest = fixture_chain(t, subject)
   widest := deepest + "/" + string(name[:len(name)-1])
   fixture_directory(t, subject, widest)
@@ -1284,7 +1289,7 @@ func fixture_deep(
   fixture_failed(t, subject, "walk")
   // One file whose own path spends every byte a path holds, fixed where it stands: the
   // fix opens the widest path a run names rather than one short of it.
-  subject = fixture_new(t, memory, syntax, format_state, command, directory, seed)
+  subject = fixture_new(t, memory, format_state, command, directory, seed)
   deepest = fixture_chain(t, subject)
   spent := make([]byte, filepath.PATH_SIZE_MAXIMUM-len(deepest)-len("/.go"))
   for index := range spent {
@@ -1298,7 +1303,7 @@ func fixture_deep(
   // A package at the end of the widest chain, holding a contract and no test file: the
   // test name is the widest a contract carries, thus that finding names a path of the
   // whole width, and a second run opens on the report it left.
-  subject = fixture_new(t, memory, syntax, format_state, command, directory, seed)
+  subject = fixture_new(t, memory, format_state, command, directory, seed)
   deepest = fixture_chain(t, subject)
   fixture_file(t, subject, deepest+"/a.go", UNFORMATTED)
   fixture_file(t, subject, deepest+"/"+requirements.MARKDOWN_NAME, CONTRACT_MARKDOWN)
@@ -1313,14 +1318,13 @@ func fixture_deep(
 func fixture_pair(
   t *testing.T,
   memory harness.Memory_Handle,
-  syntax requirements.Syntax,
   format_state harness.Format,
   command harness.Command,
   directory harness.Directory,
   seed uint64,
 ) {
   t.Helper()
-  subject := fixture_new(t, memory, syntax, format_state, command, directory, seed)
+  subject := fixture_new(t, memory, format_state, command, directory, seed)
   fixture_directory(t, subject, "twin")
   fixture_file(t, subject, "twin/m.go", MAIN)
   fixture_file(t, subject, "twin/a.go", UNFORMATTED)
@@ -1339,18 +1343,17 @@ func fixture_pair(
 
 // A refusal at the second line and second column, in a package owing a contract: the contract
 // read opens on the report that refusal filled, thus both its numbers stand at two there. A
-// grouped declaration names its own refusal, which the run after it opens on.
+// grouped declaration prints ungrouped, thus the run states its file unformatted.
 func fixture_after(
   t *testing.T,
   memory harness.Memory_Handle,
-  syntax requirements.Syntax,
   format_state harness.Format,
   command harness.Command,
   directory harness.Directory,
   seed uint64,
 ) {
   t.Helper()
-  subject := fixture_new(t, memory, syntax, format_state, command, directory, seed)
+  subject := fixture_new(t, memory, format_state, command, directory, seed)
   fixture_directory(t, subject, "after")
   fixture_file(t, subject, "after/a.go", "package a\n &")
   // The contract files stand, thus the run reads them after the refusal it stated and
@@ -1362,15 +1365,15 @@ func fixture_after(
   // A second run over the same package: it opens on the report the run before it left,
   // thus the column that report names stands past the first.
   fixture_run(t, subject, []string{"harness", "after", "-json"})
-  subject = fixture_new(t, memory, syntax, format_state, command, directory, seed)
+  subject = fixture_new(t, memory, format_state, command, directory, seed)
   fixture_directory(t, subject, "group")
   fixture_file(t, subject, "group/m.go", "package main\n\nimport (\n\t\"x\"\n)\n")
   fixture_run(t, subject, []string{"harness", "group"})
-  fixture_states(t, subject, "Write one declaration for each name")
+  fixture_states(t, subject, "group/m.go: not formatted")
   fixture_run(t, subject, []string{"harness", "group"})
   // A walk that fails with directories still queued, then a second run: the count a run
   // opens on stands where the walk left it rather than at none.
-  subject = fixture_new(t, memory, syntax, format_state, command, directory, seed)
+  subject = fixture_new(t, memory, format_state, command, directory, seed)
   fixture_directory(t, subject, "queue")
   for _, name := range [QUEUE_CHILD_COUNT]string{"a", "b", "c"} {
     fixture_directory(t, subject, "queue/"+name)
@@ -1382,7 +1385,7 @@ func fixture_after(
   fixture_failed(t, subject, "walk")
   fixture_run(t, subject, []string{"harness", "queue"})
   // One child fewer: the walk leaves one directory pending rather than two.
-  subject = fixture_new(t, memory, syntax, format_state, command, directory, seed)
+  subject = fixture_new(t, memory, format_state, command, directory, seed)
   fixture_directory(t, subject, "pair")
   fixture_directory(t, subject, "pair/a")
   fixture_directory(t, subject, "pair/b")
@@ -1398,14 +1401,13 @@ func fixture_after(
 func fixture_twice(
   t *testing.T,
   memory harness.Memory_Handle,
-  syntax requirements.Syntax,
   format_state harness.Format,
   command harness.Command,
   directory harness.Directory,
   seed uint64,
 ) {
   t.Helper()
-  subject := fixture_new(t, memory, syntax, format_state, command, directory, seed)
+  subject := fixture_new(t, memory, format_state, command, directory, seed)
   fixture_directory(t, subject, "twice")
   fixture_file(t, subject, "twice/a.go", CLEAN)
   fixture_file(t, subject, "twice/"+requirements.MARKDOWN_NAME, CONTRACT_MARKDOWN)
@@ -1417,7 +1419,7 @@ func fixture_twice(
   )
   fixture_run(t, subject, []string{"harness", "twice"})
   fixture_wrote(t, subject, "twice/requirements_test.go: not formatted\n")
-  subject = fixture_new(t, memory, syntax, format_state, command, directory, seed)
+  subject = fixture_new(t, memory, format_state, command, directory, seed)
   fixture_directory(t, subject, "both")
   fixture_file(t, subject, "both/a.go", CLEAN)
   fixture_file(t, subject, "both/"+requirements.MARKDOWN_NAME, CONTRACT_MARKDOWN)
@@ -1435,8 +1437,16 @@ func fixture_twice(
       `leaf "Contract". Declare the tests in leaf order at the top of the `+
       "file.\n",
   )
-  // The same package fixed: the form fault is neither written nor counted, and the
-  // contract fault stands, since a tier two diagnostic carries no fix.
+  // The same package fixed: the form fault is neither written nor counted, and the fix moved
+  // the lines the one parse of the test file read, thus its tests wait for the run after it.
+  fixture_run(t, subject, []string{"harness", "both", "-fix"})
+  fixture_wrote(
+    t,
+    subject,
+    "both/requirements_test.go: The file was rewritten by this run. Run the check again for "+
+      "its tests.\n",
+  )
+  // The contract fault stands, since a tier two diagnostic carries no fix.
   fixture_run(t, subject, []string{"harness", "both", "-fix"})
   fixture_wrote(
     t,
@@ -1456,19 +1466,18 @@ func fixture_twice(
 func fixture_escaped(
   t *testing.T,
   memory harness.Memory_Handle,
-  syntax requirements.Syntax,
   format_state harness.Format,
   command harness.Command,
   directory harness.Directory,
   seed uint64,
 ) {
   t.Helper()
-  subject := fixture_new(t, memory, syntax, format_state, command, directory, seed)
+  subject := fixture_new(t, memory, format_state, command, directory, seed)
   fixture_directory(t, subject, "back")
   fixture_file(t, subject, "back/a\\b.go", UNFORMATTED)
   fixture_run(t, subject, []string{"harness", "back", "-json"})
   fixture_states(t, subject, `"path":"back/a\\b.go"`)
-  subject = fixture_new(t, memory, syntax, format_state, command, directory, seed)
+  subject = fixture_new(t, memory, format_state, command, directory, seed)
   fixture_directory(t, subject, "heading")
   fixture_file(t, subject, "heading/a.go", CLEAN)
   fixture_file(
@@ -1488,14 +1497,13 @@ func fixture_escaped(
 func fixture_named(
   t *testing.T,
   memory harness.Memory_Handle,
-  syntax requirements.Syntax,
   format_state harness.Format,
   command harness.Command,
   directory harness.Directory,
   seed uint64,
 ) {
   t.Helper()
-  subject := fixture_new(t, memory, syntax, format_state, command, directory, seed)
+  subject := fixture_new(t, memory, format_state, command, directory, seed)
   fixture_directory(t, subject, "named")
   fixture_file(t, subject, "named/m.go", MAIN)
   fixture_file(t, subject, "named/a b.go", UNFORMATTED)
@@ -1510,31 +1518,27 @@ func fixture_named(
 func fixture_partial(
   t *testing.T,
   memory harness.Memory_Handle,
-  syntax requirements.Syntax,
   format_state harness.Format,
   command harness.Command,
   directory harness.Directory,
   seed uint64,
 ) {
   t.Helper()
-  subject := fixture_new(t, memory, syntax, format_state, command, directory, seed)
+  subject := fixture_new(t, memory, format_state, command, directory, seed)
   fixture_directory(t, subject, "part")
   fixture_file(t, subject, "part/m.go", MAIN)
   fixture_file(t, subject, "part/a.go", UNFORMATTED)
   fixture_file(t, subject, "part/b.go", UNFORMATTED)
-  reads := Fault_Storage{
-    Inner: subject.Loop.Storage,
-    Loop:  subject.Loop,
-    Kind:  FAULT_READ,
-    Skip:  CHECK_READ_SKIP,
-  }
-  fault_wire(subject, &reads)
+  // The run states what the declaration pass left without a read, thus the write of the
+  // second line is the step that fails.
+  cut := short_stream{Inner: subject.Runner.Output, Short: 0, Skip: 1}
+  subject.Runner.Output = nbio.Stream{State: &cut, Procedure: short_stream_write}
   fixture_run(t, subject, []string{"harness", "part"})
   fixture_wrote(t, subject, "part/a.go: not formatted\n")
-  fixture_failed(t, subject, "read")
+  fixture_failed(t, subject, "report")
   // The same fault under a fix: the file the run rewrote stands rewritten on the disk,
   // since a write that landed is not taken back by a step that failed after it.
-  subject = fixture_new(t, memory, syntax, format_state, command, directory, seed)
+  subject = fixture_new(t, memory, format_state, command, directory, seed)
   fixture_directory(t, subject, "part")
   fixture_file(t, subject, "part/m.go", MAIN)
   fixture_file(t, subject, "part/a.go", UNFORMATTED)
@@ -1542,12 +1546,12 @@ func fixture_partial(
   fixes := Fault_Storage{
     Inner: subject.Loop.Storage,
     Loop:  subject.Loop,
-    Kind:  FAULT_READ,
-    Skip:  CHECK_READ_SKIP,
+    Kind:  FAULT_WRITE,
+    Skip:  FIX_WRITE_SKIP,
   }
   fault_wire(subject, &fixes)
   fixture_run(t, subject, []string{"harness", "part", "-fix"})
-  fixture_failed(t, subject, "read")
+  fixture_failed(t, subject, "fix")
   held := fixture_contents(t, subject, "part/a.go")
   if held != CLEAN {
     t.Fatalf("a fix before a failed step left %q", held)
@@ -1559,14 +1563,13 @@ func fixture_partial(
 func fixture_barred(
   t *testing.T,
   memory harness.Memory_Handle,
-  syntax requirements.Syntax,
   format_state harness.Format,
   command harness.Command,
   directory harness.Directory,
   seed uint64,
 ) {
   t.Helper()
-  subject := fixture_new(t, memory, syntax, format_state, command, directory, seed)
+  subject := fixture_new(t, memory, format_state, command, directory, seed)
   fixture_directory(t, subject, "barred")
   fixture_file(t, subject, "barred/a.go", DECLARATION)
   fixture_file(t, subject, "barred/b.go", REFERENCE)
@@ -1587,7 +1590,7 @@ func fixture_barred(
   }
   // A bar on renaming is a bar on renaming alone: a file that owes a form still stands in
   // the canonical form once the run has fixed it.
-  subject = fixture_new(t, memory, syntax, format_state, command, directory, seed)
+  subject = fixture_new(t, memory, format_state, command, directory, seed)
   fixture_directory(t, subject, "barred")
   fixture_file(t, subject, "barred/a.go", DECLARATION)
   fixture_file(t, subject, "barred/c.go", REFUSED)
@@ -1605,7 +1608,7 @@ func fixture_barred(
   }
   // A contract test file is a Go file too, thus a directory holding it alone is a package
   // and owes the contract that test stands for.
-  subject = fixture_new(t, memory, syntax, format_state, command, directory, seed)
+  subject = fixture_new(t, memory, format_state, command, directory, seed)
   fixture_directory(t, subject, "onlytest")
   fixture_file(t, subject, "onlytest/"+requirements.TEST_NAME, CONTRACT_TEST)
   fixture_run(t, subject, []string{"harness", "onlytest"})
@@ -1618,7 +1621,7 @@ func fixture_barred(
   )
   // A file the parser refuses states its own diagnostic and bars nothing else: the
   // contract of its package is checked after it, thus both stand and in that order.
-  subject = fixture_new(t, memory, syntax, format_state, command, directory, seed)
+  subject = fixture_new(t, memory, format_state, command, directory, seed)
   fixture_directory(t, subject, "mixed")
   fixture_file(t, subject, "mixed/a.go", REFUSED)
   fixture_run(t, subject, []string{"harness", "mixed"})
@@ -1637,14 +1640,13 @@ func fixture_barred(
 func fixture_kept(
   t *testing.T,
   memory harness.Memory_Handle,
-  syntax requirements.Syntax,
   format_state harness.Format,
   command harness.Command,
   directory harness.Directory,
   seed uint64,
 ) {
   t.Helper()
-  subject := fixture_new(t, memory, syntax, format_state, command, directory, seed)
+  subject := fixture_new(t, memory, format_state, command, directory, seed)
   fixture_directory(t, subject, "kept")
   fixture_file(t, subject, "kept/m.go", MAIN)
   fixture_file(t, subject, "kept/a.go", REFUSED)
@@ -1660,14 +1662,13 @@ func fixture_kept(
 func fixture_lines_json(
   t *testing.T,
   memory harness.Memory_Handle,
-  syntax requirements.Syntax,
   format_state harness.Format,
   command harness.Command,
   directory harness.Directory,
   seed uint64,
 ) {
   t.Helper()
-  subject := fixture_new(t, memory, syntax, format_state, command, directory, seed)
+  subject := fixture_new(t, memory, format_state, command, directory, seed)
   fixture_directory(t, subject, "pairjson")
   fixture_file(t, subject, "pairjson/m.go", MAIN)
   fixture_file(t, subject, "pairjson/a.go", UNFORMATTED)
@@ -1690,14 +1691,13 @@ func fixture_lines_json(
 func fixture_shape(
   t *testing.T,
   memory harness.Memory_Handle,
-  syntax requirements.Syntax,
   format_state harness.Format,
   command harness.Command,
   directory harness.Directory,
   seed uint64,
 ) {
   t.Helper()
-  subject := fixture_new(t, memory, syntax, format_state, command, directory, seed)
+  subject := fixture_new(t, memory, format_state, command, directory, seed)
   fixture_directory(t, subject, "shape")
   fixture_file(t, subject, "shape/m.go", MAIN)
   fixture_file(t, subject, "shape/a.go", UNFORMATTED)
@@ -1715,7 +1715,7 @@ func fixture_shape(
   fixture_failed(t, subject, "walk")
   // A package fixed: the fix replaces the file, thus the diagnostic it carried is neither
   // written nor counted and the pass line opens the output.
-  subject = fixture_new(t, memory, syntax, format_state, command, directory, seed)
+  subject = fixture_new(t, memory, format_state, command, directory, seed)
   fixture_directory(t, subject, "shape")
   fixture_file(t, subject, "shape/m.go", MAIN)
   fixture_file(t, subject, "shape/a.go", UNFORMATTED)
@@ -1728,7 +1728,7 @@ func fixture_shape(
   if held != MAIN {
     t.Fatalf("a fix rewrote a clean file as %q", held)
   }
-  subject = fixture_new(t, memory, syntax, format_state, command, directory, seed)
+  subject = fixture_new(t, memory, format_state, command, directory, seed)
   fixture_directory(t, subject, "shape")
   fixture_file(t, subject, "shape/m.go", MAIN)
   fixture_file(t, subject, "shape/a.go", REFUSED)
@@ -1741,7 +1741,7 @@ func fixture_shape(
     `{"path":"shape/a.go","line":3,"column":9,"tier":2,`+
       `"rule":"refused","message":"Fix the syntax at this token."}`,
   )
-  subject = fixture_new(t, memory, syntax, format_state, command, directory, seed)
+  subject = fixture_new(t, memory, format_state, command, directory, seed)
   fixture_directory(t, subject, "shape")
   fixture_file(t, subject, "shape/a.go", CLEAN)
   fixture_run(t, subject, []string{"harness", "shape"})
@@ -1767,14 +1767,13 @@ func fixture_shape(
 func fixture_ended(
   t *testing.T,
   memory harness.Memory_Handle,
-  syntax requirements.Syntax,
   format_state harness.Format,
   command harness.Command,
   directory harness.Directory,
   seed uint64,
 ) {
   t.Helper()
-  subject := fixture_new(t, memory, syntax, format_state, command, directory, seed)
+  subject := fixture_new(t, memory, format_state, command, directory, seed)
   fixture_directory(t, subject, "ended")
   fixture_file(t, subject, "ended/a.go", CLEAN)
   fixture_file(t, subject, "ended/"+requirements.MARKDOWN_NAME, "\n# A\n\nBody.\n\n# B\n")
@@ -1786,7 +1785,7 @@ func fixture_ended(
   )
   fixture_run(t, subject, []string{"harness", "ended"})
   fixture_states(t, subject, `The section "B" has no body line.`)
-  subject = fixture_new(t, memory, syntax, format_state, command, directory, seed)
+  subject = fixture_new(t, memory, format_state, command, directory, seed)
   fixture_directory(t, subject, "cut")
   fixture_file(t, subject, "cut/a.go", CLEAN)
   fixture_file(t, subject, "cut/"+requirements.MARKDOWN_NAME, "\r\n# A\r\n\r")
@@ -1800,14 +1799,13 @@ func fixture_ended(
 func fixture_absent(
   t *testing.T,
   memory harness.Memory_Handle,
-  syntax requirements.Syntax,
   format_state harness.Format,
   command harness.Command,
   directory harness.Directory,
   seed uint64,
 ) {
   t.Helper()
-  subject := fixture_new(t, memory, syntax, format_state, command, directory, seed)
+  subject := fixture_new(t, memory, format_state, command, directory, seed)
   fixture_directory(t, subject, "gone")
   fixture_file(t, subject, "gone/a.go", CLEAN)
   faults := Fault_Storage{
@@ -1821,7 +1819,7 @@ func fixture_absent(
   // A path of bytes outside ASCII stands in the object as the host wrote it: flat JSON
   // escapes the quote and the backslash alone, thus a name of such bytes spends the same
   // bytes in the object as on the disk.
-  subject = fixture_new(t, memory, syntax, format_state, command, directory, seed)
+  subject = fixture_new(t, memory, format_state, command, directory, seed)
   wide := make([]byte, WIDE_NAME_BYTES)
   for index := range wide {
     wide[index] = 0xc3
@@ -1842,14 +1840,13 @@ func fixture_absent(
 func fixture_linked(
   t *testing.T,
   memory harness.Memory_Handle,
-  syntax requirements.Syntax,
   format_state harness.Format,
   command harness.Command,
   directory harness.Directory,
   seed uint64,
 ) {
   t.Helper()
-  subject := fixture_new(t, memory, syntax, format_state, command, directory, seed)
+  subject := fixture_new(t, memory, format_state, command, directory, seed)
   fixture_directory(t, subject, "linked")
   fixture_file(t, subject, "linked/a.go", UNFORMATTED)
   fixture_file(t, subject, "linked/m.go", MAIN)
@@ -1869,7 +1866,7 @@ func fixture_linked(
   // whatever it stands for, thus the package is told it holds none rather than answered
   // against a file the walk never named. The Go file stands as itself, so the directory
   // is a package that owes a contract it holds none of.
-  subject = fixture_new(t, memory, syntax, format_state, command, directory, seed)
+  subject = fixture_new(t, memory, format_state, command, directory, seed)
   fixture_directory(t, subject, "carried")
   fixture_file(t, subject, "carried/a.go", CLEAN)
   fixture_file(t, subject, "carried/"+requirements.MARKDOWN_NAME, CONTRACT_MARKDOWN)
@@ -1884,7 +1881,7 @@ func fixture_linked(
   fixture_states(t, subject, "carried/REQUIREMENTS.md: The package has no REQUIREMENTS.md.")
   // A directory a host named for a contract file names no contract: the walk opens it the
   // way it opens any child, thus the package that holds it is told it holds none.
-  subject = fixture_new(t, memory, syntax, format_state, command, directory, seed)
+  subject = fixture_new(t, memory, format_state, command, directory, seed)
   fixture_directory(t, subject, "shaped")
   fixture_file(t, subject, "shaped/a.go", CLEAN)
   fixture_directory(t, subject, "shaped/"+requirements.MARKDOWN_NAME)
@@ -1899,14 +1896,13 @@ func fixture_linked(
 func fixture_orphans(
   t *testing.T,
   memory harness.Memory_Handle,
-  syntax requirements.Syntax,
   format_state harness.Format,
   command harness.Command,
   directory harness.Directory,
   seed uint64,
 ) {
   t.Helper()
-  subject := fixture_new(t, memory, syntax, format_state, command, directory, seed)
+  subject := fixture_new(t, memory, format_state, command, directory, seed)
   fixture_directory(t, subject, "orphans")
   fixture_file(t, subject, "orphans/m.go", MAIN)
   fixture_link(t, subject, "orphans/gone", "missing")
@@ -1923,7 +1919,7 @@ func fixture_orphans(
   )
   // A link at a path of bytes flat JSON escapes six-fold: its object outgrows the store, thus
   // the run names the failed report.
-  subject = fixture_new(t, memory, syntax, format_state, command, directory, seed)
+  subject = fixture_new(t, memory, format_state, command, directory, seed)
   component := make([]byte, ESCAPED_COMPONENT_BYTES)
   for index := range component {
     component[index] = '<'
@@ -1938,7 +1934,7 @@ func fixture_orphans(
   fixture_run(t, subject, []string{"harness", path, "-json"})
   fixture_failed(t, subject, "report")
   for _, count := range []int{harness.ORPHAN_COUNT_MAXIMUM, harness.ORPHAN_COUNT_MAXIMUM + 1} {
-    subject = fixture_new(t, memory, syntax, format_state, command, directory, seed)
+    subject = fixture_new(t, memory, format_state, command, directory, seed)
     fixture_directory(t, subject, "full")
     for index := range count {
       fixture_link(t, subject, fmt.Sprintf("full/o%d", index), "missing")
@@ -1950,7 +1946,7 @@ func fixture_orphans(
   }
   // The shortest path a link stands at, alone in its tree. The report it leaves is the one the
   // next run opens on, thus each step that takes a report opens on the shortest path too.
-  subject = fixture_new(t, memory, syntax, format_state, command, directory, seed)
+  subject = fixture_new(t, memory, format_state, command, directory, seed)
   fixture_directory(t, subject, "o")
   fixture_link(t, subject, "o/x", "missing")
   fixture_run(t, subject, []string{"harness", "o", "-json"})
@@ -1969,7 +1965,6 @@ const CONFLICTED_LINE_BYTES = token.LINE_MAXIMUM + len("%%%%%%%")
 func fixture_conflicted(
   t *testing.T,
   memory harness.Memory_Handle,
-  syntax requirements.Syntax,
   format_state harness.Format,
   command harness.Command,
   directory harness.Directory,
@@ -1979,7 +1974,6 @@ func fixture_conflicted(
   subject := fixture_sized(
     t,
     memory,
-    syntax,
     format_state,
     command,
     directory,
@@ -2015,7 +2009,6 @@ const BACKSLASH = "\\"
 func fixture_configured(
   t *testing.T,
   memory harness.Memory_Handle,
-  syntax requirements.Syntax,
   format_state harness.Format,
   command harness.Command,
   directory harness.Directory,
@@ -2025,7 +2018,6 @@ func fixture_configured(
   subject := fixture_sized(
     t,
     memory,
-    syntax,
     format_state,
     command,
     directory,
@@ -2047,7 +2039,7 @@ func fixture_configured(
     `"ignore":[]`,
     `"ignore":["a","!/b/","c\\*",`+escaped+"]",
   )
-  decoded = strings_replace(decoded, `{"a":[]}`, `{"a":["b","c"],"d":[]}`)
+  decoded = strings_replace(decoded, `{"util":[]}`, `{"a":["b","c"],"d":[]}`)
   fixture_file(t, subject, harness.CONFIGURATION_PATH, decoded)
   fixture_run(t, subject, []string{"harness", "c"})
   // The entries decode whole, and each names nothing the host holds.
@@ -2072,14 +2064,13 @@ const IMPORT_PATH_BYTES = 700
 func fixture_imported(
   t *testing.T,
   memory harness.Memory_Handle,
-  syntax requirements.Syntax,
   format_state harness.Format,
   command harness.Command,
   directory harness.Directory,
   seed uint64,
 ) {
   t.Helper()
-  subject := fixture_new(t, memory, syntax, format_state, command, directory, seed)
+  subject := fixture_new(t, memory, format_state, command, directory, seed)
   wide := make([]byte, IMPORT_PATH_BYTES)
   for index := range wide {
     wide[index] = 'x'
@@ -2103,6 +2094,13 @@ func fixture_imported(
     "package time\n\nimport \"os/exec\"\nimport \"syscall\"\n",
     "sim/aver/v.go",
     "package aver\n\nimport \"strings\"\n",
+    // Each port stands above its default tier, which the composition tier then binds.
+    "os/p.go",
+    "package os\n",
+    "sim/nbio/p.go",
+    "package nbio\n",
+    "sim/time/p.go",
+    "package time\n",
   }
   for _, path := range []string{
     "shared",
@@ -2142,9 +2140,261 @@ func fixture_imported(
   }
 }
 
-// SURVEY_NODE_COUNT holds the surveyed tree: four directories, two Go files, harness.json, and
-// the root the simulator keeps at the first node.
-const SURVEY_NODE_COUNT = 9
+// Go files each declaring a name that breaks a naming rule, behind one that imports a banned
+// package, stated as text and as flat JSON: the last finding a report holds names a name.
+func fixture_names(
+  t *testing.T,
+  memory harness.Memory_Handle,
+  format_state harness.Format,
+  command harness.Command,
+  directory harness.Directory,
+  seed uint64,
+) {
+  t.Helper()
+  sources := []string{
+    "a/a.go",
+    "package a\n\nimport \"strings\"\n\nvar util = 1\n",
+    "b/b.go",
+    "package b\n\nvar max_line = 1\n",
+    "c/c.go",
+    "package c\n\nfunc F() {\n  for i := 0; i < 3; i++ {\n  }\n}\n",
+    "d/d.go",
+    "package d\n\nvar util_table = 1\n",
+  }
+  for _, flags := range [][]string{{}, {"-json"}} {
+    subject := fixture_new(t, memory, format_state, command, directory, seed)
+    for _, path := range []string{"shared", "shared/a", "shared/b", "shared/c", "shared/d"} {
+      fixture_directory(t, subject, path)
+    }
+    for index := 0; index < len(sources); index += 2 {
+      fixture_file(t, subject, "shared/"+sources[index], sources[index+1])
+    }
+    fixture_run(t, subject, append([]string{"harness", "shared"}, flags...))
+    for _, found := range []string{"util_table", "line_max", "i_index", "strings"} {
+      if !fixture_holds(fixture_written(subject), found) {
+        t.Fatalf("a naming run wrote no %q", found)
+      }
+    }
+  }
+}
+
+// A package whose file hides a sibling's top-level name, one whose file hides a name of its own
+// scopes, an external test package beside its library, and a package holding a file the parser
+// refuses, whose siblings go unjudged.
+func fixture_shadowed(
+  t *testing.T,
+  memory harness.Memory_Handle,
+  format_state harness.Format,
+  command harness.Command,
+  directory harness.Directory,
+  seed uint64,
+) {
+  t.Helper()
+  sources := []string{
+    "s/a.go",
+    "package s\n\nfunc value() {}\n",
+    "s/b.go",
+    "package s\n\nfunc F() {\n  value := 1\n}\n",
+    "s/e_test.go",
+    "package s_test\n\nfunc G() {\n  value := 1\n}\n",
+    "c/c.go",
+    "package c\n\nfunc F(value int) {\n  {\n    value := 1\n  }\n}\n",
+    "r/a.go",
+    "package r\n\nfunc value() {}\n\nfunc (\n",
+    "r/b.go",
+    "package r\n\nfunc F() {\n  value := 1\n}\n",
+  }
+  subject := fixture_new(t, memory, format_state, command, directory, seed)
+  for _, path := range []string{"shared", "shared/s", "shared/c", "shared/r"} {
+    fixture_directory(t, subject, path)
+  }
+  for index := 0; index < len(sources); index += 2 {
+    fixture_file(t, subject, "shared/"+sources[index], sources[index+1])
+  }
+  fixture_run(t, subject, []string{"harness", "shared"})
+  for _, found := range []string{
+    "shared/s/b.go:4:3: The variable",
+    "shared/c/c.go:5:5: The variable",
+  } {
+    if !fixture_holds(fixture_written(subject), found) {
+      t.Fatalf("a shadow run wrote no %q", found)
+    }
+  }
+  for _, absent := range []string{"shared/s/e_test.go:", "shared/r/b.go:"} {
+    if fixture_holds(fixture_written(subject), absent) {
+      t.Fatalf("a shadow run judged %s", absent)
+    }
+  }
+}
+
+// A function calling itself, a cycle across two files, a method call, and a package the
+// configuration opts out of the recursion ban, all but one file of it opted back in.
+func fixture_recursed(
+  t *testing.T,
+  memory harness.Memory_Handle,
+  format_state harness.Format,
+  command harness.Command,
+  directory harness.Directory,
+  seed uint64,
+) {
+  t.Helper()
+  sources := []string{
+    "a/a.go",
+    "package a\n\nfunc F() {\n  F()\n}\n",
+    "b/b.go",
+    "package b\n\nfunc F() {\n  G()\n}\n",
+    "b/c.go",
+    "package b\n\nfunc G() {\n  go F()\n}\n",
+    "m/m.go",
+    "package m\n\ntype T int\n\nfunc (value T) F() {\n  value.F()\n}\n",
+    "x/x.go",
+    "package x\n\nfunc F() {\n  F()\n}\n",
+    "x/y.go",
+    "package x\n\nfunc G() {\n  G()\n}\n",
+  }
+  subject := fixture_new(t, memory, format_state, command, directory, seed)
+  for _, path := range []string{"shared", "shared/a", "shared/b", "shared/m", "shared/x"} {
+    fixture_directory(t, subject, path)
+  }
+  for index := 0; index < len(sources); index += 2 {
+    fixture_file(t, subject, "shared/"+sources[index], sources[index+1])
+  }
+  shared := strings_replace(CONFIGURATION, `"shared_component":"s"`, `"shared_component":"shared"`)
+  exempt := strings_replace(
+    shared,
+    `"opt_out_recursion_ban":[]`,
+    `"opt_out_recursion_ban":["/shared/x/**/","!shared/x/y.go","shared/*/z\\*.go"]`,
+  )
+  fixture_file(t, subject, harness.CONFIGURATION_PATH, exempt)
+  fixture_run(t, subject, []string{"harness", "shared"})
+  for _, found := range []string{
+    "shared/a/a.go:4:3: The function F recurses.",
+    "shared/b/c.go:4:6: The functions recurse in a cycle. Write a loop instead. F → G → F",
+    "shared/x/y.go:4:3: The function G recurses.",
+  } {
+    if !fixture_holds(fixture_written(subject), found) {
+      t.Fatalf("a recursion run wrote no %q", found)
+    }
+  }
+  for _, absent := range []string{"shared/m/m.go:", "shared/x/x.go:"} {
+    if fixture_holds(fixture_written(subject), absent) {
+      t.Fatalf("a recursion run judged %s", absent)
+    }
+  }
+}
+
+// A tree breaking the component layout once each way: a default directory of another package, an
+// impure dependency, an instrumentation one, an impure stdlib import, a binary importing another
+// and declaring two entry points, a nested module and a workspace, then a tree of no go.mod.
+func fixture_laid(
+  t *testing.T,
+  memory harness.Memory_Handle,
+  format_state harness.Format,
+  command harness.Command,
+  directory harness.Directory,
+  seed uint64,
+) {
+  t.Helper()
+  sources := []string{
+    "shared/port/o.go",
+    "package port\n",
+    "shared/port/default/d.go",
+    "package other\n",
+    "shared/probe/p.go",
+    "package probe\n",
+    "shared/probe/default/d.go",
+    "package probe\n",
+    "shared/user/u.go",
+    "package user\n\nimport \"local/fixture/shared/port/default\"\n",
+    "shared/watch/w.go",
+    "package watch\n\nimport \"local/fixture/shared/probe/default\"\n",
+    "shared/lib/l.go",
+    "package lib\n\nimport \"runtime\"\n",
+    "shared/deep/go.mod",
+    "module deep\n",
+    "shared/deep/go.work",
+    "go 1.26\n",
+    "tool/main.go",
+    "package main\n\nfunc main() {}\n",
+    "tool/pkg/p.go",
+    "package pkg\n\nimport \"local/fixture/other/pkg\"\n\nfunc Main() {}\n",
+    "tool/pkg/q.go",
+    "package pkg\n\nfunc Main() {}\n",
+    "tool/lib/l.go",
+    "package lib\n",
+    "bare/main.go",
+    "package main\n\nfunc main() {}\n",
+  }
+  subject := fixture_new(t, memory, format_state, command, directory, seed)
+  made := map[string]bool{}
+  for index := 0; index < len(sources); index += 2 {
+    path := sources[index]
+    for cut := range len(path) {
+      if path[cut] != '/' {
+        continue
+      }
+      if made[path[:cut]] {
+        continue
+      }
+      made[path[:cut]] = true
+      fixture_directory(t, subject, path[:cut])
+    }
+    fixture_file(t, subject, path, sources[index+1])
+  }
+  shared := strings_replace(CONFIGURATION, `"shared_component":"s"`, `"shared_component":"shared"`)
+  instrumented := strings_replace(
+    shared,
+    `"instrumentation_packages":[]`,
+    `"instrumentation_packages":["shared/probe/**"]`,
+  )
+  fixture_file(t, subject, harness.CONFIGURATION_PATH, instrumented)
+  fixture_run(t, subject, []string{"harness", "."})
+  for _, found := range []string{
+    "shared/port/default/d.go:1:9: The default package declares",
+    "shared/user/u.go:3:8: The dependency",
+    "shared/lib/l.go:3:8: The stdlib import \"runtime\" is impure.",
+    "tool/pkg/p.go:3:8: The binary component",
+    "shared/deep/go.mod: A nested go.mod",
+    "shared/deep/go.work: A go.work",
+    "tool: The binary component \"local/fixture/tool\" declares more than one func Main",
+    "tool/lib/l.go:1:1: Move lib -> tool/pkg/lib.",
+    "bare: The binary component \"local/fixture/bare\" declares no func Main",
+  } {
+    if !fixture_holds(fixture_written(subject), found) {
+      t.Fatalf("a layout run wrote no %q", found)
+    }
+  }
+  if fixture_holds(fixture_written(subject), "shared/watch/w.go:") {
+    t.Fatalf("a layout run judged the instrumentation import")
+  }
+  subject = fixture_new(t, memory, format_state, command, directory, seed)
+  fixture_remove(t, subject, harness.MODULE_PATH)
+  fixture_directory(t, subject, "lone")
+  fixture_file(t, subject, "lone/a.go", CLEAN)
+  fixture_run(t, subject, []string{"harness", "lone"})
+  fixture_states(t, subject, "go.mod: There is no go.mod at the repository root.")
+}
+
+// Takes the file at the path out of the tree, the way a host that never wrote it would hold none.
+func fixture_remove(t *testing.T, subject *fixture, path string) {
+  t.Helper()
+  for index := range subject.Simulation.Nodes {
+    node := &subject.Simulation.Nodes[index]
+    if !node.Used {
+      continue
+    }
+    if string(node.Name[:node.Name_Count]) != path {
+      continue
+    }
+    node.Used = false
+    return
+  }
+  t.Fatalf("no node holds %s", path)
+}
+
+// SURVEY_NODE_COUNT holds the surveyed tree: four directories, two Go files, harness.json, go.mod,
+// and the root the simulator keeps at the first node.
+const SURVEY_NODE_COUNT = 10
 
 // SURVEY_CONTENTS_BYTES holds a harness.json of an entry as wide as a path and one wider than a
 // quote, with room to spare.
@@ -2160,7 +2410,6 @@ const SURVEY_NAME_BYTES = 250
 func fixture_surveyed(
   t *testing.T,
   memory harness.Memory_Handle,
-  syntax requirements.Syntax,
   format_state harness.Format,
   command harness.Command,
   directory harness.Directory,
@@ -2170,7 +2419,6 @@ func fixture_surveyed(
   subject := fixture_sized(
     t,
     memory,
-    syntax,
     format_state,
     command,
     directory,
@@ -2251,15 +2499,19 @@ func configuration_repeated() (source string) {
 // One harness.json of each fault the decoder states.
 func fixture_configurations() (sources []string) {
   opening := `{"shared_component":"`
-  full := `{"ignore":[`
-  for range configuration.VALUE_COUNT_MAXIMUM + 1 {
-    full += `"",`
+  // One string past the value table, in a document that decodes whole.
+  full := `{"ignore":[""`
+  for range configuration.VALUE_COUNT_MAXIMUM {
+    full += `,""`
   }
+  full += `]}`
   oversized := make([]byte, configuration.SOURCE_STORAGE_SIZE)
   for index := range oversized {
     oversized[index] = ' '
   }
-  words := strings_replace(CONFIGURATION, `{"a":[]}`, "{}")
+  words := strings_replace(CONFIGURATION, `{"util":[]}`, "{}")
+  // A string the widest source leaves open: the decoder stops one past its last byte.
+  widest := opening + string(oversized[len(opening)+1:])
   sources = append(sources, configuration_repeated())
   globs := []string{
     `[" "]`,
@@ -2306,6 +2558,7 @@ func fixture_configurations() (sources []string) {
       strings_replace(CONFIGURATION, `"shared_component":"s"`, `"shared_component":""`),
       words,
       string(oversized),
+      widest,
       full,
     }...,
   )
@@ -2327,6 +2580,13 @@ func strings_replace(source string, old string, new string) (replaced string) {
 func fixture_link(t *testing.T, subject *fixture, path string, target string) {
   t.Helper()
   fixture_file(t, subject, path, target)
+  node := fixture_node(t, subject, path)
+  node.Mode = node.Mode&^nbio.FILE_MODE_TYPE | nbio.FILE_MODE_SYMBOLIC_LINK
+}
+
+// The node of the child's name whose parent holds the name of the directory above it.
+func fixture_node(t *testing.T, subject *fixture, path string) (found *nbio.Sim_Node) {
+  t.Helper()
   split, opening := 0, 0
   for index := range path {
     if path[index] == '/' {
@@ -2350,10 +2610,45 @@ func fixture_link(t *testing.T, subject *fixture, path string, target string) {
     if string(parent.Name[:parent.Name_Count]) != directory {
       continue
     }
-    node.Mode = node.Mode&^nbio.FILE_MODE_TYPE | nbio.FILE_MODE_SYMBOLIC_LINK
-    return
+    return node
   }
   t.Fatalf("no node holds %s", path)
+  return nil
+}
+
+// A file another writer fixes while the run checks it: the read the fix step makes states it
+// clean, thus the run writes nothing over it. A contract test of one line parses whole, thus the
+// run's own line index states one line.
+func fixture_raced(
+  t *testing.T,
+  memory harness.Memory_Handle,
+  format_state harness.Format,
+  command harness.Command,
+  directory harness.Directory,
+  seed uint64,
+) {
+  t.Helper()
+  subject := fixture_new(t, memory, format_state, command, directory, seed)
+  fixture_directory(t, subject, "raced")
+  fixture_file(t, subject, "raced/a.go", UNFORMATTED)
+  fixture_file(t, subject, "raced/"+requirements.MARKDOWN_NAME, CONTRACT_MARKDOWN)
+  fixture_file(t, subject, "raced/"+requirements.TEST_NAME, "package a")
+  // A fix would end the test in a newline, thus the run that reads it whole fixes nothing.
+  fixture_run(t, subject, []string{"harness", "raced"})
+  node := fixture_node(t, subject, "raced/a.go")
+  subject.Runner.Spread.Submit = func(lane harness.Lane_Handle) { raced_submit(node, lane) }
+  fixture_run(t, subject, []string{"harness", "raced", "-fix"})
+  fixture_silent(t, subject, "raced/a.go")
+  held := string(node.Contents[:node.Contents_Count])
+  if held != CLEAN {
+    t.Fatalf("a run wrote over a file another writer fixed, leaving %q", held)
+  }
+}
+
+// Checks one lane, then fixes every file the lane may hold, the way another writer would.
+func raced_submit(node *nbio.Sim_Node, lane harness.Lane_Handle) {
+  harness.Check_Lane(lane)
+  node.Contents_Count = copy(node.Contents, CLEAN)
 }
 
 // A host that states the entries of a directory in no order of its own: the walk sorts what it
@@ -2361,14 +2656,13 @@ func fixture_link(t *testing.T, subject *fixture, path string, target string) {
 func fixture_shuffled(
   t *testing.T,
   memory harness.Memory_Handle,
-  syntax requirements.Syntax,
   format_state harness.Format,
   command harness.Command,
   directory harness.Directory,
   seed uint64,
 ) {
   t.Helper()
-  subject := fixture_new(t, memory, syntax, format_state, command, directory, seed)
+  subject := fixture_new(t, memory, format_state, command, directory, seed)
   fixture_directory(t, subject, "mixed")
   fixture_file(t, subject, "mixed/a.go", UNFORMATTED)
   fixture_file(t, subject, "mixed/b.go", UNFORMATTED)
@@ -2399,7 +2693,6 @@ func fixture_shuffled(
 func fixture_shut(
   t *testing.T,
   memory harness.Memory_Handle,
-  syntax requirements.Syntax,
   format_state harness.Format,
   command harness.Command,
   directory harness.Directory,
@@ -2407,7 +2700,7 @@ func fixture_shut(
 ) {
   t.Helper()
   for skip := range CLOSE_SKIP_COUNT {
-    subject := fixture_new(t, memory, syntax, format_state, command, directory, seed)
+    subject := fixture_new(t, memory, format_state, command, directory, seed)
     fixture_directory(t, subject, "shut")
     fixture_file(t, subject, "shut/a.go", UNFORMATTED)
     shuts := Fault_Storage{
@@ -2420,9 +2713,9 @@ func fixture_shut(
     fixture_run(t, subject, []string{"harness", "shut"})
     fixture_failed(t, subject, close_step(skip))
   }
-  // The close a fix makes stands past the three a check makes, thus a host that answers
-  // that one as failed states the fix step rather than the close a check stood on.
-  subject := fixture_new(t, memory, syntax, format_state, command, directory, seed)
+  // The close a fix makes stands past the two a check makes, thus a host that answers that one
+  // as failed states the fix step rather than the close a check stood on.
+  subject := fixture_new(t, memory, format_state, command, directory, seed)
   fixture_directory(t, subject, "shut")
   fixture_file(t, subject, "shut/a.go", UNFORMATTED)
   fixed := Fault_Storage{
@@ -2437,8 +2730,8 @@ func fixture_shut(
 }
 
 // CLOSE_SKIP_COUNT is how many closes of one package a sweep answers as failed in turn: the
-// directory the walk opened, the file the declaration pass read, and the file the check read.
-const CLOSE_SKIP_COUNT = 3
+// directory the walk opened and the file the declaration pass read, which the check recalls.
+const CLOSE_SKIP_COUNT = 2
 
 // Names the step one close stands in: the walk holds the directory it opened, and every close
 // past it holds a file the run read.
@@ -2455,20 +2748,19 @@ func close_step(skip int) (step string) {
 func fixture_spelled(
   t *testing.T,
   memory harness.Memory_Handle,
-  syntax requirements.Syntax,
   format_state harness.Format,
   command harness.Command,
   directory harness.Directory,
   seed uint64,
 ) {
   t.Helper()
-  subject := fixture_new(t, memory, syntax, format_state, command, directory, seed)
+  subject := fixture_new(t, memory, format_state, command, directory, seed)
   fixture_directory(t, subject, "ended")
   fixture_file(t, subject, "ended/a.go", CLEAN)
   fixture_file(t, subject, "ended/"+requirements.MARKDOWN_NAME, "\n# A\r")
   fixture_run(t, subject, []string{"harness", "ended"})
   fixture_states(t, subject, "There is no blank line after the heading \"A\"")
-  subject = fixture_new(t, memory, syntax, format_state, command, directory, seed)
+  subject = fixture_new(t, memory, format_state, command, directory, seed)
   fixture_directory(t, subject, "spelled")
   fixture_file(t, subject, "spelled/a.go", CLEAN)
   fixture_file(t, subject, "spelled/"+requirements.MARKDOWN_NAME, "\n# ä\n\nBody.\n")
@@ -2481,14 +2773,13 @@ func fixture_spelled(
 func fixture_declared(
   t *testing.T,
   memory harness.Memory_Handle,
-  syntax requirements.Syntax,
   format_state harness.Format,
   command harness.Command,
   directory harness.Directory,
   seed uint64,
 ) {
   t.Helper()
-  subject := fixture_new(t, memory, syntax, format_state, command, directory, seed)
+  subject := fixture_new(t, memory, format_state, command, directory, seed)
   fixture_directory(t, subject, "method")
   fixture_file(t, subject, "method/a.go", CLEAN)
   fixture_file(t, subject, "method/"+requirements.MARKDOWN_NAME, CONTRACT_MARKDOWN)
@@ -2506,7 +2797,6 @@ func fixture_declared(
   subject = fixture_sized(
     t,
     memory,
-    syntax,
     format_state,
     command,
     directory,
@@ -2545,7 +2835,6 @@ const DECLARATION_FILE_BYTES = (requirements.HEADING_COUNT_MAXIMUM + 1) * 32
 func fixture_short_line(
   t *testing.T,
   memory harness.Memory_Handle,
-  syntax requirements.Syntax,
   format_state harness.Format,
   command harness.Command,
   directory harness.Directory,
@@ -2553,7 +2842,7 @@ func fixture_short_line(
   taken int,
 ) {
   t.Helper()
-  subject := fixture_new(t, memory, syntax, format_state, command, directory, seed)
+  subject := fixture_new(t, memory, format_state, command, directory, seed)
   fixture_directory(t, subject, "short")
   fixture_file(t, subject, "short/a.go", UNFORMATTED)
   fixture_file(t, subject, "short/m.go", MAIN)
@@ -2570,11 +2859,14 @@ type short_stream struct {
   Inner nbio.Stream
   // Short is how many bytes the cut write takes.
   Short int
+  // Skip is how many writes stand whole before the one the stream cuts.
+  Skip int
   // Spent records that the cut already happened, thus one run meets it once.
   Spent bool
 }
 
-// Cuts the next write down, then hands every write after it straight on.
+// Hands the writes it skips on whole, cuts the next one down, then hands every write after it
+// straight on.
 func short_stream_write(
   state nbio.State,
   completion *nbio.Completion,
@@ -2585,6 +2877,13 @@ func short_stream_write(
   callback nbio.Stream_Callback,
 ) {
   stream := state.(*short_stream)
+  if stream.Skip > 0 {
+    stream.Skip--
+    stream.Inner.Procedure(
+      stream.Inner.State, completion, mode, buffer, offset, whence, callback,
+    )
+    return
+  }
   if !stream.Spent {
     stream.Spent = true
     buffer = buffer[:min(stream.Short, len(buffer))]
@@ -2599,14 +2898,13 @@ func short_stream_write(
 func fixture_clean(
   t *testing.T,
   memory harness.Memory_Handle,
-  syntax requirements.Syntax,
   format_state harness.Format,
   command harness.Command,
   directory harness.Directory,
   seed uint64,
 ) {
   t.Helper()
-  subject := fixture_new(t, memory, syntax, format_state, command, directory, seed)
+  subject := fixture_new(t, memory, format_state, command, directory, seed)
   fixture_directory(t, subject, "clean")
   fixture_file(t, subject, "clean/a.go", CLEAN)
   fixture_file(t, subject, "clean/REQUIREMENTS.md", "\n# Contract\n\nIt holds.\n")
@@ -2668,7 +2966,7 @@ func fixture_opened(t *testing.T, subject *fixture, held string) {
 // field or lost one, thus a whole output is stated where the shape itself is the property.
 func fixture_wrote(t *testing.T, subject *fixture, held string) {
   t.Helper()
-  written := fixture_written(subject)
+  written := fixture_findings(fixture_written(subject))
   if written != held {
     t.Fatalf("a run wrote %q, not %q", written, held)
   }
@@ -2714,7 +3012,6 @@ func fixture_errors(subject *fixture) (written string) {
 func fixture_short_write(
   t *testing.T,
   memory harness.Memory_Handle,
-  syntax requirements.Syntax,
   format_state harness.Format,
   command harness.Command,
   directory harness.Directory,
@@ -2722,7 +3019,7 @@ func fixture_short_write(
 ) {
   t.Helper()
   for short := range SHORT_WRITE_COUNT {
-    subject := fixture_new(t, memory, syntax, format_state, command, directory, seed)
+    subject := fixture_new(t, memory, format_state, command, directory, seed)
     fixture_directory(t, subject, "short")
     fixture_file(t, subject, "short/a.go", UNFORMATTED)
     faults := Fault_Storage{
@@ -2740,7 +3037,7 @@ func fixture_short_write(
     // A disk that takes part of one write and then goes away: the count of bytes the
     // fix wrote rests at what it took, which a fix that finishes leaves at its whole
     // size and a fix that never starts leaves at none.
-    subject = fixture_new(t, memory, syntax, format_state, command, directory, seed)
+    subject = fixture_new(t, memory, format_state, command, directory, seed)
     fixture_directory(t, subject, "short")
     fixture_file(t, subject, "short/a.go", UNFORMATTED)
     gone := Fault_Storage{
@@ -2759,11 +3056,11 @@ func fixture_short_write(
     }
     fixture_run(t, subject, []string{"harness", "short"})
     fixture_short_line(
-      t, memory, syntax, format_state, command, directory, seed, short+1,
+      t, memory, format_state, command, directory, seed, short+1,
     )
     // A read that hands back part of one file: the run reads the rest before it
     // checks, thus the check states the whole source rather than its first bytes.
-    subject = fixture_new(t, memory, syntax, format_state, command, directory, seed)
+    subject = fixture_new(t, memory, format_state, command, directory, seed)
     fixture_directory(t, subject, "short")
     fixture_file(t, subject, "short/a.go", UNFORMATTED)
     reads := Fault_Storage{
@@ -2786,14 +3083,13 @@ func fixture_short_write(
 func fixture_idempotent(
   t *testing.T,
   memory harness.Memory_Handle,
-  syntax requirements.Syntax,
   format_state harness.Format,
   command harness.Command,
   directory harness.Directory,
   seed uint64,
 ) {
   t.Helper()
-  subject := fixture_new(t, memory, syntax, format_state, command, directory, seed)
+  subject := fixture_new(t, memory, format_state, command, directory, seed)
   fixture_directory(t, subject, "twice")
   fixture_directory(t, subject, "twice/nested")
   fixture_file(t, subject, "twice/a.go", UNFORMATTED)
@@ -2842,14 +3138,13 @@ const SHAPE_DIRECTORY_CHANCE = 3
 func fixture_shaped(
   t *testing.T,
   memory harness.Memory_Handle,
-  syntax requirements.Syntax,
   format_state harness.Format,
   command harness.Command,
   directory harness.Directory,
   seed uint64,
 ) {
   t.Helper()
-  subject := fixture_new(t, memory, syntax, format_state, command, directory, seed)
+  subject := fixture_new(t, memory, format_state, command, directory, seed)
   generator := prng.New(prng.Seed(seed))
   sources := [SHAPE_SOURCE_COUNT]string{CLEAN, UNFORMATTED, REFUSED}
   path := "shape"
@@ -2881,14 +3176,13 @@ func fixture_shaped(
 func fixture_generated(
   t *testing.T,
   memory harness.Memory_Handle,
-  syntax requirements.Syntax,
   format_state harness.Format,
   command harness.Command,
   directory harness.Directory,
   seed uint64,
 ) {
   t.Helper()
-  subject := fixture_new(t, memory, syntax, format_state, command, directory, seed)
+  subject := fixture_new(t, memory, format_state, command, directory, seed)
   // One Go file of its own stands in that tree, thus the run checks and states a path the
   // walk built from the directory the command line named, which is a name of one byte.
   fixture_file(t, subject, "a.go", UNFORMATTED)
@@ -2924,15 +3218,14 @@ const GENERATED_MODE_COUNT = 3
 func fixture_deterministic(
   t *testing.T,
   memory harness.Memory_Handle,
-  syntax requirements.Syntax,
   format_state harness.Format,
   command harness.Command,
   directory harness.Directory,
   seed uint64,
 ) {
   t.Helper()
-  first := fixture_ordered(t, memory, syntax, format_state, command, directory, seed)
-  second := fixture_ordered(t, memory, syntax, format_state, command, directory, seed+1)
+  first := fixture_ordered(t, memory, format_state, command, directory, seed)
+  second := fixture_ordered(t, memory, format_state, command, directory, seed+1)
   // The tree holds findings, thus two seeds agree on them rather than on nothing.
   if fixture_lines(first) != ORDER_FINDING_COUNT {
     t.Fatalf(
@@ -2952,7 +3245,6 @@ func fixture_deterministic(
 func fixture_rename_barred(
   t *testing.T,
   memory harness.Memory_Handle,
-  syntax requirements.Syntax,
   format_state harness.Format,
   command harness.Command,
   directory harness.Directory,
@@ -2963,7 +3255,6 @@ func fixture_rename_barred(
   subject := fixture_sized(
     t,
     memory,
-    syntax,
     format_state,
     command,
     directory,
@@ -2992,14 +3283,13 @@ func fixture_rename_barred(
 func fixture_renamed(
   t *testing.T,
   memory harness.Memory_Handle,
-  syntax requirements.Syntax,
   format_state harness.Format,
   command harness.Command,
   directory harness.Directory,
   seed uint64,
 ) {
   t.Helper()
-  subject := fixture_new(t, memory, syntax, format_state, command, directory, seed)
+  subject := fixture_new(t, memory, format_state, command, directory, seed)
   fixture_directory(t, subject, "names")
   fixture_file(t, subject, "names/a.go", DECLARATION)
   fixture_file(t, subject, "names/b.go", REFERENCE)
@@ -3017,7 +3307,7 @@ func fixture_renamed(
   }
   // A name one package declares and another spells: the run declares every Go file under
   // the directory before it checks any, thus the rename reaches both packages.
-  subject = fixture_new(t, memory, syntax, format_state, command, directory, seed)
+  subject = fixture_new(t, memory, format_state, command, directory, seed)
   fixture_directory(t, subject, "pair")
   fixture_directory(t, subject, "pair/one")
   fixture_directory(t, subject, "pair/two")
@@ -3030,7 +3320,7 @@ func fixture_renamed(
   }
   // One file that owes both a rename and a form: its fix carries the name the run spells
   // everywhere and the form the printer states, rather than one of the two.
-  subject = fixture_new(t, memory, syntax, format_state, command, directory, seed)
+  subject = fixture_new(t, memory, format_state, command, directory, seed)
   fixture_directory(t, subject, "both")
   fixture_file(t, subject, "both/a.go", DECLARATION)
   fixture_file(t, subject, "both/b.go", REFERENCE_UNFORMATTED)
@@ -3042,7 +3332,7 @@ func fixture_renamed(
   if held != REFERENCE_RENAMED {
     t.Fatalf("a file owing a rename and a form kept %q", held)
   }
-  fixture_rename_barred(t, memory, syntax, format_state, command, directory, seed)
+  fixture_rename_barred(t, memory, format_state, command, directory, seed)
 }
 
 // DECLARATION holds one name a rename spells differently.
@@ -3090,14 +3380,13 @@ const REFERENCE_RENAMED = "package a\n\nvar held = some_value\n"
 func fixture_literal(
   t *testing.T,
   memory harness.Memory_Handle,
-  syntax requirements.Syntax,
   format_state harness.Format,
   command harness.Command,
   directory harness.Directory,
   seed uint64,
 ) {
   t.Helper()
-  subject := fixture_new(t, memory, syntax, format_state, command, directory, seed)
+  subject := fixture_new(t, memory, format_state, command, directory, seed)
   fixture_directory(t, subject, "quotes")
   fixture_file(t, subject, "quotes/a.go", DECLARATION)
   fixture_file(t, subject, "quotes/b.go", LITERAL)
@@ -3128,7 +3417,7 @@ func fixture_literal(
   }
   // The same program written with tabs: its fix is that file written with two spaces, thus
   // one form comes out of either way a host writes the same code.
-  tabbed := fixture_new(t, memory, syntax, format_state, command, directory, seed)
+  tabbed := fixture_new(t, memory, format_state, command, directory, seed)
   fixture_directory(t, tabbed, "tabs")
   fixture_file(t, tabbed, "tabs/a.go", TABBED)
   fixture_run(t, tabbed, []string{"harness", "tabs", "-fix"})
@@ -3158,7 +3447,6 @@ func fixture_literal(
 func fixture_contract_findings(
   t *testing.T,
   memory harness.Memory_Handle,
-  syntax requirements.Syntax,
   format_state harness.Format,
   command harness.Command,
   directory harness.Directory,
@@ -3166,7 +3454,7 @@ func fixture_contract_findings(
   markdown string,
 ) (written string) {
   t.Helper()
-  subject := fixture_new(t, memory, syntax, format_state, command, directory, seed)
+  subject := fixture_new(t, memory, format_state, command, directory, seed)
   fixture_directory(t, subject, "endings")
   fixture_file(t, subject, "endings/a.go", CLEAN)
   fixture_file(t, subject, "endings/"+requirements.MARKDOWN_NAME, markdown)
@@ -3192,7 +3480,6 @@ func fixture_returned(text string) (returned string) {
 func fixture_endings(
   t *testing.T,
   memory harness.Memory_Handle,
-  syntax requirements.Syntax,
   format_state harness.Format,
   command harness.Command,
   directory harness.Directory,
@@ -3204,7 +3491,6 @@ func fixture_endings(
   plain := fixture_contract_findings(
     t,
     memory,
-    syntax,
     format_state,
     command,
     directory,
@@ -3214,7 +3500,6 @@ func fixture_endings(
   returned := fixture_contract_findings(
     t,
     memory,
-    syntax,
     format_state,
     command,
     directory,
@@ -3230,7 +3515,6 @@ func fixture_endings(
   bare := fixture_contract_findings(
     t,
     memory,
-    syntax,
     format_state,
     command,
     directory,
@@ -3247,19 +3531,18 @@ func fixture_endings(
 func fixture_test_refused(
   t *testing.T,
   memory harness.Memory_Handle,
-  syntax requirements.Syntax,
   format_state harness.Format,
   command harness.Command,
   directory harness.Directory,
   seed uint64,
 ) {
   t.Helper()
-  subject := fixture_new(t, memory, syntax, format_state, command, directory, seed)
+  subject := fixture_new(t, memory, format_state, command, directory, seed)
   fixture_directory(t, subject, "broke")
   fixture_file(t, subject, "broke/a.go", CLEAN)
   fixture_file(t, subject, "broke/"+requirements.MARKDOWN_NAME, CONTRACT_MARKDOWN)
   fixture_file(t, subject, "broke/"+requirements.TEST_NAME, REFUSED)
-  subject_crlf := fixture_new(t, memory, syntax, format_state, command, directory, seed)
+  subject_crlf := fixture_new(t, memory, format_state, command, directory, seed)
   fixture_directory(t, subject_crlf, "crlfmd")
   fixture_file(t, subject_crlf, "crlfmd/a.go", CLEAN)
   fixture_file(
@@ -3275,7 +3558,7 @@ func fixture_test_refused(
   fixture_passed(t, subject_crlf)
   // The same file missing the blank line after its heading states that finding, thus the
   // ending it was written with hides no fault of its own.
-  subject_crlf = fixture_new(t, memory, syntax, format_state, command, directory, seed)
+  subject_crlf = fixture_new(t, memory, format_state, command, directory, seed)
   fixture_directory(t, subject_crlf, "crlfmd")
   fixture_file(t, subject_crlf, "crlfmd/a.go", CLEAN)
   fixture_file(
@@ -3287,7 +3570,7 @@ func fixture_test_refused(
   fixture_file(t, subject_crlf, "crlfmd/"+requirements.TEST_NAME, CONTRACT_TEST)
   fixture_run(t, subject_crlf, []string{"harness", "crlfmd"})
   fixture_states(t, subject_crlf, "There is no blank line after the heading")
-  fixture_endings(t, memory, syntax, format_state, command, directory, seed)
+  fixture_endings(t, memory, format_state, command, directory, seed)
   fixture_run(t, subject, []string{"harness", "broke"})
   fixture_states(t, subject, "broke/"+requirements.TEST_NAME+":3:9")
   // The leaves go unchecked, thus the refusal stands alone rather than beside a test the
@@ -3303,14 +3586,13 @@ func fixture_test_refused(
 func fixture_order(
   t *testing.T,
   memory harness.Memory_Handle,
-  syntax requirements.Syntax,
   format_state harness.Format,
   command harness.Command,
   directory harness.Directory,
   seed uint64,
 ) {
   t.Helper()
-  subject := fixture_new(t, memory, syntax, format_state, command, directory, seed)
+  subject := fixture_new(t, memory, format_state, command, directory, seed)
   fixture_directory(t, subject, "order")
   fixture_file(t, subject, "order/a.go", CLEAN)
   fixture_file(
@@ -3334,14 +3616,13 @@ func fixture_order(
 func fixture_exempt(
   t *testing.T,
   memory harness.Memory_Handle,
-  syntax requirements.Syntax,
   format_state harness.Format,
   command harness.Command,
   directory harness.Directory,
   seed uint64,
 ) {
   t.Helper()
-  subject := fixture_new(t, memory, syntax, format_state, command, directory, seed)
+  subject := fixture_new(t, memory, format_state, command, directory, seed)
   fixture_directory(t, subject, "vendor")
   fixture_directory(t, subject, "vendor/third_party")
   fixture_directory(t, subject, "vendor/third_party/held")
@@ -3358,7 +3639,7 @@ func fixture_exempt(
   fixture_passed(t, subject)
   // The contract file is named exactly, since a disk that resolves a differently cased
   // name would hand back a file the run never asked for.
-  subject = fixture_new(t, memory, syntax, format_state, command, directory, seed)
+  subject = fixture_new(t, memory, format_state, command, directory, seed)
   fixture_directory(t, subject, "cased")
   fixture_file(t, subject, "cased/a.go", CLEAN)
   fixture_file(t, subject, "cased/requirements.md", CONTRACT_MARKDOWN)
@@ -3386,7 +3667,7 @@ func fixture_exempt(
   fixture_states(t, subject, "cased/REQUIREMENTS.md")
   // A name holding a byte below a space states half a path on a line of its own, thus the
   // walk fails rather than writes a line that breaks in two.
-  subject = fixture_new(t, memory, syntax, format_state, command, directory, seed)
+  subject = fixture_new(t, memory, format_state, command, directory, seed)
   fixture_directory(t, subject, "weird")
   fixture_file(t, subject, "weird/a\nb.go", UNFORMATTED)
   fixture_run(t, subject, []string{"harness", "weird"})
@@ -3407,7 +3688,6 @@ func fixture_exempt(
 func fixture_untrusted(
   t *testing.T,
   memory harness.Memory_Handle,
-  syntax requirements.Syntax,
   format_state harness.Format,
   command harness.Command,
   directory harness.Directory,
@@ -3417,7 +3697,7 @@ func fixture_untrusted(
   var subject *fixture
   // Two headings of the whole width a heading holds, spelled the same: the message quotes
   // one of them, thus a quote states the widest span a message carries.
-  subject = fixture_new(t, memory, syntax, format_state, command, directory, seed)
+  subject = fixture_new(t, memory, format_state, command, directory, seed)
   fixture_directory(t, subject, "widest")
   fixture_file(t, subject, "widest/a.go", CLEAN)
   fixture_file(t, subject, "widest/"+requirements.MARKDOWN_NAME, fixture_contract_twice())
@@ -3430,14 +3710,14 @@ func fixture_untrusted(
   // Headings of no bytes, of one, and of two, each spelled twice: a quote states the
   // smallest spans a message carries as well as the widest.
   for _, heading := range [SHORT_HEADING_COUNT]string{"", "A", "AB"} {
-    subject = fixture_new(t, memory, syntax, format_state, command, directory, seed)
+    subject = fixture_new(t, memory, format_state, command, directory, seed)
     fixture_directory(t, subject, "short")
     fixture_file(t, subject, "short/a.go", CLEAN)
     section := "\n# " + heading + "\n\nBody.\n"
     fixture_file(t, subject, "short/"+requirements.MARKDOWN_NAME, section+section)
     fixture_run(t, subject, []string{"harness", "short"})
   }
-  subject = fixture_new(t, memory, syntax, format_state, command, directory, seed)
+  subject = fixture_new(t, memory, format_state, command, directory, seed)
   fixture_directory(t, subject, "hosts")
   fixture_file(t, subject, "hosts/bom.go", "\xef\xbb\xbf"+CLEAN)
   fixture_file(t, subject, "hosts/crlf.go", "package a\r\n\r\nfunc f() {}\r\n")
@@ -3455,7 +3735,7 @@ func fixture_untrusted(
   fixture_states(t, subject, "Spell the name with ASCII letters, digits, and underscores.")
   // A file a check reads is untrusted too: a byte no line can state stands as a question
   // mark rather than reaching whatever reads the line.
-  subject = fixture_new(t, memory, syntax, format_state, command, directory, seed)
+  subject = fixture_new(t, memory, format_state, command, directory, seed)
   fixture_directory(t, subject, "quoted")
   fixture_file(t, subject, "quoted/a.go", CLEAN)
   fixture_file(
@@ -3466,7 +3746,7 @@ func fixture_untrusted(
   )
   fixture_run(t, subject, []string{"harness", "quoted"})
   fixture_states(t, subject, `The heading "A?B" is not unique.`)
-  subject = fixture_new(t, memory, syntax, format_state, command, directory, seed)
+  subject = fixture_new(t, memory, format_state, command, directory, seed)
   fixture_directory(t, subject, "quote")
   fixture_file(t, subject, `quote/a".go`, UNFORMATTED)
   // A name holding a quote stands escaped in flat JSON, thus the object a run writes parses
@@ -3481,22 +3761,22 @@ const GO_SUFFIX_TEXT = ".go"
 // SHORT_HEADING_COUNT is how many short headings one sweep states: none, one byte, and two.
 const SHORT_HEADING_COUNT = 3
 
-// MAIN holds a package main file, whose package owes no contract.
-const MAIN = "package main\n\nfunc main() {}\n"
+// MAIN holds a package main test file, whose package owes no contract as a package main does,
+// and which a shared component holds, as it holds no package main.
+const MAIN = "package main_test\n\nfunc main() {}\n"
 
 // A run that fixes what it can states what stays, and the run after it states the same: the fix
 // settles the tree, thus nothing it wrote comes back as a finding.
 func fixture_settled(
   t *testing.T,
   memory harness.Memory_Handle,
-  syntax requirements.Syntax,
   format_state harness.Format,
   command harness.Command,
   directory harness.Directory,
   seed uint64,
 ) {
   t.Helper()
-  subject := fixture_new(t, memory, syntax, format_state, command, directory, seed)
+  subject := fixture_new(t, memory, format_state, command, directory, seed)
   fixture_directory(t, subject, "settle")
   fixture_file(t, subject, "settle/a.go", UNFORMATTED)
   fixture_file(t, subject, "settle/b.go", REFUSED)
@@ -3524,7 +3804,6 @@ func fixture_settled(
 func fixture_modes(
   t *testing.T,
   memory harness.Memory_Handle,
-  syntax requirements.Syntax,
   format_state harness.Format,
   command harness.Command,
   directory harness.Directory,
@@ -3532,8 +3811,8 @@ func fixture_modes(
 ) {
   t.Helper()
   // One subject per run, since a memory stream holds what the run before it wrote.
-  plain := fixture_moded(t, memory, syntax, format_state, command, directory, seed)
-  flat := fixture_moded(t, memory, syntax, format_state, command, directory, seed, "-json")
+  plain := fixture_moded(t, memory, format_state, command, directory, seed)
+  flat := fixture_moded(t, memory, format_state, command, directory, seed, "-json")
   // The tree holds findings, thus both modes state them rather than agreeing on nothing.
   if plain != MODES_FINDING_COUNT {
     t.Fatalf("a tree of %d findings stated %d text lines", MODES_FINDING_COUNT, plain)
@@ -3547,7 +3826,6 @@ func fixture_modes(
 func fixture_moded(
   t *testing.T,
   memory harness.Memory_Handle,
-  syntax requirements.Syntax,
   format_state harness.Format,
   command harness.Command,
   directory harness.Directory,
@@ -3555,12 +3833,12 @@ func fixture_moded(
   arguments ...string,
 ) (count int) {
   t.Helper()
-  subject := fixture_new(t, memory, syntax, format_state, command, directory, seed)
+  subject := fixture_new(t, memory, format_state, command, directory, seed)
   fixture_directory(t, subject, "modes")
   fixture_directory(t, subject, "modes/nested")
   fixture_file(t, subject, "modes/a.go", UNFORMATTED)
   fixture_file(t, subject, "modes/b.go", REFUSED)
-  fixture_file(t, subject, "modes/nested/c.go", GROUPED)
+  fixture_file(t, subject, "modes/nested/c.go", INTERFACE_DECLARATION)
   fixture_run(t, subject, append([]string{"harness", "modes"}, arguments...))
   return fixture_lines(fixture_written(subject))
 }
@@ -3571,12 +3849,47 @@ const MODES_FINDING_COUNT = 5
 
 // How many lines one run wrote.
 func fixture_lines(written string) (count int) {
+  opening := 0
   for index := range len(written) {
-    if written[index] == '\n' {
+    if written[index] != '\n' {
+      continue
+    }
+    if !fixture_elapsed(written[opening:index]) {
       count++
     }
+    opening = index + 1
   }
   return count
+}
+
+// Cuts the elapsed seconds a run with a finding closes on off what it wrote.
+func fixture_findings(written string) (findings string) {
+  opening := len(written) - 1
+  for opening > 0 {
+    if written[opening-1] == '\n' {
+      break
+    }
+    opening--
+  }
+  opening = max(opening, 0)
+  if fixture_elapsed(written[opening:]) {
+    return written[:opening]
+  }
+  return written
+}
+
+// Reports whether a line is the elapsed seconds a run with a finding closes on, which states no
+// finding.
+func fixture_elapsed(line string) (elapsed bool) {
+  for _, opening := range []string{harness.ELAPSED_OPENING, `{"passed":false,`} {
+    if len(line) < len(opening) {
+      continue
+    }
+    if line[:len(opening)] == opening {
+      return true
+    }
+  }
+  return false
 }
 
 // ORDER_FINDING_COUNT is how many findings that tree holds: one per Go file, and one per package
@@ -3587,19 +3900,18 @@ const ORDER_FINDING_COUNT = 7
 func fixture_ordered(
   t *testing.T,
   memory harness.Memory_Handle,
-  syntax requirements.Syntax,
   format_state harness.Format,
   command harness.Command,
   directory harness.Directory,
   seed uint64,
 ) (written string) {
   t.Helper()
-  subject := fixture_new(t, memory, syntax, format_state, command, directory, seed)
+  subject := fixture_new(t, memory, format_state, command, directory, seed)
   fixture_directory(t, subject, "order")
   fixture_directory(t, subject, "order/nested")
   fixture_file(t, subject, "order/a.go", UNFORMATTED)
   fixture_file(t, subject, "order/b.go", REFUSED)
-  fixture_file(t, subject, "order/c.go", GROUPED)
+  fixture_file(t, subject, "order/c.go", INTERFACE_DECLARATION)
   fixture_file(t, subject, "order/nested/d.go", UNFORMATTED)
   fixture_file(t, subject, "order/nested/e.go", REFUSED)
   fixture_run(t, subject, []string{"harness", "order", "-json"})
@@ -3611,14 +3923,13 @@ func fixture_ordered(
 func fixture_shut_output(
   t *testing.T,
   memory harness.Memory_Handle,
-  syntax requirements.Syntax,
   format_state harness.Format,
   command harness.Command,
   directory harness.Directory,
   seed uint64,
 ) {
   t.Helper()
-  subject := fixture_new(t, memory, syntax, format_state, command, directory, seed)
+  subject := fixture_new(t, memory, format_state, command, directory, seed)
   fixture_directory(t, subject, "shut")
   fixture_file(t, subject, "shut/a.go", UNFORMATTED)
   subject.Output.Closed = true
@@ -3626,7 +3937,7 @@ func fixture_shut_output(
   fixture_failed(t, subject, "report")
   // A clean package whose pass line takes no byte: the run states nothing, thus it cannot
   // state that it passed either.
-  subject = fixture_new(t, memory, syntax, format_state, command, directory, seed)
+  subject = fixture_new(t, memory, format_state, command, directory, seed)
   fixture_directory(t, subject, "shut")
   fixture_file(t, subject, "shut/a.go", CLEAN)
   fixture_file(t, subject, "shut/"+requirements.MARKDOWN_NAME, CONTRACT_MARKDOWN)
@@ -3638,7 +3949,7 @@ func fixture_shut_output(
   }
   // A failure line that takes no byte: the run holds its failing status with nothing to
   // name it, since no second line can state the first one's own failure.
-  subject = fixture_new(t, memory, syntax, format_state, command, directory, seed)
+  subject = fixture_new(t, memory, format_state, command, directory, seed)
   subject.Errors.Closed = true
   fixture_run(t, subject, []string{"harness", "absent"})
   if subject.Runner.Status != harness.EXIT_FAILURE {
@@ -3646,19 +3957,18 @@ func fixture_shut_output(
   }
 }
 
-// A failed open of the file a fix writes: the declaration pass and the check pass open it first,
-// thus the fault lets two opens pass and names the third.
+// A failed open of the file a fix writes: the declaration pass opens it first, thus the fault
+// lets one open pass and names the second.
 func fixture_fix_open(
   t *testing.T,
   memory harness.Memory_Handle,
-  syntax requirements.Syntax,
   format_state harness.Format,
   command harness.Command,
   directory harness.Directory,
   seed uint64,
 ) {
   t.Helper()
-  subject := fixture_new(t, memory, syntax, format_state, command, directory, seed)
+  subject := fixture_new(t, memory, format_state, command, directory, seed)
   fixture_directory(t, subject, "fixopen")
   fixture_file(t, subject, "fixopen/a.go", UNFORMATTED)
   faults := Fault_Storage{
@@ -3677,7 +3987,6 @@ func fixture_fix_open(
 func fixture_read_passes(
   t *testing.T,
   memory harness.Memory_Handle,
-  syntax requirements.Syntax,
   format_state harness.Format,
   command harness.Command,
   directory harness.Directory,
@@ -3685,7 +3994,7 @@ func fixture_read_passes(
 ) {
   t.Helper()
   for skip := range FAULT_SKIP_COUNT {
-    subject := fixture_new(t, memory, syntax, format_state, command, directory, seed)
+    subject := fixture_new(t, memory, format_state, command, directory, seed)
     fixture_directory(t, subject, "passes")
     fixture_file(t, subject, "passes/a.go", UNFORMATTED)
     fixture_file(t, subject, "passes/"+requirements.MARKDOWN_NAME, CONTRACT_MARKDOWN)
@@ -3760,7 +4069,6 @@ func fixture_failed(t *testing.T, subject *fixture, step string) {
 func fixture_counts(
   t *testing.T,
   memory harness.Memory_Handle,
-  syntax requirements.Syntax,
   format_state harness.Format,
   command harness.Command,
   directory harness.Directory,
@@ -3772,7 +4080,6 @@ func fixture_counts(
   subject := fixture_sized(
     t,
     memory,
-    syntax,
     format_state,
     command,
     directory,
@@ -3791,7 +4098,6 @@ func fixture_counts(
   subject = fixture_sized(
     t,
     memory,
-    syntax,
     format_state,
     command,
     directory,
@@ -3810,7 +4116,6 @@ func fixture_counts(
   subject = fixture_sized(
     t,
     memory,
-    syntax,
     format_state,
     command,
     directory,
@@ -3828,7 +4133,7 @@ func fixture_counts(
   }
   fixture_run(t, subject, []string{"harness", "spread"})
   fixture_failed(t, subject, "walk")
-  fixture_queue(t, memory, syntax, format_state, command, directory, seed)
+  fixture_queue(t, memory, format_state, command, directory, seed)
 }
 
 // One directory past what the pending queue holds: a walk stands on the last of two branches while
@@ -3836,7 +4141,6 @@ func fixture_counts(
 func fixture_queue(
   t *testing.T,
   memory harness.Memory_Handle,
-  syntax requirements.Syntax,
   format_state harness.Format,
   command harness.Command,
   directory harness.Directory,
@@ -3846,7 +4150,6 @@ func fixture_queue(
   subject := fixture_sized(
     t,
     memory,
-    syntax,
     format_state,
     command,
     directory,
@@ -3876,7 +4179,6 @@ const SPREAD_FILE_COUNT = harness.FILE_COUNT_MAXIMUM/SPREAD_PART_COUNT + 1
 func fixture_lined(
   t *testing.T,
   memory harness.Memory_Handle,
-  syntax requirements.Syntax,
   format_state harness.Format,
   command harness.Command,
   directory harness.Directory,
@@ -3886,7 +4188,6 @@ func fixture_lined(
   subject := fixture_sized(
     t,
     memory,
-    syntax,
     format_state,
     command,
     directory,
@@ -3935,7 +4236,6 @@ const NESTED_LINE_COUNT = harness.FORM_STORAGE_SIZE/(NESTED_INDENT_SIZE+NESTED_N
 func fixture_unprintable(
   t *testing.T,
   memory harness.Memory_Handle,
-  syntax requirements.Syntax,
   format_state harness.Format,
   command harness.Command,
   directory harness.Directory,
@@ -3946,7 +4246,6 @@ func fixture_unprintable(
   subject := fixture_sized(
     t,
     memory,
-    syntax,
     format_state,
     command,
     directory,
@@ -4018,7 +4317,6 @@ const EXACT_LAST_SIZE = NESTED_NAME_SIZE +
 func fixture_exact(
   t *testing.T,
   memory harness.Memory_Handle,
-  syntax requirements.Syntax,
   format_state harness.Format,
   command harness.Command,
   directory harness.Directory,
@@ -4028,7 +4326,6 @@ func fixture_exact(
   subject := fixture_sized(
     t,
     memory,
-    syntax,
     format_state,
     command,
     directory,
@@ -4085,7 +4382,6 @@ const WIDENING_WORD_COUNT = (requirements.HEADING_SIZE_MAXIMUM + len(" ")) /
 func fixture_widest_name(
   t *testing.T,
   memory harness.Memory_Handle,
-  syntax requirements.Syntax,
   format_state harness.Format,
   command harness.Command,
   directory harness.Directory,
@@ -4100,7 +4396,7 @@ func fixture_widest_name(
     heading = append(heading, string(WIDENING_CHARACTER)...)
   }
   markdown := "\n# " + string(heading) + "\n\nBody.\n\n### " + string(heading) + "\n\nBody.\n"
-  subject := fixture_new(t, memory, syntax, format_state, command, directory, seed)
+  subject := fixture_new(t, memory, format_state, command, directory, seed)
   fixture_directory(t, subject, "widest")
   fixture_file(t, subject, "widest/a.go", UNFORMATTED)
   fixture_file(t, subject, "widest/"+requirements.MARKDOWN_NAME, markdown)
@@ -4129,7 +4425,6 @@ func fixture_widest_name(
 func fixture_test_lines(
   t *testing.T,
   memory harness.Memory_Handle,
-  syntax requirements.Syntax,
   format_state harness.Format,
   command harness.Command,
   directory harness.Directory,
@@ -4142,7 +4437,6 @@ func fixture_test_lines(
   subject := fixture_sized(
     t,
     memory,
-    syntax,
     format_state,
     command,
     directory,
@@ -4176,14 +4470,13 @@ func fixture_test_tall(line int, end string) (source string) {
 func fixture_full_line(
   t *testing.T,
   memory harness.Memory_Handle,
-  syntax requirements.Syntax,
   format_state harness.Format,
   command harness.Command,
   directory harness.Directory,
   seed uint64,
 ) {
   t.Helper()
-  subject := fixture_new(t, memory, syntax, format_state, command, directory, seed)
+  subject := fixture_new(t, memory, format_state, command, directory, seed)
   subject.Output = nbio.Stream_Memory{Memory: make([]byte, WIDE_OUTPUT_BYTES)}
   subject.Runner.Output = nbio.Memory_To_Stream(&subject.Output)
   subject.Errors = nbio.Stream_Memory{Memory: make([]byte, WIDE_OUTPUT_BYTES)}
@@ -4223,14 +4516,13 @@ func fixture_full_line(
 func fixture_wide_command(
   t *testing.T,
   memory harness.Memory_Handle,
-  syntax requirements.Syntax,
   format_state harness.Format,
   command harness.Command,
   directory harness.Directory,
   seed uint64,
 ) {
   t.Helper()
-  subject := fixture_new(t, memory, syntax, format_state, command, directory, seed)
+  subject := fixture_new(t, memory, format_state, command, directory, seed)
   arguments := make([]string, harness.TOKEN_COUNT_MAXIMUM)
   arguments[0] = "harness"
   for index := 1; index < len(arguments); index++ {
@@ -4252,7 +4544,6 @@ func fixture_wide_command(
 func fixture_stale(
   t *testing.T,
   memory harness.Memory_Handle,
-  syntax requirements.Syntax,
   format_state harness.Format,
   command harness.Command,
   directory harness.Directory,
@@ -4270,7 +4561,7 @@ func fixture_stale(
     "package a\n\nvar (\n\ta = 1\n)\n",
     nested,
   } {
-    subject := fixture_new(t, memory, syntax, format_state, command, directory, seed)
+    subject := fixture_new(t, memory, format_state, command, directory, seed)
     fixture_directory(t, subject, "stale")
     fixture_directory(t, subject, "stale/p")
     fixture_file(t, subject, "stale/p/"+requirements.MARKDOWN_NAME, CONTRACT_MARKDOWN)
@@ -4283,8 +4574,8 @@ func fixture_stale(
   }
 }
 
-// TAIL_NODE_COUNT holds the tail tree: the root, its directory, and three files.
-const TAIL_NODE_COUNT = 8
+// TAIL_NODE_COUNT holds the tail tree: the root, its directory, three files, and go.mod.
+const TAIL_NODE_COUNT = 9
 
 // TAIL_HEAD opens the widest test source on a string that fills it.
 const TAIL_HEAD = "package a\n\nvar b = \""
@@ -4303,7 +4594,6 @@ const TAIL_CONTRACT = "\n# Contract\n\nIt holds.\n# Next\n\nIt holds.\n"
 func fixture_test_tail(
   t *testing.T,
   memory harness.Memory_Handle,
-  syntax requirements.Syntax,
   format_state harness.Format,
   command harness.Command,
   directory harness.Directory,
@@ -4313,7 +4603,6 @@ func fixture_test_tail(
   subject := fixture_sized(
     t,
     memory,
-    syntax,
     format_state,
     command,
     directory,
@@ -4348,14 +4637,13 @@ const REWRITE_LEAF_FIXED = "\n# A\n\n### B\n\nBody.\nMore.\n"
 func fixture_rewritten(
   t *testing.T,
   memory harness.Memory_Handle,
-  syntax requirements.Syntax,
   format_state harness.Format,
   command harness.Command,
   directory harness.Directory,
   seed uint64,
 ) {
   t.Helper()
-  subject := fixture_new(t, memory, syntax, format_state, command, directory, seed)
+  subject := fixture_new(t, memory, format_state, command, directory, seed)
   long := "# " + fixture_repeat("A", requirements.HEADING_SIZE_MAXIMUM+1) + "\nBody.\n"
   contracts := [...]string{"# ", REWRITE_LEAF, long}
   fixture_directory(t, subject, "loose")
@@ -4387,15 +4675,14 @@ func fixture_repeat(text string, count int) (repeated string) {
 }
 
 // TALL_NODE_COUNT holds the widest tree one tall source stands in: the root, its directory, five
-// files, and harness.json.
-const TALL_NODE_COUNT = 9
+// files, harness.json, and go.mod.
+const TALL_NODE_COUNT = 10
 
 // A source refused on the last line the index holds: a position states the largest line a
 // diagnostic names, which no shorter source reaches.
 func fixture_positions(
   t *testing.T,
   memory harness.Memory_Handle,
-  syntax requirements.Syntax,
   format_state harness.Format,
   command harness.Command,
   directory harness.Directory,
@@ -4405,7 +4692,6 @@ func fixture_positions(
   subject := fixture_reported(
     t,
     memory,
-    syntax,
     format_state,
     command,
     directory,
@@ -4424,7 +4710,6 @@ func fixture_positions(
   subject = fixture_sized(
     t,
     memory,
-    syntax,
     format_state,
     command,
     directory,
@@ -4440,8 +4725,8 @@ func fixture_positions(
   // the index to name.
   fixture_run(t, subject, []string{"harness", "past"})
   fixture_states(t, subject, "past/a.go: Fix the syntax at this token.\n")
-  fixture_huge(t, memory, syntax, format_state, command, directory, seed)
-  fixture_spare(t, memory, syntax, format_state, command, directory, seed)
+  fixture_huge(t, memory, format_state, command, directory, seed)
+  fixture_spare(t, memory, format_state, command, directory, seed)
 }
 
 // A source that fills the whole store: the read stops at the store's end, which states the largest
@@ -4451,7 +4736,6 @@ func fixture_positions(
 func fixture_huge(
   t *testing.T,
   memory harness.Memory_Handle,
-  syntax requirements.Syntax,
   format_state harness.Format,
   command harness.Command,
   directory harness.Directory,
@@ -4462,7 +4746,6 @@ func fixture_huge(
   subject := fixture_sized(
     t,
     memory,
-    syntax,
     format_state,
     command,
     directory,
@@ -4477,7 +4760,6 @@ func fixture_huge(
   fixture_reported(
     t,
     memory,
-    syntax,
     format_state,
     command,
     directory,
@@ -4486,15 +4768,14 @@ func fixture_huge(
     fixture_broad(),
     `"column":`+fmt.Sprint(requirements.SOURCE_SIZE_MAXIMUM),
   )
-  fixture_fat(t, memory, syntax, format_state, command, directory, seed)
-  fixture_headings(t, memory, syntax, format_state, command, directory, seed)
+  fixture_fat(t, memory, format_state, command, directory, seed)
+  fixture_headings(t, memory, format_state, command, directory, seed)
 }
 
 // The widest source a fix rewrites whole, then the same source as a contract test file.
 func fixture_spare(
   t *testing.T,
   memory harness.Memory_Handle,
-  syntax requirements.Syntax,
   format_state harness.Format,
   command harness.Command,
   directory harness.Directory,
@@ -4505,7 +4786,6 @@ func fixture_spare(
   subject := fixture_sized(
     t,
     memory,
-    syntax,
     format_state,
     command,
     directory,
@@ -4525,7 +4805,6 @@ func fixture_spare(
   subject = fixture_sized(
     t,
     memory,
-    syntax,
     format_state,
     command,
     directory,
@@ -4597,7 +4876,6 @@ func fixture_spacious() (source string) {
 func fixture_fat(
   t *testing.T,
   memory harness.Memory_Handle,
-  syntax requirements.Syntax,
   format_state harness.Format,
   command harness.Command,
   directory harness.Directory,
@@ -4608,7 +4886,6 @@ func fixture_fat(
   subject := fixture_sized(
     t,
     memory,
-    syntax,
     format_state,
     command,
     directory,
@@ -4667,7 +4944,6 @@ func fixture_wide() (source string) {
 func fixture_reported(
   t *testing.T,
   memory harness.Memory_Handle,
-  syntax requirements.Syntax,
   format_state harness.Format,
   command harness.Command,
   directory harness.Directory,
@@ -4680,7 +4956,6 @@ func fixture_reported(
   subject = fixture_sized(
     t,
     memory,
-    syntax,
     format_state,
     command,
     directory,
@@ -4735,18 +5010,17 @@ func fixture_name(index int) (name string) {
 func fixture_widths(
   t *testing.T,
   memory harness.Memory_Handle,
-  syntax requirements.Syntax,
   format_state harness.Format,
   command harness.Command,
   directory harness.Directory,
   seed uint64,
 ) {
   t.Helper()
-  subject := fixture_new(t, memory, syntax, format_state, command, directory, seed)
+  subject := fixture_new(t, memory, format_state, command, directory, seed)
   fixture_directory(t, subject, "a")
   fixture_file(t, subject, "a/b.go", CLEAN)
   fixture_run(t, subject, []string{"harness", "a"})
-  subject = fixture_new(t, memory, syntax, format_state, command, directory, seed)
+  subject = fixture_new(t, memory, format_state, command, directory, seed)
   fixture_directory(t, subject, "ab")
   fixture_file(t, subject, "ab/b.go", CLEAN)
   // A child under a directory of two bytes: the walk states that parent's path as it
@@ -4756,19 +5030,19 @@ func fixture_widths(
   fixture_run(t, subject, []string{"harness", "ab"})
   // A refusal at the shortest path a run reads: the line it states opens with that path
   // and nothing else, which no longer path reaches.
-  subject = fixture_new(t, memory, syntax, format_state, command, directory, seed)
+  subject = fixture_new(t, memory, format_state, command, directory, seed)
   fixture_directory(t, subject, "a")
   fixture_file(t, subject, "a/b.go", REFUSED)
   fixture_run(t, subject, []string{"harness", "a"})
   fixture_states(t, subject, "a/b.go:3:9")
-  subject = fixture_new(t, memory, syntax, format_state, command, directory, seed)
+  subject = fixture_new(t, memory, format_state, command, directory, seed)
   deep := fixture_chain(t, subject)
   fixture_file(t, subject, deep+"/b.go", REFUSED)
   fixture_run(t, subject, []string{"harness", deep})
   fixture_run(t, subject, []string{"harness", deep, "-json"})
   // One step past that width: the walk admits the directory and its Go file, and the check
   // would name a contract file past what a read path holds, thus the run fails the walk.
-  subject = fixture_new(t, memory, syntax, format_state, command, directory, seed)
+  subject = fixture_new(t, memory, format_state, command, directory, seed)
   over := fixture_chain(t, subject) + "/d"
   fixture_directory(t, subject, over)
   fixture_file(t, subject, over+"/a.go", CLEAN)
@@ -4776,14 +5050,14 @@ func fixture_widths(
   fixture_failed(t, subject, "walk")
   // A package of one main file at the shortest path a run reads: it owes no contract, thus
   // the run ends with that path rather than one the contract check named after it.
-  subject = fixture_new(t, memory, syntax, format_state, command, directory, seed)
+  subject = fixture_new(t, memory, format_state, command, directory, seed)
   fixture_directory(t, subject, "a")
   fixture_file(t, subject, "a/m.go", MAIN)
   fixture_run(t, subject, []string{"harness", "a"})
   fixture_passed(t, subject)
   // A Go file whose path spends the whole width: the check reads it, thus every step of a
   // check states a read path of that width rather than one the chain left room under.
-  subject = fixture_new(t, memory, syntax, format_state, command, directory, seed)
+  subject = fixture_new(t, memory, format_state, command, directory, seed)
   deepest := fixture_chain(t, subject)
   spare_size := filepath.PATH_SIZE_MAXIMUM - len(deepest) - len("/") - len(GO_SUFFIX_TEXT)
   name := make([]byte, spare_size)
@@ -4799,7 +5073,7 @@ func fixture_widths(
   fixture_states(t, subject, string(name)+GO_SUFFIX_TEXT)
   // A package at the whole width a path holds, owing both contract files: the finding that
   // names its test file states the widest path text a report writes.
-  subject = fixture_new(t, memory, syntax, format_state, command, directory, seed)
+  subject = fixture_new(t, memory, format_state, command, directory, seed)
   widest := fixture_chain(t, subject)
   fixture_file(t, subject, widest+"/a.go", REFUSED)
   fixture_file(t, subject, widest+"/"+requirements.MARKDOWN_NAME, CONTRACT_MARKDOWN)
@@ -4817,7 +5091,6 @@ func fixture_widths(
 func fixture_edges(
   t *testing.T,
   memory harness.Memory_Handle,
-  syntax requirements.Syntax,
   format_state harness.Format,
   command harness.Command,
   directory harness.Directory,
@@ -4827,7 +5100,7 @@ func fixture_edges(
   var subject *fixture
   // An argument one byte past what a path slot holds: the walk fails before it opens
   // anything, and its failure line names no path at all.
-  subject = fixture_new(t, memory, syntax, format_state, command, directory, seed)
+  subject = fixture_new(t, memory, format_state, command, directory, seed)
   over := make([]byte, filepath.PATH_SIZE_MAXIMUM+1)
   for index := range over {
     over[index] = 'o'
@@ -4837,15 +5110,15 @@ func fixture_edges(
   // A directory at the whole width a path holds: a walk opens it, and it owes no contract,
   // so no read names a path past what a read path holds. A second walk opens on its parent,
   // thus it records that directory from the widest parent a child fits under.
-  subject = fixture_new(t, memory, syntax, format_state, command, directory, seed)
+  subject = fixture_new(t, memory, format_state, command, directory, seed)
   widest := fixture_chain_full(t, subject)
   fixture_run(t, subject, []string{"harness", widest})
   fixture_run(t, subject, []string{"harness", widest[:len(widest)-len("/w")]})
-  subject = fixture_new(t, memory, syntax, format_state, command, directory, seed)
+  subject = fixture_new(t, memory, format_state, command, directory, seed)
   fixture_directory(t, subject, "codes")
   fixture_file(t, subject, "codes/a.go", "package a\n\nimport (\n\t\"os\"\n)\n")
   fixture_run(t, subject, []string{"harness", "codes", "-json"})
-  subject = fixture_new(t, memory, syntax, format_state, command, directory, seed)
+  subject = fixture_new(t, memory, format_state, command, directory, seed)
   fixture_directory(t, subject, "codes")
   fixture_file(t, subject, "codes/a.go", fixture_deep_nest())
   fixture_run(t, subject, []string{"harness", "codes", "-json"})
@@ -4853,7 +5126,7 @@ func fixture_edges(
   // A second run over the same source: it opens on the deepest refusal one parse names,
   // which no shallower fixture leaves behind.
   fixture_run(t, subject, []string{"harness", "codes", "-json"})
-  subject = fixture_new(t, memory, syntax, format_state, command, directory, seed)
+  subject = fixture_new(t, memory, format_state, command, directory, seed)
   fixture_directory(t, subject, "wide")
   fixture_file(t, subject, "wide/a.go", CLEAN)
   fixture_file(t, subject, "wide/REQUIREMENTS.md", fixture_contract())
@@ -4882,14 +5155,13 @@ func fixture_deep_nest() (source string) {
 func fixture_headings(
   t *testing.T,
   memory harness.Memory_Handle,
-  syntax requirements.Syntax,
   format_state harness.Format,
   command harness.Command,
   directory harness.Directory,
   seed uint64,
 ) {
   t.Helper()
-  subject := fixture_new(t, memory, syntax, format_state, command, directory, seed)
+  subject := fixture_new(t, memory, format_state, command, directory, seed)
   fixture_directory(t, subject, "heads")
   fixture_file(t, subject, "heads/a.go", CLEAN)
   fixture_file(t, subject, "heads/"+requirements.MARKDOWN_NAME, fixture_heading_wide())
@@ -4899,7 +5171,6 @@ func fixture_headings(
   subject = fixture_sized(
     t,
     memory,
-    syntax,
     format_state,
     command,
     directory,
@@ -4918,7 +5189,6 @@ func fixture_headings(
   subject = fixture_sized(
     t,
     memory,
-    syntax,
     format_state,
     command,
     directory,
@@ -4966,7 +5236,6 @@ func fixture_headings_full() (markdown string) {
 func fixture_filled(
   t *testing.T,
   memory harness.Memory_Handle,
-  syntax requirements.Syntax,
   format_state harness.Format,
   command harness.Command,
   directory harness.Directory,
@@ -4976,7 +5245,6 @@ func fixture_filled(
   subject := fixture_sized(
     t,
     memory,
-    syntax,
     format_state,
     command,
     directory,
@@ -4997,7 +5265,6 @@ func fixture_filled(
   subject = fixture_sized(
     t,
     memory,
-    syntax,
     format_state,
     command,
     directory,
@@ -5106,7 +5373,6 @@ func fixture_chain(t *testing.T, subject *fixture) (path string) {
 func fixture_new(
   t *testing.T,
   memory harness.Memory_Handle,
-  syntax requirements.Syntax,
   format_state harness.Format,
   command harness.Command,
   directory harness.Directory,
@@ -5116,7 +5382,6 @@ func fixture_new(
   return fixture_sized(
     t,
     memory,
-    syntax,
     format_state,
     command,
     directory,
@@ -5131,7 +5396,6 @@ func fixture_new(
 func fixture_sized(
   t *testing.T,
   memory harness.Memory_Handle,
-  syntax requirements.Syntax,
   format_state harness.Format,
   command harness.Command,
   directory harness.Directory,
@@ -5175,12 +5439,12 @@ func fixture_sized(
     Runner_Fields: harness.Runner_Fields{
       Read:         harness.Read{Path: read_path_new()},
       Work_Queued:  harness.Runner_Work_Queued,
+      Spread:       harness.Spread{Submit: harness.Check_Lane, Reap: harness.Lane_Oldest},
       Stopped:      harness.Runner_Stopped,
       Output:       nbio.Memory_To_Stream(&subject.Output),
       Error_Output: nbio.Memory_To_Stream(&subject.Errors),
       Clock:        nbio.Sim_Clock_To_Clock(&clocks[0]),
       Memory:       memory,
-      Syntax:       syntax,
       Format:       format_state,
       Command:      command,
       Directory:    directory,
@@ -5205,13 +5469,17 @@ func fixture_sized(
     return fixture_queued(subject)
   }
   fixture_file(t, subject, harness.CONFIGURATION_PATH, CONFIGURATION)
+  fixture_file(t, subject, harness.MODULE_PATH, MODULE)
   return subject
 }
+
+// MODULE is the go.mod a fixture tree holds at its root.
+const MODULE = "module local/fixture\n\ngo 1.26\n"
 
 // CONFIGURATION is the smallest harness.json a run decodes.
 const CONFIGURATION = `{"shared_component":"s","instrumentation_packages":[],` +
   `"opt_out_assertion_mandate_packages":[],` +
-  `"opt_out_recursion_ban":[],"opt_out_interface_ban":[],"ignore":[],"word_replacements":{"a":[]}}`
+  `"opt_out_recursion_ban":[],"opt_out_interface_ban":[],"ignore":[],"word_replacements":{"util":[]}}`
 
 func fixture_directory(t *testing.T, subject *fixture, path string) {
   t.Helper()
@@ -5325,9 +5593,76 @@ func fixture_wait(t *testing.T, subject *fixture) (failed bool) {
   return subject.Setup.Completion.Error != nil
 }
 
+// Names the component a run walks the shared one, while the tree holds the harness.json every
+// fixture starts from, thus a tree under any top-level directory stands in the shared layout. The
+// node is written in place, since a write through the storage would spend a fault a fixture set.
+func fixture_shared(subject *fixture, arguments []string) {
+  if len(arguments) < 2 {
+    return
+  }
+  top := arguments[1]
+  for len(top) > 1 {
+    if top[:2] != "./" {
+      break
+    }
+    top = top[2:]
+  }
+  for index := range len(top) {
+    if top[index] == '/' {
+      top = top[:index]
+      break
+    }
+  }
+  // A top the JSON would have to escape, or none, names no component the run could state.
+  if len(top) == 0 {
+    return
+  }
+  for index := range len(top) {
+    symbol := top[index]
+    if symbol < ' ' {
+      return
+    }
+    if symbol == '"' {
+      return
+    }
+    if symbol == '\\' {
+      return
+    }
+  }
+  shaped := strings_replace(CONFIGURATION, `"shared_component":"s"`, `"shared_component":"`+top+`"`)
+  for index := range subject.Simulation.Nodes {
+    node := &subject.Simulation.Nodes[index]
+    if !node.Used {
+      continue
+    }
+    if string(node.Name[:node.Name_Count]) != harness.CONFIGURATION_PATH {
+      continue
+    }
+    // The file the fixture started from names some component and holds the rest unchanged.
+    held := string(node.Contents[:node.Contents_Count])
+    opening := `{"shared_component":"`
+    rest := CONFIGURATION[len(opening)+len("s"):]
+    // A component of no byte is a fault the fixture wrote to be stated.
+    if len(held) < len(opening)+len(rest)+1 {
+      continue
+    }
+    if held[:len(opening)] != opening {
+      continue
+    }
+    if held[len(held)-len(rest):] != rest {
+      continue
+    }
+    if len(shaped) > len(node.Contents) {
+      continue
+    }
+    node.Contents_Count = copy(node.Contents, shaped)
+  }
+}
+
 // The root alternation of package main: run each recorded continuation, then one pump pass.
 func fixture_run(t *testing.T, subject *fixture, arguments []string) {
   t.Helper()
+  fixture_shared(subject, arguments)
   // Each run states its own lines: a memory stream holds what the run before it wrote, and
   // a fixture that read both would state a count no run reached.
   subject.Output.Cursor = 0
@@ -5356,7 +5691,6 @@ func fixture_run(t *testing.T, subject *fixture, arguments []string) {
     for harness.Rearm(
       harness.Rearm_Input{
         Memory:    subject.Runner.Memory,
-        Syntax:    subject.Runner.Syntax,
         State:     state,
         Progress:  &subject.Runner.Progress,
         Elapsed:   elapsed,
@@ -5381,14 +5715,13 @@ func fixture_run(t *testing.T, subject *fixture, arguments []string) {
 func fixture_first(
   t *testing.T,
   memory harness.Memory_Handle,
-  syntax requirements.Syntax,
   format_state harness.Format,
   command harness.Command,
   directory harness.Directory,
   seed uint64,
 ) {
   t.Helper()
-  subject := fixture_new(t, memory, syntax, format_state, command, directory, seed)
+  subject := fixture_new(t, memory, format_state, command, directory, seed)
   fixture_directory(t, subject, "first")
   fixture_file(t, subject, "first/a.go", CLEAN)
   // A heading at the first byte carries no blank line before it and no text after its
@@ -5403,7 +5736,7 @@ func fixture_first(
   fixture_run(t, subject, []string{"harness", "first"})
   // A heading of a level the doctrine names neither: the message states the fault and
   // both levels a host writes instead, which is the widest text one message opens with.
-  subject = fixture_new(t, memory, syntax, format_state, command, directory, seed)
+  subject = fixture_new(t, memory, format_state, command, directory, seed)
   fixture_directory(t, subject, "level")
   fixture_file(t, subject, "level/a.go", CLEAN)
   fixture_file(t, subject, "level/"+requirements.MARKDOWN_NAME, "\n## Bad\n\nBody.\n")
@@ -5412,7 +5745,7 @@ func fixture_first(
   fixture_run(t, subject, []string{"harness", "first"})
   // A declaration on the line the package clause opens: a test file states its leading
   // declarations wherever they stand, thus one sharing that line stands on line one.
-  subject = fixture_new(t, memory, syntax, format_state, command, directory, seed)
+  subject = fixture_new(t, memory, format_state, command, directory, seed)
   fixture_directory(t, subject, "one")
   fixture_file(t, subject, "one/a.go", CLEAN)
   fixture_file(t, subject, "one/"+requirements.MARKDOWN_NAME, CONTRACT_MARKDOWN)
@@ -5420,7 +5753,7 @@ func fixture_first(
   fixture_run(t, subject, []string{"harness", "one"})
   // A directory holding no Go file is no package, thus the run stands on a count of none
   // where one Go file would leave it at one.
-  subject = fixture_new(t, memory, syntax, format_state, command, directory, seed)
+  subject = fixture_new(t, memory, format_state, command, directory, seed)
   fixture_directory(t, subject, "bare")
   fixture_file(t, subject, "bare/notes.md", "# Notes\n")
   fixture_run(t, subject, []string{"harness", "bare"})
@@ -5431,7 +5764,6 @@ func fixture_first(
 func fixture_empty(
   t *testing.T,
   memory harness.Memory_Handle,
-  syntax requirements.Syntax,
   format_state harness.Format,
   command harness.Command,
   directory harness.Directory,
@@ -5440,7 +5772,7 @@ func fixture_empty(
   t.Helper()
   // A write that takes no byte of a fix leaves the file where it stood, thus the run fails
   // the fix step rather than writes the same bytes again with no end.
-  subject := fixture_new(t, memory, syntax, format_state, command, directory, seed)
+  subject := fixture_new(t, memory, format_state, command, directory, seed)
   fixture_directory(t, subject, "fault")
   fixture_file(t, subject, "fault/a.go", UNFORMATTED)
   empty := Fault_Storage{Inner: subject.Loop.Storage, Loop: subject.Loop, Kind: FAULT_EMPTY}
@@ -5453,7 +5785,6 @@ func fixture_empty(
 func fixture_bytes(
   t *testing.T,
   memory harness.Memory_Handle,
-  syntax requirements.Syntax,
   format_state harness.Format,
   command harness.Command,
   directory harness.Directory,
@@ -5462,7 +5793,7 @@ func fixture_bytes(
   t.Helper()
   // A name holding a byte no text spells stands, thus the line that names it carries that
   // byte rather than a name the run bent into text.
-  subject := fixture_new(t, memory, syntax, format_state, command, directory, seed)
+  subject := fixture_new(t, memory, format_state, command, directory, seed)
   fixture_directory(t, subject, "bytes")
   fixture_file(t, subject, "bytes/\xff.go", UNFORMATTED)
   fixture_run(t, subject, []string{"harness", "bytes"})
@@ -5491,14 +5822,13 @@ func fixture_bytes(
 func fixture_fixed_json(
   t *testing.T,
   memory harness.Memory_Handle,
-  syntax requirements.Syntax,
   format_state harness.Format,
   command harness.Command,
   directory harness.Directory,
   seed uint64,
 ) {
   t.Helper()
-  subject := fixture_new(t, memory, syntax, format_state, command, directory, seed)
+  subject := fixture_new(t, memory, format_state, command, directory, seed)
   fixture_directory(t, subject, "both")
   fixture_file(t, subject, "both/a.go", CLEAN)
   fixture_file(t, subject, "both/"+requirements.MARKDOWN_NAME, CONTRACT_MARKDOWN)
@@ -5515,14 +5845,13 @@ func fixture_fixed_json(
 func fixture_line(
   t *testing.T,
   memory harness.Memory_Handle,
-  syntax requirements.Syntax,
   format_state harness.Format,
   command harness.Command,
   directory harness.Directory,
   seed uint64,
 ) {
   t.Helper()
-  subject := fixture_new(t, memory, syntax, format_state, command, directory, seed)
+  subject := fixture_new(t, memory, format_state, command, directory, seed)
   fixture_directory(t, subject, "line")
   fixture_file(t, subject, "line/m.go", MAIN)
   fixture_run(t, subject, []string{"harness", "line", "-absent"})
@@ -5559,14 +5888,13 @@ const ESCAPED_COMPONENT_COUNT = 3
 func fixture_outgrown(
   t *testing.T,
   memory harness.Memory_Handle,
-  syntax requirements.Syntax,
   format_state harness.Format,
   command harness.Command,
   directory harness.Directory,
   seed uint64,
 ) {
   t.Helper()
-  subject := fixture_new(t, memory, syntax, format_state, command, directory, seed)
+  subject := fixture_new(t, memory, format_state, command, directory, seed)
   component := make([]byte, ESCAPED_COMPONENT_BYTES)
   for index := range component {
     component[index] = '<'
@@ -5584,7 +5912,7 @@ func fixture_outgrown(
   // The same path under a package that owes a contract: the contract finding names that
   // path too, thus the object the contract check states outgrows its store rather than
   // the one a Go diagnostic states.
-  subject = fixture_new(t, memory, syntax, format_state, command, directory, seed)
+  subject = fixture_new(t, memory, format_state, command, directory, seed)
   path = string(component)
   fixture_directory(t, subject, path)
   for range ESCAPED_COMPONENT_COUNT - 1 {
@@ -5603,14 +5931,13 @@ func fixture_outgrown(
 func fixture_folded(
   t *testing.T,
   memory harness.Memory_Handle,
-  syntax requirements.Syntax,
   format_state harness.Format,
   command harness.Command,
   directory harness.Directory,
   seed uint64,
 ) {
   t.Helper()
-  subject := fixture_new(t, memory, syntax, format_state, command, directory, seed)
+  subject := fixture_new(t, memory, format_state, command, directory, seed)
   fixture_directory(t, subject, "fold")
   fixture_file(t, subject, "fold/a.go", CLEAN)
   fixture_file(
@@ -5623,14 +5950,14 @@ func fixture_folded(
   fixture_run(t, subject, []string{"harness", "fold", "-json"})
   fixture_states(t, subject, `"path":"fold/REQUIREMENTS.md","line":8,"column":0,"tier":2`)
   fixture_states(t, subject, `states the test name an earlier heading states`)
-  subject = fixture_new(t, memory, syntax, format_state, command, directory, seed)
+  subject = fixture_new(t, memory, format_state, command, directory, seed)
   fixture_directory(t, subject, "cased")
   fixture_file(t, subject, "cased/a.go", CLEAN)
   fixture_file(t, subject, "cased/"+requirements.MARKDOWN_NAME, "\n# abC\n\nBody.\n")
   fixture_file(t, subject, "cased/"+requirements.TEST_NAME, "package a\n")
   fixture_run(t, subject, []string{"harness", "cased", "-json"})
   fixture_states(t, subject, `carries a capital after a lower case letter`)
-  subject = fixture_new(t, memory, syntax, format_state, command, directory, seed)
+  subject = fixture_new(t, memory, format_state, command, directory, seed)
   fixture_directory(t, subject, "bare")
   fixture_file(t, subject, "bare/a.go", CLEAN)
   fixture_file(t, subject, "bare/"+requirements.MARKDOWN_NAME, "\n")
@@ -5649,27 +5976,26 @@ const MAIN_REFUSED = "package main\n\nfunc f( {}\n"
 func fixture_unproven(
   t *testing.T,
   memory harness.Memory_Handle,
-  syntax requirements.Syntax,
   format_state harness.Format,
   command harness.Command,
   directory harness.Directory,
   seed uint64,
 ) {
   t.Helper()
-  subject := fixture_new(t, memory, syntax, format_state, command, directory, seed)
+  subject := fixture_new(t, memory, format_state, command, directory, seed)
   fixture_directory(t, subject, "unproven")
   fixture_file(t, subject, "unproven/m.go", MAIN_REFUSED)
   fixture_run(t, subject, []string{"harness", "unproven"})
   fixture_states(t, subject, "unproven/REQUIREMENTS.md: The package has no REQUIREMENTS.md.")
   // The same file the parser takes: the clause stands proven, thus the package owes none.
-  subject = fixture_new(t, memory, syntax, format_state, command, directory, seed)
+  subject = fixture_new(t, memory, format_state, command, directory, seed)
   fixture_directory(t, subject, "proven")
   fixture_file(t, subject, "proven/m.go", MAIN)
   fixture_run(t, subject, []string{"harness", "proven"})
   fixture_passed(t, subject)
   // One file the parser takes proves the clause for the package, thus a refused file
   // beside it bars nothing rather than carries its own fault onto the exemption.
-  subject = fixture_new(t, memory, syntax, format_state, command, directory, seed)
+  subject = fixture_new(t, memory, format_state, command, directory, seed)
   fixture_directory(t, subject, "beside")
   fixture_file(t, subject, "beside/a.go", MAIN_REFUSED)
   fixture_file(t, subject, "beside/m.go", MAIN)
@@ -5690,14 +6016,13 @@ func contract_named(path string) (named bool) {
 func fixture_forgotten(
   t *testing.T,
   memory harness.Memory_Handle,
-  syntax requirements.Syntax,
   format_state harness.Format,
   command harness.Command,
   directory harness.Directory,
   seed uint64,
 ) {
   t.Helper()
-  subject := fixture_new(t, memory, syntax, format_state, command, directory, seed)
+  subject := fixture_new(t, memory, format_state, command, directory, seed)
   fixture_directory(t, subject, "declared")
   fixture_file(t, subject, "declared/a.go", DECLARATION)
   fixture_file(t, subject, "declared/b.go", REFERENCE)
@@ -5710,7 +6035,7 @@ func fixture_forgotten(
   }
   // A second tree that spells the name and declares it nowhere: the run states its own
   // names, thus the spelling stands as its host wrote it.
-  subject = fixture_new(t, memory, syntax, format_state, command, directory, seed)
+  subject = fixture_new(t, memory, format_state, command, directory, seed)
   fixture_directory(t, subject, "spelled")
   fixture_file(t, subject, "spelled/b.go", REFERENCE)
   fixture_file(t, subject, "spelled/m.go", MAIN)
@@ -5730,14 +6055,13 @@ const CONTRACTED_PACKAGE_COUNT = 3
 func fixture_third(
   t *testing.T,
   memory harness.Memory_Handle,
-  syntax requirements.Syntax,
   format_state harness.Format,
   command harness.Command,
   directory harness.Directory,
   seed uint64,
 ) {
   t.Helper()
-  subject := fixture_new(t, memory, syntax, format_state, command, directory, seed)
+  subject := fixture_new(t, memory, format_state, command, directory, seed)
   fixture_directory(t, subject, "three")
   for index := range CONTRACTED_PACKAGE_COUNT {
     held := "three/" + fixture_name(index)
@@ -5748,21 +6072,6 @@ func fixture_third(
   }
   fixture_run(t, subject, []string{"harness", "three"})
   fixture_passed(t, subject)
-}
-
-// The run owns the parsed file and its line index; each pass that parses takes them. A
-// constructor would state the one parse no file ever left, thus the root builds them.
-func syntax_new() (syntax requirements.Syntax) {
-  tree := ast.Syntax_Tree{}
-  tree.Tokens.Values = make(ast.Tokens, ast.TOKEN_COUNT_MAXIMUM)
-  tree.Nodes.Values = make(ast.Nodes, ast.NODE_COUNT_MAXIMUM)
-  tree.Parents.Values = make(ast.Parents, ast.DEPTH_MAXIMUM)
-  tree.Last_Children.Values = make(ast.Last_Children, ast.DEPTH_MAXIMUM)
-  tree.Earlier_Children.Values = make(ast.Earlier_Children, ast.DEPTH_MAXIMUM)
-  starts := make(token.Line_Starts, token.LINE_COUNT_MAXIMUM)
-  syntax.Syntax_Tree = &tree
-  syntax.Lines = &token.Line_Index{Starts: starts}
-  return syntax
 }
 
 // The path of the file a run reads stands in a store the root owns, opening on a path every
@@ -5908,14 +6217,13 @@ func history_log() (log string) {
 func fixture_history(
   t *testing.T,
   memory harness.Memory_Handle,
-  syntax requirements.Syntax,
   format_state harness.Format,
   command harness.Command,
   directory harness.Directory,
   seed uint64,
 ) {
   t.Helper()
-  subject := fixture_new(t, memory, syntax, format_state, command, directory, seed)
+  subject := fixture_new(t, memory, format_state, command, directory, seed)
   subject.Output = nbio.Stream_Memory{Memory: make([]byte, WIDE_OUTPUT_BYTES)}
   subject.Runner.Output = nbio.Memory_To_Stream(&subject.Output)
   fixture_directory(t, subject, "hist")
@@ -5949,6 +6257,17 @@ func fixture_history(
   found := `"path":"\u003cgit:aaaaaaaaaa\u003e"`
   if !fixture_holds(fixture_written(subject), found) {
     t.Fatalf("a history run wrote no finding at %s", found)
+  }
+  // A tree whose last finding names a name, thus the history walks on the report it left.
+  subject = fixture_new(t, memory, format_state, command, directory, seed)
+  fixture_directory(t, subject, "named")
+  fixture_file(t, subject, "named/m.go", "package main\n\nvar max_line = 1\n\nfunc main() {}\n")
+  subject.Loop.Spawn = history_spawn(
+    History_Script{Head: "feature\n", Refs: HISTORY_REFS_LOCAL, Log: log},
+  )
+  fixture_run(t, subject, []string{"harness", "named", "-json"})
+  if !fixture_holds(fixture_written(subject), found) {
+    t.Fatalf("a named history run wrote no finding at %s", found)
   }
 }
 
@@ -5986,5 +6305,6 @@ func fixture_streams(subject *fixture) (state harness.Streams) {
     History:        &subject.Runner.History,
     Output:         subject.Runner.Output,
     Errors:         subject.Runner.Error_Output,
+    Spread:         subject.Runner.Spread,
   }
 }

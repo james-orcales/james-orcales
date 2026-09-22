@@ -12,8 +12,6 @@
           "build.go",
           "home/**",
           "documentation/youtube/**",
-          "rust-toolchain.toml",
-          "gameboy_emulator/test_roms/**",
           "shared_lua/**",
           "shared/crypto/ecdsa/**",
           "shared/crypto/ed25519/**",

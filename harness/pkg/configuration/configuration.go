@@ -1,8 +1,9 @@
 // Package configuration decodes harness.json, the policy file that holds the shape of lint.json,
-// into stores the caller owns. It reads no file: the caller reads the bytes and hands them over,
-// and the decoder states the first fault it meets at the byte it stands on.
+// into stores the caller owns. It reads no file: the caller reads the bytes and hands them over.
+// shared/encoding/json decodes them into tokens, and Parse states the first fault the shape meets.
 package configuration
 
+import "local/james-orcales/shared/encoding/json"
 import "local/james-orcales/shared/sim/aver/default"
 import "local/james-orcales/shared/unicode/ucd"
 import "local/james-orcales/shared/unicode/utf8"
@@ -15,11 +16,16 @@ const SOURCE_SIZE_MAXIMUM = 64 * 1024
 // bound.
 const SOURCE_STORAGE_SIZE = SOURCE_SIZE_MAXIMUM + 1
 
-// SOURCE_SIZE_MINIMUM is the empty source, which states an unfinished object.
+// SOURCE_SIZE_MINIMUM is the empty source, which is no JSON value.
 const SOURCE_SIZE_MINIMUM = 0
 
 // VALUE_COUNT_MAXIMUM bounds the strings one file holds, keys aside.
 const VALUE_COUNT_MAXIMUM = 4096
+
+// TOKEN_COUNT_MAXIMUM bounds the tokens of a file whose strings fill the value table: the root
+// object opens and closes, each key spends its name and at most two brackets, and each value at
+// most three tokens, a word and the brackets of its replacements.
+const TOKEN_COUNT_MAXIMUM = 2 + 3*KEY_COUNT + 3*VALUE_COUNT_MAXIMUM
 
 // COUNT_MINIMUM is a table that holds nothing.
 const COUNT_MINIMUM = 0
@@ -97,11 +103,21 @@ func Word_Slot_Invariants(value Word_Slot, namespace aver.Namespace) {
     Ensure()
 }
 
-// Text_Offset is where one value stands in the text store.
-type Text_Offset int
+// Text_Start is the first byte of one text in the text store.
+type Text_Start int
 
-// Text_Offset_Invariants bounds the offset by the text store.
-func Text_Offset_Invariants(value Text_Offset, namespace aver.Namespace) {
+// Text_Start_Invariants bounds the start by the text store.
+func Text_Start_Invariants(value Text_Start, namespace aver.Namespace) {
+  aver.Tree(value, namespace).
+    Range_Int(int(value), OFFSET_MINIMUM, SOURCE_SIZE_MAXIMUM).
+    Ensure()
+}
+
+// Text_End is one past the last byte of one text in the text store.
+type Text_End int
+
+// Text_End_Invariants bounds the end by the text store.
+func Text_End_Invariants(value Text_End, namespace aver.Namespace) {
   aver.Tree(value, namespace).
     Range_Int(int(value), OFFSET_MINIMUM, SOURCE_SIZE_MAXIMUM).
     Ensure()
@@ -115,30 +131,17 @@ type Value struct {
   // Word_Slot is the word a replacement replaces, or WORD_NONE.
   Word Word_Slot
   // Start is the first byte of the text.
-  Start Text_Offset
+  Start Text_Start
   // End is one past the last byte of the text.
-  End Text_Offset
-  // Opening is the quote the string opens on in the source.
-  Opening Source_Offset
+  End Text_End
 }
 
 // Value_Invariants composes one value.
-func Value_Invariants(value Value, namespace aver.Namespace) {
+func Value_Invariants(value *Value, namespace aver.Namespace) {
   Key_Invariants(value.Key, namespace)
   Word_Slot_Invariants(value.Word, namespace)
-  Text_Offset_Invariants(value.Start, namespace)
-  Text_Offset_Invariants(value.End, namespace)
-  Source_Offset_Invariants(value.Opening, namespace)
-}
-
-// Source_Offset is one byte of the source.
-type Source_Offset int
-
-// Source_Offset_Invariants bounds the offset by the source.
-func Source_Offset_Invariants(value Source_Offset, namespace aver.Namespace) {
-  aver.Tree(value, namespace).
-    Range_Int(int(value), OFFSET_MINIMUM, SOURCE_SIZE_MAXIMUM).
-    Ensure()
+  Text_Start_Invariants(value.Start, namespace)
+  Text_End_Invariants(value.End, namespace)
 }
 
 // Values is the value table, fixed by the caller at its whole size.
@@ -170,23 +173,20 @@ func Source_Invariants(value Source, namespace aver.Namespace) {
     Ensure()
 }
 
-// Source_Store holds the source while Parse reads it.
-type Source_Store []byte
+// Tokens is the token store the decoder writes.
+type Tokens json.Tokens
 
-// Source_Store_Invariants fixes the store.
-func Source_Store_Invariants(value Source_Store, _ aver.Namespace) {
-  aver.Always(
-    len(value) == SOURCE_STORAGE_SIZE,
-    "A configuration source store has complete length.",
-  )
-  aver.Always(cap(value) == SOURCE_STORAGE_SIZE, "A configuration source store cannot grow.")
+// Tokens_Invariants fixes the store.
+func Tokens_Invariants(value Tokens, _ aver.Namespace) {
+  aver.Always(len(value) == TOKEN_COUNT_MAXIMUM, "A configuration token store has complete length.")
+  aver.Always(cap(value) == TOKEN_COUNT_MAXIMUM, "A configuration token store cannot grow.")
 }
 
 // CELL_MINIMUM is the least a slot holds: a word slot that names no word.
 const CELL_MINIMUM = -1
 
-// CELL_MAXIMUM is the most a slot holds: the widest character an escape states.
-const CELL_MAXIMUM = 0x10ffff
+// CELL_MAXIMUM is the most a slot holds: an offset of the text store.
+const CELL_MAXIMUM = SOURCE_SIZE_MAXIMUM
 
 // Cell is one slot of the decoder's state.
 type Cell int
@@ -207,76 +207,61 @@ func Cells_Invariants(value Cells, _ aver.Namespace) {
   aver.Always(cap(value) == CELL_COUNT, "A configuration number store cannot grow.")
 }
 
-// CELL_OFFSET is the byte of the source the decoder stands on.
-const CELL_OFFSET = 0
+// CELL_TOKEN is the token the decoder stands on.
+const CELL_TOKEN = 0
 
-// CELL_SIZE is how many bytes the source holds.
-const CELL_SIZE = 1
-
-// CELL_TEXT is how many bytes of the text store the values hold.
-const CELL_TEXT = 2
-
-// CELL_END is one past the last byte of the string being decoded.
-const CELL_END = 3
+// CELL_TOKEN_COUNT is how many tokens the source decoded into.
+const CELL_TOKEN_COUNT = 1
 
 // CELL_VALUE is how many values the table holds.
-const CELL_VALUE = 4
+const CELL_VALUE = 2
 
 // CELL_PRESENT holds one bit for each key the object stated.
-const CELL_PRESENT = 5
+const CELL_PRESENT = 3
 
 // CELL_KEY is the key whose value the decoder reads.
-const CELL_KEY = 6
+const CELL_KEY = 4
 
 // CELL_WORD is the word the replacements being read replace, or WORD_NONE.
-const CELL_WORD = 7
-
-// CELL_ESCAPE is the backslash the escape being read opens on.
-const CELL_ESCAPE = 8
-
-// CELL_CHARACTER is the character one Unicode escape states.
-const CELL_CHARACTER = 9
-
-// CELL_CLOSE is the brace that closes the object.
-const CELL_CLOSE = 10
+const CELL_WORD = 5
 
 // CELL_FAULT is the first fault.
-const CELL_FAULT = 11
+const CELL_FAULT = 6
 
-// CELL_FAULT_OFFSET is the byte the first fault stands on.
-const CELL_FAULT_OFFSET = 12
+// CELL_FAULT_KEY is the key a keyed fault names.
+const CELL_FAULT_KEY = 7
 
-// CELL_FAULT_KEY is the key an absent-key fault names.
-const CELL_FAULT_KEY = 13
+// CELL_FAULT_START is the first byte of the text a quoted fault names.
+const CELL_FAULT_START = 8
 
-// CELL_HIGH is the high half of the surrogate pair being read.
-const CELL_HIGH = 14
+// CELL_FAULT_END is one past the last byte of the text a quoted fault names.
+const CELL_FAULT_END = 9
 
 // CELL_ENTRY is the slot of the glob entry being checked.
-const CELL_ENTRY = 15
+const CELL_ENTRY = 10
 
 // CELL_SPAN_START is the first byte of the text a blank check reads.
-const CELL_SPAN_START = 16
+const CELL_SPAN_START = 11
 
 // CELL_SPAN_END is one past the last byte of the text a blank check reads.
-const CELL_SPAN_END = 17
+const CELL_SPAN_END = 12
 
 // CELL_BLANK is 1 when the text a blank check read holds spaces alone.
-const CELL_BLANK = 18
+const CELL_BLANK = 13
 
 // CELL_LIST is the list of the order lint checks them in that Entry_Next stands on.
-const CELL_LIST = 19
+const CELL_LIST = 14
 
 // CELL_SLOT is the next value slot Entry_Next reads.
-const CELL_SLOT = 20
+const CELL_SLOT = 15
 
 // CELL_COUNT is how many slots the state holds.
-const CELL_COUNT = 21
+const CELL_COUNT = 16
 
-// Configuration is the decoded file and the stores Parse reads it through.
+// Configuration is the decoded file and the stores Parse decodes it through.
 type Configuration struct {
-  // Source holds the file while Parse reads it.
-  Source Source_Store
+  // Tokens holds the tokens the source decodes into.
+  Tokens Tokens
   // Text holds the decoded strings.
   Text Text
   // Values names each decoded string.
@@ -286,8 +271,8 @@ type Configuration struct {
 }
 
 // Configuration_Invariants composes the stores.
-func Configuration_Invariants(value Configuration, namespace aver.Namespace) {
-  Source_Store_Invariants(value.Source, namespace)
+func Configuration_Invariants(value *Configuration, namespace aver.Namespace) {
+  Tokens_Invariants(value.Tokens, namespace)
   Text_Invariants(value.Text, namespace)
   Values_Invariants(value.Values, namespace)
   Cells_Invariants(value.Cells, namespace)
@@ -301,81 +286,57 @@ func Configuration_Handle_Invariants(value Configuration_Handle, namespace aver.
   if value == nil {
     return
   }
-  Configuration_Invariants(*value, namespace)
+  Configuration_Invariants(value, namespace)
 }
 
 // FAULT_NONE is a file that decodes whole.
 const FAULT_NONE Fault_Kind = 0
 
-// FAULT_UNFINISHED is a source that ends inside a value.
-const FAULT_UNFINISHED Fault_Kind = 1
-
-// FAULT_OBJECT is a byte where an object opens.
-const FAULT_OBJECT Fault_Kind = 2
-
-// FAULT_ARRAY is a byte where an array opens.
-const FAULT_ARRAY Fault_Kind = 3
-
-// FAULT_STRING is a byte where a string opens.
-const FAULT_STRING Fault_Kind = 4
-
-// FAULT_COLON is a byte where a colon stands.
-const FAULT_COLON Fault_Kind = 5
-
-// FAULT_COMMA is a byte where a comma or a closing bracket stands.
-const FAULT_COMMA Fault_Kind = 6
-
-// FAULT_SURPLUS is a byte past the object.
-const FAULT_SURPLUS Fault_Kind = 7
-
-// FAULT_CONTROL is a byte below a space inside a string.
-const FAULT_CONTROL Fault_Kind = 8
-
-// FAULT_ESCAPE is an escape JSON does not state, or a surrogate without its pair.
-const FAULT_ESCAPE Fault_Kind = 9
-
-// FAULT_ENCODING is a byte that opens no UTF-8 character.
-const FAULT_ENCODING Fault_Kind = 10
-
-// FAULT_KEY_UNKNOWN is a key the shape does not hold.
-const FAULT_KEY_UNKNOWN Fault_Kind = 11
-
-// FAULT_KEY_REPEATED is a key the object already stated.
-const FAULT_KEY_REPEATED Fault_Kind = 12
-
-// FAULT_KEY_ABSENT is a key the object never stated.
-const FAULT_KEY_ABSENT Fault_Kind = 13
-
-// FAULT_COMPONENT_EMPTY is a shared_component of no byte.
-const FAULT_COMPONENT_EMPTY Fault_Kind = 14
-
-// FAULT_WORDS_EMPTY is a word_replacements of no word.
-const FAULT_WORDS_EMPTY Fault_Kind = 15
+// FAULT_SYNTAX is a source that is no JSON value.
+const FAULT_SYNTAX Fault_Kind = 1
 
 // FAULT_OVERSIZED is a source past SOURCE_SIZE_MAXIMUM.
-const FAULT_OVERSIZED Fault_Kind = 16
+const FAULT_OVERSIZED Fault_Kind = 2
 
-// FAULT_FULL is a string past the value table.
-const FAULT_FULL Fault_Kind = 17
+// FAULT_FULL is a string past the value table, or a token past the token table.
+const FAULT_FULL Fault_Kind = 3
+
+// FAULT_OBJECT is a root other than an object.
+const FAULT_OBJECT Fault_Kind = 4
+
+// FAULT_KEY_UNKNOWN is a key the shape does not hold.
+const FAULT_KEY_UNKNOWN Fault_Kind = 5
+
+// FAULT_KEY_REPEATED is a key the object already stated.
+const FAULT_KEY_REPEATED Fault_Kind = 6
+
+// FAULT_TYPE is a key whose value is of another type than the shape states.
+const FAULT_TYPE Fault_Kind = 7
+
+// FAULT_KEY_ABSENT is a key the object never stated.
+const FAULT_KEY_ABSENT Fault_Kind = 8
+
+// FAULT_EMPTY is a shared_component of no byte, or a word_replacements of no word.
+const FAULT_EMPTY Fault_Kind = 9
 
 // FAULT_GLOB_EMPTY is a glob entry of spaces alone.
-const FAULT_GLOB_EMPTY Fault_Kind = 18
+const FAULT_GLOB_EMPTY Fault_Kind = 10
 
 // FAULT_GLOB_NEGATION is a glob entry whose ! negates nothing.
-const FAULT_GLOB_NEGATION Fault_Kind = 19
+const FAULT_GLOB_NEGATION Fault_Kind = 11
 
 // FAULT_GLOB_TOKEN is a glob entry holding ? or [, which the matcher does not support.
-const FAULT_GLOB_TOKEN Fault_Kind = 20
+const FAULT_GLOB_TOKEN Fault_Kind = 12
 
 // FAULT_GLOB_ESCAPE is a glob entry with a segment that ends in a lone backslash.
-const FAULT_GLOB_ESCAPE Fault_Kind = 21
+const FAULT_GLOB_ESCAPE Fault_Kind = 13
 
 // FAULT_GLOB_NEGATED is a glob list of negations alone, which no entry of it can reach.
-const FAULT_GLOB_NEGATED Fault_Kind = 22
+const FAULT_GLOB_NEGATED Fault_Kind = 14
 
 // FAULT_ASSERTION_REPEATED is an assertion opt-out equal to an instrumentation entry, which the
 // assertion mandate already exempts.
-const FAULT_ASSERTION_REPEATED Fault_Kind = 23
+const FAULT_ASSERTION_REPEATED Fault_Kind = 15
 
 // Fault_Kind names the first fault of a file, or FAULT_NONE.
 type Fault_Kind int
@@ -395,54 +356,56 @@ func Recorded_Fault_Invariants(value Recorded_Fault, namespace aver.Namespace) {
   aver.Tree(value, namespace).
     Range_Int(
     int(value),
-    int(FAULT_UNFINISHED),
+    int(FAULT_SYNTAX),
     int(FAULT_ASSERTION_REPEATED),
   ).
     Ensure()
 }
 
-// Fault_Offset is the byte one fault stands on.
+// Fault_Offset is the byte a syntax fault stands on, counted as shared/encoding/json counts the
+// bytes it read: one past the last byte of a source that ends inside a value.
 type Fault_Offset int
 
-// Fault_Offset_Invariants bounds the offset by the source.
+// Fault_Offset_Invariants bounds the offset by the source and the byte past it.
 func Fault_Offset_Invariants(value Fault_Offset, namespace aver.Namespace) {
   aver.Tree(value, namespace).
-    Range_Int(int(value), OFFSET_MINIMUM, SOURCE_SIZE_MAXIMUM).
+    Range_Int(int(value), OFFSET_MINIMUM, SOURCE_STORAGE_SIZE).
     Ensure()
 }
 
-// Fault is the first fault of a file: what it is, the byte it stands on, and the key an absent
-// key names.
+// Fault is the first fault of a file: what it is, the byte a syntax fault stands on, and the key
+// a keyed fault names. The text a quoted fault names stands in the text store, at the cells
+// CELL_FAULT_START and CELL_FAULT_END.
 type Fault struct {
   // Kind is what the fault is.
   Kind Fault_Kind
-  // Offset is the byte the fault stands on.
+  // Offset is the byte a syntax fault stands on.
   Offset Fault_Offset
-  // Key is the key an absent key names.
+  // Key is the key a keyed fault names.
   Key Key
 }
 
 // Fault_Invariants composes one fault.
-func Fault_Invariants(value Fault, namespace aver.Namespace) {
+func Fault_Invariants(value *Fault, namespace aver.Namespace) {
   Fault_Kind_Invariants(value.Kind, namespace)
   Fault_Offset_Invariants(value.Offset, namespace)
   Key_Invariants(value.Key, namespace)
 }
 
 // FAULT_MESSAGE_SIZE_MINIMUM is the shortest fault message.
-const FAULT_MESSAGE_SIZE_MINIMUM = len(MESSAGE_KEY_ABSENT)
+const FAULT_MESSAGE_SIZE_MINIMUM = len(MESSAGE_EMPTY)
 
 // FAULT_MESSAGE_SIZE_MAXIMUM is the longest fault message.
 const FAULT_MESSAGE_SIZE_MAXIMUM = len(MESSAGE_ASSERTION_REPEATED)
+
+// MESSAGE_EMPTY states a value of no byte or no word, past the key.
+const MESSAGE_EMPTY = "is empty"
 
 // MESSAGE_KEY_ABSENT states a key the object never stated, past the key.
 const MESSAGE_KEY_ABSENT = "is absent"
 
 // MESSAGE_ASSERTION_REPEATED states an assertion opt-out that repeats an instrumentation entry.
 const MESSAGE_ASSERTION_REPEATED = "entry repeats an instrumentation_packages entry"
-
-// MESSAGE_GLOB_ESCAPE states a glob entry with a segment that ends in a lone backslash.
-const MESSAGE_GLOB_ESCAPE = "entry ends a segment in a lone backslash"
 
 // Keyed is whether a fault names the key it stands under.
 type Keyed bool
@@ -451,6 +414,16 @@ type Keyed bool
 func Keyed_Invariants(value Keyed, namespace aver.Namespace) {
   aver.Tree(value, namespace).
     Sometimes(bool(value), "A configuration fault names its key.").
+    Ensure()
+}
+
+// Quoted is whether a fault names the text it stands on.
+type Quoted bool
+
+// Quoted_Invariants proves both kinds of fault occur.
+func Quoted_Invariants(value Quoted, namespace aver.Namespace) {
+  aver.Tree(value, namespace).
+    Sometimes(bool(value), "A configuration fault names its text.").
     Ensure()
 }
 
@@ -468,605 +441,255 @@ func Fault_Message_Invariants(value Fault_Message, namespace aver.Namespace) {
     Ensure()
 }
 
-// TOKEN_COLON separates a key from its value.
-const TOKEN_COLON Token = ':'
-
-// TOKEN_ARRAY opens an array.
-const TOKEN_ARRAY Token = '['
-
-// TOKEN_OBJECT opens an object.
-const TOKEN_OBJECT Token = '{'
-
-// Token is one byte the shape requires where the decoder stands.
-type Token int
-
-// Token_Invariants admits each token.
-func Token_Invariants(value Token, namespace aver.Namespace) {
-  aver.Tree(value, namespace).
-    Enum_3_Int(
-    int(value),
-    int(TOKEN_COLON),
-    int(TOKEN_ARRAY),
-    int(TOKEN_OBJECT),
-  ).
-    Ensure()
-}
-
-// BACKSLASH opens an escape.
+// BACKSLASH escapes the byte past it in a glob.
 const BACKSLASH = 0x5c
-
-// QUOTE opens and closes a string.
-const QUOTE = '"'
-
-// SPACE is the first byte a string holds unescaped.
-const SPACE = 0x20
-
-// SURROGATE_HIGH_MINIMUM opens the high half of a surrogate pair.
-const SURROGATE_HIGH_MINIMUM = 0xd800
-
-// SURROGATE_LOW_MINIMUM opens the low half of a surrogate pair.
-const SURROGATE_LOW_MINIMUM = 0xdc00
-
-// SURROGATE_LOW_MAXIMUM closes the low half of a surrogate pair.
-const SURROGATE_LOW_MAXIMUM = 0xdfff
-
-// SURROGATE_BASE is the first character a surrogate pair states.
-const SURROGATE_BASE = 0x10000
-
-// SURROGATE_SPAN is how many characters one high surrogate spans.
-const SURROGATE_SPAN = 0x400
-
-// HEXADECIMAL_DIGIT_COUNT is the digits of one Unicode escape.
-const HEXADECIMAL_DIGIT_COUNT = 4
 
 // Parse decodes the source into the configuration's stores and states the first fault, or
 // FAULT_NONE. A value stands in the table only up to the fault.
 func Parse(configuration Configuration_Handle, source Source) (fault Fault) {
-  defer func() { Fault_Invariants(fault, "parse.fault") }()
+  defer func() { Fault_Invariants(&fault, "parse.fault") }()
   Configuration_Handle_Invariants(configuration, "parse.configuration")
   Source_Invariants(source, "parse.source")
-  numbers := configuration.Cells
-  for index := range numbers {
-    numbers[index] = 0
-  }
-  numbers[CELL_WORD] = Cell(WORD_NONE)
-  numbers[CELL_SIZE] = Cell(copy(configuration.Source, source))
+  cells := configuration.Cells
+  clear(cells)
+  cells[CELL_WORD] = Cell(WORD_NONE)
   if len(source) > SOURCE_SIZE_MAXIMUM {
-    numbers[CELL_OFFSET] = SOURCE_SIZE_MAXIMUM
-    fault_record(configuration, Recorded_Fault(FAULT_OVERSIZED))
+    return Fault{Kind: FAULT_OVERSIZED}
   }
-  if numbers[CELL_FAULT] == Cell(FAULT_NONE) {
-    object_parse(configuration)
+  count, _, position, status := json.Decode_Into(
+    json.Tokens(configuration.Tokens),
+    json.Output(configuration.Text),
+    json.Encoded(source),
+  )
+  switch status {
+  case json.STATUS_INPUT_INVALID:
+    return Fault{Kind: FAULT_SYNTAX, Offset: Fault_Offset(position)}
+  case json.STATUS_OUTPUT_TOO_SMALL:
+    return Fault{Kind: FAULT_FULL}
   }
-  if numbers[CELL_FAULT] == Cell(FAULT_NONE) {
+  // The stores are the caller's own and the text store holds the widest source, thus the decoder
+  // refuses no store and no decoded size.
+  aver.Always(status == json.STATUS_OK, "A configuration decodes into its stores.")
+  cells[CELL_TOKEN_COUNT] = Cell(count)
+  object_decode(configuration)
+  if cells[CELL_FAULT] == Cell(FAULT_NONE) {
     object_close(configuration)
   }
   return Fault{
-    Kind:   Fault_Kind(numbers[CELL_FAULT]),
-    Offset: Fault_Offset(numbers[CELL_FAULT_OFFSET]),
-    Key:    Key(numbers[CELL_FAULT_KEY]),
+    Kind:   Fault_Kind(cells[CELL_FAULT]),
+    Key:    Key(cells[CELL_FAULT_KEY]),
+    Offset: OFFSET_MINIMUM,
   }
 }
 
-// Records the fault at the byte the decoder stands on.
-func fault_record(configuration Configuration_Handle, kind Recorded_Fault) {
+// Shape_Fault is a fault the decoded tokens meet: a string past the value table, or a shape the
+// file does not hold.
+type Shape_Fault Fault_Kind
+
+// Shape_Fault_Invariants admits each fault past the decode.
+func Shape_Fault_Invariants(value Shape_Fault, namespace aver.Namespace) {
+  aver.Tree(value, namespace).
+    Range_Int(int(value), int(FAULT_FULL), int(FAULT_ASSERTION_REPEATED)).
+    Ensure()
+}
+
+// Records the first fault, naming the key the decoder stands under.
+func fault_record(configuration Configuration_Handle, kind Shape_Fault) {
   Configuration_Handle_Invariants(configuration, "fault_record.configuration")
-  Recorded_Fault_Invariants(kind, "fault_record.kind")
-  numbers := configuration.Cells
-  numbers[CELL_FAULT] = Cell(kind)
-  numbers[CELL_FAULT_OFFSET] = numbers[CELL_OFFSET]
+  Shape_Fault_Invariants(kind, "fault_record.kind")
+  cells := configuration.Cells
+  cells[CELL_FAULT] = Cell(kind)
+  cells[CELL_FAULT_KEY] = cells[CELL_KEY]
 }
 
-// Reads the object and each member it holds, up to the brace that closes it. Past the seventh
+// Reports whether the token the decoder stands on is of one kind.
+func token_is(configuration Configuration_Handle, kind Shape_Kind) (held Held) {
+  defer func() { Held_Invariants(held, "token_is.held") }()
+  Configuration_Handle_Invariants(configuration, "token_is.configuration")
+  Shape_Kind_Invariants(kind, "token_is.kind")
+  return configuration.Tokens[configuration.Cells[CELL_TOKEN]].Kind == json.Kind(kind)
+}
+
+// Shape_Kind is a token kind the shape states: a string, or a bracket of an array or an object.
+type Shape_Kind json.Kind
+
+// Shape_Kind_Invariants admits each kind the shape states.
+func Shape_Kind_Invariants(value Shape_Kind, namespace aver.Namespace) {
+  aver.Tree(value, namespace).
+    Range_Uint8(
+    uint8(value),
+    uint8(json.KIND_STRING),
+    uint8(json.KIND_OBJECT_END),
+  ).
+    Ensure()
+}
+
+// Held is whether the token the decoder stands on is of the kind it asked for.
+type Held bool
+
+// Held_Invariants proves both answers occur.
+func Held_Invariants(value Held, namespace aver.Namespace) {
+  aver.Tree(value, namespace).
+    Sometimes(
+    bool(value),
+    "A configuration token is of the kind the shape states.",
+  ).
+    Ensure()
+}
+
+// Reads the root object and each member it holds, up to the brace that closes it. The decoder
+// states one complete value, thus the root's closing brace is the last token. Past the seventh
 // member a key is unknown or repeated, thus the members the loop reads are bounded.
-func object_parse(configuration Configuration_Handle) {
-  Configuration_Handle_Invariants(configuration, "object_parse.configuration")
-  numbers, source := configuration.Cells, configuration.Source
-  token_expect(configuration, TOKEN_OBJECT)
-  if numbers[CELL_FAULT] != Cell(FAULT_NONE) {
+func object_decode(configuration Configuration_Handle) {
+  Configuration_Handle_Invariants(configuration, "object_decode.configuration")
+  cells := configuration.Cells
+  if !bool(token_is(configuration, Shape_Kind(json.KIND_OBJECT))) {
+    fault_record(configuration, Shape_Fault(FAULT_OBJECT))
     return
   }
-  space_skip(configuration)
-  closed := numbers[CELL_OFFSET] < numbers[CELL_SIZE]
-  if closed {
-    closed = source[numbers[CELL_OFFSET]] == '}'
-  }
+  cells[CELL_TOKEN]++
   for range KEY_COUNT + 1 {
-    if closed {
-      numbers[CELL_CLOSE] = numbers[CELL_OFFSET]
-      numbers[CELL_OFFSET]++
+    if cells[CELL_TOKEN] == cells[CELL_TOKEN_COUNT]-1 {
       return
     }
-    member_parse(configuration)
-    if numbers[CELL_FAULT] != Cell(FAULT_NONE) {
+    key_decode(configuration)
+    if cells[CELL_FAULT] != Cell(FAULT_NONE) {
       return
     }
-    closed = bool(member_close(configuration, TERMINATOR_OBJECT))
-    if numbers[CELL_FAULT] != Cell(FAULT_NONE) {
+    cells[CELL_TOKEN]++
+    member_decode(configuration)
+    if cells[CELL_FAULT] != Cell(FAULT_NONE) {
       return
     }
   }
 }
 
-// Steps past the comma after one member, or reports the closing byte. A source that ends there,
-// or holds another byte, is a fault.
-func member_close(configuration Configuration_Handle, terminator Terminator) (closed Closed) {
-  defer func() { Closed_Invariants(closed, "member_close.closed") }()
-  Configuration_Handle_Invariants(configuration, "member_close.configuration")
-  Terminator_Invariants(terminator, "member_close.terminator")
-  numbers, source := configuration.Cells, configuration.Source
-  space_skip(configuration)
-  if numbers[CELL_OFFSET] == numbers[CELL_SIZE] {
-    fault_record(configuration, Recorded_Fault(FAULT_UNFINISHED))
-    return false
-  }
-  switch source[numbers[CELL_OFFSET]] {
-  case byte(terminator):
-    return true
-  case ',':
-    numbers[CELL_OFFSET]++
-    space_skip(configuration)
-    return false
-  }
-  fault_record(configuration, Recorded_Fault(FAULT_COMMA))
-  return false
-}
-
-// TERMINATOR_ARRAY closes an array.
-const TERMINATOR_ARRAY Terminator = ']'
-
-// TERMINATOR_OBJECT closes an object.
-const TERMINATOR_OBJECT Terminator = '}'
-
-// Terminator is the byte that closes the container the decoder reads.
-type Terminator int
-
-// Terminator_Invariants admits each closing byte.
-func Terminator_Invariants(value Terminator, namespace aver.Namespace) {
-  aver.Tree(value, namespace).
-    Enum_Int(int(value), int(TERMINATOR_ARRAY), int(TERMINATOR_OBJECT)).
-    Ensure()
-}
-
-// Closed is whether the container the decoder reads is closed.
-type Closed bool
-
-// Closed_Invariants proves both answers occur.
-func Closed_Invariants(value Closed, namespace aver.Namespace) {
-  aver.Tree(value, namespace).
-    Sometimes(bool(value), "A container closes past a member.").
-    Ensure()
-}
-
-// Reads one member: its key, the colon, and the value the key names.
-func member_parse(configuration Configuration_Handle) {
-  Configuration_Handle_Invariants(configuration, "member_parse.configuration")
-  numbers := configuration.Cells
-  numbers[CELL_WORD] = Cell(WORD_NONE)
-  key_parse(configuration)
-  if numbers[CELL_FAULT] != Cell(FAULT_NONE) {
+// Reads one member name, which names a key of the shape the object has not stated yet.
+func key_decode(configuration Configuration_Handle) {
+  Configuration_Handle_Invariants(configuration, "key_decode.configuration")
+  cells := configuration.Cells
+  named := configuration.Tokens[cells[CELL_TOKEN]]
+  name := configuration.Text[named.Start:named.End]
+  // The conversion stands inside the comparison, where it copies nothing.
+  for key := range Key(KEY_COUNT) {
+    if string(name) != string(Key_Text(key)) {
+      continue
+    }
+    cells[CELL_KEY] = Cell(key)
+    if cells[CELL_PRESENT]&(1<<key) != 0 {
+      fault_record(configuration, Shape_Fault(FAULT_KEY_REPEATED))
+      return
+    }
+    cells[CELL_PRESENT] |= 1 << key
     return
   }
-  token_expect(configuration, TOKEN_COLON)
-  if numbers[CELL_FAULT] != Cell(FAULT_NONE) {
-    return
-  }
-  switch Key(numbers[CELL_KEY]) {
+  cells[CELL_FAULT_START], cells[CELL_FAULT_END] = Cell(named.Start), Cell(named.End)
+  fault_record(configuration, Shape_Fault(FAULT_KEY_UNKNOWN))
+}
+
+// Reads the value of the key the decoder stands under, as the shape states its type.
+func member_decode(configuration Configuration_Handle) {
+  Configuration_Handle_Invariants(configuration, "member_decode.configuration")
+  cells := configuration.Cells
+  cells[CELL_WORD] = Cell(WORD_NONE)
+  switch Key(cells[CELL_KEY]) {
   case KEY_SHARED_COMPONENT:
-    value_parse(configuration)
+    value_decode(configuration)
   case KEY_WORD_REPLACEMENTS:
-    words_parse(configuration)
+    words_decode(configuration)
   default:
-    list_parse(configuration)
+    list_decode(configuration)
   }
 }
 
-// Reads one key, which names a key of the shape the object has not stated yet.
-func key_parse(configuration Configuration_Handle) {
-  Configuration_Handle_Invariants(configuration, "key_parse.configuration")
-  numbers, text := configuration.Cells, configuration.Text
-  space_skip(configuration)
-  opening := numbers[CELL_OFFSET]
-  string_decode(configuration)
-  if numbers[CELL_FAULT] != Cell(FAULT_NONE) {
+// Reads one array of strings under the key the decoder stands on, and steps past its bracket.
+func list_decode(configuration Configuration_Handle) {
+  Configuration_Handle_Invariants(configuration, "list_decode.configuration")
+  cells := configuration.Cells
+  if !bool(token_is(configuration, Shape_Kind(json.KIND_ARRAY))) {
+    fault_record(configuration, Shape_Fault(FAULT_TYPE))
     return
   }
-  key := Cell(-1)
-  switch string(text[numbers[CELL_TEXT]:numbers[CELL_END]]) {
-  case "shared_component":
-    key = Cell(KEY_SHARED_COMPONENT)
-  case "instrumentation_packages":
-    key = Cell(KEY_INSTRUMENTATION_PACKAGES)
-  case "word_replacements":
-    key = Cell(KEY_WORD_REPLACEMENTS)
-  case "ignore":
-    key = Cell(KEY_IGNORE)
-  case "opt_out_assertion_mandate_packages":
-    key = Cell(KEY_ASSERTION_EXEMPT)
-  case "opt_out_recursion_ban":
-    key = Cell(KEY_RECURSION_EXEMPT)
-  case "opt_out_interface_ban":
-    key = Cell(KEY_INTERFACE_EXEMPT)
-  }
-  if key < 0 {
-    numbers[CELL_OFFSET] = opening
-    fault_record(configuration, Recorded_Fault(FAULT_KEY_UNKNOWN))
-    return
-  }
-  if numbers[CELL_PRESENT]&(1<<key) != 0 {
-    numbers[CELL_OFFSET] = opening
-    fault_record(configuration, Recorded_Fault(FAULT_KEY_REPEATED))
-    return
-  }
-  numbers[CELL_PRESENT] |= 1 << key
-  numbers[CELL_KEY] = key
-}
-
-// Reads one array of strings under the key the decoder stands on.
-func list_parse(configuration Configuration_Handle) {
-  Configuration_Handle_Invariants(configuration, "list_parse.configuration")
-  numbers, source := configuration.Cells, configuration.Source
-  token_expect(configuration, TOKEN_ARRAY)
-  if numbers[CELL_FAULT] != Cell(FAULT_NONE) {
-    return
-  }
-  space_skip(configuration)
-  closed := numbers[CELL_OFFSET] < numbers[CELL_SIZE]
-  if closed {
-    closed = source[numbers[CELL_OFFSET]] == ']'
-  }
+  cells[CELL_TOKEN]++
   // Past the last slot a string is a fault, thus the strings the loop reads are bounded.
   for range VALUE_COUNT_MAXIMUM + 1 {
-    if closed {
-      numbers[CELL_OFFSET]++
+    if bool(token_is(configuration, Shape_Kind(json.KIND_ARRAY_END))) {
+      cells[CELL_TOKEN]++
       return
     }
-    value_parse(configuration)
-    if numbers[CELL_FAULT] != Cell(FAULT_NONE) {
-      return
-    }
-    closed = bool(member_close(configuration, TERMINATOR_ARRAY))
-    if numbers[CELL_FAULT] != Cell(FAULT_NONE) {
+    value_decode(configuration)
+    if cells[CELL_FAULT] != Cell(FAULT_NONE) {
       return
     }
   }
 }
 
-// Reads the word table: each word, then the array of its replacements.
-func words_parse(configuration Configuration_Handle) {
-  Configuration_Handle_Invariants(configuration, "words_parse.configuration")
-  numbers, source := configuration.Cells, configuration.Source
-  token_expect(configuration, TOKEN_OBJECT)
-  if numbers[CELL_FAULT] != Cell(FAULT_NONE) {
+// Reads the word table: each word, then the array of its replacements, and steps past its brace.
+func words_decode(configuration Configuration_Handle) {
+  Configuration_Handle_Invariants(configuration, "words_decode.configuration")
+  cells := configuration.Cells
+  if !bool(token_is(configuration, Shape_Kind(json.KIND_OBJECT))) {
+    fault_record(configuration, Shape_Fault(FAULT_TYPE))
     return
   }
-  space_skip(configuration)
-  closed := numbers[CELL_OFFSET] < numbers[CELL_SIZE]
-  if closed {
-    closed = source[numbers[CELL_OFFSET]] == '}'
-  }
+  cells[CELL_TOKEN]++
   for range VALUE_COUNT_MAXIMUM + 1 {
-    if closed {
-      numbers[CELL_OFFSET]++
+    if bool(token_is(configuration, Shape_Kind(json.KIND_OBJECT_END))) {
+      cells[CELL_TOKEN]++
       return
     }
-    numbers[CELL_WORD] = Cell(WORD_NONE)
-    value_parse(configuration)
-    if numbers[CELL_FAULT] != Cell(FAULT_NONE) {
+    cells[CELL_WORD] = Cell(WORD_NONE)
+    value_decode(configuration)
+    if cells[CELL_FAULT] != Cell(FAULT_NONE) {
       return
     }
-    numbers[CELL_WORD] = numbers[CELL_VALUE] - 1
-    token_expect(configuration, TOKEN_COLON)
-    if numbers[CELL_FAULT] != Cell(FAULT_NONE) {
-      return
-    }
-    list_parse(configuration)
-    if numbers[CELL_FAULT] != Cell(FAULT_NONE) {
-      return
-    }
-    closed = bool(member_close(configuration, TERMINATOR_OBJECT))
-    if numbers[CELL_FAULT] != Cell(FAULT_NONE) {
+    cells[CELL_WORD] = cells[CELL_VALUE] - 1
+    list_decode(configuration)
+    if cells[CELL_FAULT] != Cell(FAULT_NONE) {
       return
     }
   }
 }
 
-// Reads one string into the next slot of the value table.
-func value_parse(configuration Configuration_Handle) {
-  Configuration_Handle_Invariants(configuration, "value_parse.configuration")
-  numbers := configuration.Cells
-  space_skip(configuration)
-  if numbers[CELL_VALUE] == VALUE_COUNT_MAXIMUM {
-    fault_record(configuration, Recorded_Fault(FAULT_FULL))
+// Reads one string into the next slot of the value table, and steps past it.
+func value_decode(configuration Configuration_Handle) {
+  Configuration_Handle_Invariants(configuration, "value_decode.configuration")
+  cells := configuration.Cells
+  if !bool(token_is(configuration, Shape_Kind(json.KIND_STRING))) {
+    fault_record(configuration, Shape_Fault(FAULT_TYPE))
     return
   }
-  opening := numbers[CELL_OFFSET]
-  string_decode(configuration)
-  if numbers[CELL_FAULT] != Cell(FAULT_NONE) {
+  if cells[CELL_VALUE] == VALUE_COUNT_MAXIMUM {
+    fault_record(configuration, Shape_Fault(FAULT_FULL))
     return
   }
-  configuration.Values[numbers[CELL_VALUE]] = Value{
-    Key:     Key(numbers[CELL_KEY]),
-    Word:    Word_Slot(numbers[CELL_WORD]),
-    Start:   Text_Offset(numbers[CELL_TEXT]),
-    End:     Text_Offset(numbers[CELL_END]),
-    Opening: Source_Offset(opening),
+  decoded := configuration.Tokens[cells[CELL_TOKEN]]
+  configuration.Values[cells[CELL_VALUE]] = Value{
+    Key:   Key(cells[CELL_KEY]),
+    Word:  Word_Slot(cells[CELL_WORD]),
+    Start: Text_Start(decoded.Start),
+    End:   Text_End(decoded.End),
   }
-  numbers[CELL_TEXT] = numbers[CELL_END]
-  numbers[CELL_VALUE]++
+  cells[CELL_VALUE]++
+  cells[CELL_TOKEN]++
 }
 
-// Decodes one string into the text store past the values it holds. A string decodes to no more
-// bytes than it spends, thus the store never runs out ahead of the source.
-func string_decode(configuration Configuration_Handle) {
-  Configuration_Handle_Invariants(configuration, "string_decode.configuration")
-  numbers, source, text := configuration.Cells, configuration.Source, configuration.Text
-  if numbers[CELL_OFFSET] == numbers[CELL_SIZE] {
-    fault_record(configuration, Recorded_Fault(FAULT_UNFINISHED))
-    return
-  }
-  if source[numbers[CELL_OFFSET]] != QUOTE {
-    fault_record(configuration, Recorded_Fault(FAULT_STRING))
-    return
-  }
-  numbers[CELL_OFFSET]++
-  numbers[CELL_END] = numbers[CELL_TEXT]
-  for range SOURCE_STORAGE_SIZE {
-    if numbers[CELL_OFFSET] == numbers[CELL_SIZE] {
-      fault_record(configuration, Recorded_Fault(FAULT_UNFINISHED))
-      return
-    }
-    value := source[numbers[CELL_OFFSET]]
-    if value == QUOTE {
-      numbers[CELL_OFFSET]++
-      return
-    }
-    switch {
-    case value == BACKSLASH:
-      escape_decode(configuration)
-    case value < SPACE:
-      fault_record(configuration, Recorded_Fault(FAULT_CONTROL))
-    case value < byte(utf8.CHARACTER_SELF):
-      text[numbers[CELL_END]] = value
-      numbers[CELL_END]++
-      numbers[CELL_OFFSET]++
-    default:
-      character_copy(configuration)
-    }
-    if numbers[CELL_FAULT] != Cell(FAULT_NONE) {
-      return
-    }
-  }
-}
-
-// Copies one UTF-8 character past ASCII into the text store. An invalid sequence is a fault at
-// its first byte.
-func character_copy(configuration Configuration_Handle) {
-  Configuration_Handle_Invariants(configuration, "character_copy.configuration")
-  numbers, source, text := configuration.Cells, configuration.Source, configuration.Text
-  offset := numbers[CELL_OFFSET]
-  end := min(offset+utf8.UTF_MAXIMUM, numbers[CELL_SIZE])
-  character, size := utf8.Decode_Character(utf8.Bytes(source[offset:end]))
-  if size == utf8.CHARACTER_SIZE_MINIMUM {
-    if character == utf8.REPLACEMENT_CHARACTER {
-      fault_record(configuration, Recorded_Fault(FAULT_ENCODING))
-      return
-    }
-  }
-  written := copy(text[numbers[CELL_END]:], source[offset:offset+Cell(size)])
-  numbers[CELL_END] += Cell(written)
-  numbers[CELL_OFFSET] += Cell(size)
-}
-
-// Decodes one escape. A fault in it stands at its backslash.
-func escape_decode(configuration Configuration_Handle) {
-  Configuration_Handle_Invariants(configuration, "escape_decode.configuration")
-  numbers, source, text := configuration.Cells, configuration.Source, configuration.Text
-  numbers[CELL_ESCAPE] = numbers[CELL_OFFSET]
-  if numbers[CELL_OFFSET]+1 == numbers[CELL_SIZE] {
-    fault_record(configuration, Recorded_Fault(FAULT_ESCAPE))
-    return
-  }
-  value := source[numbers[CELL_OFFSET]+1]
-  switch value {
-  case QUOTE, BACKSLASH, '/':
-  case 'b':
-    value = '\b'
-  case 'f':
-    value = '\f'
-  case 'n':
-    value = '\n'
-  case 'r':
-    value = '\r'
-  case 't':
-    value = '\t'
-  case 'u':
-    numbers[CELL_OFFSET] += 2
-    unicode_decode(configuration)
-    return
-  default:
-    fault_record(configuration, Recorded_Fault(FAULT_ESCAPE))
-    return
-  }
-  text[numbers[CELL_END]] = value
-  numbers[CELL_END]++
-  numbers[CELL_OFFSET] += 2
-}
-
-// Decodes the digits of one Unicode escape, and the low half of a pair a high surrogate opens.
-func unicode_decode(configuration Configuration_Handle) {
-  Configuration_Handle_Invariants(configuration, "unicode_decode.configuration")
-  numbers, source := configuration.Cells, configuration.Source
-  hexadecimal_read(configuration)
-  if numbers[CELL_FAULT] != Cell(FAULT_NONE) {
-    return
-  }
-  high := numbers[CELL_CHARACTER]
-  paired := high > SURROGATE_HIGH_MINIMUM-1
-  if paired {
-    paired = high < SURROGATE_LOW_MINIMUM
-  }
-  lone := high > SURROGATE_LOW_MINIMUM-1
-  if lone {
-    lone = high < SURROGATE_LOW_MAXIMUM+1
-  }
-  if paired {
-    // The low half opens with its own backslash and u.
-    lone = numbers[CELL_OFFSET]+2 > numbers[CELL_SIZE]
-    if !lone {
-      lone = source[numbers[CELL_OFFSET]] != BACKSLASH
-    }
-    if !lone {
-      lone = source[numbers[CELL_OFFSET]+1] != 'u'
-    }
-  }
-  if lone {
-    escape_fault(configuration)
-    return
-  }
-  if paired {
-    numbers[CELL_OFFSET] += 2
-    hexadecimal_read(configuration)
-    numbers[CELL_HIGH] = high
-    surrogate_join(configuration)
-  }
-  if numbers[CELL_FAULT] != Cell(FAULT_NONE) {
-    return
-  }
-  character_write(configuration)
-}
-
-// States a fault at the backslash the escape opens on.
-func escape_fault(configuration Configuration_Handle) {
-  Configuration_Handle_Invariants(configuration, "escape_fault.configuration")
-  numbers := configuration.Cells
-  numbers[CELL_OFFSET] = numbers[CELL_ESCAPE]
-  fault_record(configuration, Recorded_Fault(FAULT_ESCAPE))
-}
-
-// Joins a high surrogate and the low half the decoder read into the character they state.
-func surrogate_join(configuration Configuration_Handle) {
-  Configuration_Handle_Invariants(configuration, "surrogate_join.configuration")
-  numbers := configuration.Cells
-  if numbers[CELL_FAULT] != Cell(FAULT_NONE) {
-    return
-  }
-  low := numbers[CELL_CHARACTER]
-  if low < SURROGATE_LOW_MINIMUM {
-    escape_fault(configuration)
-    return
-  }
-  if low > SURROGATE_LOW_MAXIMUM {
-    escape_fault(configuration)
-    return
-  }
-  joined := SURROGATE_BASE + (numbers[CELL_HIGH]-SURROGATE_HIGH_MINIMUM)*SURROGATE_SPAN
-  numbers[CELL_CHARACTER] = joined + low - SURROGATE_LOW_MINIMUM
-}
-
-// Reads the four hexadecimal digits of one Unicode escape.
-func hexadecimal_read(configuration Configuration_Handle) {
-  Configuration_Handle_Invariants(configuration, "hexadecimal_read.configuration")
-  numbers, source := configuration.Cells, configuration.Source
-  if numbers[CELL_OFFSET]+HEXADECIMAL_DIGIT_COUNT > numbers[CELL_SIZE] {
-    escape_fault(configuration)
-    return
-  }
-  character := Cell(0)
-  for index := range HEXADECIMAL_DIGIT_COUNT {
-    value := Cell(source[numbers[CELL_OFFSET]+Cell(index)])
-    digit := Cell(-1)
-    switch {
-    case value < '0':
-    case value < '9'+1:
-      digit = value - '0'
-    case value < 'A':
-    case value < 'F'+1:
-      digit = value - 'A' + 10
-    case value < 'a':
-    case value < 'f'+1:
-      digit = value - 'a' + 10
-    }
-    if digit < 0 {
-      escape_fault(configuration)
-      return
-    }
-    character = character*16 + digit
-  }
-  numbers[CELL_CHARACTER] = character
-  numbers[CELL_OFFSET] += HEXADECIMAL_DIGIT_COUNT
-}
-
-// Writes the character one escape states into the text store as UTF-8.
-func character_write(configuration Configuration_Handle) {
-  Configuration_Handle_Invariants(configuration, "character_write.configuration")
-  numbers, text := configuration.Cells, configuration.Text
-  end := numbers[CELL_END]
-  character := utf8.Character(numbers[CELL_CHARACTER])
-  size := utf8.Encode_Character(utf8.Bytes(text[end:end+utf8.UTF_MAXIMUM]), character)
-  numbers[CELL_END] += Cell(size)
-}
-
-// Steps past the token the shape requires where the decoder stands.
-func token_expect(configuration Configuration_Handle, token Token) {
-  Configuration_Handle_Invariants(configuration, "token_expect.configuration")
-  Token_Invariants(token, "token_expect.token")
-  numbers, source := configuration.Cells, configuration.Source
-  space_skip(configuration)
-  if numbers[CELL_OFFSET] == numbers[CELL_SIZE] {
-    fault_record(configuration, Recorded_Fault(FAULT_UNFINISHED))
-    return
-  }
-  if source[numbers[CELL_OFFSET]] == byte(token) {
-    numbers[CELL_OFFSET]++
-    return
-  }
-  switch token {
-  case TOKEN_OBJECT:
-    fault_record(configuration, Recorded_Fault(FAULT_OBJECT))
-  case TOKEN_ARRAY:
-    fault_record(configuration, Recorded_Fault(FAULT_ARRAY))
-  case TOKEN_COLON:
-    fault_record(configuration, Recorded_Fault(FAULT_COLON))
-  }
-}
-
-// Steps past the whitespace JSON admits between tokens.
-func space_skip(configuration Configuration_Handle) {
-  Configuration_Handle_Invariants(configuration, "space_skip.configuration")
-  numbers, source := configuration.Cells, configuration.Source
-  for numbers[CELL_OFFSET] < numbers[CELL_SIZE] {
-    switch source[numbers[CELL_OFFSET]] {
-    case ' ', '\t', '\n', '\r':
-      numbers[CELL_OFFSET]++
-    default:
-      return
-    }
-  }
-}
-
-// Checks what the object states as a whole: nothing past it, each key, a shared component of at
-// least one byte, and at least one word.
+// Checks what the object states as a whole: each key, a shared component of at least one byte, at
+// least one word, then each glob list in the order lint checks them.
 func object_close(configuration Configuration_Handle) {
   Configuration_Handle_Invariants(configuration, "object_close.configuration")
-  numbers := configuration.Cells
-  space_skip(configuration)
-  if numbers[CELL_OFFSET] < numbers[CELL_SIZE] {
-    fault_record(configuration, Recorded_Fault(FAULT_SURPLUS))
-    return
-  }
-  numbers[CELL_OFFSET] = numbers[CELL_CLOSE]
+  cells := configuration.Cells
   for key := range Cell(KEY_COUNT) {
-    if numbers[CELL_PRESENT]&(1<<key) == 0 {
-      numbers[CELL_FAULT_KEY] = key
-      fault_record(configuration, Recorded_Fault(FAULT_KEY_ABSENT))
+    if cells[CELL_PRESENT]&(1<<key) == 0 {
+      cells[CELL_KEY] = key
+      fault_record(configuration, Shape_Fault(FAULT_KEY_ABSENT))
       return
     }
   }
   words, component := 0, 0
-  for _, value := range configuration.Values[:numbers[CELL_VALUE]] {
+  for _, value := range configuration.Values[:cells[CELL_VALUE]] {
     if value.Key == KEY_SHARED_COMPONENT {
-      component = int(value.End - value.Start)
+      component = int(value.End) - int(value.Start)
     }
     if value.Key == KEY_WORD_REPLACEMENTS {
       if value.Word == WORD_NONE {
@@ -1075,11 +698,13 @@ func object_close(configuration Configuration_Handle) {
     }
   }
   if component == 0 {
-    fault_record(configuration, Recorded_Fault(FAULT_COMPONENT_EMPTY))
+    cells[CELL_KEY] = Cell(KEY_SHARED_COMPONENT)
+    fault_record(configuration, Shape_Fault(FAULT_EMPTY))
     return
   }
   if words == 0 {
-    fault_record(configuration, Recorded_Fault(FAULT_WORDS_EMPTY))
+    cells[CELL_KEY] = Cell(KEY_WORD_REPLACEMENTS)
+    fault_record(configuration, Shape_Fault(FAULT_EMPTY))
     return
   }
   // Lint checks the lists in this order, thus the fault it states first is this one's too.
@@ -1091,13 +716,37 @@ func object_close(configuration Configuration_Handle) {
     KEY_INTERFACE_EXEMPT,
   }
   for _, key := range lists {
-    numbers[CELL_KEY] = Cell(key)
+    cells[CELL_KEY] = Cell(key)
     list_check(configuration)
-    if numbers[CELL_FAULT] != Cell(FAULT_NONE) {
+    if cells[CELL_FAULT] != Cell(FAULT_NONE) {
       return
     }
   }
   exemptions_check(configuration)
+}
+
+// Entry_Fault is a fault one glob entry meets.
+type Entry_Fault Fault_Kind
+
+// Entry_Fault_Invariants admits each fault of one entry.
+func Entry_Fault_Invariants(value Entry_Fault, namespace aver.Namespace) {
+  aver.Tree(value, namespace).
+    Range_Int(
+    int(value),
+    int(FAULT_GLOB_EMPTY),
+    int(FAULT_ASSERTION_REPEATED),
+  ).
+    Ensure()
+}
+
+// Records the first fault of one entry, naming its text.
+func entry_fault(configuration Configuration_Handle, kind Entry_Fault) {
+  Configuration_Handle_Invariants(configuration, "entry_fault.configuration")
+  Entry_Fault_Invariants(kind, "entry_fault.kind")
+  cells := configuration.Cells
+  value := configuration.Values[cells[CELL_ENTRY]]
+  cells[CELL_FAULT_START], cells[CELL_FAULT_END] = Cell(value.Start), Cell(value.End)
+  fault_record(configuration, Shape_Fault(kind))
 }
 
 // Checks that no assertion opt-out repeats an instrumentation entry exactly: an instrumentation
@@ -1107,7 +756,7 @@ func exemptions_check(configuration Configuration_Handle) {
   Configuration_Handle_Invariants(configuration, "exemptions_check.configuration")
   cells, text := configuration.Cells, configuration.Text
   values := configuration.Values[:cells[CELL_VALUE]]
-  for _, exemption := range values {
+  for slot, exemption := range values {
     if exemption.Key != KEY_ASSERTION_EXEMPT {
       continue
     }
@@ -1118,10 +767,8 @@ func exemptions_check(configuration Configuration_Handle) {
       if string(text[exemption.Start:exemption.End]) != string(text[entry.Start:entry.End]) {
         continue
       }
-      cells[CELL_OFFSET], cells[CELL_FAULT_KEY] = Cell(exemption.Opening), Cell(
-        KEY_ASSERTION_EXEMPT,
-      )
-      fault_record(configuration, Recorded_Fault(FAULT_ASSERTION_REPEATED))
+      cells[CELL_ENTRY], cells[CELL_KEY] = Cell(slot), Cell(KEY_ASSERTION_EXEMPT)
+      entry_fault(configuration, Entry_Fault(FAULT_ASSERTION_REPEATED))
       return
     }
   }
@@ -1133,13 +780,10 @@ func exemptions_check(configuration Configuration_Handle) {
 func list_check(configuration Configuration_Handle) {
   Configuration_Handle_Invariants(configuration, "list_check.configuration")
   cells, text := configuration.Cells, configuration.Text
-  entries, negated, first := 0, 0, Cell(0)
+  entries, negated := 0, 0
   for slot, value := range configuration.Values[:cells[CELL_VALUE]] {
     if value.Key != Key(cells[CELL_KEY]) {
       continue
-    }
-    if entries == 0 {
-      first = Cell(value.Opening)
     }
     entries++
     cells[CELL_ENTRY] = Cell(slot)
@@ -1156,8 +800,7 @@ func list_check(configuration Configuration_Handle) {
     return
   }
   if negated == entries {
-    cells[CELL_OFFSET], cells[CELL_FAULT_KEY] = first, cells[CELL_KEY]
-    fault_record(configuration, Recorded_Fault(FAULT_GLOB_NEGATED))
+    fault_record(configuration, Shape_Fault(FAULT_GLOB_NEGATED))
   }
 }
 
@@ -1168,12 +811,11 @@ func entry_check(configuration Configuration_Handle) {
   Configuration_Handle_Invariants(configuration, "entry_check.configuration")
   cells, text := configuration.Cells, configuration.Text
   value := configuration.Values[cells[CELL_ENTRY]]
-  cells[CELL_OFFSET], cells[CELL_FAULT_KEY] = Cell(value.Opening), cells[CELL_KEY]
   start, end := Cell(value.Start), Cell(value.End)
   cells[CELL_SPAN_START], cells[CELL_SPAN_END] = start, end
   blank_check(configuration)
   if cells[CELL_BLANK] == 1 {
-    fault_record(configuration, Recorded_Fault(FAULT_GLOB_EMPTY))
+    entry_fault(configuration, Entry_Fault(FAULT_GLOB_EMPTY))
     return
   }
   if text[start] == '!' {
@@ -1182,13 +824,13 @@ func entry_check(configuration Configuration_Handle) {
     blank_check(configuration)
   }
   if cells[CELL_BLANK] == 1 {
-    fault_record(configuration, Recorded_Fault(FAULT_GLOB_NEGATION))
+    entry_fault(configuration, Entry_Fault(FAULT_GLOB_NEGATION))
     return
   }
   for _, symbol := range text[start:end] {
     switch symbol {
     case '?', '[':
-      fault_record(configuration, Recorded_Fault(FAULT_GLOB_TOKEN))
+      entry_fault(configuration, Entry_Fault(FAULT_GLOB_TOKEN))
       return
     }
   }
@@ -1210,7 +852,7 @@ func entry_check(configuration Configuration_Handle) {
       lone = text[index+1] == '/'
     }
     if lone {
-      fault_record(configuration, Recorded_Fault(FAULT_GLOB_ESCAPE))
+      entry_fault(configuration, Entry_Fault(FAULT_GLOB_ESCAPE))
       return
     }
     // The backslash escapes the byte past it, which the scan steps over.
@@ -1270,40 +912,24 @@ func Fault_Text(kind Recorded_Fault) (message Fault_Message) {
   defer func() { Fault_Message_Invariants(message, "fault_text.message") }()
   Recorded_Fault_Invariants(kind, "fault_text.kind")
   switch Fault_Kind(kind) {
-  case FAULT_UNFINISHED:
-    return "unfinished value"
-  case FAULT_OBJECT:
-    return "expected '{'"
-  case FAULT_ARRAY:
-    return "expected '['"
-  case FAULT_STRING:
-    return "expected a string"
-  case FAULT_COLON:
-    return "expected ':'"
-  case FAULT_COMMA:
-    return "expected ',' or a closing bracket"
-  case FAULT_SURPLUS:
-    return "trailing data"
-  case FAULT_CONTROL:
-    return "control byte in a string"
-  case FAULT_ESCAPE:
-    return "invalid escape"
-  case FAULT_ENCODING:
-    return "invalid UTF-8"
-  case FAULT_KEY_UNKNOWN:
-    return "unknown key"
-  case FAULT_KEY_REPEATED:
-    return "repeated key"
-  case FAULT_KEY_ABSENT:
-    return MESSAGE_KEY_ABSENT
-  case FAULT_COMPONENT_EMPTY:
-    return "shared_component is empty"
-  case FAULT_WORDS_EMPTY:
-    return "word_replacements is empty"
+  case FAULT_SYNTAX:
+    return "invalid JSON"
   case FAULT_OVERSIZED:
     return "the file is larger than 65536 bytes"
   case FAULT_FULL:
     return "more than 4096 strings"
+  case FAULT_OBJECT:
+    return "expected an object"
+  case FAULT_KEY_UNKNOWN:
+    return "unknown key"
+  case FAULT_KEY_REPEATED:
+    return "is repeated"
+  case FAULT_TYPE:
+    return "holds a value of another type"
+  case FAULT_KEY_ABSENT:
+    return MESSAGE_KEY_ABSENT
+  case FAULT_EMPTY:
+    return MESSAGE_EMPTY
   case FAULT_GLOB_EMPTY:
     return "entry is empty"
   case FAULT_GLOB_NEGATION:
@@ -1311,22 +937,33 @@ func Fault_Text(kind Recorded_Fault) (message Fault_Message) {
   case FAULT_GLOB_TOKEN:
     return "entry holds ? or [; write * or **"
   case FAULT_GLOB_ESCAPE:
-    return MESSAGE_GLOB_ESCAPE
+    return "entry ends a segment in a lone backslash"
   case FAULT_GLOB_NEGATED:
     return "holds negation entries alone"
   }
   return MESSAGE_ASSERTION_REPEATED
 }
 
-// Fault_Keyed reports whether a fault names the key it stands under: an absent key, and a glob
-// entry or list.
+// Fault_Keyed reports whether a fault names the key it stands under: every fault past an unknown
+// key, since a known key is where each of them stands.
 func Fault_Keyed(kind Recorded_Fault) (keyed Keyed) {
   defer func() { Keyed_Invariants(keyed, "fault_keyed.keyed") }()
   Recorded_Fault_Invariants(kind, "fault_keyed.kind")
-  if kind == Recorded_Fault(FAULT_KEY_ABSENT) {
+  return Keyed(kind > Recorded_Fault(FAULT_KEY_UNKNOWN))
+}
+
+// Fault_Quoted reports whether a fault names the text it stands on: an unknown key, and a glob
+// entry.
+func Fault_Quoted(kind Recorded_Fault) (quoted Quoted) {
+  defer func() { Quoted_Invariants(quoted, "fault_quoted.quoted") }()
+  Recorded_Fault_Invariants(kind, "fault_quoted.kind")
+  switch Fault_Kind(kind) {
+  case FAULT_KEY_UNKNOWN, FAULT_GLOB_EMPTY, FAULT_GLOB_NEGATION, FAULT_GLOB_TOKEN:
+    return true
+  case FAULT_GLOB_ESCAPE, FAULT_ASSERTION_REPEATED:
     return true
   }
-  return Keyed(kind > Recorded_Fault(FAULT_FULL))
+  return false
 }
 
 // LIST_COUNT is how many path lists the file holds.

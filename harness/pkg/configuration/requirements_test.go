@@ -3,10 +3,11 @@ package configuration_test
 import "testing"
 
 import "local/james-orcales/harness/pkg/configuration"
+import "local/james-orcales/shared/encoding/json"
 import "local/james-orcales/shared/testify"
 
 // Test_Parse_Shape verifies an object of the seven keys parses whatever whitespace stands between
-// its tokens, and a key whose value is of another type states the byte where that value opens.
+// its tokens, and a key whose value is of another type states that key.
 func Test_Parse_Shape(t *testing.T) {
   subject := configuration_new()
   testify.Equal(t, configuration.FAULT_NONE, parse(subject, MINIMAL).Kind)
@@ -16,21 +17,23 @@ func Test_Parse_Shape(t *testing.T) {
     "\"opt_out_interface_ban\":[],\"word_replacements\":{ \"a\" : [ ] , \"b\":[\"c\"] } }\n"
   testify.Equal(t, configuration.FAULT_NONE, parse(subject, spaced).Kind)
   for _, shape := range []Shape_Fault{
-    {Source: `{"shared_component":1}`, Kind: configuration.FAULT_STRING, Offset: 20},
-    {Source: `{"ignore":"x"}`, Kind: configuration.FAULT_ARRAY, Offset: 10},
-    {Source: `{"ignore":[1]}`, Kind: configuration.FAULT_STRING, Offset: 11},
-    {Source: `{"word_replacements":["a"]}`, Kind: configuration.FAULT_OBJECT, Offset: 21},
-    {Source: `{"word_replacements":{"a":"b"}}`, Kind: configuration.FAULT_ARRAY, Offset: 26},
-    {Source: `["a"]`, Kind: configuration.FAULT_OBJECT, Offset: 0},
+    {Source: `{"shared_component":1}`, Key: configuration.KEY_SHARED_COMPONENT},
+    {Source: `{"shared_component":["s"]}`, Key: configuration.KEY_SHARED_COMPONENT},
+    {Source: `{"ignore":"x"}`, Key: configuration.KEY_IGNORE},
+    {Source: `{"ignore":[1]}`, Key: configuration.KEY_IGNORE},
+    {Source: `{"ignore":[[]]}`, Key: configuration.KEY_IGNORE},
+    {Source: `{"word_replacements":["a"]}`, Key: configuration.KEY_WORD_REPLACEMENTS},
+    {Source: `{"word_replacements":{"a":"b"}}`, Key: configuration.KEY_WORD_REPLACEMENTS},
   } {
     fault := parse(subject, shape.Source)
-    testify.Equal(t, shape.Kind, fault.Kind, shape.Source)
-    testify.Equal(t, configuration.Fault_Offset(shape.Offset), fault.Offset, shape.Source)
+    testify.Equal(t, configuration.FAULT_TYPE, fault.Kind, shape.Source)
+    testify.Equal(t, shape.Key, fault.Key, shape.Source)
   }
+  testify.Equal(t, configuration.FAULT_OBJECT, parse(subject, `["a"]`).Kind)
 }
 
 // Test_Parse_Values verifies each string decodes into one value naming its key, a replacement
-// names its word, and each escape decodes as JSON states it.
+// names its word, and each string decodes as shared/encoding/json decodes it.
 func Test_Parse_Values(t *testing.T) {
   subject := configuration_new()
   source := `{"shared_component":"shared","instrumentation_packages":["a/**"],` +
@@ -58,19 +61,25 @@ func Test_Parse_Values(t *testing.T) {
     },
     rendered(subject),
   )
-  escaped := `"a\"\\\/\b\f\n\r\t` + BACKSLASH + `u00e9` + BACKSLASH + `ud83d` + BACKSLASH +
-    `ude00"`
+  escaped := `"a\"\\\/\b\f\n\r\t` +
+    BACKSLASH +
+    `u00e9` +
+    BACKSLASH +
+    `ud83d` +
+    BACKSLASH +
+    `ude00` +
+    BACKSLASH +
+    "ud800\xff\""
   source = MINIMAL[:len(`{"shared_component":`)] +
     escaped +
     MINIMAL[len(`{"shared_component":"s"`):]
   testify.Equal(t, configuration.FAULT_NONE, parse(subject, source).Kind)
-  decoded := "shared_component=a\"\\/\b\f\n\r\t\xc3\xa9\xf0\x9f\x98\x80"
+  decoded := "shared_component=a\"\\/\b\f\n\r\t\xc3\xa9\xf0\x9f\x98\x80��"
   testify.Equal(t, decoded, rendered(subject)[0])
 }
 
-// Test_Parse_Globs verifies each entry lint refuses as a glob is a fault at its opening quote,
-// naming its key, in lint's order of lists, and a list of negations alone is a fault at its first
-// entry.
+// Test_Parse_Globs verifies each entry lint refuses as a glob is a fault naming its key and the
+// entry, in lint's order of lists, and a list of negations alone is a fault naming its key.
 func Test_Parse_Globs(t *testing.T) {
   subject := configuration_new()
   for _, entries := range []string{`["**","/a/","a/*.go","!b","a\\*","a\\\\"]`, `[]`} {
@@ -78,26 +87,24 @@ func Test_Parse_Globs(t *testing.T) {
     testify.Equal(t, configuration.FAULT_NONE, parse(subject, source).Kind, entries)
   }
   for _, glob := range []Glob_Fault{
-    {Entries: `[" "]`, Needle: `" "`, Kind: configuration.FAULT_GLOB_EMPTY},
-    {Entries: `["a",""]`, Needle: `""`, Kind: configuration.FAULT_GLOB_EMPTY},
-    {
-      Entries: `["` + BACKSLASH + `u2003"]`,
-      Needle:  `"` + BACKSLASH,
-      Kind:    configuration.FAULT_GLOB_EMPTY,
-    },
-    {Entries: `["! "]`, Needle: `"!`, Kind: configuration.FAULT_GLOB_NEGATION},
-    {Entries: `["a?"]`, Needle: `"a`, Kind: configuration.FAULT_GLOB_TOKEN},
-    {Entries: `["!a[b"]`, Needle: `"!`, Kind: configuration.FAULT_GLOB_TOKEN},
-    {Entries: `["a\\"]`, Needle: `"a`, Kind: configuration.FAULT_GLOB_ESCAPE},
-    {Entries: `["a\\/b"]`, Needle: `"a`, Kind: configuration.FAULT_GLOB_ESCAPE},
-    {Entries: `["!a","!b"]`, Needle: `"!a`, Kind: configuration.FAULT_GLOB_NEGATED},
+    {Entries: `[" "]`, Entry: " ", Kind: configuration.FAULT_GLOB_EMPTY},
+    {Entries: `["a",""]`, Entry: "", Kind: configuration.FAULT_GLOB_EMPTY},
+    {Entries: `["` + BACKSLASH + `u2003"]`, Entry: " ", Kind: configuration.FAULT_GLOB_EMPTY},
+    {Entries: `["! "]`, Entry: "! ", Kind: configuration.FAULT_GLOB_NEGATION},
+    {Entries: `["a?"]`, Entry: "a?", Kind: configuration.FAULT_GLOB_TOKEN},
+    {Entries: `["!a[b"]`, Entry: "!a[b", Kind: configuration.FAULT_GLOB_TOKEN},
+    {Entries: `["a\\"]`, Entry: `a\`, Kind: configuration.FAULT_GLOB_ESCAPE},
+    {Entries: `["a\\/b"]`, Entry: `a\/b`, Kind: configuration.FAULT_GLOB_ESCAPE},
   } {
     source := glob_list(configuration.KEY_IGNORE, glob.Entries)
     fault := parse(subject, source)
     testify.Equal(t, glob.Kind, fault.Kind, glob.Entries)
     testify.Equal(t, configuration.KEY_IGNORE, fault.Key, glob.Entries)
-    testify.Equal(t, configuration.Fault_Offset(offset_of(source, glob.Needle)), fault.Offset)
+    testify.Equal(t, glob.Entry, quote(subject), glob.Entries)
   }
+  negated := parse(subject, glob_list(configuration.KEY_IGNORE, `["!a","!b"]`))
+  testify.Equal(t, configuration.FAULT_GLOB_NEGATED, negated.Kind)
+  testify.Equal(t, configuration.KEY_IGNORE, negated.Key)
   // Lint checks the ignore list before the instrumentation packages, whatever order the file
   // states them in.
   source := glob_list(configuration.KEY_INSTRUMENTATION_PACKAGES, `["?"]`)
@@ -112,12 +119,25 @@ func Test_Parse_Globs(t *testing.T) {
   }
   testify.False(
     t,
-    bool(configuration.Fault_Keyed(configuration.Recorded_Fault(configuration.FAULT_SURPLUS))),
+    bool(configuration.Fault_Keyed(configuration.Recorded_Fault(configuration.FAULT_SYNTAX))),
+  )
+  for _, kind := range []configuration.Fault_Kind{
+    configuration.FAULT_KEY_UNKNOWN,
+    configuration.FAULT_GLOB_ESCAPE,
+    configuration.FAULT_ASSERTION_REPEATED,
+  } {
+    testify.True(t, bool(configuration.Fault_Quoted(configuration.Recorded_Fault(kind))))
+  }
+  testify.False(
+    t,
+    bool(
+      configuration.Fault_Quoted(configuration.Recorded_Fault(configuration.FAULT_GLOB_NEGATED)),
+    ),
   )
 }
 
 // Test_Parse_Exemptions verifies an assertion opt-out equal to an instrumentation entry is a fault
-// at the opt-out, and one a broader glob covers is not.
+// naming the opt-out, and one a broader glob covers is not.
 func Test_Parse_Exemptions(t *testing.T) {
   subject := configuration_new()
   source := glob_list(configuration.KEY_INSTRUMENTATION_PACKAGES, `["a/**","b/"]`)
@@ -136,8 +156,7 @@ func Test_Parse_Exemptions(t *testing.T) {
   fault := parse(subject, source)
   testify.Equal(t, configuration.FAULT_ASSERTION_REPEATED, fault.Kind)
   testify.Equal(t, configuration.KEY_ASSERTION_EXEMPT, fault.Key)
-  exemption := offset_of(source, `"c/","b/"]`) + len(`"c/",`)
-  testify.Equal(t, configuration.Fault_Offset(exemption), fault.Offset)
+  testify.Equal(t, "b/", quote(subject))
   text := configuration.Fault_Text(configuration.Recorded_Fault(fault.Kind))
   testify.Equal(t, configuration.Fault_Message(configuration.MESSAGE_ASSERTION_REPEATED), text)
 }
@@ -164,60 +183,47 @@ func Test_Parse_Order(t *testing.T) {
   testify.False(t, bool(configuration.Entry_Next(subject)))
 }
 
-// Test_Parse_Faults verifies each fault states itself at the byte it stands on, the end of the
-// source for an unfinished value, and an absent key or an empty value at the brace that closes
-// the object.
+// Test_Parse_Faults verifies a source that is no JSON value states the byte shared/encoding/json
+// states, an unknown key names itself, a repeated key names its key, and past every member an
+// absent key or an empty value names its key.
 func Test_Parse_Faults(t *testing.T) {
   subject := configuration_new()
   opening := `{"shared_component":`
-  for _, shape := range []Shape_Fault{
-    {Source: ``, Kind: configuration.FAULT_UNFINISHED, Offset: 0},
-    {Source: `{`, Kind: configuration.FAULT_UNFINISHED, Offset: 1},
-    {Source: `{"x":[]}`, Kind: configuration.FAULT_KEY_UNKNOWN, Offset: 1},
-    {Source: `{"shared_component" "s"}`, Kind: configuration.FAULT_COLON, Offset: 20},
-    {Source: opening + `"s""`, Kind: configuration.FAULT_COMMA, Offset: 23},
-    {Source: opening + `"s"`, Kind: configuration.FAULT_UNFINISHED, Offset: 23},
-    {Source: opening + `"s`, Kind: configuration.FAULT_UNFINISHED, Offset: 22},
-    {
-      Source: opening + `"s","shared_component":"t"}`,
-      Kind:   configuration.FAULT_KEY_REPEATED,
-      Offset: 24,
-    },
-    {Source: opening + "\"\x01\"}", Kind: configuration.FAULT_CONTROL, Offset: 21},
-    {Source: opening + `"\q"}`, Kind: configuration.FAULT_ESCAPE, Offset: 21},
-    {Source: opening + `"\u00g0"}`, Kind: configuration.FAULT_ESCAPE, Offset: 21},
-    {Source: opening + `"\u00`, Kind: configuration.FAULT_ESCAPE, Offset: 21},
-    {Source: opening + `"\ud800"}`, Kind: configuration.FAULT_ESCAPE, Offset: 21},
-    {
-      Source: opening + `"` + BACKSLASH + `ud800` + BACKSLASH + `u0041"}`,
-      Kind:   configuration.FAULT_ESCAPE,
-      Offset: 21,
-    },
-    {Source: opening + `"\udc00"}`, Kind: configuration.FAULT_ESCAPE, Offset: 21},
-    {Source: opening + "\"\xff\"}", Kind: configuration.FAULT_ENCODING, Offset: 21},
-    {Source: opening + "\"\xe2\x82\"}", Kind: configuration.FAULT_ENCODING, Offset: 21},
-    {Source: MINIMAL + ` x`, Kind: configuration.FAULT_SURPLUS, Offset: len(MINIMAL) + 1},
+  for _, source := range []string{
+    ``,
+    `{`,
+    `{"shared_component" "s"}`,
+    opening + `"s""`,
+    opening + "\"\x01\"}",
+    opening + `"\q"}`,
+    MINIMAL + ` x`,
   } {
-    fault := parse(subject, shape.Source)
-    testify.Equal(t, shape.Kind, fault.Kind, shape.Source)
-    testify.Equal(t, configuration.Fault_Offset(shape.Offset), fault.Offset, shape.Source)
+    fault := parse(subject, source)
+    position, _ := json.Validate(json.Encoded(source))
+    testify.Equal(t, configuration.FAULT_SYNTAX, fault.Kind, source)
+    testify.Equal(t, configuration.Fault_Offset(position), fault.Offset, source)
   }
-  fault := parse(subject, `{}`)
+  fault := parse(subject, `{"x":[]}`)
+  testify.Equal(t, configuration.FAULT_KEY_UNKNOWN, fault.Kind)
+  testify.Equal(t, "x", quote(subject))
+  fault = parse(subject, opening+`"s","shared_component":"t"}`)
+  testify.Equal(t, configuration.FAULT_KEY_REPEATED, fault.Kind)
+  testify.Equal(t, configuration.KEY_SHARED_COMPONENT, fault.Key)
+  fault = parse(subject, `{}`)
   testify.Equal(t, configuration.FAULT_KEY_ABSENT, fault.Kind)
   testify.Equal(t, configuration.KEY_SHARED_COMPONENT, fault.Key)
-  testify.Equal(t, configuration.Fault_Offset(1), fault.Offset)
   text := configuration.Fault_Text(configuration.Recorded_Fault(fault.Kind))
   testify.Equal(t, configuration.Fault_Message("is absent"), text)
   fault = parse(subject, `{"shared_component":"s"}`)
   testify.Equal(t, configuration.KEY_INSTRUMENTATION_PACKAGES, fault.Key)
   empty := `{"shared_component":""` + MINIMAL[len(`{"shared_component":"s"`):]
   fault = parse(subject, empty)
-  testify.Equal(t, configuration.FAULT_COMPONENT_EMPTY, fault.Kind)
-  testify.Equal(t, configuration.Fault_Offset(len(empty)-1), fault.Offset)
+  testify.Equal(t, configuration.FAULT_EMPTY, fault.Kind)
+  testify.Equal(t, configuration.KEY_SHARED_COMPONENT, fault.Key)
   words := MINIMAL[:len(MINIMAL)-len(`{"a":[]}}`)] + `{}}`
   fault = parse(subject, words)
-  testify.Equal(t, configuration.FAULT_WORDS_EMPTY, fault.Kind)
-  testify.Equal(t, configuration.Fault_Offset(len(words)-1), fault.Offset)
+  testify.Equal(t, configuration.FAULT_EMPTY, fault.Kind)
+  testify.Equal(t, configuration.KEY_WORD_REPLACEMENTS, fault.Key)
 }
 
 // Test_Parse_Bounds verifies a source past its bound and a string past the value table are
@@ -225,18 +231,28 @@ func Test_Parse_Faults(t *testing.T) {
 func Test_Parse_Bounds(t *testing.T) {
   subject := configuration_new()
   wide := make([]byte, configuration.SOURCE_SIZE_MAXIMUM+1)
-  fault := configuration.Parse(subject, configuration.Source(wide))
-  testify.Equal(t, configuration.FAULT_OVERSIZED, fault.Kind)
-  testify.Equal(t, configuration.Fault_Offset(configuration.SOURCE_SIZE_MAXIMUM), fault.Offset)
+  testify.Equal(
+    t,
+    configuration.FAULT_OVERSIZED,
+    configuration.Parse(subject, configuration.Source(wide)).Kind,
+  )
   count := configuration.VALUE_COUNT_MAXIMUM
   full := `{"ignore":[` + repeat(`"",`, count) + `""]}`
-  fault = parse(subject, full)
-  testify.Equal(t, configuration.FAULT_FULL, fault.Kind)
-  testify.Equal(t, configuration.Fault_Offset(len(`{"ignore":[`)+3*count), fault.Offset)
+  testify.Equal(t, configuration.FAULT_FULL, parse(subject, full).Kind)
   // The component and one word take two slots, thus the ignore list takes the rest.
   filled := `{"ignore":[` + repeat(`"a",`, count-3) + `"a"],` + replace_ignore(MINIMAL[len(`{`):])
   testify.Equal(t, configuration.FAULT_NONE, parse(subject, filled).Kind)
   testify.Equal(t, configuration.Cell(count), subject.Cells[configuration.CELL_VALUE])
+  // Each word spends three tokens, thus a table of words fills the token table as well.
+  words := `{"word_replacements":{` +
+    repeat(`"a":[],`, count-2) +
+    `"a":[]},` +
+    MINIMAL[len(`{`):len(MINIMAL)-
+      len(`,"word_replacements":{"a":[]}}`)] +
+    `}`
+  testify.Equal(t, configuration.FAULT_NONE, parse(subject, words).Kind)
+  words = `{"word_replacements":{` + repeat(`"a":[],`, count) + `"a":[]}}`
+  testify.Equal(t, configuration.FAULT_FULL, parse(subject, words).Kind)
 }
 
 // BACKSLASH opens an escape, spelled apart so no escape stands in this source.
@@ -247,17 +263,16 @@ const MINIMAL = `{"shared_component":"s","instrumentation_packages":[],` +
   `"opt_out_assertion_mandate_packages":[],` +
   `"opt_out_recursion_ban":[],"opt_out_interface_ban":[],"ignore":[],"word_replacements":{"a":[]}}`
 
-// Shape_Fault is one source and the fault it states.
+// Shape_Fault is one source and the key its fault names.
 type Shape_Fault struct {
   Source string
-  Kind   configuration.Fault_Kind
-  Offset int
+  Key    configuration.Key
 }
 
 // Builds the stores Parse writes into.
 func configuration_new() (subject configuration.Configuration_Handle) {
   return &configuration.Configuration{
-    Source: make(configuration.Source_Store, configuration.SOURCE_STORAGE_SIZE),
+    Tokens: make(configuration.Tokens, configuration.TOKEN_COUNT_MAXIMUM),
     Text:   make(configuration.Text, configuration.SOURCE_SIZE_MAXIMUM),
     Values: make(configuration.Values, configuration.VALUE_COUNT_MAXIMUM),
     Cells:  make(configuration.Cells, configuration.CELL_COUNT),
@@ -267,6 +282,14 @@ func configuration_new() (subject configuration.Configuration_Handle) {
 // Parses one source.
 func parse(subject configuration.Configuration_Handle, source string) (fault configuration.Fault) {
   return configuration.Parse(subject, configuration.Source(source))
+}
+
+// The text the last fault quotes, which its cells name in the text store.
+func quote(subject configuration.Configuration_Handle) (text string) {
+  cells := subject.Cells
+  return string(
+    subject.Text[cells[configuration.CELL_FAULT_START]:cells[configuration.CELL_FAULT_END]],
+  )
 }
 
 // States each value as its key and text, a replacement past its word.
@@ -301,10 +324,10 @@ func replace_ignore(rest string) (dropped string) {
   return rest
 }
 
-// Glob_Fault is one list of entries, the text the faulty entry opens with, and the fault it states.
+// Glob_Fault is one list of entries, the entry its fault names, and the fault it states.
 type Glob_Fault struct {
   Entries string
-  Needle  string
+  Entry   string
   Kind    configuration.Fault_Kind
 }
 

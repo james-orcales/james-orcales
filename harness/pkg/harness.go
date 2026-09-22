@@ -8,6 +8,7 @@ import "reflect"
 import "unsafe"
 
 import "local/james-orcales/harness/pkg/configuration"
+import "local/james-orcales/harness/pkg/naming"
 import "local/james-orcales/harness/pkg/requirements"
 import "local/james-orcales/harness/pkg/vcs"
 import "local/james-orcales/shared/bytes"
@@ -53,10 +54,22 @@ const RULE_OVERSIZED Rule = 3
 const RULE_UNPRINTABLE Rule = 4
 
 // RULE_CONFLICTED is a file with a line that opens on a merge conflict marker.
-const RULE_CONFLICTED Rule = 6
+const RULE_CONFLICTED Rule = 10
+
+// RULE_LAYOUT is a Go file that breaks the component layout.
+const RULE_LAYOUT Rule = 9
+
+// RULE_RECURSION is a Go file holding a call that closes a cycle among its package's functions.
+const RULE_RECURSION Rule = 8
+
+// RULE_SHADOWS is a Go file declaring a name a scope around it, or a sibling file, declares.
+const RULE_SHADOWS Rule = 7
 
 // RULE_IMPORTS is a Go file importing a stdlib package lint bans.
 const RULE_IMPORTS Rule = 5
+
+// RULE_NAMES is a Go file declaring a name that breaks a rule of harness/pkg/naming.
+const RULE_NAMES Rule = 6
 
 // MESSAGE_UNPRINTABLE is what a line says of RULE_UNPRINTABLE.
 const MESSAGE_UNPRINTABLE = "canonical form exceeds its storage"
@@ -118,8 +131,20 @@ const READING_DECLARATION Reading = 3
 // CONFIGURATION_PATH is the policy file a run reads from its working directory before the walk.
 const CONFIGURATION_PATH = "harness.json"
 
+// MODULE_PATH is the module file a run reads from its working directory past harness.json.
+const MODULE_PATH = "go.mod"
+
+// WORKSPACE_NAME is the file that joins modules into a workspace.
+const WORKSPACE_NAME = "go.work"
+
+// RULE_TEXT_LAYOUT names a finding of the component layout in flat JSON.
+const RULE_TEXT_LAYOUT Rule_Text = "layout"
+
 // CONFIGURATION_PREFIX opens the line of a configuration that does not decode.
 const CONFIGURATION_PREFIX = PROGRAM_PREFIX + CONFIGURATION_PATH + SEPARATOR
+
+// QUOTE_OPENING stands between a fault and the text it quotes.
+const QUOTE_OPENING = ": \""
 
 // BYTE_INFIX stands between a fault and the byte it stands on.
 const BYTE_INFIX = " at byte "
@@ -147,6 +172,15 @@ const RULE_TEXT_CONFLICTED Rule_Text = "conflicted"
 
 // RULE_TEXT_IMPORTS names RULE_IMPORTS in flat JSON.
 const RULE_TEXT_IMPORTS Rule_Text = "imports"
+
+// RULE_TEXT_NAMES names RULE_NAMES in flat JSON.
+const RULE_TEXT_NAMES Rule_Text = "names"
+
+// RULE_TEXT_SHADOWS names RULE_SHADOWS in flat JSON.
+const RULE_TEXT_SHADOWS Rule_Text = "shadows"
+
+// RULE_TEXT_RECURSION names RULE_RECURSION in flat JSON.
+const RULE_TEXT_RECURSION Rule_Text = "recursion"
 
 // RULE_TEXT_SYMLINKS names a symbolic link whose target resolves to nothing.
 const RULE_TEXT_SYMLINKS Rule_Text = "symlinks"
@@ -287,9 +321,6 @@ const ADVANCE_READY Advance_Pass = 0
 // ADVANCE_SUBMIT is a stage whose operation goes to the loop.
 const ADVANCE_SUBMIT Advance_Pass = 1
 
-// ADVANCE_STOPPED is a run the stage finished.
-const ADVANCE_STOPPED Advance_Pass = 2
-
 // STAGE_DIRECTORY_OPEN opens the next pending directory.
 const STAGE_DIRECTORY_OPEN Stage = 0
 
@@ -317,7 +348,7 @@ const STAGE_FAIL Stage = 11
 // STAGE_HELP writes the help -h asked for.
 const STAGE_HELP Stage = 5
 
-// STAGE_PASSED writes the pass line of a run without diagnostics.
+// STAGE_PASSED writes the closing line of a run: the pass line, or the elapsed seconds alone.
 const STAGE_PASSED Stage = 6
 
 // STAGE_FIX_OPEN opens the current file to replace it with its fix.
@@ -359,7 +390,11 @@ const STAGE_HISTORY_HEAD Stage = 21
 const STAGE_HISTORY_REFS Stage = 22
 
 // STAGE_HISTORY_LOG spawns the git that reads the log between the main ref and HEAD.
-const STAGE_HISTORY_LOG Stage = 23
+const STAGE_HISTORY_LOG Stage = 24
+
+// STAGE_RECALL states the diagnostic the declaration pass left for the file the run stands on,
+// without IO.
+const STAGE_RECALL Stage = 23
 
 // STAGE_PACKAGE starts the contract check of the next package, without IO. A stage of its own
 // keeps the package walk a loop through Rearm rather than a recursion.
@@ -368,8 +403,11 @@ const STAGE_PACKAGE Stage = 12
 // STAGE_REQUIREMENTS resumes the open package's contract check, without IO.
 const STAGE_REQUIREMENTS Stage = 7
 
+// ELAPSED_OPENING opens the line of the elapsed seconds, which close every run that ends.
+const ELAPSED_OPENING = "elapsed_sec="
+
 // PASSED opens the pass line; the elapsed seconds follow it.
-const PASSED = "✓ all checks passed\nelapsed_sec="
+const PASSED = "✓ all checks passed\n" + ELAPSED_OPENING
 
 // MILLISECONDS_PER_SECOND splits elapsed milliseconds into seconds and their fraction.
 const MILLISECONDS_PER_SECOND = 1000
@@ -377,7 +415,7 @@ const MILLISECONDS_PER_SECOND = 1000
 // Main opens a run: it stamps the start and stands the run where Rearm parses the command line.
 // It returns without waiting: the root repeats Rearm and pumps.
 func Main(input Main_Input) {
-  Main_Input_Invariants(input, "main.input")
+  Main_Input_Invariants(&input, "main.input")
   *input.Start = time.Clock_Now_Monotonic(input.Clock)
   *input.Phase = Opening_Phase(PHASE_OPENED)
 }
@@ -422,8 +460,8 @@ func parse(
   outcome Outcome_Handle,
 ) (next Command_Pass) {
   defer func() { Command_Pass_Invariants(next, "parse.next") }()
-  Command_Invariants(command, "parse.command")
-  Run_Flag_Storage_Invariants(run_flags, "parse.run_flags")
+  Command_Invariants(&command, "parse.command")
+  Run_Flag_Storage_Invariants(&run_flags, "parse.run_flags")
   Memory_Handle_Invariants(memory, "parse.memory")
   Findings_Handle_Invariants(findings, "parse.findings")
   Program_Arguments_Invariants(arguments, "parse.arguments")
@@ -498,7 +536,7 @@ func record(
   outcome Outcome_Handle,
 ) (next Record_Pass) {
   defer func() { Record_Pass_Invariants(next, "record.next") }()
-  Run_Flag_Storage_Invariants(run_flags, "record.run_flags")
+  Run_Flag_Storage_Invariants(&run_flags, "record.run_flags")
   Memory_Handle_Invariants(memory, "record.memory")
   Findings_Handle_Invariants(findings, "record.findings")
   cli.Value_Text_Invariants(root, "record.root")
@@ -529,6 +567,9 @@ func record(
   // The walk opens on the one directory a command line names once the run read its
   // configuration, which the caller names.
   memory.Directories[0] = append(memory.Directories[0][:0], root...)
+  // The component layout reads which components the walk covers from its root.
+  rooted := memory.Layout.Text[LAYOUT_ROOT : LAYOUT_ROOT+LAYOUT_REGION_SIZE]
+  rooted[copy(rooted[:LAYOUT_REGION_SIZE-1], root)] = 0
   return Record_Pass(STAGE_OPEN)
 }
 
@@ -540,11 +581,11 @@ func Check(
   count Source_Count,
   format_state Format,
 ) (diagnostic Diagnostic) {
-  defer func() { Diagnostic_Invariants(diagnostic, "check.diagnostic") }()
+  defer func() { Diagnostic_Invariants(&diagnostic, "check.diagnostic") }()
   Memory_Handle_Invariants(memory, "check.memory")
-  requirements.Syntax_Invariants(syntax, "check.syntax")
+  requirements.Syntax_Invariants(&syntax, "check.syntax")
   Source_Count_Invariants(count, "check.count")
-  Format_Invariants(format_state, "Check.format_state")
+  Format_Invariants(&format_state, "Check.format_state")
   file := memory.Source[:count]
   diagnostic = Diagnostic{Tier: TIER_NONE, Rule: RULE_NONE}
   if len(file) > requirements.SOURCE_SIZE_MAXIMUM {
@@ -932,8 +973,22 @@ const RUN_WALK_NAME = 15
 // RUN_WALK_WIDE records a path past the path bound.
 const RUN_WALK_WIDE = 16
 
+// RUN_RENAME records the rename past the declaration pass, which reads again the bytes of each file
+// the whole name table can reach and renames them, parsing none.
+const RUN_RENAME = 17
+
+// RUN_HISTORY_READ records that git told the run its history while the lanes worked, thus past
+// the packages the run judges it without asking git again.
+const RUN_HISTORY_READ = 18
+
+// RUN_SIBLINGS records that the run judged the names of each package's files against each other.
+const RUN_SIBLINGS = 19
+
+// RUN_MODULE records that the run read go.mod, or found none, past harness.json.
+const RUN_MODULE = 20
+
 // RUN_FLAG_COUNT is how many flags one run keeps.
-const RUN_FLAG_COUNT = 17
+const RUN_FLAG_COUNT = 21
 
 // Run_Flags holds every yes or no one run keeps, and cannot grow.
 type Run_Flags []Mark
@@ -951,7 +1006,7 @@ type Run_Flag_Storage struct {
 }
 
 // Run_Flag_Storage_Invariants composes the flag table.
-func Run_Flag_Storage_Invariants(value Run_Flag_Storage, namespace aver.Namespace) {
+func Run_Flag_Storage_Invariants(value *Run_Flag_Storage, namespace aver.Namespace) {
   Run_Flags_Invariants(value.Values, namespace)
 }
 
@@ -1012,15 +1067,24 @@ type Package struct {
   Test Test_Mark
   // Impure records a package main file, which exempts the directory from the contract.
   Impure Impure_Mark
+  // Declarations holds the leading declarations the one parse of requirements_test.go collected.
+  Declarations requirements.Declarations
+  // Declared is how many of them it collected.
+  Declared requirements.Declaration_Count
+  // Read is what became of requirements_test.go past that parse.
+  Read requirements.Test_Read
 }
 
 // Package_Invariants composes one package. Each mark states its own kind, since one type
 // standing for three of them would name a package whose parts the compiler lets a run swap.
-func Package_Invariants(value Package, namespace aver.Namespace) {
+func Package_Invariants(value *Package, namespace aver.Namespace) {
   Package_Path_Invariants(value.Path, namespace)
   Markdown_Mark_Invariants(value.Markdown, namespace)
   Test_Mark_Invariants(value.Test, namespace)
   Impure_Mark_Invariants(value.Impure, namespace)
+  requirements.Declarations_Invariants(value.Declarations, namespace)
+  requirements.Declaration_Count_Invariants(value.Declared, namespace)
+  requirements.Test_Read_Invariants(value.Read, namespace)
 }
 
 // Recorded_Package is one package the walk just took: its directory and the contract files it
@@ -1036,7 +1100,7 @@ type Recorded_Package struct {
 }
 
 // Recorded_Package_Invariants composes one package the walk took.
-func Recorded_Package_Invariants(value Recorded_Package, namespace aver.Namespace) {
+func Recorded_Package_Invariants(value *Recorded_Package, namespace aver.Namespace) {
   Package_Path_Invariants(value.Path, namespace)
   Markdown_Mark_Invariants(value.Markdown, namespace)
   Test_Mark_Invariants(value.Test, namespace)
@@ -1117,7 +1181,7 @@ func Path_Text_Invariants(value Path_Text, namespace aver.Namespace) {
 }
 
 // RULE_TEXT_SIZE_MINIMUM is the shortest rule the harness names.
-const RULE_TEXT_SIZE_MINIMUM = len(RULE_TEXT_REFUSED)
+const RULE_TEXT_SIZE_MINIMUM = len(RULE_TEXT_NAMES)
 
 // RULE_TEXT_SIZE_MAXIMUM is the longest.
 const RULE_TEXT_SIZE_MAXIMUM = len(RULE_TEXT_REQUIREMENTS)
@@ -1227,7 +1291,7 @@ type Report struct {
 }
 
 // Report_Invariants composes one flat JSON diagnostic.
-func Report_Invariants(value Report, namespace aver.Namespace) {
+func Report_Invariants(value *Report, namespace aver.Namespace) {
   Path_Text_Invariants(value.Path, namespace)
   Report_Line_Invariants(value.Line, namespace)
   Report_Column_Invariants(value.Column, namespace)
@@ -1255,7 +1319,7 @@ type Summary struct {
 }
 
 // Summary_Invariants composes one flat JSON summary.
-func Summary_Invariants(value Summary, namespace aver.Namespace) {
+func Summary_Invariants(value *Summary, namespace aver.Namespace) {
   Passed_Invariants(value.Passed, namespace)
   Elapsed_Text_Invariants(value.Elapsed_Seconds, namespace)
 }
@@ -1514,14 +1578,26 @@ func Read_Pass_Invariants(value Read_Pass, namespace aver.Namespace) {
     Ensure()
 }
 
-// File_Pass is the stage one pass over the file table leaves the run on: the open of the next
-// file, or the first package once every file is served.
+// File_Pass is the stage one pass over the file table leaves the run on: the recall of one
+// diagnostic, or the first package once every file is served.
 type File_Pass Stage
 
-// File_Pass_Invariants admits the two stages one pass over the file table leaves the run on.
+// File_Pass_Invariants admits each stage one pass over the file table leaves the run on.
 func File_Pass_Invariants(value File_Pass, namespace aver.Namespace) {
   aver.Tree(value, namespace).
-    Enum_Int(int(value), int(STAGE_OPEN), int(STAGE_PACKAGE)).
+    Enum_Int(int(value), int(STAGE_PACKAGE), int(STAGE_RECALL)).
+    Ensure()
+}
+
+// Declare_Pass is the stage one step of the declaration pass leaves the run on: the open of the
+// next file, the fix one closed lane owes, the pass again, or whatever the first step of the file
+// table leaves.
+type Declare_Pass Stage
+
+// Declare_Pass_Invariants admits each stage one step of the declaration pass leaves the run on.
+func Declare_Pass_Invariants(value Declare_Pass, namespace aver.Namespace) {
+  aver.Tree(value, namespace).
+    Range_Int(int(value), int(STAGE_FIX_OPEN), int(STAGE_RECALL)).
     Ensure()
 }
 
@@ -1548,12 +1624,7 @@ type Served_Pass Stage
 // Served_Pass_Invariants admits the two stages one such read leaves the run on.
 func Served_Pass_Invariants(value Served_Pass, namespace aver.Namespace) {
   aver.Tree(value, namespace).
-    Enum_3_Int(
-    int(value),
-    int(STAGE_REQUIREMENTS),
-    int(STAGE_FIX_OPEN),
-    int(STAGE_DECLARED),
-  ).
+    Enum_Int(int(value), int(STAGE_REQUIREMENTS), int(STAGE_DECLARED)).
     Ensure()
 }
 
@@ -1581,8 +1652,9 @@ type Contract_Pass Stage
 // Contract_Pass_Invariants admits the stages one step of a contract check leaves.
 func Contract_Pass_Invariants(value Contract_Pass, namespace aver.Namespace) {
   aver.Tree(value, namespace).
-    Enum_3_Int(
+    Enum_4_Int(
     int(value),
+    int(STAGE_FIX_OPEN),
     int(STAGE_OPEN),
     int(STAGE_PACKAGED),
     int(STAGE_FINDING),
@@ -1645,35 +1717,27 @@ func Record_Pass_Invariants(value Record_Pass, namespace aver.Namespace) {
     Ensure()
 }
 
-// CLOSE_PASS_CONFIGURED is the close of a configuration that decodes, which the walk follows.
-const CLOSE_PASS_CONFIGURED Close_Pass = 5
-
 // CLOSE_PASS_FAILED is the close a step of the run failed at, which the run cannot finish.
 const CLOSE_PASS_FAILED Close_Pass = 0
 
-// CLOSE_PASS_SERVED is the close of a file the run is done with, whatever it found in it.
-const CLOSE_PASS_SERVED Close_Pass = 1
+// CLOSE_PASS_CONTRACT is the close of a file the declaration pass or a contract read, which the
+// read's own step takes from here.
+const CLOSE_PASS_CONTRACT Close_Pass = 1
 
-// CLOSE_PASS_FIX is the close of a file whose canonical form the run writes back.
-const CLOSE_PASS_FIX Close_Pass = 2
+// CLOSE_PASS_CONFIGURED is the close of a configuration that decodes, which the walk follows.
+const CLOSE_PASS_CONFIGURED Close_Pass = 2
 
-// CLOSE_PASS_REPORT is the close of a file whose diagnostic the run wrote.
-const CLOSE_PASS_REPORT Close_Pass = 3
-
-// CLOSE_PASS_CONTRACT is the close of a file the run read for a package contract rather than
-// for its own bytes, which the contract check takes from here.
-const CLOSE_PASS_CONTRACT Close_Pass = 4
-
-// Close_Pass is what one close leaves the run to do. The close names the five, and the caller
+// Close_Pass is what one close leaves the run to do. The close names the three, and the caller
 // alone turns one of them into the stage the run stands on next.
 type Close_Pass int
 
-// Close_Pass_Invariants admits the five one close leaves.
+// Close_Pass_Invariants admits the three one close leaves.
 func Close_Pass_Invariants(value Close_Pass, namespace aver.Namespace) {
   aver.Tree(value, namespace).
-    Range_Int(
+    Enum_3_Int(
     int(value),
     int(CLOSE_PASS_FAILED),
+    int(CLOSE_PASS_CONTRACT),
     int(CLOSE_PASS_CONFIGURED),
   ).
     Ensure()
@@ -1706,13 +1770,13 @@ func Fix_Pass_Invariants(value Fix_Pass, namespace aver.Namespace) {
     Ensure()
 }
 
-// Fixed_Reading is what a fixed file serves: a Go file, or a contract.
+// Fixed_Reading is what a fixed file serves: a Go file the declaration pass read, or a contract.
 type Fixed_Reading Reading
 
 // Fixed_Reading_Invariants admits the two files a fix writes.
 func Fixed_Reading_Invariants(value Fixed_Reading, namespace aver.Namespace) {
   aver.Tree(value, namespace).
-    Enum_Int(int(value), int(READING_SOURCE), int(READING_MARKDOWN)).
+    Enum_Int(int(value), int(READING_MARKDOWN), int(READING_DECLARATION)).
     Ensure()
 }
 
@@ -1776,7 +1840,7 @@ type Reported struct {
 }
 
 // Reported_Invariants composes one written diagnostic.
-func Reported_Invariants(value Reported, namespace aver.Namespace) {
+func Reported_Invariants(value *Reported, namespace aver.Namespace) {
   Reported_Tier_Invariants(value.Tier, namespace)
   Reported_Rule_Invariants(value.Rule, namespace)
   Refusal_Invariants(value.Failure, namespace)
@@ -1846,7 +1910,7 @@ type Diagnostic struct {
 }
 
 // Diagnostic_Invariants composes one diagnostic.
-func Diagnostic_Invariants(value Diagnostic, namespace aver.Namespace) {
+func Diagnostic_Invariants(value *Diagnostic, namespace aver.Namespace) {
   Tier_Invariants(value.Tier, namespace)
   Rule_Invariants(value.Rule, namespace)
   Fix_Invariants(value.Fix, namespace)
@@ -2020,7 +2084,7 @@ func Report_Handle_Invariants(value Report_Handle, namespace aver.Namespace) {
   if value == nil {
     return
   }
-  Report_Invariants(*value, namespace)
+  Report_Invariants(value, namespace)
 }
 
 // Summary_Handle is the caller-owned summary one write states.
@@ -2031,7 +2095,7 @@ func Summary_Handle_Invariants(value Summary_Handle, namespace aver.Namespace) {
   if value == nil {
     return
   }
-  Summary_Invariants(*value, namespace)
+  Summary_Invariants(value, namespace)
 }
 
 // Current_Path is the directory the walk has open. The run fixes it at one whole path.
@@ -2078,9 +2142,9 @@ type Reports struct {
 }
 
 // Reports_Invariants composes what one write states.
-func Reports_Invariants(value Reports, namespace aver.Namespace) {
-  Report_Invariants(value.Report, namespace)
-  Summary_Invariants(value.Summary, namespace)
+func Reports_Invariants(value *Reports, namespace aver.Namespace) {
+  Report_Invariants(&value.Report, namespace)
+  Summary_Invariants(&value.Summary, namespace)
 }
 
 // Failure_Path is the path one failed step names. The caller states which path failed, since a
@@ -2108,7 +2172,7 @@ type Directory struct {
 }
 
 // Directory_Invariants composes the open directory.
-func Directory_Invariants(value Directory, namespace aver.Namespace) {
+func Directory_Invariants(value *Directory, namespace aver.Namespace) {
   Current_Path_Invariants(value.Current, namespace)
   Directory_Count_Invariants(value.Directory_Count, namespace)
 }
@@ -2173,7 +2237,7 @@ func Directory_Handle_Invariants(value Directory_Handle, namespace aver.Namespac
   if value == nil {
     return
   }
-  Directory_Invariants(*value, namespace)
+  Directory_Invariants(value, namespace)
 }
 
 // Command is every store one command line parse fills. It stands apart from the run's stores,
@@ -2201,7 +2265,7 @@ type Command struct {
 }
 
 // Command_Invariants composes what one parse stands on.
-func Command_Invariants(value Command, namespace aver.Namespace) {
+func Command_Invariants(value *Command, namespace aver.Namespace) {
   Argument_Declarations_Invariants(value.Declared_Arguments, namespace)
   Flag_Declarations_Invariants(value.Declared_Flags, namespace)
   Parsed_Arguments_Invariants(value.Command_Arguments, namespace)
@@ -2224,9 +2288,9 @@ type Formatter_Stores struct {
 }
 
 // Formatter_Stores_Invariants composes the kept stores.
-func Formatter_Stores_Invariants(value Formatter_Stores, namespace aver.Namespace) {
-  format.Place_Storage_Invariants(value.Places, namespace)
-  format.Table_Fields_Invariants(value.Table, namespace)
+func Formatter_Stores_Invariants(value *Formatter_Stores, namespace aver.Namespace) {
+  format.Place_Storage_Invariants(&value.Places, namespace)
+  format.Table_Fields_Invariants(&value.Table, namespace)
 }
 
 // Format is what rewrites one source into its canonical form. It stands apart from the run's
@@ -2239,8 +2303,8 @@ type Format struct {
 }
 
 // Format_Invariants composes what one rewrite stands on.
-func Format_Invariants(value Format, namespace aver.Namespace) {
-  Formatter_Stores_Invariants(value.Formatter, namespace)
+func Format_Invariants(value *Format, namespace aver.Namespace) {
+  Formatter_Stores_Invariants(&value.Formatter, namespace)
   printer.Printer_Handle_Invariants(value.Printer, namespace)
 }
 
@@ -2269,6 +2333,10 @@ type Memory struct {
   Packages Packages
   // File_Packages names each Go file's package, slot for slot with Paths.
   File_Packages Package_Indices
+  // Sizes holds each Go file's size as the walk found it, slot for slot with Paths.
+  Sizes File_Sizes
+  // Order holds the slots in the order the declaration pass reads them: the largest file first.
+  Order File_Order
   // Requirements checks each package's contract.
   Requirements requirements.Checker_Handle
   // History_Output holds what one git command wrote.
@@ -2279,8 +2347,15 @@ type Memory struct {
   History_Name History_Name
   // Configuration holds the decoded harness.json.
   Configuration configuration.Configuration_Handle
-  // Notice holds the message of one finding of harness.json.
+  // Notice holds the message of one finding of harness.json, of one banned import, or of one name.
   Notice Notice_Store
+  // Name_Checker checks the names of the Go file a lane holds, over the word table of the
+  // configuration; the run's own memory holds none.
+  Name_Checker naming.Checker_Handle
+  // Diagnostics holds the diagnostic the declaration pass left for each Go file.
+  Diagnostics File_Diagnostics
+  // Notices holds the banned import message the declaration pass left for each Go file.
+  Notices Notice_Table
   // Orphans holds each symbolic link the walk found whose target resolves to nothing.
   Orphans Orphan_Paths
   // Link holds the path of one child the walk asks the host about.
@@ -2289,12 +2364,24 @@ type Memory struct {
   Resolved Resolved_Path
   // Target holds the target one symbolic link names.
   Target Link_Target
+  // Lanes holds the stores each Go file of one batch is checked in apart.
+  Lanes Lane_Table
+  // Held marks each lane the declaration pass handed over and has not closed.
+  Held Lane_Marks
+  // Siblings holds the names each Go file declares, which the files of one package judge.
+  Siblings Sibling_Table
+  // Layout holds the findings of the component layout that name no Go file, and the module path.
+  Layout Layout_Table
+  // Graph holds the call graph of the package the recursion judgment reads.
+  Graph Graph_Store
+  // Glob holds the glob pattern and the path one match of opt_out_recursion_ban reads.
+  Glob Glob_Storage
 }
 
 // Memory_Invariants states that every store the root allocated stands at its whole size. A store
 // another package declares belongs to that package's chain, which its own simulation covers, thus
 // this chain states the one property the run depends on: the store is there and cannot grow.
-func Memory_Invariants(value Memory, namespace aver.Namespace) {
+func Memory_Invariants(value *Memory, namespace aver.Namespace) {
   Form_Bytes_Invariants(value.Form, namespace)
   Path_Table_Invariants(value.Paths, namespace)
   Directory_Paths_Invariants(value.Directories, namespace)
@@ -2305,16 +2392,27 @@ func Memory_Invariants(value Memory, namespace aver.Namespace) {
   Json_Storage_Invariants(value.Json, namespace)
   Packages_Invariants(value.Packages, namespace)
   Package_Indices_Invariants(value.File_Packages, namespace)
+  File_Sizes_Invariants(value.Sizes, namespace)
+  File_Order_Invariants(value.Order, namespace)
   requirements.Checker_Handle_Invariants(value.Requirements, namespace)
   History_Output_Invariants(value.History_Output, namespace)
   History_Errors_Invariants(value.History_Errors, namespace)
   History_Name_Invariants(value.History_Name, namespace)
   configuration.Configuration_Handle_Invariants(value.Configuration, namespace)
   Notice_Store_Invariants(value.Notice, namespace)
+  naming.Checker_Handle_Invariants(value.Name_Checker, namespace)
+  File_Diagnostics_Invariants(value.Diagnostics, namespace)
+  Notice_Table_Invariants(value.Notices, namespace)
   Orphan_Paths_Invariants(value.Orphans, namespace)
   Link_Path_Invariants(value.Link, namespace)
   Resolved_Path_Invariants(value.Resolved, namespace)
   Link_Target_Invariants(value.Target, namespace)
+  Lane_Table_Invariants(value.Lanes, namespace)
+  Lane_Marks_Invariants(value.Held, namespace)
+  Sibling_Table_Invariants(&value.Siblings, namespace)
+  Layout_Table_Invariants(&value.Layout, namespace)
+  Graph_Store_Invariants(value.Graph, namespace)
+  Glob_Storage_Invariants(value.Glob, namespace)
 }
 
 // Memory_Handle is caller-owned run storage.
@@ -2325,7 +2423,7 @@ func Memory_Handle_Invariants(value Memory_Handle, namespace aver.Namespace) {
   if value == nil {
     return
   }
-  Memory_Invariants(*value, namespace)
+  Memory_Invariants(value, namespace)
 }
 
 // Driven_Phase is the phase one drive pass reads. A rearm submits every stage it is ready to
@@ -2367,6 +2465,30 @@ type Work_Queued_Procedure func(phase Driven_Phase) (queued Boolean)
 // Stopped_Procedure reports whether the run is over and Status is final.
 type Stopped_Procedure func(phase Pass_Phase) (stopped Boolean)
 
+// Lane_Procedure is one step of the root's spread on one lane.
+type Lane_Procedure func(lane Lane_Handle)
+
+// Reap_Procedure hands back one lane the run holds whose check is done, waiting for one where none
+// is.
+type Reap_Procedure func(memory Memory_Handle) (lane Lane_Index)
+
+// Spread is how the root checks lanes: Submit hands one lane over, and Reap hands back a lane whose
+// check is done. No lane reads what another writes, and what a closed lane leaves the run states
+// the same in any order, thus a spread checks lanes at once or in turn, and reaps them in any
+// order.
+type Spread struct {
+  // Submit hands one loaded lane over for its check.
+  Submit Lane_Procedure
+  // Reap hands back one checked lane.
+  Reap Reap_Procedure
+}
+
+// Spread_Invariants states both steps bound.
+func Spread_Invariants(value *Spread, _ aver.Namespace) {
+  aver.Always(value.Submit != nil, "A spread submits.")
+  aver.Always(value.Reap != nil, "A spread reaps.")
+}
+
 // Loop is where one run stands in the operating system loop: the operation in flight, the
 // surface it goes through, the descriptors it holds, and the step it is on.
 type Loop struct {
@@ -2381,7 +2503,7 @@ type Loop struct {
 }
 
 // Loop_Invariants composes where the run stands.
-func Loop_Invariants(value Loop, namespace aver.Namespace) {
+func Loop_Invariants(value *Loop, namespace aver.Namespace) {
   nbio.IO_Invariants(value.IO, namespace)
 }
 
@@ -2394,7 +2516,7 @@ type Progress struct {
 }
 
 // Progress_Invariants composes where one stage stands.
-func Progress_Invariants(value Progress, namespace aver.Namespace) {
+func Progress_Invariants(value *Progress, namespace aver.Namespace) {
   Phase_Invariants(value.Phase, namespace)
 }
 
@@ -2406,7 +2528,7 @@ type Outcome struct {
 }
 
 // Outcome_Invariants composes what the run will exit as.
-func Outcome_Invariants(value Outcome, namespace aver.Namespace) {
+func Outcome_Invariants(value *Outcome, namespace aver.Namespace) {
   Status_Code_Invariants(value.Status, namespace)
 }
 
@@ -2418,7 +2540,7 @@ func Outcome_Handle_Invariants(value Outcome_Handle, namespace aver.Namespace) {
   if value == nil {
     return
   }
-  Outcome_Invariants(*value, namespace)
+  Outcome_Invariants(value, namespace)
 }
 
 // Progress_Handle is caller-owned run progress.
@@ -2429,7 +2551,7 @@ func Progress_Handle_Invariants(value Progress_Handle, namespace aver.Namespace)
   if value == nil {
     return
   }
-  Progress_Invariants(*value, namespace)
+  Progress_Invariants(value, namespace)
 }
 
 // Loop_Handle is caller-owned loop position.
@@ -2440,7 +2562,7 @@ func Loop_Handle_Invariants(value Loop_Handle, namespace aver.Namespace) {
   if value == nil {
     return
   }
-  Loop_Invariants(*value, namespace)
+  Loop_Invariants(value, namespace)
 }
 
 // Walk is the pass over the tree: what it collected.
@@ -2452,7 +2574,7 @@ type Walk struct {
 }
 
 // Walk_Invariants composes the tree pass.
-func Walk_Invariants(value Walk, namespace aver.Namespace) {
+func Walk_Invariants(value *Walk, namespace aver.Namespace) {
   Package_Count_Invariants(value.Package_Count, namespace)
   Orphan_Count_Invariants(value.Orphan_Count, namespace)
 }
@@ -2486,7 +2608,7 @@ type Orphan_Cursor struct {
 }
 
 // Orphan_Cursor_Invariants composes the orphan cursor.
-func Orphan_Cursor_Invariants(value Orphan_Cursor, namespace aver.Namespace) {
+func Orphan_Cursor_Invariants(value *Orphan_Cursor, namespace aver.Namespace) {
   Orphan_Index_Invariants(value.Orphan_Index, namespace)
 }
 
@@ -2498,7 +2620,7 @@ func Orphan_Cursor_Handle_Invariants(value Orphan_Cursor_Handle, namespace aver.
   if value == nil {
     return
   }
-  Orphan_Cursor_Invariants(*value, namespace)
+  Orphan_Cursor_Invariants(value, namespace)
 }
 
 // Orphan_Count_Handle is the count of a caller-owned pass.
@@ -2578,7 +2700,7 @@ func Walk_Handle_Invariants(value Walk_Handle, namespace aver.Namespace) {
   if value == nil {
     return
   }
-  Walk_Invariants(*value, namespace)
+  Walk_Invariants(value, namespace)
 }
 
 // Package_Cursor is the package whose contract the run checks. It stands apart from the pass,
@@ -2590,7 +2712,7 @@ type Package_Cursor struct {
 }
 
 // Package_Cursor_Invariants composes the package cursor.
-func Package_Cursor_Invariants(value Package_Cursor, namespace aver.Namespace) {
+func Package_Cursor_Invariants(value *Package_Cursor, namespace aver.Namespace) {
   Package_Index_Invariants(value.Package_Index, namespace)
 }
 
@@ -2602,7 +2724,7 @@ func Package_Cursor_Handle_Invariants(value Package_Cursor_Handle, namespace ave
   if value == nil {
     return
   }
-  Package_Cursor_Invariants(*value, namespace)
+  Package_Cursor_Invariants(value, namespace)
 }
 
 // Served_Reading is the purpose one file pass stands on: the bytes of a Go file, or the names
@@ -2718,7 +2840,7 @@ type Read struct {
 }
 
 // Read_Invariants composes the open read.
-func Read_Invariants(value Read, namespace aver.Namespace) {
+func Read_Invariants(value *Read, namespace aver.Namespace) {
   Reading_Invariants(value.Reading, namespace)
   Source_Count_Invariants(value.Source_Count, namespace)
   Read_Path_Slice_Invariants(value.Path, namespace)
@@ -2732,7 +2854,7 @@ func Read_Handle_Invariants(value Read_Handle, namespace aver.Namespace) {
   if value == nil {
     return
   }
-  Read_Invariants(*value, namespace)
+  Read_Invariants(value, namespace)
 }
 
 // Files is where the run stands in the collected paths. It stands apart from the pass, because a
@@ -2743,7 +2865,7 @@ type Files struct {
 }
 
 // Files_Invariants composes the collected paths.
-func Files_Invariants(value Files, namespace aver.Namespace) {
+func Files_Invariants(value *Files, namespace aver.Namespace) {
   File_Count_Invariants(value.File_Count, namespace)
 }
 
@@ -2755,7 +2877,7 @@ func Files_Handle_Invariants(value Files_Handle, namespace aver.Namespace) {
   if value == nil {
     return
   }
-  Files_Invariants(*value, namespace)
+  Files_Invariants(value, namespace)
 }
 
 // File_Cursor is the file the run stands on. It stands apart from the count, because the walk
@@ -2767,7 +2889,7 @@ type File_Cursor struct {
 }
 
 // File_Cursor_Invariants composes the file cursor.
-func File_Cursor_Invariants(value File_Cursor, namespace aver.Namespace) {
+func File_Cursor_Invariants(value *File_Cursor, namespace aver.Namespace) {
   File_Index_Invariants(value.File_Index, namespace)
 }
 
@@ -2779,19 +2901,20 @@ func File_Cursor_Handle_Invariants(value File_Cursor_Handle, namespace aver.Name
   if value == nil {
     return
   }
-  File_Cursor_Invariants(*value, namespace)
+  File_Cursor_Invariants(value, namespace)
 }
 
-// Finding is what the last check found. Only the passes that check, fix or report one take it,
-// so a helper that never reads it owes no rule and no position.
+// Finding is what the fix step writes: the form the last check found a file should stand in. A
+// diagnostic the run states rather than fixes stands in the file table, thus the finding holds
+// no rule and no position.
 type Finding struct {
-  // Diagnostic is what the last check found.
-  Diagnostic Diagnostic
+  // Fix is the whole file as it should stand.
+  Fix Fix
 }
 
-// Finding_Invariants composes what the last check found.
-func Finding_Invariants(value Finding, namespace aver.Namespace) {
-  Diagnostic_Invariants(value.Diagnostic, namespace)
+// Finding_Invariants composes what the fix step writes.
+func Finding_Invariants(value *Finding, namespace aver.Namespace) {
+  Fix_Invariants(value.Fix, namespace)
 }
 
 // Finding_Handle is caller-owned finding state.
@@ -2802,7 +2925,7 @@ func Finding_Handle_Invariants(value Finding_Handle, namespace aver.Namespace) {
   if value == nil {
     return
   }
-  Finding_Invariants(*value, namespace)
+  Finding_Invariants(value, namespace)
 }
 
 // Fix_State is how far one fix write got. Only the passes that write a fix take it, so a helper
@@ -2813,7 +2936,7 @@ type Fix_State struct {
 }
 
 // Fix_State_Invariants composes how far one fix write got.
-func Fix_State_Invariants(value Fix_State, namespace aver.Namespace) {
+func Fix_State_Invariants(value *Fix_State, namespace aver.Namespace) {
   Fix_Count_Invariants(value.Fix_Count, namespace)
 }
 
@@ -2825,7 +2948,7 @@ func Fix_State_Handle_Invariants(value Fix_State_Handle, namespace aver.Namespac
   if value == nil {
     return
   }
-  Fix_State_Invariants(*value, namespace)
+  Fix_State_Invariants(value, namespace)
 }
 
 // Tally is whether the run reported a finding and where it continues after one. Only the passes
@@ -2838,7 +2961,7 @@ type Tally struct {
 }
 
 // Tally_Invariants composes what the run reported.
-func Tally_Invariants(value Tally, namespace aver.Namespace) {
+func Tally_Invariants(value *Tally, namespace aver.Namespace) {
   Boolean_Invariants(value.Found, namespace)
   Resume_Invariants(value.Resume, namespace)
 }
@@ -2851,7 +2974,7 @@ func Tally_Handle_Invariants(value Tally_Handle, namespace aver.Namespace) {
   if value == nil {
     return
   }
-  Tally_Invariants(*value, namespace)
+  Tally_Invariants(value, namespace)
 }
 
 // Findings is the line the run writes about what it found.
@@ -2861,7 +2984,7 @@ type Findings struct {
 }
 
 // Findings_Invariants composes what the run found.
-func Findings_Invariants(value Findings, namespace aver.Namespace) {
+func Findings_Invariants(value *Findings, namespace aver.Namespace) {
   Line_Invariants(value.Line, namespace)
 }
 
@@ -2873,7 +2996,7 @@ func Findings_Handle_Invariants(value Findings_Handle, namespace aver.Namespace)
   if value == nil {
     return
   }
-  Findings_Invariants(*value, namespace)
+  Findings_Invariants(value, namespace)
 }
 
 // Streams is where one submission writes and what it stands on: the parts the pump hands the
@@ -2921,10 +3044,13 @@ type Streams struct {
   Output nbio.Stream
   // Errors receives the diagnostic of a failed step.
   Errors nbio.Stream
+  // Spread checks the lanes.
+  Spread Spread
 }
 
 // Streams_Invariants composes what one submission stands on.
-func Streams_Invariants(value Streams, namespace aver.Namespace) {
+func Streams_Invariants(value *Streams, namespace aver.Namespace) {
+  Spread_Invariants(&value.Spread, namespace)
   Loop_Handle_Invariants(value.Loop, namespace)
   Stage_Handle_Invariants(value.Stage, namespace)
   Walk_Handle_Invariants(value.Walk, namespace)
@@ -2933,9 +3059,9 @@ func Streams_Invariants(value Streams, namespace aver.Namespace) {
   Files_Handle_Invariants(value.Files, namespace)
   File_Cursor_Handle_Invariants(value.File_Cursor, namespace)
   Read_Handle_Invariants(value.Read, namespace)
-  Format_Invariants(value.Format, namespace)
+  Format_Invariants(&value.Format, namespace)
   Directory_Handle_Invariants(value.Directory, namespace)
-  Run_Flag_Storage_Invariants(value.Flags, namespace)
+  Run_Flag_Storage_Invariants(&value.Flags, namespace)
   Findings_Handle_Invariants(value.Findings, namespace)
   Outcome_Handle_Invariants(value.Outcome, namespace)
   Report_Handle_Invariants(value.Report, namespace)
@@ -2984,10 +3110,10 @@ type Runner_Fields struct {
   Arguments os.Arguments
   // Work_Queued is bound by the root.
   Work_Queued Work_Queued_Procedure
+  // Spread is bound by the root.
+  Spread Spread
   // Stopped is bound by the root.
   Stopped Stopped_Procedure
-  // Syntax holds the parsed file and its line index.
-  Syntax requirements.Syntax
   // Memory is every store the run uses; the root allocates it once. It stays behind a handle,
   // because a run's fields past the stack bound of an interface conversion would allocate on
   // every assertion.
@@ -3026,32 +3152,32 @@ type Runner_Fields struct {
 }
 
 // Runner_Fields_Invariants composes every run field.
-func Runner_Fields_Invariants(value Runner_Fields, namespace aver.Namespace) {
-  Loop_Invariants(value.Loop, namespace)
+func Runner_Fields_Invariants(value *Runner_Fields, namespace aver.Namespace) {
+  Spread_Invariants(&value.Spread, namespace)
+  Loop_Invariants(&value.Loop, namespace)
   Stage_Invariants(value.Stage, namespace)
-  Progress_Invariants(value.Progress, namespace)
-  Outcome_Invariants(value.Outcome, namespace)
-  Reports_Invariants(value.Reports, namespace)
-  time.Clock_Invariants(value.Clock, namespace)
+  Progress_Invariants(&value.Progress, namespace)
+  Outcome_Invariants(&value.Outcome, namespace)
+  Reports_Invariants(&value.Reports, namespace)
+  time.Clock_Invariants(&value.Clock, namespace)
   time.Monotonic_Moment_Invariants(value.Start, namespace)
   os.Arguments_Invariants(value.Arguments, namespace)
   Memory_Handle_Invariants(value.Memory, namespace)
-  requirements.Syntax_Invariants(value.Syntax, namespace)
-  Walk_Invariants(value.Walk, namespace)
-  Package_Cursor_Invariants(value.Package_Cursor, namespace)
-  Orphan_Cursor_Invariants(value.Orphan_Cursor, namespace)
-  Files_Invariants(value.Files, namespace)
-  File_Cursor_Invariants(value.File_Cursor, namespace)
-  Read_Invariants(value.Read, namespace)
-  Format_Invariants(value.Format, namespace)
-  Command_Invariants(value.Command, namespace)
-  Directory_Invariants(value.Directory, namespace)
-  Run_Flag_Storage_Invariants(value.Flags, namespace)
-  Findings_Invariants(value.Findings, namespace)
-  Finding_Invariants(value.Finding, namespace)
-  Fix_State_Invariants(value.Fix_State, namespace)
-  Tally_Invariants(value.Tally, namespace)
-  History_Invariants(value.History, namespace)
+  Walk_Invariants(&value.Walk, namespace)
+  Package_Cursor_Invariants(&value.Package_Cursor, namespace)
+  Orphan_Cursor_Invariants(&value.Orphan_Cursor, namespace)
+  Files_Invariants(&value.Files, namespace)
+  File_Cursor_Invariants(&value.File_Cursor, namespace)
+  Read_Invariants(&value.Read, namespace)
+  Format_Invariants(&value.Format, namespace)
+  Command_Invariants(&value.Command, namespace)
+  Directory_Invariants(&value.Directory, namespace)
+  Run_Flag_Storage_Invariants(&value.Flags, namespace)
+  Findings_Invariants(&value.Findings, namespace)
+  Finding_Invariants(&value.Finding, namespace)
+  Fix_State_Invariants(&value.Fix_State, namespace)
+  Tally_Invariants(&value.Tally, namespace)
+  History_Invariants(&value.History, namespace)
 }
 
 // Runner is one whole run.
@@ -3060,8 +3186,8 @@ type Runner struct {
 }
 
 // Runner_Invariants composes every run field.
-func Runner_Invariants(value Runner, namespace aver.Namespace) {
-  Runner_Fields_Invariants(value.Runner_Fields, namespace)
+func Runner_Invariants(value *Runner, namespace aver.Namespace) {
+  Runner_Fields_Invariants(&value.Runner_Fields, namespace)
 }
 
 // Runner_Handle is caller-owned run state.
@@ -3072,7 +3198,7 @@ func Runner_Handle_Invariants(value Runner_Handle, namespace aver.Namespace) {
   if value == nil {
     return
   }
-  Runner_Invariants(*value, namespace)
+  Runner_Invariants(value, namespace)
 }
 
 // Rearm_Input is what one rearm stands on: the run's stores, the parse it holds, the parts one
@@ -3080,8 +3206,6 @@ func Runner_Handle_Invariants(value Runner_Handle, namespace aver.Namespace) {
 type Rearm_Input struct {
   // Memory is the run's stores.
   Memory Memory_Handle
-  // Syntax is the parse state and its line index.
-  Syntax requirements.Syntax
   // State is the parts one pass works on.
   State Streams
   // Progress is where the pump stands.
@@ -3095,14 +3219,13 @@ type Rearm_Input struct {
 }
 
 // Rearm_Input_Invariants composes what one rearm stands on.
-func Rearm_Input_Invariants(value Rearm_Input, namespace aver.Namespace) {
+func Rearm_Input_Invariants(value *Rearm_Input, namespace aver.Namespace) {
   Memory_Handle_Invariants(value.Memory, namespace)
-  requirements.Syntax_Invariants(value.Syntax, namespace)
-  Streams_Invariants(value.State, namespace)
+  Streams_Invariants(&value.State, namespace)
   Progress_Handle_Invariants(value.Progress, namespace)
   Elapsed_Invariants(value.Elapsed, namespace)
   os.Arguments_Invariants(value.Arguments, namespace)
-  Command_Invariants(value.Command, namespace)
+  Command_Invariants(&value.Command, namespace)
   // A count past its store names a slot the store never held, thus each count stands at
   // the store it counts rather than at a slot past the end of it.
   memory, state := value.Memory, value.State
@@ -3168,25 +3291,20 @@ type Main_Input struct {
 }
 
 // Main_Input_Invariants composes what a run opens on.
-func Main_Input_Invariants(value Main_Input, namespace aver.Namespace) {
+func Main_Input_Invariants(value *Main_Input, namespace aver.Namespace) {
   Opening_Phase_Handle_Invariants(value.Phase, namespace)
   Moment_Handle_Invariants(value.Start, namespace)
-  time.Clock_Invariants(value.Clock, namespace)
+  time.Clock_Invariants(&value.Clock, namespace)
 }
 
-// Advance_Pass is what one ready stage leaves the run on: another stage ready, an operation to
-// submit, or a stopped run.
+// Advance_Pass is what one ready stage leaves the run on: another stage ready, or an operation
+// to submit, since every run closes on a line it writes.
 type Advance_Pass int
 
 // Advance_Pass_Invariants admits each pass.
 func Advance_Pass_Invariants(value Advance_Pass, namespace aver.Namespace) {
   aver.Tree(value, namespace).
-    Enum_3_Int(
-    int(value),
-    int(ADVANCE_READY),
-    int(ADVANCE_SUBMIT),
-    int(ADVANCE_STOPPED),
-  ).
+    Enum_Int(int(value), int(ADVANCE_READY), int(ADVANCE_SUBMIT)).
     Ensure()
 }
 
@@ -3195,8 +3313,6 @@ func Advance_Pass_Invariants(value Advance_Pass, namespace aver.Namespace) {
 type Advance_Input struct {
   // Memory is the run's stores.
   Memory Memory_Handle
-  // Syntax is the parse state and its line index.
-  Syntax requirements.Syntax
   // State is the parts one pass works on.
   State Streams
   // Elapsed is how long the run has taken.
@@ -3204,10 +3320,9 @@ type Advance_Input struct {
 }
 
 // Advance_Input_Invariants composes what one ready stage stands on.
-func Advance_Input_Invariants(value Advance_Input, namespace aver.Namespace) {
+func Advance_Input_Invariants(value *Advance_Input, namespace aver.Namespace) {
   Memory_Handle_Invariants(value.Memory, namespace)
-  requirements.Syntax_Invariants(value.Syntax, namespace)
-  Streams_Invariants(value.State, namespace)
+  Streams_Invariants(&value.State, namespace)
   Elapsed_Invariants(value.Elapsed, namespace)
 }
 
@@ -3215,15 +3330,16 @@ func Advance_Input_Invariants(value Advance_Input, namespace aver.Namespace) {
 // nothing, thus it leaves the run ready for the stage it names.
 func advance(input Advance_Input) (next Advance_Pass) {
   defer func() { Advance_Pass_Invariants(next, "advance.next") }()
-  Advance_Input_Invariants(input, "advance.input")
-  memory, syntax, state, elapsed := input.Memory, input.Syntax, input.State, input.Elapsed
+  Advance_Input_Invariants(&input, "advance.input")
+  memory, state, elapsed := input.Memory, input.State, input.Elapsed
   checked := Checked_Reading_Handle((*Checked_Reading)(&state.Read.Reading))
   path := Read_Path_Handle(&state.Read.Path)
   packages, files := state.Walk.Package_Count, state.Files.File_Count
+  cursor, served := state.File_Cursor, Served_Reading_Handle((*Served_Reading)(&state.Read.Reading))
+  lanes := Lane_Input{Spread: state.Spread, Finding: state.Finding, Flags: state.Flags}
+  lanes.Formatter = state.Format.Formatter
   switch *state.Stage {
   case STAGE_PACKAGE:
-    // A run that found something rests at the package stage, thus the pump stops it
-    // where the step left it.
     stepped := package_step(
       memory,
       state.Walk,
@@ -3238,25 +3354,23 @@ func advance(input Advance_Input) (next Advance_Pass) {
       path,
     )
     *state.Stage = Stage(stepped)
-    if stepped == Step_Pass(STAGE_PACKAGE) {
-      return ADVANCE_STOPPED
-    }
   case STAGE_SERVE:
-    state.File_Cursor.File_Index++
-    served := Served_Reading_Handle((*Served_Reading)(&state.Read.Reading))
-    next := file_next(memory, packages, files, state.File_Cursor, served, path)
+    cursor.File_Index++
+    next := file_next(memory, packages, files, cursor, served, state.Flags)
     *state.Stage = Stage(next)
+  case STAGE_RECALL:
+    findings, report, slot := state.Findings, state.Report, File_Slot(state.File_Cursor.File_Index)
+    recalled := file_recall(memory, findings, report, state.Tally, state.Flags, slot, state.Outcome)
+    *state.Stage = Stage(recalled)
   case STAGE_DECLARED:
-    state.File_Cursor.File_Index++
-    *state.Stage = STAGE_DECLARE
+    slot := memory.Order[cursor.File_Index]
+    *state.Stage = Stage(declared(memory, lanes, slot, state.Read.Source_Count))
+    cursor.File_Index++
   case STAGE_DECLARE:
-    reading := Served_Reading_Handle((*Served_Reading)(&state.Read.Reading))
-    formatter, cursor := state.Format.Formatter,
-      state.File_Cursor
-    next := declare_next(memory, packages, state.Flags, files, cursor, reading, formatter, path)
+    next := declare_next(memory, packages, files, cursor, served, path, lanes)
     *state.Stage = Stage(next)
   case STAGE_REQUIREMENTS:
-    *state.Stage = Stage(requirements_next(memory, syntax, checked, path))
+    *state.Stage = Stage(requirements_next(memory, checked, path, state.Finding))
   case STAGE_FINDING:
     // A contract finding fails the run, and the run takes the contract up again once its line
     // is written.
@@ -3271,8 +3385,7 @@ func advance(input Advance_Input) (next Advance_Pass) {
     *state.Stage = STAGE_PACKAGE
   case STAGE_HISTORY_NEXT:
     findings, report, tally := state.Findings, state.Report, state.Tally
-    past := Past{Orphans: state.Orphans, Walk: state.Walk}
-    past.Loop, past.Outcome = state.Loop, state.Outcome
+    past := Past{Orphans: state.Orphans, Walk: state.Walk, Loop: state.Loop, Outcome: state.Outcome}
     next := history_next(memory, findings, report, tally, state.Flags, &state.History.Walk, past)
     *state.Stage = Stage(next)
   default:
@@ -3286,8 +3399,8 @@ func advance(input Advance_Input) (next Advance_Pass) {
 // whole run.
 func Rearm(input Rearm_Input) (progressed Boolean) {
   defer func() { Boolean_Invariants(progressed, "rearm.progressed") }()
-  Rearm_Input_Invariants(input, "rearm.input")
-  memory, syntax, state := input.Memory, input.Syntax, input.State
+  Rearm_Input_Invariants(&input, "rearm.input")
+  memory, state := input.Memory, input.State
   progress := input.Progress
   switch progress.Phase {
   case PHASE_OPENED:
@@ -3300,6 +3413,10 @@ func Rearm(input Rearm_Input) (progressed Boolean) {
     state.Read.Path = append(state.Read.Path[:0], CONFIGURATION_PATH...)
     state.Directory.Current, state.Read.Reading = state.Directory.Current[:0], READING_SOURCE
     *state.Orphans, state.Directory.Directory_Count = Orphan_Cursor{}, 1
+    memory.Layout.Findings[LAYOUT_HEADER] = Layout_Finding{
+      Path_Start: LAYOUT_FINDING_FIRST,
+      Path_End:   LAYOUT_FINDING_FIRST,
+    }
     clear(state.Flags.Values)
     progress.Phase, *state.Stage = PHASE_READY, STAGE_FAIL
     // The vector is a host's, and cli.Program_Parse states a program name as a
@@ -3316,13 +3433,8 @@ func Rearm(input Rearm_Input) (progressed Boolean) {
     )
     return true
   case PHASE_READY:
-    switch advance(
-      Advance_Input{
-        Memory: memory, Syntax: syntax, State: state, Elapsed: input.Elapsed,
-      },
-    ) {
-    case ADVANCE_STOPPED:
-      progress.Phase = PHASE_STOPPED
+    advanced := Advance_Input{Memory: memory, State: state, Elapsed: input.Elapsed}
+    switch advance(advanced) {
     case ADVANCE_SUBMIT:
       // A stream can retire inside the submit, thus the phase moves first or
       // the retirement it records would be erased.
@@ -3334,7 +3446,7 @@ func Rearm(input Rearm_Input) (progressed Boolean) {
         state.Findings,
         state.Output,
         state.Errors,
-        state.Finding.Diagnostic.Fix,
+        state.Finding.Fix,
         state.Fix_State,
         state.Read,
         state.Directory,
@@ -3347,7 +3459,7 @@ func Rearm(input Rearm_Input) (progressed Boolean) {
     progress.Phase = PHASE_READY
     // The last line of a run retires at the stage that wrote it, thus the judge
     // states that the run is done and the pump stops it here.
-    if bool(judge(memory, syntax, state)) {
+    if bool(judge(memory, state)) {
       progress.Phase = PHASE_STOPPED
     }
     return true
@@ -3567,9 +3679,9 @@ func judge_walk(
   Memory_Handle_Invariants(memory, "judge_walk.memory")
   Loop_Handle_Invariants(loop, "judge_walk.loop")
   Walk_Handle_Invariants(walk, "judge_walk.walk")
-  Run_Flag_Storage_Invariants(run_flags, "judge_walk.run_flags")
+  Run_Flag_Storage_Invariants(&run_flags, "judge_walk.run_flags")
   Files_Handle_Invariants(files, "judge_walk.files")
-  Formatter_Stores_Invariants(stores, "judge_walk.stores")
+  Formatter_Stores_Invariants(&stores, "judge_walk.stores")
   Walked_Path_Invariants(current, "judge_walk.current")
   Directory_Count_Handle_Invariants(queue, "judge_walk.queue")
   Walk_Stage_Handle_Invariants(stage, "judge_walk.stage")
@@ -3589,13 +3701,11 @@ func judge_walk(
 
 func judge(
   memory Memory_Handle,
-  syntax requirements.Syntax,
   state Streams,
 ) (stopped Boolean) {
   defer func() { Boolean_Invariants(stopped, "judge.stopped") }()
-  requirements.Syntax_Invariants(syntax, "judge.syntax")
   Memory_Handle_Invariants(memory, "judge.memory")
-  Streams_Invariants(state, "judge.state")
+  Streams_Invariants(&state, "judge.state")
   loop, stage, read := state.Loop, state.Stage, state.Read
   findings, run_flags, outcome := state.Findings, state.Flags, state.Outcome
   tally, current, opened := state.Tally, Walked_Path(state.Directory.Current), STAGE_DIRECTORY_OPEN
@@ -3609,33 +3719,38 @@ func judge(
     walked := Walk_Stage_Handle((*Walk_Stage)((*Stage)(stage)))
     owed = judge_walk(memory, loop, walk, run_flags, files, stores, current, queue, walked)
   case STAGE_OPEN:
+    // A run that finds no module file states it and walks the tree anyway.
+    if loop.Completion.Error != nil {
+      if run_flags.Values[RUN_CONFIGURED] {
+        if !run_flags.Values[RUN_MODULE] {
+          run_flags.Values[RUN_MODULE] = true
+          module_absent(memory)
+          *stage = opened
+          return false
+        }
+      }
+    }
     *stage = Stage(judge_open(memory, loop, run_flags, read))
     owed, step, failed = true, STEP_OPEN, Failure_Path(read.Path)
   case STAGE_READ:
     unfilled := Unfilled_Count_Handle((*Unfilled_Count)(&read.Source_Count))
     *stage = Stage(judge_read(memory, loop, run_flags, read.Reading, unfilled))
   case STAGE_CLOSE:
-    closed := judge_close(
-      memory,
-      syntax,
-      loop,
-      findings,
-      state.Report,
-      state.Finding,
-      tally,
-      run_flags,
-      File_Slot(state.File_Cursor.File_Index),
-      read,
-      state.Format,
-      outcome,
-    )
+    closed := judge_close(memory, loop, findings, run_flags, read, outcome)
     // A contract close takes the stage its check names, thus its slot of the table stands unread.
-    stages := [...]Stage{STAGE_FAIL, STAGE_SERVE, STAGE_FIX_OPEN, STAGE_REPORT, opened, opened}
+    stages := [...]Stage{STAGE_FAIL, opened, opened}
     *stage = stages[closed]
+    // The configuration opens the module file, and the module file opens the walk.
+    if closed == CLOSE_PASS_CONFIGURED {
+      if !run_flags.Values[RUN_MODULE] {
+        read.Path = append(read.Path[:0], MODULE_PATH...)
+        *stage = STAGE_OPEN
+      }
+    }
     if closed == CLOSE_PASS_CONTRACT {
       contract := Contract_Reading_Handle((*Contract_Reading)(&read.Reading))
       count := read.Source_Count
-      next := judge_served(memory, syntax, run_flags, contract, count, stores, state.Finding)
+      next := judge_served(memory, run_flags, contract, count)
       *stage = Stage(next)
     }
   case STAGE_REPORT:
@@ -3646,9 +3761,11 @@ func judge(
     return true
   case STAGE_HISTORY_HEAD, STAGE_HISTORY_REFS, STAGE_HISTORY_LOG:
     source := Judged_Source_Handle((*Judged_Source)(&state.History.Walk.Source))
-    *stage = Stage(judge_history(memory, loop, History_Stage(*stage), source))
+    *stage = Stage(
+      history_resume(memory, judge_history(memory, loop, History_Stage(*stage), source)),
+    )
   case STAGE_FIX_OPEN, STAGE_FIX_WRITE, STAGE_FIX_CLOSE:
-    fix, reading := Written_Fix(state.Finding.Diagnostic.Fix), Fixed_Reading(read.Reading)
+    fix, reading := Written_Fix(state.Finding.Fix), Fixed_Reading(read.Reading)
     *stage = Stage(judge_fix(loop, Fix_Stage(*stage), fix, state.Fix_State, run_flags, reading))
     owed, step, failed = true, STEP_FIX, Failure_Path(read.Path)
   }
@@ -3680,7 +3797,7 @@ func judge_open(
   defer func() { Open_Pass_Invariants(next, "judge_open.next") }()
   Memory_Handle_Invariants(memory, "judge_open.memory")
   Loop_Handle_Invariants(loop, "judge_open.loop")
-  Run_Flag_Storage_Invariants(run_flags, "judge_open.run_flags")
+  Run_Flag_Storage_Invariants(&run_flags, "judge_open.run_flags")
   Read_Handle_Invariants(read, "judge_open.read")
   // A file the run cannot open names the step that failed, which the caller states.
   if loop.Completion.Error != nil {
@@ -3729,7 +3846,7 @@ func judge_fix(
   Fix_State_Handle_Invariants(fix_state, "judge_fix.fix_state")
   Written_Fix_Invariants(fix, "judge_fix.fix")
   Loop_Handle_Invariants(loop, "judge_fix.loop")
-  Run_Flag_Storage_Invariants(run_flags, "judge_fix.run_flags")
+  Run_Flag_Storage_Invariants(&run_flags, "judge_fix.run_flags")
   Fix_Stage_Invariants(stage, "judge_fix.stage")
   completion := &loop.Completion
   switch stage {
@@ -3782,7 +3899,7 @@ func judge_fix(
   if reading == Fixed_Reading(READING_MARKDOWN) {
     return Fix_Pass(STAGE_REQUIREMENTS)
   }
-  return Fix_Pass(STAGE_SERVE)
+  return Fix_Pass(STAGE_DECLARE)
 }
 
 // A descriptor outlives a failed pass, thus the failure waits for the close.
@@ -3801,7 +3918,7 @@ func judge_directory_read(
   Files_Handle_Invariants(files, "judge_directory_read.files")
   Memory_Handle_Invariants(memory, "judge_directory_read.memory")
   Walk_Handle_Invariants(walk, "judge_directory_read.walk")
-  Run_Flag_Storage_Invariants(run_flags, "judge_directory_read.run_flags")
+  Run_Flag_Storage_Invariants(&run_flags, "judge_directory_read.run_flags")
   Loop_Handle_Invariants(loop, "judge_directory_read.loop")
   if loop.Completion.Error != nil {
     run_flags.Values[RUN_WALK_FAILED] = true
@@ -3832,7 +3949,7 @@ func judge_directory_open(
   defer func() {
     Directory_Open_Pass_Invariants(next, "judge_directory_open.next")
   }()
-  Run_Flag_Storage_Invariants(run_flags, "judge_directory_open.run_flags")
+  Run_Flag_Storage_Invariants(&run_flags, "judge_directory_open.run_flags")
   Loop_Handle_Invariants(loop, "judge_directory_open.loop")
   // A directory the walk cannot open names the step that failed, which the caller states.
   if loop.Completion.Error != nil {
@@ -3856,7 +3973,7 @@ func collect_directory(
   queue Directory_Count_Handle,
 ) {
   Directory_Paths_Invariants(directories, "collect_directory.directories")
-  Run_Flag_Storage_Invariants(run_flags, "collect_directory.run_flags")
+  Run_Flag_Storage_Invariants(&run_flags, "collect_directory.run_flags")
   Parent_Path_Invariants(current, "collect_directory.current")
   Directory_Count_Handle_Invariants(queue, "collect_directory.queue")
   if int(*queue) == len(directories) {
@@ -3884,7 +4001,7 @@ func collect(
 ) {
   Memory_Handle_Invariants(memory, "collect.memory")
   Walk_Handle_Invariants(walk, "collect.walk")
-  Run_Flag_Storage_Invariants(run_flags, "collect.run_flags")
+  Run_Flag_Storage_Invariants(&run_flags, "collect.run_flags")
   Files_Handle_Invariants(files, "collect.files")
   Walked_Path_Invariants(current, "collect.current")
   Directory_Count_Handle_Invariants(queue, "collect.queue")
@@ -3901,6 +4018,23 @@ func collect(
     run_flags.Values[RUN_WALK_FAILED] = true
     return
   }
+  // A path the ignore list holds stands outside the run: the walk opens no such directory and
+  // checks no such file.
+  // A walked path spends at most PATH_SIZE_MAXIMUM bytes, thus its zero byte fits the part.
+  glob := memory.Glob[GLOB_PATTERN_SIZE:GLOB_STORAGE_SIZE]
+  size := copy(glob, current)
+  size += copy(glob[size:], "/")
+  glob[size+copy(glob[size:], entry.Name)] = 0
+  // A module file past the root, or a workspace file anywhere, divides the one module.
+  if !entry.Is_Directory {
+    switch entry.Name {
+    case MODULE_PATH, WORKSPACE_NAME:
+      layout_module(memory, Boolean(entry.Name == WORKSPACE_NAME))
+    }
+  }
+  if bool(glob_listed(memory, GLOB_LIST_IGNORE)) {
+    return
+  }
   if entry.Is_Directory {
     parent := Parent_Path(current)
     collect_directory(memory.Directories, entry, run_flags, parent, queue)
@@ -3911,7 +4045,7 @@ func collect(
   link := append(append(memory.Link[:0], current...), PATH_SEPARATOR)
   link = append(link, entry.Name...)
   orphans := Orphan_Count_Handle(&walk.Orphan_Count)
-  if !bool(collect_status(memory, orphans, storage, run_flags, Entry_Path(link))) {
+  if !bool(collect_status(memory, orphans, storage, run_flags, Entry_Path(link), files.File_Count)) {
     return
   }
   // Exact names, since a case-insensitive disk would resolve a differently cased file.
@@ -3959,11 +4093,13 @@ func collect_status(
   storage nbio.Storage,
   run_flags Run_Flag_Storage,
   entry Entry_Path,
+  taken File_Count,
 ) (regular Boolean) {
   defer func() { Boolean_Invariants(regular, "collect_status.regular") }()
+  File_Count_Invariants(taken, "collect_status.taken")
   Memory_Handle_Invariants(memory, "collect_status.memory")
   Orphan_Count_Handle_Invariants(orphans, "collect_status.orphans")
-  Run_Flag_Storage_Invariants(run_flags, "collect_status.run_flags")
+  Run_Flag_Storage_Invariants(&run_flags, "collect_status.run_flags")
   Entry_Path_Invariants(entry, "collect_status.entry")
   stated := unsafe.String(unsafe.SliceData(entry), len(entry))
   status, status_err := nbio.Storage_Status(storage, stated)
@@ -3971,6 +4107,9 @@ func collect_status(
     run_flags.Values[RUN_WALK_FAILED] = true
     return false
   }
+  // The slot past the last file the walk took stands for the file this entry may be, thus its
+  // size stands there whether or not the walk takes it.
+  memory.Sizes[taken] = File_Size(min(status.Size, int64(SOURCE_STORAGE_SIZE)))
   if !nbio.File_Mode_Is_Symbolic_Link(status.Mode) {
     return Boolean(nbio.File_Mode_Is_Regular(status.Mode))
   }
@@ -4040,7 +4179,7 @@ func collect_source(
   Package_Indices_Invariants(owners, "collect_source.owners")
   Package_Slot_Invariants(owner, "collect_source.owner")
   File_Slot_Invariants(slot, "collect_source.slot")
-  Run_Flag_Storage_Invariants(run_flags, "collect_source.run_flags")
+  Run_Flag_Storage_Invariants(&run_flags, "collect_source.run_flags")
   owners[slot] = owner
   run_flags.Values[RUN_PENDING_GO] = true
 }
@@ -4058,9 +4197,9 @@ func judge_directory_close(
   defer func() { Walk_Pass_Invariants(next, "judge_directory_close.next") }()
   Memory_Handle_Invariants(memory, "judge_directory_close.memory")
   Walk_Handle_Invariants(walk, "judge_directory_close.walk")
-  Run_Flag_Storage_Invariants(run_flags, "judge_directory_close.run_flags")
+  Run_Flag_Storage_Invariants(&run_flags, "judge_directory_close.run_flags")
   Files_Handle_Invariants(files, "judge_directory_close.files")
-  Formatter_Stores_Invariants(formatter, "judge_directory_close.formatter")
+  Formatter_Stores_Invariants(&formatter, "judge_directory_close.formatter")
   Walked_Path_Invariants(current, "judge_directory_close.current")
   Directory_Count_Handle_Invariants(queue, "judge_directory_close.queue")
   Loop_Handle_Invariants(loop, "judge_directory_close.loop")
@@ -4094,23 +4233,27 @@ func judge_directory_close(
     slot.Path = append(slot.Path[:0], current...)
     slot.Markdown = Markdown_Mark(run_flags.Values[RUN_PENDING_MARKDOWN])
     slot.Test = Test_Mark(run_flags.Values[RUN_PENDING_TEST])
-    slot.Impure = false
+    // A package whose test file no lane reads holds no declaration the check can read.
+    slot.Impure, slot.Declared, slot.Read = false, 0, requirements.TEST_REFUSED
     recorded := Recorded_Package{
       Path: slot.Path, Markdown: slot.Markdown, Test: slot.Test,
     }
     // A table states its length alone, thus each package states its own parts
     // where it is recorded rather than nowhere at all.
-    Recorded_Package_Invariants(recorded, "judge_directory_close.recorded")
+    Recorded_Package_Invariants(&recorded, "judge_directory_close.recorded")
     walk.Package_Count++
   }
   if *queue > 0 {
     return Walk_Pass(STAGE_DIRECTORY_OPEN)
   }
-  paths_sort(memory.Paths, memory.File_Packages, files.File_Count)
+  paths_sort(memory.Paths, memory.File_Packages, memory.Sizes, files.File_Count)
+  order_sort(memory, files.File_Count)
   format.Forget(&format.Formatter{Places: formatter.Places, Table_Fields: formatter.Table})
   // A run opens its cursor at the first file and the walk stands on none, thus the cursor
   // still stands there and needs no reset that would carry it into this pass.
-  run_flags.Values[RUN_UNDECLARED] = false
+  run_flags.Values[RUN_UNDECLARED], run_flags.Values[RUN_RENAME] = false, false
+  run_flags.Values[RUN_SIBLINGS] = false
+  siblings_open(memory, files.File_Count)
   return Walk_Pass(STAGE_DECLARE)
 }
 
@@ -4119,34 +4262,83 @@ func judge_directory_close(
 func declare_next(
   memory Memory_Handle,
   packages Package_Count,
-  run_flags Run_Flag_Storage,
   served File_Count,
   file_cursor File_Cursor_Handle,
   reading Served_Reading_Handle,
-  formatter Formatter_Stores,
   path_store Read_Path_Handle,
-) (next File_Pass) {
-  defer func() { File_Pass_Invariants(next, "declare_next.next") }()
+  input Lane_Input,
+) (next Declare_Pass) {
+  defer func() { Declare_Pass_Invariants(next, "declare_next.next") }()
   Read_Path_Handle_Invariants(path_store, "declare_next.path_store")
   Memory_Handle_Invariants(memory, "declare_next.memory")
   Package_Count_Invariants(packages, "declare_next.packages")
-  Run_Flag_Storage_Invariants(run_flags, "declare_next.run_flags")
   File_Count_Invariants(served, "declare_next.served")
   File_Cursor_Handle_Invariants(file_cursor, "declare_next.file_cursor")
   Served_Reading_Handle_Invariants(reading, "declare_next.reading")
-  Formatter_Stores_Invariants(formatter, "declare_next.formatter")
+  Lane_Input_Invariants(&input, "declare_next.input")
+  run_flags, formatter := input.Flags, input.Formatter
+  // The rename reads again each file whose bytes are the form its one parse printed: a clean one,
+  // one whose only fault is a banned import, and one -fix rewrote to its form.
+  for file_cursor.File_Index < File_Index(served) {
+    if !run_flags.Values[RUN_RENAME] {
+      break
+    }
+    rule := memory.Diagnostics[memory.Order[file_cursor.File_Index]].Rule
+    owed := rule == RULE_NONE
+    if rule == RULE_IMPORTS {
+      owed = true
+    }
+    if rule == RULE_NAMES {
+      owed = true
+    }
+    if rule == RULE_SHADOWS {
+      owed = true
+    }
+    if rule == RULE_RECURSION {
+      owed = true
+    }
+    if rule == RULE_LAYOUT {
+      owed = true
+    }
+    if rule == RULE_UNFORMATTED {
+      owed = bool(run_flags.Values[RUN_AUTOFIX])
+    }
+    if owed {
+      break
+    }
+    file_cursor.File_Index++
+  }
   if file_cursor.File_Index < File_Index(served) {
+    // Each lane holds a file, thus the spread hands one back before the pass reads another.
+    if int(lanes_held(memory)) == LANE_COUNT {
+      reaped := input.Spread.Reap(memory)
+      if bool(lane_turn(memory, input, reaped, path_store)) {
+        return Declare_Pass(STAGE_FIX_OPEN)
+      }
+    }
     *path_store = append(
-      (*path_store)[:0], memory.Paths[file_cursor.File_Index]...,
+      (*path_store)[:0], memory.Paths[memory.Order[file_cursor.File_Index]]...,
     )
     *reading = Served_Reading(READING_DECLARATION)
-    return File_Pass(STAGE_OPEN)
+    return Declare_Pass(STAGE_OPEN)
   }
-  // A rename that misses one file breaks every file that spells the name, thus a file the
-  // table never took bars every rename of the run.
-  if run_flags.Values[RUN_UNDECLARED] {
-    view := format.Formatter{Places: formatter.Places, Table_Fields: formatter.Table}
-    format.Forget(&view)
+  // Git answers for the history while the lanes work, thus the run asks it once the last file
+  // stands read rather than once every package stands checked.
+  if lanes_held(memory) > 0 {
+    if !run_flags.Values[RUN_HISTORY_READ] {
+      run_flags.Values[RUN_HISTORY_READ] = true
+      return Declare_Pass(STAGE_HISTORY_HEAD)
+    }
+  }
+  // Past the last file, each lane the pass still holds closes, in the order the spread reaps them.
+  for range LANE_COUNT {
+    if lanes_held(memory) == 0 {
+      break
+    }
+    reaped := input.Spread.Reap(memory)
+    if bool(lane_turn(memory, input, reaped, path_store)) {
+      return Declare_Pass(STAGE_FIX_OPEN)
+    }
   }
   // A name one file declares is spelled in files the run checks before it, thus every file
   // stands declared here rather than one of them reaching the check undeclared.
@@ -4155,40 +4347,27 @@ func declare_next(
     "A run declares every file before it checks any.",
   )
   file_cursor.File_Index = 0
-  return file_next(
-    memory,
-    packages,
-    served,
-    file_cursor,
-    reading,
-    path_store,
-  )
-}
-
-// Takes the names the read file declares into the table, or records that the table never took
-// them: a file past the source bound or refused by the parser holds no tree to read them from.
-func declare(
-  formatter Formatter_Stores,
-  tree ast.Syntax_Tree_Handle,
-  file File_Bytes,
-  count Source_Count,
-) (declared Mark) {
-  defer func() { Mark_Invariants(declared, "declare.declared") }()
-  Formatter_Stores_Invariants(formatter, "declare.formatter")
-  ast.Syntax_Tree_Handle_Invariants(tree, "declare.tree")
-  File_Bytes_Invariants(file, "declare.file")
-  Source_Count_Invariants(count, "declare.count")
-  text := file[:count]
-  if len(text) > requirements.SOURCE_SIZE_MAXIMUM {
-    return false
+  if !run_flags.Values[RUN_SIBLINGS] {
+    run_flags.Values[RUN_SIBLINGS] = true
+    siblings_judge(memory)
+    recursion_judge(memory)
+    layout_judge(memory)
   }
-  source := token.Source(text)
-  state := ast.Parse_State{Syntax_Tree: *tree}
-  if !bool(ast.Parse(&state, source).OK) {
-    return false
+  if !run_flags.Values[RUN_RENAME] {
+    // A rename that misses one file breaks every file that spells the name, thus a file the
+    // table never took bars every rename of the run.
+    if run_flags.Values[RUN_UNDECLARED] {
+      view := format.Formatter{Places: formatter.Places, Table_Fields: formatter.Table}
+      format.Forget(&view)
+    }
+    // Lanes format by no table, thus a table that took a name renames each file it can reach
+    // past the pass, and a table that took none leaves each diagnostic final.
+    if formatter.Places.Values[format.PLACE_NAMES] != 0 {
+      run_flags.Values[RUN_RENAME] = true
+      return Declare_Pass(STAGE_DECLARE)
+    }
   }
-  view := format.Formatter{Places: formatter.Places, Table_Fields: formatter.Table}
-  return Mark(format.Declare(&view, &state, source))
+  return Declare_Pass(file_next(memory, packages, served, file_cursor, reading, run_flags))
 }
 
 // Untrusted_Name is a name the run was handed rather than wrote: a child one directory pass
@@ -4257,73 +4436,106 @@ func Spelled_Name_Invariants(value Spelled_Name, namespace aver.Namespace) {
 
 // A directory pass reports children in whatever order the kernel keeps, thus the paths sort
 // before any line is written, or two runs over one tree would disagree.
-func paths_sort(table Path_Table, owners Package_Indices, count File_Count) {
+func paths_sort(table Path_Table, owners Package_Indices, sizes File_Sizes, count File_Count) {
   Path_Table_Invariants(table, "paths_sort.table")
   Package_Indices_Invariants(owners, "paths_sort.owners")
+  File_Sizes_Invariants(sizes, "paths_sort.sizes")
   File_Count_Invariants(count, "paths_sort.count")
   paths := table[:count]
-  owners = owners[:count]
+  owners, sizes = owners[:count], sizes[:count]
   for index := 1; index < len(paths); index++ {
-    held := paths[index]
-    owner := owners[index]
+    held, owner, size := paths[index], owners[index], sizes[index]
     position := index
     for position > 0 {
       if string(held) < string(paths[position-1]) {
-        paths[position] = paths[position-1]
-        owners[position] = owners[position-1]
+        paths[position], owners[position] = paths[position-1], owners[position-1]
+        sizes[position] = sizes[position-1]
         position--
         continue
       }
       break
     }
-    paths[position] = held
-    owners[position] = owner
+    paths[position], owners[position], sizes[position] = held, owner, size
   }
+}
+
+// Orders the slots the declaration pass reads, the largest file first: a large file read last
+// holds the whole run past every other file's check, and one read first overlaps them.
+func order_sort(memory Memory_Handle, count File_Count) {
+  Memory_Handle_Invariants(memory, "order_sort.memory")
+  File_Count_Invariants(count, "order_sort.count")
+  order := memory.Order[:count]
+  for index := range order {
+    slot := File_Slot(index)
+    position := index
+    for position > 0 {
+      if memory.Sizes[slot] > memory.Sizes[order[position-1]] {
+        order[position] = order[position-1]
+        position--
+        continue
+      }
+      break
+    }
+    order[position] = slot
+  }
+}
+
+// FILE_SIZE_MINIMUM is an empty file.
+const FILE_SIZE_MINIMUM = 0
+
+// File_Size is one Go file's size as the walk found it, up to one byte past the source bound.
+type File_Size int64
+
+// File_Size_Invariants bounds the size by the source store.
+func File_Size_Invariants(value File_Size, namespace aver.Namespace) {
+  aver.Tree(value, namespace).
+    Range_Int64(int64(value), FILE_SIZE_MINIMUM, SOURCE_STORAGE_SIZE).
+    Ensure()
+}
+
+// SIZE_TABLE_SIZE holds one size for each slot of the file table, and one for the entry the walk
+// asks about past a full table.
+const SIZE_TABLE_SIZE = FILE_COUNT_MAXIMUM + 1
+
+// File_Sizes holds each Go file's size, slot for slot with the file table.
+type File_Sizes []File_Size
+
+// File_Sizes_Invariants fixes the table.
+func File_Sizes_Invariants(value File_Sizes, _ aver.Namespace) {
+  aver.Always(len(value) == SIZE_TABLE_SIZE, "A size table has complete length.")
+  aver.Always(cap(value) == SIZE_TABLE_SIZE, "A size table cannot grow.")
+}
+
+// File_Order holds the slots of the file table in the order the declaration pass reads them.
+type File_Order []File_Slot
+
+// File_Order_Invariants fixes the table.
+func File_Order_Invariants(value File_Order, _ aver.Namespace) {
+  aver.Always(len(value) == FILE_COUNT_MAXIMUM, "A read order has complete length.")
+  aver.Always(cap(value) == FILE_COUNT_MAXIMUM, "A read order cannot grow.")
 }
 
 // Judges a read that served the contract check or the name table rather than one file's rules.
 func judge_served(
   memory Memory_Handle,
-  syntax requirements.Syntax,
   run_flags Run_Flag_Storage,
   reading Contract_Reading_Handle,
   source_count Source_Count,
-  formatter Formatter_Stores,
-  finding Finding_Handle,
 ) (next Served_Pass) {
   defer func() { Served_Pass_Invariants(next, "judge_served.next") }()
-  Finding_Handle_Invariants(finding, "judge_served.finding")
   Memory_Handle_Invariants(memory, "judge_served.memory")
-  requirements.Syntax_Invariants(syntax, "judge_served.syntax")
-  Run_Flag_Storage_Invariants(run_flags, "judge_served.run_flags")
+  Run_Flag_Storage_Invariants(&run_flags, "judge_served.run_flags")
   Contract_Reading_Handle_Invariants(reading, "judge_served.reading")
   Source_Count_Invariants(source_count, "judge_served.source_count")
-  Formatter_Stores_Invariants(formatter, "judge_served.formatter")
   checker := memory.Requirements
   switch Reading(*reading) {
   case READING_MARKDOWN:
-    // A contract off the form the rewrite answers is fixed before its check, thus the
-    // check states only what stays, at the lines the fixed file holds.
-    rewritten := requirements.Flag(false)
-    if run_flags.Values[RUN_AUTOFIX] {
-      rewritten = requirements.Rewrite(checker)
-    }
+    // Under a fix the check's one walk of the contract writes the form it should stand in as
+    // well, and asks for it to be written.
+    wanted := requirements.Flag(run_flags.Values[RUN_AUTOFIX])
+    checker.Flags.Values[requirements.FLAG_REWRITE_WANTED] = wanted
     requirements.Begin(checker)
-    if rewritten {
-      count := checker.Numbers.Values[requirements.NUMBER_MARKDOWN_COUNT]
-      // The rewritten contract is the form it should stand in, which the fix carries the
-      // way a Go file's canonical form does.
-      fix := Fix(checker.Markdown[:count])
-      finding.Diagnostic = Diagnostic{Tier: TIER_ONE, Rule: RULE_UNFORMATTED, Fix: fix}
-      return Served_Pass(STAGE_FIX_OPEN)
-    }
   case READING_DECLARATION:
-    declared := declare(
-      formatter, syntax.Syntax_Tree, memory.Source, source_count,
-    )
-    if !declared {
-      run_flags.Values[RUN_UNDECLARED] = true
-    }
     return Served_Pass(STAGE_DECLARED)
   case READING_TEST:
     // A test file past the source bound has its own diagnostic; an empty source refuses
@@ -4347,7 +4559,7 @@ func judge_read(
 ) (next Read_Pass) {
   defer func() { Read_Pass_Invariants(next, "judge_read.next") }()
   Memory_Handle_Invariants(memory, "judge_read.memory")
-  Run_Flag_Storage_Invariants(run_flags, "judge_read.run_flags")
+  Run_Flag_Storage_Invariants(&run_flags, "judge_read.run_flags")
   Reading_Invariants(reading, "judge_read.reading")
   Unfilled_Count_Handle_Invariants(count, "judge_read.count")
   Loop_Handle_Invariants(loop, "judge_read.loop")
@@ -4379,29 +4591,17 @@ func judge_read(
 
 func judge_close(
   memory Memory_Handle,
-  syntax requirements.Syntax,
   loop Loop_Handle,
   findings Findings_Handle,
-  report Report_Handle,
-  finding Finding_Handle,
-  tally Tally_Handle,
   run_flags Run_Flag_Storage,
-  slot File_Slot,
   read Read_Handle,
-  format_state Format,
   outcome Outcome_Handle,
 ) (next Close_Pass) {
   defer func() { Close_Pass_Invariants(next, "judge_close.next") }()
-  Format_Invariants(format_state, "judge_close.format_state")
-  Tally_Handle_Invariants(tally, "judge_close.tally")
-  Finding_Handle_Invariants(finding, "judge_close.finding")
-  requirements.Syntax_Invariants(syntax, "judge_close.syntax")
   Memory_Handle_Invariants(memory, "judge_close.memory")
   Findings_Handle_Invariants(findings, "judge_close.findings")
-  Run_Flag_Storage_Invariants(run_flags, "judge_close.run_flags")
-  File_Slot_Invariants(slot, "judge_close.slot")
+  Run_Flag_Storage_Invariants(&run_flags, "judge_close.run_flags")
   Read_Handle_Invariants(read, "judge_close.read")
-  Report_Handle_Invariants(report, "judge_close.report")
   Loop_Handle_Invariants(loop, "judge_close.loop")
   Outcome_Handle_Invariants(outcome, "judge_close.outcome")
   if loop.Completion.Error != nil {
@@ -4417,49 +4617,20 @@ func judge_close(
     count := Configured_Count(min(int(read.Source_Count), configuration.SOURCE_STORAGE_SIZE))
     return Close_Pass(configure(memory, findings, run_flags, count, outcome))
   }
-  if read.Reading != READING_SOURCE {
-    return CLOSE_PASS_CONTRACT
+  // The module file closes on a zero byte, which the store past the widest source holds.
+  if !run_flags.Values[RUN_MODULE] {
+    run_flags.Values[RUN_MODULE] = true
+    memory.Source[min(int(read.Source_Count), SOURCE_STORAGE_SIZE-1)] = 0
+    module_read(memory)
+    return CLOSE_PASS_CONFIGURED
   }
-  finding.Diagnostic = Check(memory, syntax, read.Source_Count, format_state)
-  impure(memory, syntax, finding.Diagnostic.Rule, slot, read.Source_Count)
-  finding.Diagnostic = imports_check(memory, syntax, slot, read.Source_Count, finding.Diagnostic)
-  tally.Resume = RESUME_FILE
-  if finding.Diagnostic.Tier == TIER_NONE {
-    return CLOSE_PASS_SERVED
-  }
-  if finding.Diagnostic.Tier == TIER_ONE {
-    if run_flags.Values[RUN_AUTOFIX] {
-      return CLOSE_PASS_FIX
-    }
-  }
-  written := Reported{
-    Tier:    Reported_Tier(finding.Diagnostic.Tier),
-    Rule:    Reported_Rule(finding.Diagnostic.Rule),
-    Failure: finding.Diagnostic.Failure,
-    Line:    finding.Diagnostic.Line,
-    Column:  finding.Diagnostic.Column,
-  }
-  tally.Found = true
-  if !bool(
-    report_file(
-      Report_File_Input{
-        Memory:   memory,
-        Findings: findings,
-        Report:   report,
-        Written:  written,
-        Flags:    run_flags,
-        Slot:     slot,
-      },
-    ),
-  ) {
-    fail(memory, findings, Failure_Path(read.Path), STEP_REPORT, run_flags, outcome)
-    return CLOSE_PASS_FAILED
-  }
-  return CLOSE_PASS_REPORT
+  return CLOSE_PASS_CONTRACT
 }
 
-// Decodes the configuration the run read. A file that does not decode states its fault and the
-// byte it stands on, and the run fails before the walk.
+// Decodes the configuration the run read. A file that does not decode states its fault, and the
+// run fails before the walk: the key it stands under, what it is, the text it names, and the byte a
+// source that is no JSON value stops on. The text is untrusted, thus a byte that steers a terminal
+// stands as a mark and the quote ends where the message store does.
 func configure(
   memory Memory_Handle,
   findings Findings_Handle,
@@ -4470,27 +4641,48 @@ func configure(
   defer func() { Configured_Pass_Invariants(next, "configure.next") }()
   Memory_Handle_Invariants(memory, "configure.memory")
   Findings_Handle_Invariants(findings, "configure.findings")
-  Run_Flag_Storage_Invariants(run_flags, "configure.run_flags")
+  Run_Flag_Storage_Invariants(&run_flags, "configure.run_flags")
   Configured_Count_Invariants(count, "configure.count")
   Outcome_Handle_Invariants(outcome, "configure.outcome")
   run_flags.Values[RUN_CONFIGURED] = true
   source := configuration.Source(memory.Source[:count])
   fault := configuration.Parse(memory.Configuration, source)
   if fault.Kind == configuration.FAULT_NONE {
+    naming.Words_Build(memory.Lanes[0].Memory.Name_Checker.Words, memory.Configuration)
     return Configured_Pass(CLOSE_PASS_CONFIGURED)
   }
   kind := configuration.Recorded_Fault(fault.Kind)
+  outcome.Status = EXIT_FAILURE
   line := append(Line(memory.Line[:0]), CONFIGURATION_PREFIX...)
   if bool(configuration.Fault_Keyed(kind)) {
     line = append(append(line, configuration.Key_Text(fault.Key)...), ' ')
   }
-  line = append(append(line, configuration.Fault_Text(kind)...), BYTE_INFIX...)
+  line = append(line, configuration.Fault_Text(kind)...)
+  if bool(configuration.Fault_Quoted(kind)) {
+    line = append(line, QUOTE_OPENING...)
+    // The cells name the text the fault quotes, in the text store.
+    decoded := memory.Configuration
+    start := decoded.Cells[configuration.CELL_FAULT_START]
+    quote := decoded.Text[start:decoded.Cells[configuration.CELL_FAULT_END]]
+    for _, symbol := range quote[:min(len(quote), QUOTE_SIZE_MAXIMUM)] {
+      if symbol < NAME_BYTE_MINIMUM {
+        symbol = requirements.QUOTED_BYTE_ABSENT
+      }
+      line = append(line, symbol)
+    }
+    line = append(line, '"')
+  }
+  if fault.Kind != configuration.FAULT_SYNTAX {
+    findings.Line = append(line, '\n')
+    return Configured_Pass(CLOSE_PASS_FAILED)
+  }
+  line = append(line, BYTE_INFIX...)
   // The digits land in the line's spare capacity, since a conversion would allocate.
   size := len(line)
   spare := strconv.Buffer(line[size : size+strconv.DIGIT_TEXT_SIZE_MAXIMUM])
   offset := strconv.Unsigned_Integer(fault.Offset)
   written := strconv.Format_Unsigned_Integer_Into(spare, offset, strconv.DECIMAL_BASE)
-  findings.Line, outcome.Status = append(line[:size+int(written)], '\n'), EXIT_FAILURE
+  findings.Line = append(line[:size+int(written)], '\n')
   return Configured_Pass(CLOSE_PASS_FAILED)
 }
 
@@ -4542,19 +4734,19 @@ type Report_File_Input struct {
 }
 
 // Report_File_Input_Invariants composes what the write of one file diagnostic stands on.
-func Report_File_Input_Invariants(value Report_File_Input, namespace aver.Namespace) {
+func Report_File_Input_Invariants(value *Report_File_Input, namespace aver.Namespace) {
   Memory_Handle_Invariants(value.Memory, namespace)
   Findings_Handle_Invariants(value.Findings, namespace)
   Report_Handle_Invariants(value.Report, namespace)
-  Reported_Invariants(value.Written, namespace)
-  Run_Flag_Storage_Invariants(value.Flags, namespace)
+  Reported_Invariants(&value.Written, namespace)
+  Run_Flag_Storage_Invariants(&value.Flags, namespace)
   File_Slot_Invariants(value.Slot, namespace)
 }
 
 // Writes one file diagnostic, as a text line or a flat JSON line.
 func report_file(input Report_File_Input) (wrote Boolean) {
   defer func() { Boolean_Invariants(wrote, "report_file.wrote") }()
-  Report_File_Input_Invariants(input, "report_file.input")
+  Report_File_Input_Invariants(&input, "report_file.input")
   memory, findings, report := input.Memory, input.Findings, input.Report
   written := input.Written
   path := memory.Paths[input.Slot]
@@ -4574,6 +4766,22 @@ func report_file(input Report_File_Input) (wrote Boolean) {
     message = requirements.MESSAGE_TEXT_CONFLICT_MARKER
   case RULE_IMPORTS:
     rule_text, message = RULE_TEXT_IMPORTS, Message_Text(import_message(memory))
+  case RULE_NAMES:
+    notice := memory.Notice[:bytes.Index_Byte(bytes.Slice(memory.Notice), 0)]
+    message = Message_Text(unsafe.String(unsafe.SliceData(notice), len(notice)))
+    rule_text = RULE_TEXT_NAMES
+  case RULE_SHADOWS:
+    notice := memory.Notice[:bytes.Index_Byte(bytes.Slice(memory.Notice), 0)]
+    message = Message_Text(unsafe.String(unsafe.SliceData(notice), len(notice)))
+    rule_text = RULE_TEXT_SHADOWS
+  case RULE_RECURSION:
+    notice := memory.Notice[:bytes.Index_Byte(bytes.Slice(memory.Notice), 0)]
+    message = Message_Text(unsafe.String(unsafe.SliceData(notice), len(notice)))
+    rule_text = RULE_TEXT_RECURSION
+  case RULE_LAYOUT:
+    notice := memory.Notice[:bytes.Index_Byte(bytes.Slice(memory.Notice), 0)]
+    message = Message_Text(unsafe.String(unsafe.SliceData(notice), len(notice)))
+    rule_text = RULE_TEXT_LAYOUT
   }
   if input.Flags.Values[RUN_JSON] {
     // The report lands in run storage: a local would escape into the reflected value
@@ -4588,7 +4796,8 @@ func report_file(input Report_File_Input) (wrote Boolean) {
     }
     return report_write(memory, findings, report)
   }
-  path_steady(Untrusted_Name(path))
+  // The name views the path, since a copy of one past a few words would allocate.
+  path_steady(Untrusted_Name(unsafe.String(unsafe.SliceData(path), len(path))))
   findings.Line = append(Line(memory.Line[:0]), path...)
   // Only a refusal names a position, and a source past the line index has none the index
   // can name, thus its line names the path alone rather than a wrong place.
@@ -4657,21 +4866,31 @@ func file_next(
   served File_Count,
   file_cursor File_Cursor_Handle,
   reading Served_Reading_Handle,
-  path_store Read_Path_Handle,
+  run_flags Run_Flag_Storage,
 ) (next File_Pass) {
   defer func() { File_Pass_Invariants(next, "file_next.next") }()
-  Read_Path_Handle_Invariants(path_store, "file_next.path_store")
+  Run_Flag_Storage_Invariants(&run_flags, "file_next.run_flags")
   Served_Reading_Handle_Invariants(reading, "file_next.reading")
   Memory_Handle_Invariants(memory, "file_next.memory")
   Package_Count_Invariants(packages, "file_next.packages")
   File_Count_Invariants(served, "file_next.served")
   File_Cursor_Handle_Invariants(file_cursor, "file_next.file_cursor")
-  if file_cursor.File_Index < File_Index(served) {
-    *path_store = append(
-      (*path_store)[:0], memory.Paths[file_cursor.File_Index]...,
-    )
-    *reading = Served_Reading(READING_SOURCE)
-    return File_Pass(STAGE_OPEN)
+  // The check pass reads each file for its own bytes, whether or not it opens one.
+  *reading = Served_Reading(READING_SOURCE)
+  // A diagnostic the declaration pass left stands final: a clean file states nothing, a file the
+  // pass fixed states nothing, and any other states itself.
+  for file_cursor.File_Index < File_Index(served) {
+    left := memory.Diagnostics[file_cursor.File_Index]
+    stated := left.Tier != TIER_NONE
+    if left.Tier == TIER_ONE {
+      if run_flags.Values[RUN_AUTOFIX] {
+        stated = false
+      }
+    }
+    if stated {
+      return File_Pass(STAGE_RECALL)
+    }
+    file_cursor.File_Index++
   }
   // A run that turns to its packages with a file left states no diagnostic of it, thus the
   // cursor stands at the count here rather than short of a file nobody checked.
@@ -4697,7 +4916,7 @@ func impure(
   source_count Source_Count,
 ) {
   Memory_Handle_Invariants(memory, "impure.memory")
-  requirements.Syntax_Invariants(syntax, "impure.syntax")
+  requirements.Syntax_Invariants(&syntax, "impure.syntax")
   Rule_Invariants(rule, "impure.rule")
   File_Slot_Invariants(slot, "impure.slot")
   Source_Count_Invariants(source_count, "impure.source_count")
@@ -4769,7 +4988,7 @@ func package_step(
   Read_Path_Handle_Invariants(path_store, "package_step.path_store")
   Outcome_Handle_Invariants(outcome, "package_step.outcome")
   Checked_Reading_Handle_Invariants(reading, "package_step.reading")
-  Run_Flag_Storage_Invariants(run_flags, "package_step.run_flags")
+  Run_Flag_Storage_Invariants(&run_flags, "package_step.run_flags")
   Boolean_Invariants(found, "package_step.found")
   Memory_Handle_Invariants(memory, "package_step.memory")
   Walk_Handle_Invariants(walk, "package_step.walk")
@@ -4793,16 +5012,18 @@ func package_step(
   )
   // Past the packages the run judges the history it stands on, then finishes here again.
   if !run_flags.Values[RUN_HISTORY_DONE] {
+    if run_flags.Values[RUN_HISTORY_READ] {
+      return Step_Pass(STAGE_HISTORY_NEXT)
+    }
     return Step_Pass(STAGE_HISTORY_HEAD)
   }
-  // A run that found something states its findings and rests at the package stage; one
-  // that found none writes the pass line and stands at the stage that writes it.
+  // A run closes on the stage that writes its elapsed seconds, behind the pass line of a run
+  // that found nothing.
   outcome.Status = EXIT_SUCCESS
   if bool(found) {
     outcome.Status = EXIT_FAILURE
-    return Step_Pass(STAGE_PACKAGE)
   }
-  passed(memory, findings, elapsed, summary, run_flags)
+  passed(memory, findings, elapsed, summary, run_flags, found)
   return Step_Pass(STAGE_PASSED)
 }
 
@@ -4831,6 +5052,8 @@ func package_next(
   checker.Flags.Values[requirements.FLAG_HAS_MARKDOWN] = requirements.Flag(found.Markdown)
   checker.Flags.Values[requirements.FLAG_HAS_TEST] = requirements.Flag(found.Test)
   checker.Flags.Values[requirements.FLAG_IMPURE] = requirements.Flag(found.Impure)
+  copy(checker.Declarations, found.Declarations[:found.Declared])
+  requirements.Load_Tests(checker, found.Declared, found.Read)
   requirements.Load(checker, 0)
   if found.Markdown {
     *path_store = Read_Path_Slice(read_path(
@@ -4847,17 +5070,17 @@ func package_next(
 // reads it, and the end moves to the next package.
 func requirements_next(
   memory Memory_Handle,
-  syntax requirements.Syntax,
   reading Checked_Reading_Handle,
   path_store Read_Path_Handle,
+  finding Finding_Handle,
 ) (next Contract_Pass) {
   defer func() { Contract_Pass_Invariants(next, "requirements_next.next") }()
   Read_Path_Handle_Invariants(path_store, "requirements_next.path_store")
   Checked_Reading_Handle_Invariants(reading, "requirements_next.reading")
-  requirements.Syntax_Invariants(syntax, "requirements_next.syntax")
+  Finding_Handle_Invariants(finding, "requirements_next.finding")
   Memory_Handle_Invariants(memory, "requirements_next.memory")
   checker := memory.Requirements
-  requirements.Next(checker, syntax)
+  requirements.Next(checker)
   switch checker.Numbers.Values[requirements.NUMBER_STATE] {
   case requirements.STATE_FINDING:
     return Contract_Pass(STAGE_FINDING)
@@ -4867,6 +5090,16 @@ func requirements_next(
     ))
     *reading = Checked_Reading(READING_TEST)
     return Contract_Pass(STAGE_OPEN)
+  case requirements.STATE_REWRITE:
+    // The rewritten contract is the form it should stand in, which the fix carries the way a Go
+    // file's canonical form does.
+    count := checker.Numbers.Values[requirements.NUMBER_REWRITE_COUNT]
+    finding.Fix = Fix(checker.Rewritten[:count])
+    *path_store = Read_Path_Slice(read_path(
+      *path_store, checker, READ_FILE_MARKDOWN,
+    ))
+    *reading = Checked_Reading(READING_MARKDOWN)
+    return Contract_Pass(STAGE_FIX_OPEN)
   }
   // The check of one package is done, thus the run turns to the package after it.
   return Contract_Pass(STAGE_PACKAGED)
@@ -4903,7 +5136,7 @@ func report_requirement(
   Read_Path_Handle_Invariants(path_store, "report_requirement.path_store")
   Memory_Handle_Invariants(memory, "report_requirement.memory")
   Findings_Handle_Invariants(findings, "report_requirement.findings")
-  Run_Flag_Storage_Invariants(run_flags, "report_requirement.run_flags")
+  Run_Flag_Storage_Invariants(&run_flags, "report_requirement.run_flags")
   Report_Handle_Invariants(report, "report_requirement.report")
   checker := memory.Requirements
   stated := Read_File(checker.Numbers.Values[requirements.NUMBER_FILE])
@@ -4941,22 +5174,27 @@ func report_requirement(
   return true
 }
 
-// Writes the pass line and the elapsed seconds to the millisecond. The digits land in the line's
-// spare capacity, since a conversion would allocate.
+// Writes the elapsed seconds to the millisecond, behind the pass line of a run that found
+// nothing. The digits land in the line's spare capacity, since a conversion would allocate.
 func passed(
   memory Memory_Handle,
   findings Findings_Handle,
   elapsed Elapsed,
   summary Summary_Handle,
   run_flags Run_Flag_Storage,
+  found Boolean,
 ) {
   Memory_Handle_Invariants(memory, "passed.memory")
   Findings_Handle_Invariants(findings, "passed.findings")
   Elapsed_Invariants(elapsed, "passed.elapsed")
-  Run_Flag_Storage_Invariants(run_flags, "passed.run_flags")
+  Run_Flag_Storage_Invariants(&run_flags, "passed.run_flags")
   Summary_Handle_Invariants(summary, "passed.summary")
+  Boolean_Invariants(found, "passed.found")
   milliseconds := int64(elapsed) / int64(time.MILLISECOND)
   findings.Line = append(Line(memory.Line[:0]), PASSED...)
+  if bool(found) {
+    findings.Line = append(Line(memory.Line[:0]), ELAPSED_OPENING...)
+  }
   size := len(findings.Line)
   spare := strconv.Buffer(findings.Line[size : size+strconv.DIGIT_TEXT_SIZE_MAXIMUM])
   seconds := strconv.Unsigned_Integer(milliseconds / MILLISECONDS_PER_SECOND)
@@ -4973,19 +5211,19 @@ func passed(
   if !run_flags.Values[RUN_JSON] {
     return
   }
-  findings.Line = Line(summary_write(memory.Json, summary, Passed_Line(findings.Line)))
+  findings.Line = Line(summary_write(memory.Json, summary, Passed_Line(findings.Line), found))
 }
 
 // The elapsed text already stands in the line, thus the summary views it rather than write it
 // twice. The summary lands in run storage for the same reason the report does.
-// PASSED_SIZE_MINIMUM is the shortest pass line: the text, one second digit and its fraction,
-// and the newline that ends it.
-const PASSED_SIZE_MINIMUM = len(PASSED) + ELAPSED_SIZE_MINIMUM + len("\n")
+// PASSED_SIZE_MINIMUM is the shortest closing line: the elapsed seconds of a run that found
+// something, one second digit and its fraction, and the newline that ends it.
+const PASSED_SIZE_MINIMUM = len(ELAPSED_OPENING) + ELAPSED_SIZE_MINIMUM + len("\n")
 
 // PASSED_SIZE_MAXIMUM is the widest: every second digit one run can spend.
 const PASSED_SIZE_MAXIMUM = len(PASSED) + ELAPSED_SIZE_MAXIMUM + len("\n")
 
-// Passed_Line is the line a clean run wrote, which the summary reads its seconds back out of.
+// Passed_Line is the closing line a run wrote, which the summary reads its seconds back out of.
 type Passed_Line []byte
 
 // Passed_Line_Invariants bounds the pass line by the text and the seconds it carries.
@@ -4995,14 +5233,18 @@ func Passed_Line_Invariants(value Passed_Line, namespace aver.Namespace) {
     Ensure()
 }
 
-// SUMMARY_FIXED_SIZE is every byte of a flat JSON summary but the seconds it carries.
+// SUMMARY_FIXED_SIZE is every byte of a flat JSON summary of a clean run but the seconds it
+// carries.
 const SUMMARY_FIXED_SIZE = len(`{"passed":true,"elapsed_sec":""}`)
 
-// SUMMARY_SIZE_MINIMUM holds that summary at one second digit, and the newline that ends it.
+// SUMMARY_FOUND_SIZE is every byte of one of a run that found something but its seconds.
+const SUMMARY_FOUND_SIZE = len(`{"passed":false,"elapsed_sec":""}`)
+
+// SUMMARY_SIZE_MINIMUM holds a clean summary at one second digit, and the newline that ends it.
 const SUMMARY_SIZE_MINIMUM = SUMMARY_FIXED_SIZE + ELAPSED_SIZE_MINIMUM + len("\n")
 
-// SUMMARY_SIZE_MAXIMUM holds it at every second digit one run can spend.
-const SUMMARY_SIZE_MAXIMUM = SUMMARY_FIXED_SIZE + ELAPSED_SIZE_MAXIMUM + len("\n")
+// SUMMARY_SIZE_MAXIMUM holds one of a run that found something at every second digit.
+const SUMMARY_SIZE_MAXIMUM = SUMMARY_FOUND_SIZE + ELAPSED_SIZE_MAXIMUM + len("\n")
 
 // Summary_Line is the flat JSON line a clean run writes, which views the JSON store.
 type Summary_Line []byte
@@ -5018,14 +5260,20 @@ func summary_write(
   storage Json_Storage,
   summary Summary_Handle,
   passed Passed_Line,
+  found Boolean,
 ) (written Summary_Line) {
   defer func() { Summary_Line_Invariants(written, "summary_write.written") }()
   Json_Storage_Invariants(storage, "summary_write.storage")
   Summary_Handle_Invariants(summary, "summary_write.summary")
   Passed_Line_Invariants(passed, "summary_write.passed")
-  elapsed := passed[len(PASSED) : len(passed)-len("\n")]
+  Boolean_Invariants(found, "summary_write.found")
+  opening_size := len(PASSED)
+  if bool(found) {
+    opening_size = len(ELAPSED_OPENING)
+  }
+  elapsed := passed[opening_size : len(passed)-len("\n")]
   seconds_text := unsafe.String(unsafe.SliceData(elapsed), len(elapsed))
-  *summary = Summary{Passed: true, Elapsed_Seconds: Elapsed_Text(seconds_text)}
+  *summary = Summary{Passed: Passed(!bool(found)), Elapsed_Seconds: Elapsed_Text(seconds_text)}
   data, err := flatjson.Marshal_Into(
     flatjson.Output(storage[:flatjson.OUTPUT_SIZE_MAXIMUM]),
     flatjson.Value(reflect.ValueOf(summary)),
@@ -5053,7 +5301,7 @@ func fail(
   Findings_Handle_Invariants(findings, "fail.findings")
   Failure_Path_Invariants(path, "fail.path")
   Step_Invariants(step, "fail.step")
-  Run_Flag_Storage_Invariants(run_flags, "fail.run_flags")
+  Run_Flag_Storage_Invariants(&run_flags, "fail.run_flags")
   Outcome_Handle_Invariants(outcome, "fail.outcome")
   path_steady(Untrusted_Name(path))
   line := append(Line(memory.Line[:0]), FAILURE_PREFIX...)
@@ -5134,8 +5382,8 @@ func New_Memory() (
 ) {
   defer func() {
     Memory_Handle_Invariants(memory, "new_memory.memory")
-    Format_Invariants(format_state, "new_memory.format_state")
-    Command_Invariants(command, "new_memory.command")
+    Format_Invariants(&format_state, "new_memory.format_state")
+    Command_Invariants(&command, "new_memory.command")
   }()
   memory = &Memory{}
   format_state.Printer, format_state.Formatter = new_print(), new_formatter()
@@ -5148,8 +5396,16 @@ func New_Memory() (
     memory.Paths[index] = make(filepath.Slice, 0, filepath.PATH_SIZE_MAXIMUM)
     memory.Directories[index] = make(filepath.Slice, 0, filepath.PATH_SIZE_MAXIMUM)
     memory.Packages[index].Path = make(Package_Path, 0, filepath.PATH_SIZE_MAXIMUM)
+    memory.Packages[index].Declarations = make(
+      requirements.Declarations,
+      requirements.HEADING_COUNT_MAXIMUM,
+    )
   }
   memory.File_Packages = make(Package_Indices, FILE_COUNT_MAXIMUM)
+  memory.Sizes, memory.Order = make(File_Sizes, SIZE_TABLE_SIZE), make(
+    File_Order,
+    FILE_COUNT_MAXIMUM,
+  )
   memory.Entries = make(Entry_Table, ENTRY_COUNT_MAXIMUM)
   memory.Directory_Buffer = make(Entry_Buffer, nbio.DIRECTORY_BUFFER_SIZE_MAXIMUM)
   memory.Source = make(File_Bytes, SOURCE_STORAGE_SIZE)
@@ -5173,12 +5429,23 @@ func New_Memory() (
   memory.History_Errors = make(History_Errors, HISTORY_ERROR_SIZE)
   memory.History_Name = make(History_Name, HISTORY_NAME_SIZE)
   memory.Configuration = &configuration.Configuration{
-    Source: make(configuration.Source_Store, configuration.SOURCE_STORAGE_SIZE),
+    Tokens: make(configuration.Tokens, configuration.TOKEN_COUNT_MAXIMUM),
     Text:   make(configuration.Text, configuration.SOURCE_SIZE_MAXIMUM),
     Values: make(configuration.Values, configuration.VALUE_COUNT_MAXIMUM),
     Cells:  make(configuration.Cells, configuration.CELL_COUNT),
   }
   memory.Notice = make(Notice_Store, MESSAGE_SIZE_MAXIMUM)
+  memory.Diagnostics = make(File_Diagnostics, FILE_COUNT_MAXIMUM)
+  memory.Notices = make(Notice_Table, FILE_COUNT_MAXIMUM)
+  for slot := range memory.Notices {
+    memory.Notices[slot] = make(Notice_Store, MESSAGE_SIZE_MAXIMUM)
+  }
+  memory.Siblings = New_Siblings()
+  memory.Layout = New_Layout()
+  memory.Graph, memory.Glob = make(Graph_Store, GRAPH_STORE_SIZE), make(
+    Glob_Storage,
+    GLOB_STORAGE_SIZE,
+  )
   memory.Orphans = make(Orphan_Paths, ORPHAN_COUNT_MAXIMUM)
   for index := range memory.Orphans {
     memory.Orphans[index] = make(filepath.Slice, 0, filepath.PATH_SIZE_MAXIMUM)
@@ -5186,7 +5453,393 @@ func New_Memory() (
   memory.Link = make(Link_Path, filepath.PATH_SIZE_MAXIMUM)
   memory.Resolved = make(Resolved_Path, filepath.PATH_SIZE_MAXIMUM)
   memory.Target = make(Link_Target, LINK_TARGET_SIZE)
+  // Each lane views every store above, thus the table stands past them.
+  memory.Lanes, memory.Held = make(Lane_Table, LANE_COUNT), make(Lane_Marks, LANE_COUNT)
+  New_Lanes(memory, format_state)
   return memory, format_state, command
+}
+
+// LANE_COUNT is how many Go files the spread holds at once. A lane holds one file's check stores
+// whole, thus the count bounds what a run holds for its spread.
+const LANE_COUNT = 16
+
+// Lane is what one Go file's check stands on apart from every other: its source, its form, its
+// notice, its parse, its format places, and its printer. Its memory views the run's stores for the
+// rest, which the check reads, or writes at its file's own slot alone.
+type Lane struct {
+  // Memory views the run's stores, save the source, the form, and the notice.
+  Memory Memory
+  // Syntax is the lane's parse state and line index.
+  Syntax requirements.Syntax
+  // Format is the lane's format places and printer, over the run's name table.
+  Format Format
+  // Slot is the file the lane holds.
+  Slot File_Slot
+  // Count is how many bytes of the file the source holds.
+  Count Source_Count
+  // Fix views the canonical form the check wrote, which the lane's next file overwrites.
+  Fix Fix
+  // Index is the lane's own slot of the table.
+  Index Lane_Index
+}
+
+// Lane_Invariants composes one lane.
+func Lane_Invariants(value *Lane, namespace aver.Namespace) {
+  Memory_Invariants(&value.Memory, namespace)
+  requirements.Syntax_Invariants(&value.Syntax, namespace)
+  Format_Invariants(&value.Format, namespace)
+  File_Slot_Invariants(value.Slot, namespace)
+  Source_Count_Invariants(value.Count, namespace)
+  Fix_Invariants(value.Fix, namespace)
+  Lane_Index_Invariants(value.Index, namespace)
+}
+
+// Lane_Handle is one lane of the table.
+type Lane_Handle *Lane
+
+// Lane_Handle_Invariants composes a present lane.
+func Lane_Handle_Invariants(value Lane_Handle, namespace aver.Namespace) {
+  if value == nil {
+    return
+  }
+  Lane_Invariants(value, namespace)
+}
+
+// Lane_Marks holds one mark for each lane of the table.
+type Lane_Marks []Mark
+
+// Lane_Marks_Invariants fixes the table to one mark per lane.
+func Lane_Marks_Invariants(value Lane_Marks, _ aver.Namespace) {
+  aver.Always(len(value) == LANE_COUNT, "Lane marks have complete length.")
+  aver.Always(cap(value) == LANE_COUNT, "Lane marks cannot grow.")
+}
+
+// Lane_Table holds one lane for each file the spread holds at once.
+type Lane_Table []Lane
+
+// Lane_Table_Invariants fixes the table. Each lane views the memory that holds the table, thus the
+// table states its length alone rather than each lane again.
+func Lane_Table_Invariants(value Lane_Table, _ aver.Namespace) {
+  aver.Always(len(value) == LANE_COUNT, "A lane table has complete length.")
+  aver.Always(cap(value) == LANE_COUNT, "A lane table cannot grow.")
+}
+
+// New_Lanes fills each lane of the table with the stores it holds apart, and a view of every other
+// store of the memory, thus it stands past the rest of the memory.
+func New_Lanes(memory Memory_Handle, format_state Format) {
+  Memory_Handle_Invariants(memory, "new_lanes.memory")
+  Format_Invariants(&format_state, "new_lanes.format_state")
+  words := make(naming.Word_Table, naming.WORD_SLOT_COUNT)
+  for index := range memory.Lanes {
+    lane := &memory.Lanes[index]
+    lane.Memory = *memory
+    lane.Index = Lane_Index(index)
+    // A lane checks no contract, and the run's checker moves with every file it opens.
+    lane.Memory.Requirements = nil
+    lane.Memory.Source = make(File_Bytes, SOURCE_STORAGE_SIZE)
+    lane.Memory.Form = make(Form_Bytes, FORM_STORAGE_SIZE)
+    lane.Memory.Notice = make(Notice_Store, MESSAGE_SIZE_MAXIMUM)
+    tree := &ast.Syntax_Tree{}
+    tree.Tokens.Values = make(ast.Tokens, ast.TOKEN_COUNT_MAXIMUM)
+    tree.Nodes.Values = make(ast.Nodes, ast.NODE_COUNT_MAXIMUM)
+    tree.Parents.Values = make(ast.Parents, ast.DEPTH_MAXIMUM)
+    tree.Last_Children.Values = make(ast.Last_Children, ast.DEPTH_MAXIMUM)
+    tree.Earlier_Children.Values = make(ast.Earlier_Children, ast.DEPTH_MAXIMUM)
+    starts := make(token.Line_Starts, token.LINE_COUNT_MAXIMUM)
+    lane.Syntax = requirements.Syntax{Syntax_Tree: tree, Lines: &token.Line_Index{Starts: starts}}
+    // The lanes share one word table, which the run builds once the configuration decodes.
+    lane.Memory.Name_Checker = &naming.Checker{
+      Nodes:   naming.Node_View(tree.Nodes.Values),
+      Tokens:  naming.Token_View(tree.Tokens.Values),
+      Source:  naming.Source_Store(lane.Memory.Source),
+      Path:    make(naming.Path_Store, naming.PATH_SIZE_MAXIMUM),
+      Values:  naming.Decoded_Values(memory.Configuration.Values),
+      Text:    naming.Decoded_Text(memory.Configuration.Text),
+      Words:   words,
+      Terms:   make(naming.Terms, ast.NODE_COUNT_MAXIMUM),
+      Message: naming.Message_Store(lane.Memory.Notice),
+      Records: make(naming.Record_Table, naming.RECORD_COUNT_MAXIMUM),
+      Names:   make(naming.Scope_Names, ast.NODE_COUNT_MAXIMUM),
+      Frames:  make(naming.Frame_Stack, naming.FRAME_COUNT),
+      Cells:   make(naming.State_Cells, naming.CELL_COUNT),
+    }
+    lane.Format.Printer = new_print()
+    lane.Format.Formatter.Places.Values = make(format.Places, format.PLACE_SLOT_COUNT)
+    lane.Format.Formatter.Table = format_state.Formatter.Table
+  }
+}
+
+// Check_Lane checks the Go file one lane holds and leaves its diagnostic, with the notice it
+// states, at the file's own slot.
+func Check_Lane(lane Lane_Handle) {
+  Lane_Handle_Invariants(lane, "check_lane.lane")
+  memory := Memory_Handle(&lane.Memory)
+  diagnostic := file_check(memory, lane.Syntax, lane.Slot, lane.Count, lane.Format)
+  // The fix views the lane's form, which the lane's next file overwrites, thus the table
+  // holds none and the lane keeps it until the pass closes the lane.
+  lane.Fix, diagnostic.Fix = diagnostic.Fix, nil
+  memory.Diagnostics[lane.Slot] = diagnostic
+  copy(memory.Notices[lane.Slot], memory.Notice)
+  if !bool(test_file(memory, lane.Slot)) {
+    return
+  }
+  // The contract check reads the declarations of its test file out of this one parse of it, and
+  // the package's own slot holds them, which no other lane writes.
+  owner := &memory.Packages[memory.File_Packages[lane.Slot]]
+  owner.Declared, owner.Read = 0, requirements.TEST_REFUSED
+  if !bool(tree_taken(diagnostic.Rule)) {
+    return
+  }
+  source := requirements.Parsed_Source(lane.Memory.Source[:lane.Count])
+  owner.Declared = requirements.Collect(lane.Syntax, source, owner.Declarations)
+  owner.Read = requirements.TEST_PARSED
+}
+
+// Reports whether the Go file in one slot is a package's requirements_test.go.
+func test_file(memory Memory_Handle, slot File_Slot) (held Boolean) {
+  defer func() { Boolean_Invariants(held, "test_file.held") }()
+  Memory_Handle_Invariants(memory, "test_file.memory")
+  File_Slot_Invariants(slot, "test_file.slot")
+  path := memory.Paths[slot]
+  name := path[max(len(path)-len(requirements.TEST_NAME), 0):]
+  if string(name) != requirements.TEST_NAME {
+    return false
+  }
+  if len(path) == len(name) {
+    return true
+  }
+  return Boolean(path[len(path)-len(name)-1] == PATH_SEPARATOR)
+}
+
+// Reports whether a check that stated the rule stood on a tree the parser took.
+func tree_taken(rule Rule) (taken Boolean) {
+  defer func() { Boolean_Invariants(taken, "tree_taken.taken") }()
+  Rule_Invariants(rule, "tree_taken.rule")
+  switch rule {
+  case RULE_OVERSIZED, RULE_REFUSED, RULE_CONFLICTED:
+    return false
+  }
+  return true
+}
+
+// Lane_Oldest is the reap of a spread that checks each lane as it is submitted: every lane the run
+// holds is checked already, thus it hands back the one whose file the run read first, which keeps
+// the run in file order.
+func Lane_Oldest(memory Memory_Handle) (oldest Lane_Index) {
+  defer func() { Lane_Index_Invariants(oldest, "lane_oldest.oldest") }()
+  Memory_Handle_Invariants(memory, "lane_oldest.memory")
+  found := false
+  for index := range memory.Lanes {
+    if !bool(memory.Held[index]) {
+      continue
+    }
+    if !found {
+      oldest, found = Lane_Index(index), true
+      continue
+    }
+    if memory.Lanes[index].Slot < memory.Lanes[oldest].Slot {
+      oldest = Lane_Index(index)
+    }
+  }
+  aver.Always(found, "A reap stands on a lane the run holds.")
+  return oldest
+}
+
+// Copies the Go file the declaration pass read into its lane, with format places that hold none of
+// the table, since the pass takes names while lanes format.
+func lane_load(memory Memory_Handle, lane Lane_Handle, count Source_Count) {
+  Memory_Handle_Invariants(memory, "lane_load.memory")
+  Lane_Handle_Invariants(lane, "lane_load.lane")
+  Source_Count_Invariants(count, "lane_load.count")
+  copy(lane.Memory.Source, memory.Source[:count])
+  lane.Count = count
+  clear(lane.Format.Formatter.Places.Values)
+  // A file the check never reads leaves no name of its body to record.
+  cells := lane.Memory.Name_Checker.Cells
+  cells[naming.CELL_RECORD_COUNT], cells[naming.CELL_LOCAL_COUNT] = 0, 0
+}
+
+// Lane_Input is what one step of the declaration pass stands on: the spread, the finding a fix
+// writes, the name table, and the run's flags.
+type Lane_Input struct {
+  // Spread checks the lanes.
+  Spread Spread
+  // Finding holds the fix one closed lane owes.
+  Finding Finding_Handle
+  // Formatter holds the name table.
+  Formatter Formatter_Stores
+  // Flags holds the run's flags.
+  Flags Run_Flag_Storage
+}
+
+// Lane_Input_Invariants composes one step's input.
+func Lane_Input_Invariants(value *Lane_Input, namespace aver.Namespace) {
+  Spread_Invariants(&value.Spread, namespace)
+  Finding_Handle_Invariants(value.Finding, namespace)
+  Formatter_Stores_Invariants(&value.Formatter, namespace)
+  Run_Flag_Storage_Invariants(&value.Flags, namespace)
+}
+
+// Lane_Index is one lane of the table.
+type Lane_Index int
+
+// Lane_Index_Invariants admits each lane.
+func Lane_Index_Invariants(value Lane_Index, namespace aver.Namespace) {
+  aver.Tree(value, namespace).
+    Range_Int(int(value), LANE_INDEX_MINIMUM, LANE_INDEX_MAXIMUM).
+    Ensure()
+}
+
+// Held_Count is how many lanes the run holds.
+type Held_Count int
+
+// Held_Count_Invariants bounds the count by the lane table.
+func Held_Count_Invariants(value Held_Count, namespace aver.Namespace) {
+  aver.Tree(value, namespace).
+    Range_Int(int(value), LANE_INDEX_MINIMUM, LANE_COUNT).
+    Ensure()
+}
+
+// Counts the lanes the run holds.
+func lanes_held(memory Memory_Handle) (count Held_Count) {
+  defer func() { Held_Count_Invariants(count, "lanes_held.count") }()
+  Memory_Handle_Invariants(memory, "lanes_held.memory")
+  for _, held := range memory.Held {
+    if held {
+      count++
+    }
+  }
+  return count
+}
+
+// LANE_INDEX_MINIMUM is the first lane.
+const LANE_INDEX_MINIMUM = 0
+
+// LANE_INDEX_MAXIMUM is the last lane.
+const LANE_INDEX_MAXIMUM = LANE_COUNT - 1
+
+// Declared_Pass is the stage one declared file leaves the run on: the step past it, or the fix its
+// rename owes.
+type Declared_Pass Stage
+
+// Declared_Pass_Invariants admits the two stages one declared file leaves the run on.
+func Declared_Pass_Invariants(value Declared_Pass, namespace aver.Namespace) {
+  aver.Tree(value, namespace).
+    Enum_Int(int(value), int(STAGE_FIX_OPEN), int(STAGE_DECLARE)).
+    Ensure()
+}
+
+// Hands the file the declaration pass read to a lane the pass holds no file in. Past the pass, the
+// file is read for its rename alone: its bytes are the form its one parse printed, thus
+// the rename renames them by the whole table, and a file the rename changes is off its canonical
+// form, which -fix writes.
+func declared(
+  memory Memory_Handle,
+  input Lane_Input,
+  slot File_Slot,
+  count Source_Count,
+) (next Declared_Pass) {
+  defer func() { Declared_Pass_Invariants(next, "declared.next") }()
+  Memory_Handle_Invariants(memory, "declared.memory")
+  Lane_Input_Invariants(&input, "declared.input")
+  File_Slot_Invariants(slot, "declared.slot")
+  Source_Count_Invariants(count, "declared.count")
+  if input.Flags.Values[RUN_RENAME] {
+    source := memory.Source[:count]
+    view := format.Formatter{Places: input.Formatter.Places, Table_Fields: input.Formatter.Table}
+    copied := printer.Form_Count(copy(memory.Form, source))
+    result := format.Rename(&view, printer.Form(memory.Form), copied)
+    form := memory.Form[:result.Count]
+    if !bool(result.OK) {
+      memory.Diagnostics[slot] = Diagnostic{Tier: TIER_TWO, Rule: RULE_UNPRINTABLE}
+      return Declared_Pass(STAGE_DECLARE)
+    }
+    if string(form) == string(source) {
+      return Declared_Pass(STAGE_DECLARE)
+    }
+    memory.Diagnostics[slot] = Diagnostic{Tier: TIER_ONE, Rule: RULE_UNFORMATTED}
+    if !input.Flags.Values[RUN_AUTOFIX] {
+      return Declared_Pass(STAGE_DECLARE)
+    }
+    input.Finding.Fix = Fix(form)
+    // The fix moves the lines the parse collected declarations at, as the fix of its form does.
+    if bool(test_file(memory, slot)) {
+      memory.Packages[memory.File_Packages[slot]].Read = requirements.TEST_REWRITTEN
+    }
+    return Declared_Pass(STAGE_FIX_OPEN)
+  }
+  // The pass read this file once a lane stood free.
+  free := 0
+  for free < LANE_COUNT-1 {
+    if !bool(memory.Held[free]) {
+      break
+    }
+    free++
+  }
+  lane, held := &memory.Lanes[free], &memory.Held[free]
+  aver.Always(!bool(*held), "A lane takes a file once the pass closed the one it held.")
+  lane.Slot = slot
+  lane_load(memory, lane, count)
+  *held = true
+  input.Spread.Submit(lane)
+  return Declared_Pass(STAGE_DECLARE)
+}
+
+// Closes one lane the pass holds, once the spread checked it. A lane whose file is off its
+// canonical form under -fix owes that form to the file, thus the fix stands next.
+func lane_turn(
+  memory Memory_Handle,
+  input Lane_Input,
+  index Lane_Index,
+  path_store Read_Path_Handle,
+) (owed Boolean) {
+  defer func() { Boolean_Invariants(owed, "lane_turn.owed") }()
+  Memory_Handle_Invariants(memory, "lane_turn.memory")
+  Lane_Input_Invariants(&input, "lane_turn.input")
+  Lane_Index_Invariants(index, "lane_turn.index")
+  Read_Path_Handle_Invariants(path_store, "lane_turn.path_store")
+  lane := &memory.Lanes[index]
+  lane_close(lane, input.Formatter, input.Flags)
+  memory.Held[index] = false
+  if memory.Diagnostics[lane.Slot].Tier != TIER_ONE {
+    return false
+  }
+  if !input.Flags.Values[RUN_AUTOFIX] {
+    return false
+  }
+  input.Finding.Fix = lane.Fix
+  // The fix moves the lines the parse collected declarations at, thus the contract check of the
+  // package waits for the next run.
+  if bool(test_file(memory, lane.Slot)) {
+    memory.Packages[memory.File_Packages[lane.Slot]].Read = requirements.TEST_REWRITTEN
+  }
+  *path_store = append((*path_store)[:0], memory.Paths[lane.Slot]...)
+  return true
+}
+
+// Takes what one checked lane leaves the run, in file order: the purity of the package its file
+// stands in, and the names the file declares, which the rename past the pass renames by. A file the
+// parser never took holds no tree to read names from, thus the table bars every rename.
+func lane_close(lane Lane_Handle, formatter Formatter_Stores, run_flags Run_Flag_Storage) {
+  Lane_Handle_Invariants(lane, "lane_close.lane")
+  Formatter_Stores_Invariants(&formatter, "lane_close.formatter")
+  Run_Flag_Storage_Invariants(&run_flags, "lane_close.run_flags")
+  memory := Memory_Handle(&lane.Memory)
+  rule := memory.Diagnostics[lane.Slot].Rule
+  impure(memory, lane.Syntax, rule, lane.Slot, lane.Count)
+  siblings_record(memory, lane.Syntax, lane.Slot, lane.Count, tree_taken(rule))
+  layout_imports_record(memory, lane.Slot, lane.Count, tree_taken(rule))
+  layout_path_record(memory, lane.Slot, lane.Count, tree_taken(rule))
+  if !bool(tree_taken(rule)) {
+    run_flags.Values[RUN_UNDECLARED] = true
+    return
+  }
+  view := format.Formatter{Places: formatter.Places, Table_Fields: formatter.Table}
+  state := ast.Parse_State{Syntax_Tree: *lane.Syntax.Syntax_Tree}
+  source := token.Source(lane.Memory.Source[:lane.Count])
+  if !bool(format.Declare(&view, &state, source)) {
+    run_flags.Values[RUN_UNDECLARED] = true
+  }
 }
 
 func new_print() (print printer.Printer_Handle) {
@@ -5212,7 +5865,7 @@ func new_print() (print printer.Printer_Handle) {
 }
 
 func new_formatter() (formatter Formatter_Stores) {
-  defer func() { Formatter_Stores_Invariants(formatter, "new_formatter.formatter") }()
+  defer func() { Formatter_Stores_Invariants(&formatter, "new_formatter.formatter") }()
   formatter.Places.Values = make(format.Places, format.PLACE_SLOT_COUNT)
   formatter.Table.Slots.Values = make(format.Slots, format.SLOT_COUNT)
   formatter.Table.Names.Values = make(format.Names, format.NAME_SLOT_COUNT)
@@ -5236,6 +5889,8 @@ func new_checker(source File_Bytes) (handle requirements.Checker_Handle) {
   checker.Name = make(requirements.Name_Bytes, requirements.NAME_SIZE_MAXIMUM)
   checker.Prior = make(requirements.Prior_Bytes, requirements.NAME_SIZE_MAXIMUM)
   checker.Message = make(requirements.Message_Bytes, requirements.MESSAGE_SIZE_MAXIMUM)
+  checker.Events = make(requirements.Events, requirements.EVENT_COUNT_MAXIMUM)
+  checker.Lines = make(requirements.Rewritten_Lines, requirements.LINE_TABLE_SIZE)
   checker.Path = make(requirements.Path_Bytes, requirements.PATH_STORAGE_SIZE)
   checker.Test = requirements.Test_Bytes(source)
   checker.Numbers.Values = make(requirements.Numbers, requirements.NUMBER_SLOT_COUNT)
@@ -5538,7 +6193,7 @@ type Git_Command struct {
 }
 
 // Git_Command_Invariants composes one argument vector.
-func Git_Command_Invariants(value Git_Command, namespace aver.Namespace) {
+func Git_Command_Invariants(value *Git_Command, namespace aver.Namespace) {
   Git_Subcommand_Invariants(value.Subcommand, namespace)
   Git_Option_Invariants(value.Option, namespace)
   Git_Reference_Invariants(value.Reference, namespace)
@@ -5553,7 +6208,7 @@ func Git_Command_Handle_Invariants(value Git_Command_Handle, namespace aver.Name
   if value == nil {
     return
   }
-  Git_Command_Invariants(*value, namespace)
+  Git_Command_Invariants(value, namespace)
 }
 
 // History_Walk is where the history check stands: where it reads from, and how far through the
@@ -5566,7 +6221,7 @@ type History_Walk struct {
 }
 
 // History_Walk_Invariants composes where the history check stands.
-func History_Walk_Invariants(value History_Walk, namespace aver.Namespace) {
+func History_Walk_Invariants(value *History_Walk, namespace aver.Namespace) {
   History_Source_Invariants(value.Source, namespace)
   History_Offset_Invariants(value.Offset, namespace)
 }
@@ -5579,7 +6234,7 @@ func History_Walk_Handle_Invariants(value History_Walk_Handle, namespace aver.Na
   if value == nil {
     return
   }
-  History_Walk_Invariants(*value, namespace)
+  History_Walk_Invariants(value, namespace)
 }
 
 // History is the history check: the walk, and the argument vector of the git it spawned last.
@@ -5591,9 +6246,9 @@ type History struct {
 }
 
 // History_Invariants composes the history check.
-func History_Invariants(value History, namespace aver.Namespace) {
-  History_Walk_Invariants(value.Walk, namespace)
-  Git_Command_Invariants(value.Command, namespace)
+func History_Invariants(value *History, namespace aver.Namespace) {
+  History_Walk_Invariants(&value.Walk, namespace)
+  Git_Command_Invariants(&value.Command, namespace)
 }
 
 // History_Handle is caller-owned history state.
@@ -5604,7 +6259,7 @@ func History_Handle_Invariants(value History_Handle, namespace aver.Namespace) {
   if value == nil {
     return
   }
-  History_Invariants(*value, namespace)
+  History_Invariants(value, namespace)
 }
 
 // History_Stage is a stage that spawns git.
@@ -5631,6 +6286,38 @@ func History_Pass_Invariants(value History_Pass, namespace aver.Namespace) {
   aver.Tree(value, namespace).
     Enum_3_Int(
     int(value),
+    int(STAGE_HISTORY_NEXT),
+    int(STAGE_HISTORY_REFS),
+    int(STAGE_HISTORY_LOG),
+  ).
+    Ensure()
+}
+
+// Turns the stage one git command leaves into the stage the run stands on next: a history git told
+// while the lanes still work returns to them, and the run judges it past the packages.
+func history_resume(memory Memory_Handle, next History_Pass) (stage History_Resume) {
+  defer func() { History_Resume_Invariants(stage, "history_resume.stage") }()
+  Memory_Handle_Invariants(memory, "history_resume.memory")
+  History_Pass_Invariants(next, "history_resume.next")
+  if next != History_Pass(STAGE_HISTORY_NEXT) {
+    return History_Resume(next)
+  }
+  if lanes_held(memory) > 0 {
+    return History_Resume(STAGE_DECLARE)
+  }
+  return History_Resume(next)
+}
+
+// History_Resume is the stage one git command leaves the run on past the lanes it may return to:
+// the next command, the judging of the history, or the lanes still working.
+type History_Resume Stage
+
+// History_Resume_Invariants admits each stage one git command leaves the run on.
+func History_Resume_Invariants(value History_Resume, namespace aver.Namespace) {
+  aver.Tree(value, namespace).
+    Enum_4_Int(
+    int(value),
+    int(STAGE_DECLARE),
     int(STAGE_HISTORY_NEXT),
     int(STAGE_HISTORY_REFS),
     int(STAGE_HISTORY_LOG),
@@ -5807,7 +6494,7 @@ type Past struct {
 }
 
 // Past_Invariants composes what the run states past its packages.
-func Past_Invariants(value Past, namespace aver.Namespace) {
+func Past_Invariants(value *Past, namespace aver.Namespace) {
   Orphan_Cursor_Handle_Invariants(value.Orphans, namespace)
   Walk_Handle_Invariants(value.Walk, namespace)
   Loop_Handle_Invariants(value.Loop, namespace)
@@ -5831,9 +6518,9 @@ func history_next(
   Findings_Handle_Invariants(findings, "history_next.findings")
   Report_Handle_Invariants(report, "history_next.report")
   Tally_Handle_Invariants(tally, "history_next.tally")
-  Run_Flag_Storage_Invariants(run_flags, "history_next.run_flags")
+  Run_Flag_Storage_Invariants(&run_flags, "history_next.run_flags")
   History_Walk_Handle_Invariants(history, "history_next.history")
-  Past_Invariants(past, "history_next.past")
+  Past_Invariants(&past, "history_next.past")
   if !bool(past_pick(memory, report, run_flags, history, past)) {
     return Next_Pass(STAGE_PACKAGE)
   }
@@ -5862,9 +6549,9 @@ func past_pick(
   defer func() { Boolean_Invariants(picked, "past_pick.picked") }()
   Memory_Handle_Invariants(memory, "past_pick.memory")
   Report_Handle_Invariants(report, "past_pick.report")
-  Run_Flag_Storage_Invariants(run_flags, "past_pick.run_flags")
+  Run_Flag_Storage_Invariants(&run_flags, "past_pick.run_flags")
   History_Walk_Handle_Invariants(history, "past_pick.history")
-  Past_Invariants(past, "past_pick.past")
+  Past_Invariants(&past, "past_pick.past")
   // A run that states nothing past its packages leaves the report the last finding wrote, which
   // the run after it opens on.
   fix := survey_next(memory, past.Loop)
@@ -5872,6 +6559,9 @@ func past_pick(
     notice := survey_message(memory, Stated_Fix(fix))
     *report = Report{Path: CONFIGURATION_PATH, Tier: Report_Tier(TIER_TWO), Rule: RULE_TEXT_SLASHES}
     report.Message = Message_Text(notice)
+    return true
+  }
+  if bool(layout_pick(memory, report)) {
     return true
   }
   if int(past.Orphans.Orphan_Index) < int(past.Walk.Orphan_Count) {
@@ -5917,7 +6607,7 @@ func history_finding(
 ) (kind History_Kind) {
   defer func() { History_Kind_Invariants(kind, "history_finding.kind") }()
   Memory_Handle_Invariants(memory, "history_finding.memory")
-  Run_Flag_Storage_Invariants(run_flags, "history_finding.run_flags")
+  Run_Flag_Storage_Invariants(&run_flags, "history_finding.run_flags")
   History_Walk_Handle_Invariants(history, "history_finding.history")
   if run_flags.Values[RUN_HISTORY_DONE] {
     return HISTORY_KIND_NONE
@@ -6429,33 +7119,34 @@ func imports_check(
   count Source_Count,
   checked Diagnostic,
 ) (diagnostic Diagnostic) {
-  defer func() { Diagnostic_Invariants(diagnostic, "imports_check.diagnostic") }()
+  defer func() { Diagnostic_Invariants(&diagnostic, "imports_check.diagnostic") }()
   Memory_Handle_Invariants(memory, "imports_check.memory")
-  requirements.Syntax_Invariants(syntax, "imports_check.syntax")
+  requirements.Syntax_Invariants(&syntax, "imports_check.syntax")
   File_Slot_Invariants(slot, "imports_check.slot")
   Source_Count_Invariants(count, "imports_check.count")
-  Diagnostic_Invariants(checked, "imports_check.checked")
+  Diagnostic_Invariants(&checked, "imports_check.checked")
   diagnostic = checked
   if checked.Tier != TIER_NONE {
     return diagnostic
   }
   gateway := file_gateway(memory, slot)
   view := ast.Parse_State{Syntax_Tree: *syntax.Syntax_Tree}
-  run := ast.Parse_State_Token_Run(&view)
   source := memory.Source[:count]
-  within := false
-  for index, lexeme := range run {
-    switch lexeme.Kind {
-    case token.KIND_IMPORT:
-      within = true
-    case token.KIND_FUNCTION, token.KIND_TYPE, token.KIND_VARIABLE, token.KIND_CONSTANT:
-      return diagnostic
-    }
-    if !within {
+  // A clean parse roots the file at the first slot, and each import is a child of that root.
+  root := ast.Node_At(&view, ast.INDEX_FIRST)
+  aver.Always(root.Kind == ast.NODE_FILE, "A clean parse roots the file at the first slot.")
+  child := ast.Index(root.First_Child)
+  for ; child != ast.INDEX_ABSENT; child = ast.Index(ast.Node_At(&view, child).Next) {
+    node := ast.Node_At(&view, child)
+    if node.Kind != ast.NODE_IMPORT {
       continue
     }
-    if lexeme.Kind != token.KIND_STRING {
-      continue
+    // An import opens at the name it binds, when it binds one, and its path stands after it,
+    // thus the node states where the specification opens, as lint states it.
+    opening := ast.Token_At(&view, node.Token)
+    lexeme := opening
+    if opening.Kind != token.KIND_STRING {
+      lexeme = ast.Token_At(&view, node.Token+1)
     }
     // An import path holds no escape, thus the bytes between its quotes are the path, which
     // the notice store holds up to its first zero byte.
@@ -6469,17 +7160,12 @@ func imports_check(
     if bool(import_exempt(memory, gateway, Stated_Family(family))) {
       continue
     }
-    // An aliased import stands at its name, as lint states where the specification opens.
-    opening := lexeme.Offset
-    if run[index-1].Kind == token.KIND_IDENTIFIER {
-      opening = run[index-1].Offset
-    }
     import_notice(memory, Stated_Family(family))
     diagnostic = Diagnostic{Tier: TIER_TWO, Rule: RULE_IMPORTS}
     if !bool(token.Index_Lines(syntax.Lines, token.Source(source))) {
       return diagnostic
     }
-    position := token.Position_Of(syntax.Lines, opening)
+    position := token.Position_Of(syntax.Lines, opening.Offset)
     diagnostic.Line = Diagnostic_Line(position.Line)
     diagnostic.Column = Diagnostic_Column(position.Column)
     return diagnostic
@@ -6615,6 +7301,14 @@ func file_gateway(memory Memory_Handle, slot File_Slot) (gateway Gateway) {
   path := memory.Paths[slot]
   cut := int(bytes.Last_Index_Byte(bytes.Slice(path), PATH_SEPARATOR))
   directory := string(path[:max(cut, 0)])
+  // A caller may spell a repository-relative path with leading current-directory segments.
+  // Strip only those segments; the gateway still has to match a whole directory below.
+  for len(directory) > 1 {
+    if directory[:2] != "./" {
+      break
+    }
+    directory = directory[2:]
+  }
   roots := [...]string{"", AVER_DIRECTORY, OS_GATEWAY, LOOP_GATEWAY, CLOCK_GATEWAY}
   for index := GATEWAY_AVER; index < GATEWAY_CLOCK+1; index++ {
     root := roots[index]
@@ -6756,7 +7450,7 @@ func Walk_Cause_Invariants(value Walk_Cause, namespace aver.Namespace) {
 // States why a walk failed, as the run recorded it where the walk stopped.
 func walk_cause(run_flags Run_Flag_Storage) (cause Walk_Cause) {
   defer func() { Walk_Cause_Invariants(cause, "walk_cause.cause") }()
-  Run_Flag_Storage_Invariants(run_flags, "walk_cause.run_flags")
+  Run_Flag_Storage_Invariants(&run_flags, "walk_cause.run_flags")
   for offset, flag := range [...]int{
     RUN_WALK_ARGUMENT,
     RUN_WALK_FILES,
@@ -6770,4 +7464,2336 @@ func walk_cause(run_flags Run_Flag_Storage) (cause Walk_Cause) {
     }
   }
   return CAUSE_REFUSED
+}
+
+// File_Diagnostics holds the diagnostic the declaration pass left for each Go file, one slot each.
+type File_Diagnostics []Diagnostic
+
+// File_Diagnostics_Invariants fixes the store.
+func File_Diagnostics_Invariants(value File_Diagnostics, _ aver.Namespace) {
+  aver.Always(len(value) == FILE_COUNT_MAXIMUM, "A file diagnostic table has complete length.")
+  aver.Always(cap(value) == FILE_COUNT_MAXIMUM, "A file diagnostic table cannot grow.")
+}
+
+// Notice_Table holds the banned import message the declaration pass left for each Go file.
+type Notice_Table []Notice_Store
+
+// Notice_Table_Invariants fixes the store.
+func Notice_Table_Invariants(value Notice_Table, _ aver.Namespace) {
+  aver.Always(len(value) == FILE_COUNT_MAXIMUM, "A notice table has complete length.")
+  aver.Always(cap(value) == FILE_COUNT_MAXIMUM, "A notice table cannot grow.")
+}
+
+// States the rule the Go file the run read breaks: the check of its form, then its imports, and
+// records a package main file as it goes.
+func file_check(
+  memory Memory_Handle,
+  syntax requirements.Syntax,
+  slot File_Slot,
+  count Source_Count,
+  format_state Format,
+) (diagnostic Diagnostic) {
+  defer func() { Diagnostic_Invariants(&diagnostic, "file_check.diagnostic") }()
+  Memory_Handle_Invariants(memory, "file_check.memory")
+  requirements.Syntax_Invariants(&syntax, "file_check.syntax")
+  File_Slot_Invariants(slot, "file_check.slot")
+  Source_Count_Invariants(count, "file_check.count")
+  Format_Invariants(&format_state, "file_check.format_state")
+  diagnostic = Check(memory, syntax, count, format_state)
+  diagnostic = imports_check(memory, syntax, slot, count, diagnostic)
+  return names_check(memory, syntax, slot, count, diagnostic)
+}
+
+// Checks the names of the Go file the run read by harness/pkg/naming, and states the first that
+// breaks a rule. A file the check or its imports already faulted keeps that diagnostic alone.
+func names_check(
+  memory Memory_Handle,
+  syntax requirements.Syntax,
+  slot File_Slot,
+  count Source_Count,
+  checked Diagnostic,
+) (diagnostic Diagnostic) {
+  defer func() { Diagnostic_Invariants(&diagnostic, "names_check.diagnostic") }()
+  Memory_Handle_Invariants(memory, "names_check.memory")
+  requirements.Syntax_Invariants(&syntax, "names_check.syntax")
+  File_Slot_Invariants(slot, "names_check.slot")
+  Source_Count_Invariants(count, "names_check.count")
+  Diagnostic_Invariants(&checked, "names_check.checked")
+  diagnostic = checked
+  if checked.Tier != TIER_NONE {
+    return diagnostic
+  }
+  checker := memory.Name_Checker
+  checker.Cells[naming.CELL_PATH_SIZE] = naming.State_Cell(copy(checker.Path, memory.Paths[slot]))
+  if !bool(naming.Check(checker)) {
+    return diagnostic
+  }
+  diagnostic = Diagnostic{Tier: TIER_TWO, Rule: RULE_NAMES}
+  if checker.Cells[naming.CELL_SHADOW] == 1 {
+    diagnostic.Rule = RULE_SHADOWS
+  }
+  if !bool(token.Index_Lines(syntax.Lines, token.Source(memory.Source[:count]))) {
+    return diagnostic
+  }
+  position := token.Position_Of(syntax.Lines, token.Offset(checker.Cells[naming.CELL_OFFSET]))
+  diagnostic.Line = Diagnostic_Line(position.Line)
+  diagnostic.Column = Diagnostic_Column(position.Column)
+  return diagnostic
+}
+
+// Recall_Pass is the stage one recalled diagnostic leaves the run on: its write, or the failure of
+// a line past flat JSON.
+type Recall_Pass Stage
+
+// Recall_Pass_Invariants admits the two stages one recalled diagnostic leaves.
+func Recall_Pass_Invariants(value Recall_Pass, namespace aver.Namespace) {
+  aver.Tree(value, namespace).
+    Enum_Int(int(value), int(STAGE_REPORT), int(STAGE_FAIL)).
+    Ensure()
+}
+
+// States the diagnostic the declaration pass left for one Go file, with the banned import message
+// it left beside it, as a text line or a flat JSON line. A line past flat JSON fails the report.
+func file_recall(
+  memory Memory_Handle,
+  findings Findings_Handle,
+  report Report_Handle,
+  tally Tally_Handle,
+  run_flags Run_Flag_Storage,
+  slot File_Slot,
+  outcome Outcome_Handle,
+) (next Recall_Pass) {
+  defer func() { Recall_Pass_Invariants(next, "file_recall.next") }()
+  Memory_Handle_Invariants(memory, "file_recall.memory")
+  Findings_Handle_Invariants(findings, "file_recall.findings")
+  Report_Handle_Invariants(report, "file_recall.report")
+  Tally_Handle_Invariants(tally, "file_recall.tally")
+  Run_Flag_Storage_Invariants(&run_flags, "file_recall.run_flags")
+  File_Slot_Invariants(slot, "file_recall.slot")
+  Outcome_Handle_Invariants(outcome, "file_recall.outcome")
+  left := memory.Diagnostics[slot]
+  copy(memory.Notice, memory.Notices[slot])
+  tally.Found, tally.Resume = true, RESUME_FILE
+  written := Reported{
+    Tier:    Reported_Tier(left.Tier),
+    Rule:    Reported_Rule(left.Rule),
+    Failure: left.Failure,
+    Line:    left.Line,
+    Column:  left.Column,
+  }
+  input := Report_File_Input{Memory: memory, Findings: findings, Report: report, Written: written}
+  input.Flags, input.Slot = run_flags, slot
+  if !bool(report_file(input)) {
+    fail(memory, findings, Failure_Path(memory.Paths[slot]), STEP_REPORT, run_flags, outcome)
+    return Recall_Pass(STAGE_FAIL)
+  }
+  return Recall_Pass(STAGE_REPORT)
+}
+
+// SIBLING_NAME_COUNT_MAXIMUM bounds the names the run records for the judgment across the files
+// of a package: each name a function body declares, and each top-level one. The first slot holds
+// no name but the fill of the stores, as the arena of a tree holds no node there.
+const SIBLING_NAME_COUNT_MAXIMUM = 1 << 19
+
+// SIBLING_NAME_FIRST is the first slot that holds a name.
+const SIBLING_NAME_FIRST = 1
+
+// SIBLING_HEADER is the slot that holds the fill: its start is the next free name, and its end the
+// next free byte of the text store.
+const SIBLING_HEADER = 0
+
+// SIBLING_TEXT_SIZE_MAXIMUM bounds the bytes of those names and of each package clause.
+const SIBLING_TEXT_SIZE_MAXIMUM = 1 << 23
+
+// SIBLING_SLOT_COUNT is the slots of the hash set one judgment fills: twice the names, a power of
+// two, thus a probe meets an empty slot.
+const SIBLING_SLOT_COUNT = 2 * SIBLING_NAME_COUNT_MAXIMUM
+
+// SIBLING_SLOT_MASK folds a hash into the hash set.
+const SIBLING_SLOT_MASK = SIBLING_SLOT_COUNT - 1
+
+// SIBLING_OFFSET_MINIMUM is the first slot of a store, and the empty slot of the hash set.
+const SIBLING_OFFSET_MINIMUM = 0
+
+// Sibling_Offset is one place in the stores of the sibling judgment: a name or a byte.
+type Sibling_Offset int32
+
+// Sibling_Offset_Invariants bounds the place by the widest store.
+func Sibling_Offset_Invariants(value Sibling_Offset, namespace aver.Namespace) {
+  aver.Tree(value, namespace).
+    Range_Int32(
+    int32(value),
+    SIBLING_OFFSET_MINIMUM,
+    SIBLING_TEXT_SIZE_MAXIMUM,
+  ).
+    Ensure()
+}
+
+// Sibling_Name is one recorded name: its hash, its bytes in the text store, and, for a name a
+// function body declares, where it stands.
+type Sibling_Name struct {
+  // Hash is the hash of the name's bytes.
+  Hash naming.Name_Hash
+  // Start is the first byte of the name in the text store.
+  Start Sibling_Offset
+  // End is one past its last byte.
+  End Sibling_Offset
+  // Line is the line the name stands on, absent for a top-level name.
+  Line Diagnostic_Line
+  // Column is the column it stands at, absent for a top-level name.
+  Column Diagnostic_Column
+  // Call is whether the name stands at a call of the call graph, rather than names a function.
+  Call Boolean
+}
+
+// Sibling_Name_Invariants composes one name.
+func Sibling_Name_Invariants(value *Sibling_Name, namespace aver.Namespace) {
+  naming.Name_Hash_Invariants(value.Hash, namespace)
+  Sibling_Offset_Invariants(value.Start, namespace)
+  Sibling_Offset_Invariants(value.End, namespace)
+  Diagnostic_Line_Invariants(value.Line, namespace)
+  Diagnostic_Column_Invariants(value.Column, namespace)
+  Boolean_Invariants(value.Call, namespace)
+}
+
+// Sibling_Names holds every recorded name, past the fill at the first slot.
+type Sibling_Names []Sibling_Name
+
+// Sibling_Names_Invariants fixes the store.
+func Sibling_Names_Invariants(value Sibling_Names, _ aver.Namespace) {
+  aver.Always(len(value) == SIBLING_NAME_COUNT_MAXIMUM, "A sibling name table has complete length.")
+  aver.Always(cap(value) == SIBLING_NAME_COUNT_MAXIMUM, "A sibling name table cannot grow.")
+}
+
+// Sibling_Text holds the bytes of the recorded names and package clauses.
+type Sibling_Text []byte
+
+// Sibling_Text_Invariants fixes the store.
+func Sibling_Text_Invariants(value Sibling_Text, _ aver.Namespace) {
+  aver.Always(len(value) == SIBLING_TEXT_SIZE_MAXIMUM, "A sibling text store has complete length.")
+  aver.Always(cap(value) == SIBLING_TEXT_SIZE_MAXIMUM, "A sibling text store cannot grow.")
+}
+
+// Sibling_File is what one Go file recorded: its names, the names its bodies declare first, and
+// its package clause, and whether the walk found it and the judgment reads it.
+type Sibling_File struct {
+  // Start is the file's first name.
+  Start Sibling_Offset
+  // Locals is one past the last name its bodies declare, and the first top-level one.
+  Locals Sibling_Offset
+  // Graph is the first name of its call graph: each function and method, each followed by the
+  // calls its body makes.
+  Graph Sibling_Offset
+  // End is one past its last name.
+  End Sibling_Offset
+  // Clause_Start is the first byte of its package clause in the text store.
+  Clause_Start Sibling_Offset
+  // Clause_End is one past its last byte.
+  Clause_End Sibling_Offset
+  // Walked is whether the walk found the file.
+  Walked Boolean
+  // Recorded is whether the file's names stand in the table.
+  Recorded Boolean
+  // Judged is whether the judgment reads the file against its siblings, or read its package's
+  // call graph.
+  Judged Boolean
+  // Member is whether the file stands in the package whose call graph the judgment reads.
+  Member Boolean
+  // Imports_End is one past the last import the file makes, which stand from End.
+  Imports_End Sibling_Offset
+  // Soft is the name standing for the first clock, stdout, or network selector, or none.
+  Soft Sibling_Offset
+  // Transitive is the name standing for the first selector that reaches one, or none.
+  Transitive Sibling_Offset
+  // Mains is how many free functions named Main the file declares.
+  Mains Sibling_Offset
+  // Path_Start is how many bytes of leading current directories the file's path spends.
+  Path_Start Sibling_Offset
+  // Top_End is one past the last byte of the file's component in its path, or Path_Start for a
+  // file at the root, which stands in none.
+  Top_End Sibling_Offset
+  // Canonical_Start is the first byte of the file's directory in its component, each major version
+  // segment aside, in the text store.
+  Canonical_Start Sibling_Offset
+  // Canonical_End is one past its last byte.
+  Canonical_End Sibling_Offset
+  // Clause_Line is the line the package clause's name stands on.
+  Clause_Line Diagnostic_Line
+  // Clause_Column is the column it stands at.
+  Clause_Column Diagnostic_Column
+  // Test is whether the file is a test file.
+  Test Boolean
+}
+
+// Sibling_File_Invariants composes one file.
+func Sibling_File_Invariants(value *Sibling_File, namespace aver.Namespace) {
+  Sibling_Offset_Invariants(value.Start, namespace)
+  Sibling_Offset_Invariants(value.Locals, namespace)
+  Sibling_Offset_Invariants(value.Graph, namespace)
+  Sibling_Offset_Invariants(value.End, namespace)
+  Sibling_Offset_Invariants(value.Clause_Start, namespace)
+  Sibling_Offset_Invariants(value.Clause_End, namespace)
+  Boolean_Invariants(value.Walked, namespace)
+  Boolean_Invariants(value.Recorded, namespace)
+  Boolean_Invariants(value.Judged, namespace)
+  Boolean_Invariants(value.Member, namespace)
+  Sibling_Offset_Invariants(value.Imports_End, namespace)
+  Sibling_Offset_Invariants(value.Soft, namespace)
+  Sibling_Offset_Invariants(value.Transitive, namespace)
+  Sibling_Offset_Invariants(value.Mains, namespace)
+  Sibling_Offset_Invariants(value.Path_Start, namespace)
+  Sibling_Offset_Invariants(value.Top_End, namespace)
+  Sibling_Offset_Invariants(value.Canonical_Start, namespace)
+  Sibling_Offset_Invariants(value.Canonical_End, namespace)
+  Diagnostic_Line_Invariants(value.Clause_Line, namespace)
+  Diagnostic_Column_Invariants(value.Clause_Column, namespace)
+  Boolean_Invariants(value.Test, namespace)
+}
+
+// Sibling_Files holds what each Go file recorded, slot for slot with Paths.
+type Sibling_Files []Sibling_File
+
+// Sibling_Files_Invariants fixes the store.
+func Sibling_Files_Invariants(value Sibling_Files, _ aver.Namespace) {
+  aver.Always(len(value) == FILE_COUNT_MAXIMUM, "A sibling file table has complete length.")
+  aver.Always(cap(value) == FILE_COUNT_MAXIMUM, "A sibling file table cannot grow.")
+}
+
+// Sibling_Slots is the hash set of one judgment: each slot holds a recorded name, or none.
+type Sibling_Slots []Sibling_Offset
+
+// Sibling_Slots_Invariants fixes the store.
+func Sibling_Slots_Invariants(value Sibling_Slots, _ aver.Namespace) {
+  aver.Always(len(value) == SIBLING_SLOT_COUNT, "A sibling hash set has complete length.")
+  aver.Always(cap(value) == SIBLING_SLOT_COUNT, "A sibling hash set cannot grow.")
+}
+
+// Sibling_Table holds the stores of the judgment of each package's files against each other.
+type Sibling_Table struct {
+  // Names holds every recorded name.
+  Names Sibling_Names
+  // Text holds their bytes.
+  Text Sibling_Text
+  // Files holds what each Go file recorded.
+  Files Sibling_Files
+  // Slots is the hash set one judgment fills.
+  Slots Sibling_Slots
+}
+
+// Sibling_Table_Invariants composes the stores.
+func Sibling_Table_Invariants(value *Sibling_Table, namespace aver.Namespace) {
+  Sibling_Names_Invariants(value.Names, namespace)
+  Sibling_Text_Invariants(value.Text, namespace)
+  Sibling_Files_Invariants(value.Files, namespace)
+  Sibling_Slots_Invariants(value.Slots, namespace)
+}
+
+// Allocates the stores of the sibling judgment.
+func New_Siblings() (table Sibling_Table) {
+  defer func() { Sibling_Table_Invariants(&table, "new_siblings.table") }()
+  return Sibling_Table{
+    Names: make(Sibling_Names, SIBLING_NAME_COUNT_MAXIMUM),
+    Text:  make(Sibling_Text, SIBLING_TEXT_SIZE_MAXIMUM),
+    Files: make(Sibling_Files, FILE_COUNT_MAXIMUM),
+    Slots: make(Sibling_Slots, SIBLING_SLOT_COUNT),
+  }
+}
+
+// Opens the table for the Go files one walk found: each walked, none recorded yet.
+func siblings_open(memory Memory_Handle, count File_Count) {
+  Memory_Handle_Invariants(memory, "siblings_open.memory")
+  File_Count_Invariants(count, "siblings_open.count")
+  table := memory.Siblings
+  table.Names[SIBLING_HEADER] = Sibling_Name{Start: SIBLING_NAME_FIRST}
+  clear(table.Files)
+  for slot := range table.Files[:count] {
+    table.Files[slot].Walked = true
+  }
+}
+
+// Records the names of the Go file one lane holds: each name its bodies declare, where it stands,
+// then its top-level names, and its package clause. A tree the parser refused, or a file past the
+// table or the line index, stays unrecorded, and its package judges no sibling.
+func siblings_record(
+  memory Memory_Handle,
+  syntax requirements.Syntax,
+  slot File_Slot,
+  count Source_Count,
+  taken Boolean,
+) {
+  Memory_Handle_Invariants(memory, "siblings_record.memory")
+  requirements.Syntax_Invariants(&syntax, "siblings_record.syntax")
+  File_Slot_Invariants(slot, "siblings_record.slot")
+  Source_Count_Invariants(count, "siblings_record.count")
+  Boolean_Invariants(taken, "siblings_record.taken")
+  if !bool(taken) {
+    return
+  }
+  table, checker := memory.Siblings, memory.Name_Checker
+  naming.Record(checker)
+  source := memory.Source[:count]
+  if !bool(token.Index_Lines(syntax.Lines, token.Source(source))) {
+    return
+  }
+  records := checker.Records[:checker.Cells[naming.CELL_IMPORT_START]]
+  locals, graph := int(checker.Cells[naming.CELL_LOCAL_COUNT]), int(
+    checker.Cells[naming.CELL_GRAPH_START],
+  )
+  // A file opted out of the recursion ban adds neither a function nor a call to the graph.
+  if bool(recursion_exempt(memory, slot)) {
+    records = records[:graph]
+  }
+  header := table.Names[SIBLING_HEADER]
+  start, text := int(header.Start), int(header.End)
+  if len(records) > SIBLING_NAME_COUNT_MAXIMUM-start {
+    return
+  }
+  // The package clause is the one identifier the file holds as its own, past any note.
+  named := ast.Index(checker.Nodes[ast.INDEX_FIRST].First_Child)
+  for checker.Nodes[named].Kind != ast.NODE_IDENTIFIER {
+    named = ast.Index(checker.Nodes[named].Next)
+  }
+  clause := checker.Tokens[checker.Nodes[named].Token]
+  file := Sibling_File{Start: Sibling_Offset(start), Walked: true, Recorded: true}
+  file.Locals = Sibling_Offset(start + locals)
+  file.Graph = Sibling_Offset(start + graph)
+  file.End = Sibling_Offset(start + len(records))
+  clause_text := source[clause.Offset : clause.Offset+token.Offset(clause.Size)]
+  file.Clause_Start = Sibling_Offset(text)
+  // A copy stops at the store, thus a name that does not fit leaves the file unrecorded.
+  text += copy(table.Text[text:], clause_text)
+  file.Clause_End = Sibling_Offset(text)
+  if int(file.Clause_End-file.Clause_Start) < len(clause_text) {
+    return
+  }
+  for index, node := range records {
+    spelled := checker.Tokens[checker.Nodes[node].Token]
+    name := source[spelled.Offset : spelled.Offset+token.Offset(spelled.Size)]
+    written := copy(table.Text[text:], name)
+    if written < len(name) {
+      return
+    }
+    hash := naming.Name_Hash(naming.HASH_WIDE_BASIS)
+    for _, symbol := range name {
+      hash = (hash ^ naming.Name_Hash(symbol)) * naming.HASH_WIDE_PRIME
+    }
+    entry := Sibling_Name{Hash: hash, Start: Sibling_Offset(text)}
+    entry.End = Sibling_Offset(text + written)
+    // A name a body declares and a call each state where they stand.
+    placed := index < locals
+    if index > graph-1 {
+      entry.Call = Boolean(checker.Nodes[checker.Nodes[node].Parent].Kind == ast.NODE_CALL)
+      placed = bool(entry.Call)
+    }
+    if placed {
+      position := token.Position_Of(syntax.Lines, spelled.Offset)
+      entry.Line, entry.Column = Diagnostic_Line(position.Line), Diagnostic_Column(position.Column)
+    }
+    table.Names[start+index] = entry
+    text += written
+  }
+  table.Names[SIBLING_HEADER].Start = Sibling_Offset(start + len(records))
+  table.Names[SIBLING_HEADER].End = Sibling_Offset(text)
+  table.Files[slot] = file
+}
+
+// Judges each clean Go file against the top-level names its siblings declare, once every file
+// stands recorded.
+func siblings_judge(memory Memory_Handle) {
+  Memory_Handle_Invariants(memory, "siblings_judge.memory")
+  table := memory.Siblings
+  for slot, own := range table.Files {
+    if !bool(own.Recorded) {
+      continue
+    }
+    if own.Locals == own.Start {
+      continue
+    }
+    if memory.Diagnostics[slot].Tier != TIER_NONE {
+      continue
+    }
+    table.Files[slot].Judged = true
+    if bool(siblings_fill(memory, true)) {
+      siblings_probe(memory)
+    }
+    siblings_fill(memory, false)
+    table.Files[slot].Judged = false
+  }
+}
+
+// Fills the hash set with the top-level names each sibling of the judged Go file declares, or
+// empties it again, and reports whether every file of its package stands recorded. A sibling
+// stands in the file's package directory under the file's package clause.
+func siblings_fill(memory Memory_Handle, fill Boolean) (known Boolean) {
+  defer func() { Boolean_Invariants(known, "siblings_fill.known") }()
+  Memory_Handle_Invariants(memory, "siblings_fill.memory")
+  Boolean_Invariants(fill, "siblings_fill.fill")
+  table := memory.Siblings
+  judged := 0
+  for slot, file := range table.Files {
+    if bool(file.Judged) {
+      judged = slot
+    }
+  }
+  own := table.Files[judged]
+  clause := table.Text[own.Clause_Start:own.Clause_End]
+  known = true
+  for other, file := range table.Files {
+    if other == judged {
+      continue
+    }
+    if !bool(file.Walked) {
+      continue
+    }
+    if memory.File_Packages[other] != memory.File_Packages[judged] {
+      continue
+    }
+    if !bool(file.Recorded) {
+      known = false
+      continue
+    }
+    if string(table.Text[file.Clause_Start:file.Clause_End]) != string(clause) {
+      continue
+    }
+    // The top-level names stand between the locals and the call graph.
+    for entry := file.Locals; entry < file.Graph; entry++ {
+      position := int(table.Names[entry].Hash & SIBLING_SLOT_MASK)
+      // Emptying scans past the slots an earlier name gave back, to the one this name holds.
+      for range SIBLING_SLOT_COUNT {
+        held := table.Slots[position]
+        if bool(fill) {
+          if held == SIBLING_OFFSET_MINIMUM {
+            table.Slots[position] = entry
+            break
+          }
+        } else if held == entry {
+          table.Slots[position] = SIBLING_OFFSET_MINIMUM
+          break
+        }
+        position = (position + 1) & SIBLING_SLOT_MASK
+      }
+    }
+  }
+  return known
+}
+
+// States the first name the bodies of the judged Go file declare that the hash set holds, as the
+// shadow of a sibling's top-level name.
+func siblings_probe(memory Memory_Handle) {
+  Memory_Handle_Invariants(memory, "siblings_probe.memory")
+  table := memory.Siblings
+  judged := 0
+  for slot, file := range table.Files {
+    if bool(file.Judged) {
+      judged = slot
+    }
+  }
+  own := table.Files[judged]
+  for entry := own.Start; entry < own.Locals; entry++ {
+    local := table.Names[entry]
+    name := table.Text[local.Start:local.End]
+    position := int(local.Hash & SIBLING_SLOT_MASK)
+    for range SIBLING_SLOT_COUNT {
+      held := table.Slots[position]
+      if held == SIBLING_OFFSET_MINIMUM {
+        break
+      }
+      global := table.Names[held]
+      if global.Hash == local.Hash {
+        if string(table.Text[global.Start:global.End]) == string(name) {
+          memory.Diagnostics[judged] = Diagnostic{
+            Tier:   TIER_TWO,
+            Rule:   RULE_SHADOWS,
+            Line:   local.Line,
+            Column: local.Column,
+          }
+          notice := memory.Notices[judged]
+          written := copy(notice, "The variable \"")
+          written += copy(notice[written:], name)
+          tail := "\" shadows a variable in an outer scope. Write a different name."
+          written += copy(notice[written:], tail)
+          notice[min(written, len(notice)-1)] = 0
+          return
+        }
+      }
+      position = (position + 1) & SIBLING_SLOT_MASK
+    }
+  }
+}
+
+// GRAPH_NODES is the section of the graph store listing the functions of one package, each by
+// its first declaration, in file order.
+const GRAPH_NODES = 0
+
+// GRAPH_CALLERS is the section naming the calling function of each call, by its declaration.
+const GRAPH_CALLERS = 1 * SIBLING_NAME_COUNT_MAXIMUM
+
+// GRAPH_CALLEES is the section naming the called function of each call.
+const GRAPH_CALLEES = 2 * SIBLING_NAME_COUNT_MAXIMUM
+
+// GRAPH_SITES is the section naming the recorded name each call stands at.
+const GRAPH_SITES = 3 * SIBLING_NAME_COUNT_MAXIMUM
+
+// GRAPH_ORDER is the section listing the calls grouped by caller, each group in call order.
+const GRAPH_ORDER = 4 * SIBLING_NAME_COUNT_MAXIMUM
+
+// GRAPH_STARTS is the section holding, for each function by its declaration, its first call.
+const GRAPH_STARTS = 5 * SIBLING_NAME_COUNT_MAXIMUM
+
+// GRAPH_ENDS is the section holding, for each function by its declaration, one past its last call.
+const GRAPH_ENDS = 6 * SIBLING_NAME_COUNT_MAXIMUM
+
+// GRAPH_MARKS is the section holding the mark of each function by its declaration: unvisited,
+// finished, or on the path at a depth past GRAPH_MARK_PATH.
+const GRAPH_MARKS = 7 * SIBLING_NAME_COUNT_MAXIMUM
+
+// GRAPH_PATH is the section holding the functions the search stands in, the first outermost.
+const GRAPH_PATH = 8 * SIBLING_NAME_COUNT_MAXIMUM
+
+// GRAPH_CURSORS is the section holding, for each depth of the path, the next call it reads.
+const GRAPH_CURSORS = 9 * SIBLING_NAME_COUNT_MAXIMUM
+
+// GRAPH_STATE is the section holding the counts and the cycle one search found, each state
+// constant below naming a slot inside it.
+const GRAPH_STATE = 10 * SIBLING_NAME_COUNT_MAXIMUM
+
+// GRAPH_NODE_COUNT is how many functions the package declares.
+const GRAPH_NODE_COUNT = 0
+
+// GRAPH_EDGE_COUNT is how many calls name one of them.
+const GRAPH_EDGE_COUNT = 1
+
+// GRAPH_CYCLE_START is the depth of the path the cycle a call closes opens at.
+const GRAPH_CYCLE_START = 2
+
+// GRAPH_CYCLE_END is the depth of the path the call closing the cycle stands at.
+const GRAPH_CYCLE_END = 3
+
+// GRAPH_SITE is the recorded name the call closing the cycle stands at.
+const GRAPH_SITE = 4
+
+// GRAPH_LOOKUP is the recorded name one lookup reads.
+const GRAPH_LOOKUP = 5
+
+// GRAPH_FOUND is the function declaration the lookup found, or none.
+const GRAPH_FOUND = 6
+
+// GRAPH_EMPTY is the empty slot of the hash set a lookup that found none stopped at.
+const GRAPH_EMPTY = 7
+
+// GRAPH_LAYOUT_SLOT is the Go file the component layout judges.
+const GRAPH_LAYOUT_SLOT = 8
+
+// GRAPH_LAYOUT_ANCESTRY is the ancestry of that file's directory.
+const GRAPH_LAYOUT_ANCESTRY = 9
+
+// GRAPH_LAYOUT_SHARED is 1 when that file stands in the shared component.
+const GRAPH_LAYOUT_SHARED = 10
+
+// GRAPH_LAYOUT_IMPURE is 1 when that file stands in an impure package.
+const GRAPH_LAYOUT_IMPURE = 11
+
+// GRAPH_STATE_COUNT is how many slots the state holds.
+const GRAPH_STATE_COUNT = 12
+
+// GRAPH_STORE_SIZE holds every section and the state.
+const GRAPH_STORE_SIZE = GRAPH_STATE + GRAPH_STATE_COUNT
+
+// GRAPH_MARK_UNVISITED is a function the search has not reached.
+const GRAPH_MARK_UNVISITED = 0
+
+// GRAPH_MARK_FINISHED is a function each call of which the search followed.
+const GRAPH_MARK_FINISHED = 1
+
+// GRAPH_MARK_PATH is the mark of the outermost function on the path; each depth past it adds one.
+const GRAPH_MARK_PATH = 2
+
+// Graph_Store holds the call graph of one package in sections back to back.
+type Graph_Store []Sibling_Offset
+
+// Graph_Store_Invariants fixes the store.
+func Graph_Store_Invariants(value Graph_Store, _ aver.Namespace) {
+  aver.Always(len(value) == GRAPH_STORE_SIZE, "A call graph store has complete length.")
+  aver.Always(cap(value) == GRAPH_STORE_SIZE, "A call graph store cannot grow.")
+}
+
+// GLOB_PATTERN_SIZE is the part of the glob store one pattern stands in, closed by a zero byte:
+// the widest text a configuration holds, and the byte past it.
+const GLOB_PATTERN_SIZE = configuration.SOURCE_SIZE_MAXIMUM + 1
+
+// GLOB_STORAGE_SIZE is the pattern's part and the path's past it, each closed by a zero byte.
+const GLOB_STORAGE_SIZE = GLOB_PATTERN_SIZE + filepath.PATH_SIZE_MAXIMUM + 1
+
+// Glob_Storage holds one glob pattern and the path it is matched against, each closed by a zero
+// byte, which neither a path nor a pattern the run matches holds.
+type Glob_Storage []byte
+
+// Glob_Storage_Invariants fixes the store.
+func Glob_Storage_Invariants(value Glob_Storage, _ aver.Namespace) {
+  aver.Always(len(value) == GLOB_STORAGE_SIZE, "A glob store has complete length.")
+  aver.Always(cap(value) == GLOB_STORAGE_SIZE, "A glob store cannot grow.")
+}
+
+// Reports whether an opt_out_recursion_ban entry holds the Go file in one slot.
+func recursion_exempt(memory Memory_Handle, slot File_Slot) (exempt Boolean) {
+  defer func() { Boolean_Invariants(exempt, "recursion_exempt.exempt") }()
+  Memory_Handle_Invariants(memory, "recursion_exempt.memory")
+  File_Slot_Invariants(slot, "recursion_exempt.slot")
+  glob := memory.Glob
+  glob[GLOB_PATTERN_SIZE+copy(glob[GLOB_PATTERN_SIZE:GLOB_STORAGE_SIZE-1], memory.Paths[slot])] = 0
+  return glob_listed(memory, GLOB_LIST_RECURSION)
+}
+
+// GLOB_LIST_IGNORE is the ignore list.
+const GLOB_LIST_IGNORE Glob_List = 0
+
+// GLOB_LIST_RECURSION is opt_out_recursion_ban.
+const GLOB_LIST_RECURSION Glob_List = 1
+
+// GLOB_LIST_INSTRUMENTATION is instrumentation_packages.
+const GLOB_LIST_INSTRUMENTATION Glob_List = 2
+
+// Glob_List is one path list of harness.json a glob match reads.
+type Glob_List int
+
+// Glob_List_Invariants admits each list.
+func Glob_List_Invariants(value Glob_List, namespace aver.Namespace) {
+  aver.Tree(value, namespace).
+    Enum_3_Int(
+    int(value),
+    int(GLOB_LIST_IGNORE),
+    int(GLOB_LIST_RECURSION),
+    int(GLOB_LIST_INSTRUMENTATION),
+  ).
+    Ensure()
+}
+
+// Reports whether an entry of one path list holds the path
+// the glob store holds, as lint matches a glob against it: the last entry that matches decides, a
+// negated one clearing the match. An entry states the path from the root, thus a leading and a
+// closing separator name nothing, and neither does a leading current directory of the path.
+func glob_listed(memory Memory_Handle, list Glob_List) (listed Boolean) {
+  defer func() { Boolean_Invariants(listed, "glob_listed.listed") }()
+  Memory_Handle_Invariants(memory, "glob_listed.memory")
+  Glob_List_Invariants(list, "glob_listed.list")
+  decoded, glob := memory.Configuration, memory.Glob
+  keys := [...]configuration.Key{
+    configuration.KEY_IGNORE,
+    configuration.KEY_RECURSION_EXEMPT,
+    configuration.KEY_INSTRUMENTATION_PACKAGES,
+  }
+  key := keys[list]
+  path := glob[GLOB_PATTERN_SIZE:]
+  for string(path[:2]) == "./" {
+    copy(path, path[2:])
+  }
+  for _, value := range decoded.Values[:decoded.Cells[configuration.CELL_VALUE]] {
+    if value.Key != key {
+      continue
+    }
+    pattern := decoded.Text[value.Start:value.End]
+    negated := false
+    if len(pattern) > 0 {
+      negated = pattern[0] == '!'
+    }
+    if negated {
+      pattern = pattern[1:]
+    }
+    for len(pattern) > 0 {
+      if pattern[0] != PATH_SEPARATOR {
+        break
+      }
+      pattern = pattern[1:]
+    }
+    for len(pattern) > 0 {
+      if pattern[len(pattern)-1] != PATH_SEPARATOR {
+        break
+      }
+      pattern = pattern[:len(pattern)-1]
+    }
+    glob[copy(glob[:GLOB_PATTERN_SIZE-1], pattern)] = 0
+    if bool(glob_matched(memory)) {
+      listed = Boolean(!negated)
+    }
+  }
+  return listed
+}
+
+// Reports whether the pattern the glob store holds matches its path: a * stands for any run of
+// bytes but a separator, a ** segment for any run of whole segments, and a backslash quotes the
+// byte past it. A mismatch resumes past the last * one byte further, else past the last ** one
+// segment further, and a pattern whose rest is stars, or a separator and **, matches no rest.
+func glob_matched(memory Memory_Handle) (matched Boolean) {
+  defer func() { Boolean_Invariants(matched, "glob_matched.matched") }()
+  Memory_Handle_Invariants(memory, "glob_matched.memory")
+  glob := memory.Glob
+  // Each part closes on a zero byte, which the part of its store always holds.
+  pattern, path := glob[:GLOB_PATTERN_SIZE], glob[GLOB_PATTERN_SIZE:]
+  for index, symbol := range pattern {
+    if symbol == 0 {
+      pattern = pattern[:index]
+      break
+    }
+  }
+  for index, symbol := range path {
+    if symbol == 0 {
+      path = path[:index]
+      break
+    }
+  }
+  at, cursor, star, star_cursor, double, double_cursor := 0, 0, -1, 0, -1, 0
+  for range (len(path) + 1) * (len(pattern) + 2) {
+    if cursor == len(path) {
+      break
+    }
+    if at+1 < len(pattern) {
+      if string(pattern[at:at+2]) == "**" {
+        at = at + 2
+        if at < len(pattern) {
+          if pattern[at] == PATH_SEPARATOR {
+            at++
+          }
+        }
+        double, double_cursor, star = at, cursor, -1
+        continue
+      }
+    }
+    if at < len(pattern) {
+      if pattern[at] == '*' {
+        at, star, star_cursor = at+1, at+1, cursor
+        continue
+      }
+      literal, width := pattern[at], 1
+      if literal == '\\' {
+        if at+1 < len(pattern) {
+          literal, width = pattern[at+1], 2
+        }
+      }
+      if literal == path[cursor] {
+        at, cursor = at+width, cursor+1
+        continue
+      }
+    }
+    if star > -1 {
+      if path[star_cursor] != PATH_SEPARATOR {
+        star_cursor++
+        at, cursor = star, star_cursor
+        continue
+      }
+    }
+    if double < 0 {
+      return false
+    }
+    double_cursor++
+    // A ** closed by a separator spans whole segments, thus it resumes past the next one.
+    if pattern[double-1] == PATH_SEPARATOR {
+      for double_cursor < len(path) {
+        if path[double_cursor-1] == PATH_SEPARATOR {
+          break
+        }
+        double_cursor++
+      }
+    }
+    at, cursor, star = double, double_cursor, -1
+  }
+  for at < len(pattern) {
+    if pattern[at] == '*' {
+      at++
+      continue
+    }
+    if string(pattern[at:]) != "/**" {
+      break
+    }
+    at = len(pattern)
+  }
+  return Boolean(at == len(pattern))
+}
+
+// Judges the call graph of each package once every Go file stands recorded: a package is the
+// files of one directory under one package clause, judged once, from its first file, which marks
+// each of its files judged.
+func recursion_judge(memory Memory_Handle) {
+  Memory_Handle_Invariants(memory, "recursion_judge.memory")
+  table := memory.Siblings
+  for slot, own := range table.Files {
+    if !bool(own.Recorded) {
+      continue
+    }
+    if bool(own.Judged) {
+      continue
+    }
+    // A member stands recorded in the file's directory under its package clause.
+    clause := table.Text[own.Clause_Start:own.Clause_End]
+    for other, file := range table.Files {
+      if !bool(file.Recorded) {
+        continue
+      }
+      if memory.File_Packages[other] != memory.File_Packages[slot] {
+        continue
+      }
+      if string(table.Text[file.Clause_Start:file.Clause_End]) == string(clause) {
+        table.Files[other].Member = true
+      }
+    }
+    graph_build(memory)
+    graph_order(memory)
+    graph_search(memory)
+    graph_clear(memory)
+    for other, file := range table.Files {
+      if bool(file.Member) {
+        table.Files[other].Judged, table.Files[other].Member = true, false
+      }
+    }
+  }
+  for slot := range table.Files {
+    table.Files[slot].Judged = false
+  }
+}
+
+// Builds the call graph of the judged package: each function by its first declaration, in file
+// order, then each call that names one, counted for its caller.
+func graph_build(memory Memory_Handle) {
+  Memory_Handle_Invariants(memory, "graph_build.memory")
+  state := memory.Graph[GRAPH_STATE:]
+  table, graph := memory.Siblings, memory.Graph
+  state[GRAPH_NODE_COUNT], state[GRAPH_EDGE_COUNT] = 0, 0
+  for _, file := range table.Files {
+    if !bool(file.Member) {
+      continue
+    }
+    for entry := file.Graph; entry < file.End; entry++ {
+      if bool(table.Names[entry].Call) {
+        continue
+      }
+      state[GRAPH_LOOKUP] = entry
+      graph_find(memory)
+      if state[GRAPH_FOUND] != SIBLING_OFFSET_MINIMUM {
+        continue
+      }
+      table.Slots[state[GRAPH_EMPTY]] = entry
+      graph[GRAPH_NODES+state[GRAPH_NODE_COUNT]] = entry
+      state[GRAPH_NODE_COUNT]++
+      graph[GRAPH_STARTS+entry], graph[GRAPH_ENDS+entry] = 0, 0
+      graph[GRAPH_MARKS+entry] = GRAPH_MARK_UNVISITED
+    }
+  }
+  for _, file := range table.Files {
+    if !bool(file.Member) {
+      continue
+    }
+    caller := Sibling_Offset(SIBLING_OFFSET_MINIMUM)
+    for entry := file.Graph; entry < file.End; entry++ {
+      state[GRAPH_LOOKUP] = entry
+      graph_find(memory)
+      found := state[GRAPH_FOUND]
+      if !bool(table.Names[entry].Call) {
+        caller = found
+        continue
+      }
+      if found == SIBLING_OFFSET_MINIMUM {
+        continue
+      }
+      edge := state[GRAPH_EDGE_COUNT]
+      graph[GRAPH_CALLERS+edge], graph[GRAPH_CALLEES+edge] = caller, found
+      graph[GRAPH_SITES+edge] = entry
+      graph[GRAPH_ENDS+caller]++
+      state[GRAPH_EDGE_COUNT]++
+    }
+  }
+}
+
+// Finds the function declaration whose name the recorded name GRAPH_LOOKUP spells, and leaves it
+// in GRAPH_FOUND, or none with the empty slot the probe stopped at in GRAPH_EMPTY.
+func graph_find(memory Memory_Handle) {
+  Memory_Handle_Invariants(memory, "graph_find.memory")
+  state := memory.Graph[GRAPH_STATE:]
+  table := memory.Siblings
+  name := table.Names[state[GRAPH_LOOKUP]]
+  text := table.Text[name.Start:name.End]
+  state[GRAPH_FOUND] = SIBLING_OFFSET_MINIMUM
+  position := int(name.Hash & SIBLING_SLOT_MASK)
+  for range SIBLING_SLOT_COUNT {
+    held := table.Slots[position]
+    if held == SIBLING_OFFSET_MINIMUM {
+      state[GRAPH_EMPTY] = Sibling_Offset(position)
+      return
+    }
+    candidate := table.Names[held]
+    if candidate.Hash == name.Hash {
+      if string(table.Text[candidate.Start:candidate.End]) == string(text) {
+        state[GRAPH_FOUND] = held
+        return
+      }
+    }
+    position = (position + 1) & SIBLING_SLOT_MASK
+  }
+}
+
+// Groups the calls of the graph by caller, each group in call order: the count of each caller
+// becomes the span of its group.
+func graph_order(memory Memory_Handle) {
+  Memory_Handle_Invariants(memory, "graph_order.memory")
+  state := memory.Graph[GRAPH_STATE:]
+  graph := memory.Graph
+  offset := Sibling_Offset(SIBLING_OFFSET_MINIMUM)
+  for _, node := range graph[GRAPH_NODES : GRAPH_NODES+state[GRAPH_NODE_COUNT]] {
+    graph[GRAPH_STARTS+node], offset = offset, offset+graph[GRAPH_ENDS+node]
+    graph[GRAPH_ENDS+node] = graph[GRAPH_STARTS+node]
+  }
+  for edge := range state[GRAPH_EDGE_COUNT] {
+    caller := graph[GRAPH_CALLERS+edge]
+    graph[GRAPH_ORDER+graph[GRAPH_ENDS+caller]] = edge
+    graph[GRAPH_ENDS+caller]++
+  }
+}
+
+// Searches the graph depth first from each function in file order, and states each call that
+// reaches a function on the path, which closes a cycle.
+func graph_search(memory Memory_Handle) {
+  Memory_Handle_Invariants(memory, "graph_search.memory")
+  state := memory.Graph[GRAPH_STATE:]
+  graph := memory.Graph
+  for _, root := range graph[GRAPH_NODES : GRAPH_NODES+state[GRAPH_NODE_COUNT]] {
+    if graph[GRAPH_MARKS+root] != GRAPH_MARK_UNVISITED {
+      continue
+    }
+    depth := Sibling_Offset(0)
+    graph[GRAPH_PATH+depth], graph[GRAPH_CURSORS+depth] = root, graph[GRAPH_STARTS+root]
+    graph[GRAPH_MARKS+root] = GRAPH_MARK_PATH
+    // Each step enters a function, leaves one, or follows a call, each at most once.
+    for range 3*SIBLING_NAME_COUNT_MAXIMUM + 1 {
+      top := graph[GRAPH_PATH+depth]
+      if graph[GRAPH_CURSORS+depth] == graph[GRAPH_ENDS+top] {
+        graph[GRAPH_MARKS+top] = GRAPH_MARK_FINISHED
+        if depth == 0 {
+          break
+        }
+        depth--
+        continue
+      }
+      edge := graph[GRAPH_ORDER+graph[GRAPH_CURSORS+depth]]
+      graph[GRAPH_CURSORS+depth]++
+      callee := graph[GRAPH_CALLEES+edge]
+      mark := graph[GRAPH_MARKS+callee]
+      if mark == GRAPH_MARK_UNVISITED {
+        depth++
+        graph[GRAPH_PATH+depth], graph[GRAPH_CURSORS+depth] = callee, graph[GRAPH_STARTS+callee]
+        graph[GRAPH_MARKS+callee] = GRAPH_MARK_PATH + depth
+        continue
+      }
+      if mark == GRAPH_MARK_FINISHED {
+        continue
+      }
+      state[GRAPH_CYCLE_START], state[GRAPH_CYCLE_END] = mark-GRAPH_MARK_PATH, depth
+      state[GRAPH_SITE] = graph[GRAPH_SITES+edge]
+      graph_report(memory)
+    }
+  }
+}
+
+// States the cycle the call GRAPH_SITE closes at the file it stands in, unless that file states a
+// finding already: the function that calls itself, or each function of the cycle in call order.
+func graph_report(memory Memory_Handle) {
+  Memory_Handle_Invariants(memory, "graph_report.memory")
+  state := memory.Graph[GRAPH_STATE:]
+  table, graph := memory.Siblings, memory.Graph
+  site := state[GRAPH_SITE]
+  owner := 0
+  for slot, file := range table.Files {
+    if bool(file.Recorded) {
+      if file.Graph < site+1 {
+        if site < file.End {
+          owner = slot
+        }
+      }
+    }
+  }
+  if memory.Diagnostics[owner].Tier != TIER_NONE {
+    return
+  }
+  call := table.Names[site]
+  memory.Diagnostics[owner] = Diagnostic{
+    Tier:   TIER_TWO,
+    Rule:   RULE_RECURSION,
+    Line:   call.Line,
+    Column: call.Column,
+  }
+  notice := memory.Notices[owner]
+  start, end := state[GRAPH_CYCLE_START], state[GRAPH_CYCLE_END]
+  first := table.Names[graph[GRAPH_PATH+start]]
+  written := 0
+  if start == end {
+    written += copy(notice[written:], "The function ")
+    written += copy(notice[written:], table.Text[first.Start:first.End])
+    written += copy(notice[written:], " recurses. Write a loop instead.")
+    notice[min(written, len(notice)-1)] = 0
+    return
+  }
+  written += copy(notice[written:], "The functions recurse in a cycle. Write a loop instead. ")
+  for depth := start; depth < end+1; depth++ {
+    node := table.Names[graph[GRAPH_PATH+depth]]
+    written += copy(notice[written:], table.Text[node.Start:node.End])
+    written += copy(notice[written:], " → ")
+  }
+  written += copy(notice[written:], table.Text[first.Start:first.End])
+  notice[min(written, len(notice)-1)] = 0
+}
+
+// Empties the hash set of the functions the graph holds, in the order they entered it: a probe
+// scans past the slots an earlier function gave back, to the one this one holds.
+func graph_clear(memory Memory_Handle) {
+  Memory_Handle_Invariants(memory, "graph_clear.memory")
+  state := memory.Graph[GRAPH_STATE:]
+  table, graph := memory.Siblings, memory.Graph
+  for _, node := range graph[GRAPH_NODES : GRAPH_NODES+state[GRAPH_NODE_COUNT]] {
+    position := int(table.Names[node].Hash & SIBLING_SLOT_MASK)
+    for range SIBLING_SLOT_COUNT {
+      if table.Slots[position] == node {
+        table.Slots[position] = SIBLING_OFFSET_MINIMUM
+        break
+      }
+      position = (position + 1) & SIBLING_SLOT_MASK
+    }
+  }
+}
+
+// LAYOUT_FINDING_COUNT_MAXIMUM bounds the findings of the component layout that name no Go file.
+// The first slot holds none but the fill: its path start the next free slot, its path end the next
+// one to state, and its text the module path.
+const LAYOUT_FINDING_COUNT_MAXIMUM = 1024
+
+// LAYOUT_HEADER is the slot that holds the fill.
+const LAYOUT_HEADER = 0
+
+// LAYOUT_FINDING_FIRST is the first slot that holds a finding.
+const LAYOUT_FINDING_FIRST = 1
+
+// LAYOUT_TEXT_SIZE_MAXIMUM bounds the bytes of the module path and of those findings.
+const LAYOUT_TEXT_SIZE_MAXIMUM = 256 * 1024
+
+// Layout_Finding is one finding of the component layout that names no Go file: the path it stands
+// at and its message, each in the text store.
+type Layout_Finding struct {
+  // Path_Start is the first byte of the path.
+  Path_Start Sibling_Offset
+  // Path_End is one past its last byte.
+  Path_End Sibling_Offset
+  // Text_Start is the first byte of the message.
+  Text_Start Sibling_Offset
+  // Text_End is one past its last byte.
+  Text_End Sibling_Offset
+}
+
+// Layout_Finding_Invariants composes one finding.
+func Layout_Finding_Invariants(value *Layout_Finding, namespace aver.Namespace) {
+  Sibling_Offset_Invariants(value.Path_Start, namespace)
+  Sibling_Offset_Invariants(value.Path_End, namespace)
+  Sibling_Offset_Invariants(value.Text_Start, namespace)
+  Sibling_Offset_Invariants(value.Text_End, namespace)
+}
+
+// Layout_Findings holds those findings past the fill.
+type Layout_Findings []Layout_Finding
+
+// Layout_Findings_Invariants fixes the store.
+func Layout_Findings_Invariants(value Layout_Findings, _ aver.Namespace) {
+  aver.Always(
+    len(value) == LAYOUT_FINDING_COUNT_MAXIMUM,
+    "A layout finding table has complete length.",
+  )
+  aver.Always(cap(value) == LAYOUT_FINDING_COUNT_MAXIMUM, "A layout finding table cannot grow.")
+}
+
+// Layout_Text holds the module path and the paths and messages of the findings.
+type Layout_Text []byte
+
+// Layout_Text_Invariants fixes the store.
+func Layout_Text_Invariants(value Layout_Text, _ aver.Namespace) {
+  aver.Always(len(value) == LAYOUT_TEXT_SIZE_MAXIMUM, "A layout text store has complete length.")
+  aver.Always(cap(value) == LAYOUT_TEXT_SIZE_MAXIMUM, "A layout text store cannot grow.")
+}
+
+// Layout_Table holds the findings of the component layout that name no Go file.
+type Layout_Table struct {
+  // Findings holds the findings past the fill.
+  Findings Layout_Findings
+  // Text holds their bytes and the module path.
+  Text Layout_Text
+}
+
+// Layout_Table_Invariants composes the stores.
+func Layout_Table_Invariants(value *Layout_Table, namespace aver.Namespace) {
+  Layout_Findings_Invariants(value.Findings, namespace)
+  Layout_Text_Invariants(value.Text, namespace)
+}
+
+// Allocates the stores of the component layout.
+func New_Layout() (table Layout_Table) {
+  defer func() { Layout_Table_Invariants(&table, "new_layout.table") }()
+  return Layout_Table{
+    Findings: make(Layout_Findings, LAYOUT_FINDING_COUNT_MAXIMUM),
+    Text:     make(Layout_Text, LAYOUT_TEXT_SIZE_MAXIMUM),
+  }
+}
+
+// Reads the module path out of the module file the source store holds up to its zero byte: the
+// first word past a line that opens with module, as lint reads it.
+func module_read(memory Memory_Handle) {
+  Memory_Handle_Invariants(memory, "module_read.memory")
+  source := memory.Source
+  table := memory.Layout
+  start := 0
+  for offset := range len(source) - len("module ") {
+    if source[offset] == 0 {
+      break
+    }
+    if offset > 0 {
+      if source[offset-1] != '\n' {
+        continue
+      }
+    }
+    if string(source[offset:offset+len("module")]) != "module" {
+      continue
+    }
+    past := source[offset+len("module")]
+    if past != ' ' {
+      if past != '\t' {
+        continue
+      }
+    }
+    start = offset + len("module")
+    break
+  }
+  for start > 0 {
+    if source[start] != ' ' {
+      if source[start] != '\t' {
+        break
+      }
+    }
+    start++
+  }
+  end := start
+  for start > 0 {
+    symbol := source[end]
+    if symbol < '!' {
+      break
+    }
+    end++
+  }
+  written := copy(table.Text[:filepath.PATH_SIZE_MAXIMUM], source[start:end])
+  table.Findings[LAYOUT_HEADER].Text_Start = 0
+  table.Findings[LAYOUT_HEADER].Text_End = Sibling_Offset(written)
+}
+
+// States that the working directory holds no module file.
+func module_absent(memory Memory_Handle) {
+  Memory_Handle_Invariants(memory, "module_absent.memory")
+  glob := memory.Glob[GLOB_PATTERN_SIZE:GLOB_STORAGE_SIZE]
+  glob[copy(glob, MODULE_PATH)] = 0
+  layout_record(
+    memory,
+    "There is no go.mod at the repository root. The linter needs the module anchor.",
+    LAYOUT_QUOTE_NONE,
+  )
+}
+
+// States a module file below the root, or a workspace file, at the path the glob store holds.
+func layout_module(memory Memory_Handle, workspace Boolean) {
+  Memory_Handle_Invariants(memory, "layout_module.memory")
+  Boolean_Invariants(workspace, "layout_module.workspace")
+  path := memory.Glob[GLOB_PATTERN_SIZE:GLOB_STORAGE_SIZE]
+  for index, symbol := range path {
+    if symbol == 0 {
+      path = path[:index]
+      break
+    }
+  }
+  // A leading current directory names the root, whose module file is the one module.
+  for len(path) > 1 {
+    if string(path[:2]) != "./" {
+      break
+    }
+    path = path[2:]
+  }
+  if !bool(workspace) {
+    if string(path) == MODULE_PATH {
+      return
+    }
+    layout_record(
+      memory,
+      "A nested go.mod divides the repository into more than one module. Remove ",
+      LAYOUT_QUOTE_PATH,
+    )
+    return
+  }
+  layout_record(
+    memory,
+    "A go.work makes a workspace with more than one module. Remove ",
+    LAYOUT_QUOTE_PATH,
+  )
+}
+
+// LAYOUT_QUOTE_NONE closes a message on its own text.
+const LAYOUT_QUOTE_NONE Layout_Quote = 0
+
+// LAYOUT_QUOTE_PATH closes a message on the path it stands at, quoted, and a full stop.
+const LAYOUT_QUOTE_PATH Layout_Quote = 1
+
+// LAYOUT_QUOTE_MAIN_ABSENT closes a message on the component the path names, quoted, which
+// declares no func Main in pkg.
+const LAYOUT_QUOTE_MAIN_ABSENT Layout_Quote = 2
+
+// LAYOUT_QUOTE_MAIN_SEVERAL closes a message on the component, quoted, which declares several.
+const LAYOUT_QUOTE_MAIN_SEVERAL Layout_Quote = 3
+
+// Layout_Quote is what closes one message of the component layout past its text.
+type Layout_Quote int
+
+// Layout_Quote_Invariants admits each close.
+func Layout_Quote_Invariants(value Layout_Quote, namespace aver.Namespace) {
+  aver.Tree(value, namespace).
+    Enum_4_Int(
+    int(value),
+    int(LAYOUT_QUOTE_NONE),
+    int(LAYOUT_QUOTE_PATH),
+    int(LAYOUT_QUOTE_MAIN_ABSENT),
+    int(LAYOUT_QUOTE_MAIN_SEVERAL),
+  ).
+    Ensure()
+}
+
+// Layout_Message is the text a message of the component layout opens with.
+type Layout_Message string
+
+// Layout_Message_Invariants bounds the text by the messages.
+func Layout_Message_Invariants(value Layout_Message, namespace aver.Namespace) {
+  aver.Tree(value, namespace).
+    Range_Int(
+    len(value),
+    LAYOUT_MESSAGE_SIZE_MINIMUM,
+    LAYOUT_MESSAGE_SIZE_MAXIMUM,
+  ).
+    Ensure()
+}
+
+// LAYOUT_MESSAGE_SIZE_MINIMUM is the shortest such text.
+const LAYOUT_MESSAGE_SIZE_MINIMUM = len(LAYOUT_COMPONENT_OPENING)
+
+// LAYOUT_COMPONENT_OPENING opens the message of a component's func Main.
+const LAYOUT_COMPONENT_OPENING = "The binary component "
+
+// LAYOUT_MESSAGE_SIZE_MAXIMUM is the longest.
+const LAYOUT_MESSAGE_SIZE_MAXIMUM = len(
+  "There is no go.mod at the repository root. The linter needs the module anchor.",
+)
+
+// Records one finding at the path the glob store holds, its leading current directories aside:
+// the message opens with the text, and the close follows it. A table or a text store past its
+// bound records nothing more.
+func layout_record(memory Memory_Handle, message Layout_Message, quote Layout_Quote) {
+  Memory_Handle_Invariants(memory, "layout_record.memory")
+  Layout_Message_Invariants(message, "layout_record.message")
+  Layout_Quote_Invariants(quote, "layout_record.quote")
+  table := memory.Layout
+  header := table.Findings[LAYOUT_HEADER]
+  if int(header.Path_Start) == LAYOUT_FINDING_COUNT_MAXIMUM {
+    return
+  }
+  path := memory.Glob[GLOB_PATTERN_SIZE:GLOB_STORAGE_SIZE]
+  for index, symbol := range path {
+    if symbol == 0 {
+      path = path[:index]
+      break
+    }
+  }
+  for len(path) > 1 {
+    if string(path[:2]) != "./" {
+      break
+    }
+    path = path[2:]
+  }
+  fill := LAYOUT_FILL
+  if header.Path_Start > LAYOUT_FINDING_FIRST {
+    fill = int(table.Findings[header.Path_Start-1].Text_End)
+  }
+  // The widest finding spends its path twice and a message of the store's width.
+  if fill+2*len(path)+MESSAGE_SIZE_MAXIMUM > LAYOUT_TEXT_SIZE_MAXIMUM {
+    return
+  }
+  finding := Layout_Finding{Path_Start: Sibling_Offset(fill)}
+  fill += copy(table.Text[fill:], path)
+  finding.Path_End, finding.Text_Start = Sibling_Offset(fill), Sibling_Offset(fill)
+  written := copy(table.Text[fill:fill+MESSAGE_SIZE_MAXIMUM], message)
+  store := table.Text[:fill+MESSAGE_SIZE_MAXIMUM]
+  switch quote {
+  case LAYOUT_QUOTE_PATH:
+    written += copy(store[fill+written:], "\"")
+    written += copy(store[fill+written:], path)
+    written += copy(store[fill+written:], "\".")
+  case LAYOUT_QUOTE_MAIN_ABSENT, LAYOUT_QUOTE_MAIN_SEVERAL:
+    written += copy(store[fill+written:], "\"")
+    written += copy(store[fill+written:], table.Text[:header.Text_End])
+    written += copy(store[fill+written:], "/")
+    written += copy(store[fill+written:], path)
+    tail := "\" declares no func Main in pkg/. Declare a func Main in pkg/."
+    if quote == LAYOUT_QUOTE_MAIN_SEVERAL {
+      tail = "\" declares more than one func Main in pkg/. Declare only one func Main."
+    }
+    written += copy(store[fill+written:], tail)
+  }
+  finding.Text_End = Sibling_Offset(fill + written)
+  table.Findings[header.Path_Start] = finding
+  table.Findings[LAYOUT_HEADER].Path_Start++
+}
+
+// Picks the next finding of the component layout that names no Go file into the report, and
+// reports whether one stands.
+func layout_pick(memory Memory_Handle, report Report_Handle) (picked Boolean) {
+  defer func() { Boolean_Invariants(picked, "layout_pick.picked") }()
+  Memory_Handle_Invariants(memory, "layout_pick.memory")
+  Report_Handle_Invariants(report, "layout_pick.report")
+  table := memory.Layout
+  header := table.Findings[LAYOUT_HEADER]
+  if header.Path_End == header.Path_Start {
+    return false
+  }
+  finding := table.Findings[header.Path_End]
+  table.Findings[LAYOUT_HEADER].Path_End++
+  path := table.Text[finding.Path_Start:finding.Path_End]
+  message := table.Text[finding.Text_Start:finding.Text_End]
+  *report = Report{Tier: Report_Tier(TIER_TWO), Rule: RULE_TEXT_LAYOUT}
+  report.Path = Path_Text(unsafe.String(unsafe.SliceData(path), len(path)))
+  report.Message = Message_Text(unsafe.String(unsafe.SliceData(message), len(message)))
+  return true
+}
+
+// LAYOUT_REGION_SIZE is one region of the layout text store: a path and its zero byte.
+const LAYOUT_REGION_SIZE = filepath.PATH_SIZE_MAXIMUM + 1
+
+// LAYOUT_ROOT is the region holding the root the walk opened on.
+const LAYOUT_ROOT = LAYOUT_REGION_SIZE
+
+// LAYOUT_SUBJECT is the region holding the directory a layout judgment reads, in its component.
+const LAYOUT_SUBJECT = 2 * LAYOUT_REGION_SIZE
+
+// LAYOUT_TOP is the region holding the component of that directory.
+const LAYOUT_TOP = 3 * LAYOUT_REGION_SIZE
+
+// LAYOUT_NAMES is the region holding the library ancestors of that directory, space separated.
+const LAYOUT_NAMES = 4 * LAYOUT_REGION_SIZE
+
+// LAYOUT_FILL is the first byte of the findings, past the regions.
+const LAYOUT_FILL = 6 * LAYOUT_REGION_SIZE
+
+// ANCESTRY_NONE is a directory with no library ancestor: a library package.
+const ANCESTRY_NONE Ancestry = 0
+
+// ANCESTRY_ONE is a directory with one: the composition tier.
+const ANCESTRY_ONE Ancestry = 1
+
+// ANCESTRY_SEVERAL is a directory with more: below the library tier.
+const ANCESTRY_SEVERAL Ancestry = 2
+
+// Ancestry is how many library ancestors a directory stands under, past one counted as several.
+type Ancestry int
+
+// Ancestry_Invariants admits each count.
+func Ancestry_Invariants(value Ancestry, namespace aver.Namespace) {
+  aver.Tree(value, namespace).
+    Enum_3_Int(
+    int(value),
+    int(ANCESTRY_NONE),
+    int(ANCESTRY_ONE),
+    int(ANCESTRY_SEVERAL),
+  ).
+    Ensure()
+}
+
+// Splits the repository path the glob store holds, a directory, into its component, which the top
+// region holds, and its directory in that component, each major version segment aside, which the
+// subject region holds: a component root stands as ".". Each region closes on a zero byte.
+func layout_subject(memory Memory_Handle) {
+  Memory_Handle_Invariants(memory, "layout_subject.memory")
+  text := memory.Layout.Text
+  path := memory.Glob[GLOB_PATTERN_SIZE:GLOB_STORAGE_SIZE]
+  for index, symbol := range path {
+    if symbol == 0 {
+      path = path[:index]
+      break
+    }
+  }
+  top_size := len(path)
+  for index, symbol := range path {
+    if symbol == PATH_SEPARATOR {
+      top_size = index
+      break
+    }
+  }
+  text[LAYOUT_TOP+copy(text[LAYOUT_TOP:LAYOUT_TOP+LAYOUT_REGION_SIZE-1], path[:top_size])] = 0
+  subject := text[LAYOUT_SUBJECT : LAYOUT_SUBJECT+LAYOUT_REGION_SIZE-1]
+  size := 0
+  for start := top_size + 1; start < len(path)+1; {
+    end := start
+    for end < len(path) {
+      if path[end] == PATH_SEPARATOR {
+        break
+      }
+      end++
+    }
+    // A major version segment is a v and digits alone.
+    segment := path[start:end]
+    version := len(segment) > 1
+    if version {
+      version = segment[0] == 'v'
+    }
+    for _, symbol := range segment[min(1, len(segment)):] {
+      if symbol-'0' > 9 {
+        version = false
+      }
+    }
+    if !version {
+      if size > 0 {
+        size += copy(subject[size:], "/")
+      }
+      size += copy(subject[size:], segment)
+    }
+    start = end + 1
+  }
+  if size == 0 {
+    size = copy(subject, ".")
+  }
+  text[LAYOUT_SUBJECT+size] = 0
+}
+
+// Counts the library ancestors of the subject directory in the top component: each directory above
+// it that holds a Go package the walk recorded, no test and no main, a binary's top-level pkg
+// aside. The names region holds them, nearest first, space separated.
+func layout_ancestry(memory Memory_Handle) (ancestry Ancestry) {
+  defer func() { Ancestry_Invariants(ancestry, "layout_ancestry.ancestry") }()
+  Memory_Handle_Invariants(memory, "layout_ancestry.memory")
+  table, text := memory.Siblings, memory.Layout.Text
+  subject := text[LAYOUT_SUBJECT : LAYOUT_SUBJECT+LAYOUT_REGION_SIZE]
+  subject = subject[:bytes.Index_Byte(bytes.Slice(subject), 0)]
+  top := text[LAYOUT_TOP : LAYOUT_TOP+LAYOUT_REGION_SIZE]
+  top = top[:bytes.Index_Byte(bytes.Slice(top), 0)]
+  shared := layout_shared(memory)
+  names := text[LAYOUT_NAMES : LAYOUT_NAMES+2*LAYOUT_REGION_SIZE-1]
+  size, count := 0, 0
+  for cut := len(subject) - 1; cut > 0; cut-- {
+    if subject[cut] != PATH_SEPARATOR {
+      continue
+    }
+    ancestor := subject[:cut]
+    if !bool(shared) {
+      if string(ancestor) == "pkg" {
+        continue
+      }
+    }
+    held := false
+    for other, file := range table.Files {
+      if !bool(file.Recorded) {
+        continue
+      }
+      if bool(file.Test) {
+        continue
+      }
+      if string(table.Text[file.Clause_Start:file.Clause_End]) == "main" {
+        continue
+      }
+      if string(memory.Paths[other][file.Path_Start:file.Top_End]) != string(top) {
+        continue
+      }
+      if string(table.Text[file.Canonical_Start:file.Canonical_End]) == string(ancestor) {
+        held = true
+        break
+      }
+    }
+    if held {
+      if count > 0 {
+        size += copy(names[size:], " ")
+      }
+      size += copy(names[size:], ancestor)
+      count++
+    }
+  }
+  text[LAYOUT_NAMES+size] = 0
+  return Ancestry(min(count, int(ANCESTRY_SEVERAL)))
+}
+
+// Reports whether the component the top region holds is the shared one harness.json names.
+func layout_shared(memory Memory_Handle) (shared Boolean) {
+  defer func() { Boolean_Invariants(shared, "layout_shared.shared") }()
+  Memory_Handle_Invariants(memory, "layout_shared.memory")
+  decoded, text := memory.Configuration, memory.Layout.Text
+  top := text[LAYOUT_TOP : LAYOUT_TOP+LAYOUT_REGION_SIZE]
+  top = top[:bytes.Index_Byte(bytes.Slice(top), 0)]
+  for _, value := range decoded.Values[:decoded.Cells[configuration.CELL_VALUE]] {
+    if value.Key != configuration.KEY_SHARED_COMPONENT {
+      continue
+    }
+    named := decoded.Text[value.Start:value.End]
+    for len(named) > 1 {
+      if string(named[:2]) != "./" {
+        break
+      }
+      named = named[2:]
+    }
+    for len(named) > 0 {
+      if named[len(named)-1] != PATH_SEPARATOR {
+        break
+      }
+      named = named[:len(named)-1]
+    }
+    return Boolean(string(named) == string(top))
+  }
+  return false
+}
+
+// Records the imports of the Go file one lane holds, each at the import, and the first clock,
+// stdout, or network selector and the first selector that reaches one, each as path.name at its
+// receiver. A file past the table stays unrecorded.
+func layout_imports_record(
+  memory Memory_Handle,
+  slot File_Slot,
+  count Source_Count,
+  taken Boolean,
+) {
+  Memory_Handle_Invariants(memory, "layout_imports_record.memory")
+  File_Slot_Invariants(slot, "layout_imports_record.slot")
+  Source_Count_Invariants(count, "layout_imports_record.count")
+  Boolean_Invariants(taken, "layout_imports_record.taken")
+  table, checker := memory.Siblings, memory.Name_Checker
+  if !bool(taken) {
+    return
+  }
+  file := table.Files[slot]
+  if !bool(file.Recorded) {
+    return
+  }
+  cells, nodes, tokens := checker.Cells, checker.Nodes, checker.Tokens
+  source := memory.Source[:count]
+  imports := checker.Records[cells[naming.CELL_IMPORT_START]:cells[naming.CELL_RECORD_COUNT]]
+  header := table.Names[SIBLING_HEADER]
+  start, text := int(header.Start), int(header.End)
+  if len(imports)+2 > SIBLING_NAME_COUNT_MAXIMUM-start {
+    table.Files[slot].Recorded = false
+    return
+  }
+  // Each import records its path, the text between its quotes, then each selector its own.
+  sites := [...]naming.State_Cell{
+    0,
+    cells[naming.CELL_SOFT_CALL],
+    cells[naming.CELL_TRANSITIVE_CALL],
+  }
+  paths := [...]naming.State_Cell{
+    0,
+    cells[naming.CELL_SOFT_IMPORT],
+    cells[naming.CELL_TRANSITIVE_IMPORT],
+  }
+  entry := start
+  for index := range len(imports) + 2 {
+    site, quoted := ast.Index(0), ast.Index(0)
+    if index < len(imports) {
+      site, quoted = imports[index], ast.Index(nodes[imports[index]].First_Child)
+      for nodes[quoted].Kind != ast.NODE_STRING {
+        quoted = ast.Index(nodes[quoted].Next)
+      }
+    }
+    if index > len(imports)-1 {
+      site, quoted = ast.Index(sites[index-len(imports)+1]), ast.Index(paths[index-len(imports)+1])
+      if site == ast.INDEX_ABSENT {
+        continue
+      }
+      // A selector stands at its receiver, the child before the name it selects.
+      site = ast.Index(nodes[nodes[site].Parent].First_Child)
+    }
+    held := tokens[nodes[quoted].Token]
+    path := source[held.Offset+1 : held.Offset+token.Offset(held.Size)-1]
+    written := copy(table.Text[text:], path)
+    if index > len(imports)-1 {
+      named := tokens[nodes[nodes[site].Next].Token]
+      written += copy(table.Text[text+written:], ".")
+      written += copy(
+        table.Text[text+written:],
+        source[named.Offset:named.Offset+token.Offset(named.Size)],
+      )
+      if index == len(imports) {
+        file.Soft = Sibling_Offset(entry)
+      } else {
+        file.Transitive = Sibling_Offset(entry)
+      }
+    }
+    if text+written == SIBLING_TEXT_SIZE_MAXIMUM {
+      table.Files[slot].Recorded = false
+      return
+    }
+    // The line and the column count the bytes before the site, as the line index does.
+    offset := int(tokens[nodes[site].Token].Offset)
+    line, opening := 1, 0
+    for cursor, symbol := range source[:offset] {
+      if symbol == '\n' {
+        line, opening = line+1, cursor+1
+      }
+    }
+    table.Names[entry] = Sibling_Name{
+      Start:  Sibling_Offset(text),
+      End:    Sibling_Offset(text + written),
+      Line:   Diagnostic_Line(line),
+      Column: Diagnostic_Column(offset - opening + 1),
+    }
+    text, entry = text+written, entry+1
+    if index == len(imports)-1 {
+      file.Imports_End = Sibling_Offset(entry)
+    }
+  }
+  if len(imports) == 0 {
+    file.Imports_End = file.End
+  }
+  file.Mains = Sibling_Offset(cells[naming.CELL_MAIN_COUNT])
+  table.Names[SIBLING_HEADER].Start, table.Names[SIBLING_HEADER].End = Sibling_Offset(entry), Sibling_Offset(
+    text,
+  )
+  table.Files[slot] = file
+}
+
+// Records where the Go file one lane holds stands: its component, its directory in that component,
+// whether it is a test, and where its package clause names its package.
+func layout_path_record(
+  memory Memory_Handle,
+  slot File_Slot,
+  count Source_Count,
+  taken Boolean,
+) {
+  Memory_Handle_Invariants(memory, "layout_path_record.memory")
+  File_Slot_Invariants(slot, "layout_path_record.slot")
+  Source_Count_Invariants(count, "layout_path_record.count")
+  Boolean_Invariants(taken, "layout_path_record.taken")
+  table := memory.Siblings
+  if !bool(taken) {
+    return
+  }
+  file := table.Files[slot]
+  if !bool(file.Recorded) {
+    return
+  }
+  path := memory.Paths[slot]
+  start := 0
+  for len(path)-start > 1 {
+    if string(path[start:start+2]) != "./" {
+      break
+    }
+    start += 2
+  }
+  file.Path_Start, file.Top_End = Sibling_Offset(start), Sibling_Offset(start)
+  directory := int(bytes.Last_Index_Byte(bytes.Slice(path), PATH_SEPARATOR))
+  for index := start; index < len(path); index++ {
+    if path[index] == PATH_SEPARATOR {
+      file.Top_End = Sibling_Offset(index)
+      break
+    }
+  }
+  file.Test = len(path) > len("_test.go")-1
+  if bool(file.Test) {
+    file.Test = Boolean(string(path[len(path)-len("_test.go"):]) == "_test.go")
+  }
+  glob := memory.Glob[GLOB_PATTERN_SIZE:GLOB_STORAGE_SIZE]
+  glob[copy(glob, path[start:max(directory, start)])] = 0
+  layout_subject(memory)
+  subject := memory.Layout.Text[LAYOUT_SUBJECT : LAYOUT_SUBJECT+LAYOUT_REGION_SIZE]
+  subject = subject[:bytes.Index_Byte(bytes.Slice(subject), 0)]
+  text := int(table.Names[SIBLING_HEADER].End)
+  written := copy(table.Text[text:], subject)
+  if text+written == SIBLING_TEXT_SIZE_MAXIMUM {
+    table.Files[slot].Recorded = false
+    return
+  }
+  file.Canonical_Start, file.Canonical_End = Sibling_Offset(text), Sibling_Offset(text+written)
+  table.Names[SIBLING_HEADER].End = Sibling_Offset(text + written)
+  // The package clause is the one identifier the file holds as its own, past any note.
+  nodes := memory.Name_Checker.Nodes
+  named := ast.Index(nodes[ast.INDEX_FIRST].First_Child)
+  for nodes[named].Kind != ast.NODE_IDENTIFIER {
+    named = ast.Index(nodes[named].Next)
+  }
+  offset := int(memory.Name_Checker.Tokens[nodes[named].Token].Offset)
+  line, opening := 1, 0
+  for index, symbol := range memory.Source[:offset] {
+    if symbol == '\n' {
+      line, opening = line+1, index+1
+    }
+  }
+  file.Clause_Line, file.Clause_Column = Diagnostic_Line(line), Diagnostic_Column(offset-opening+1)
+  table.Files[slot] = file
+}
+
+// Judges the component layout of each clean Go file the walk recorded, in slot order, then the
+// func Main of each binary component the walk covers whole.
+func layout_judge(memory Memory_Handle) {
+  Memory_Handle_Invariants(memory, "layout_judge.memory")
+  state := memory.Graph[GRAPH_STATE:]
+  for slot, file := range memory.Siblings.Files {
+    // Past the walked files every slot stands unrecorded, which the judgment passes by unread.
+    if !bool(file.Recorded) {
+      continue
+    }
+    state[GRAPH_LAYOUT_SLOT] = Sibling_Offset(slot)
+    if !bool(layout_open(memory)) {
+      continue
+    }
+    layout_file(memory)
+  }
+  layout_entry(memory)
+}
+
+// Reports whether the Go file GRAPH_LAYOUT_SLOT names stands recorded in a component, clean so
+// far, and loads its directory into the subject region and its component into the top region.
+func layout_open(memory Memory_Handle) (open Boolean) {
+  defer func() { Boolean_Invariants(open, "layout_open.open") }()
+  Memory_Handle_Invariants(memory, "layout_open.memory")
+  slot := memory.Graph[GRAPH_STATE:][GRAPH_LAYOUT_SLOT]
+  file := memory.Siblings.Files[slot]
+  if !bool(file.Recorded) {
+    return false
+  }
+  if file.Top_End == file.Path_Start {
+    return false
+  }
+  if memory.Diagnostics[slot].Tier != TIER_NONE {
+    return false
+  }
+  path := memory.Paths[slot]
+  directory := max(int(bytes.Last_Index_Byte(bytes.Slice(path), PATH_SEPARATOR)), 0)
+  glob := memory.Glob[GLOB_PATTERN_SIZE:GLOB_STORAGE_SIZE]
+  glob[copy(glob, path[file.Path_Start:directory])] = 0
+  layout_subject(memory)
+  return true
+}
+
+// Judges the Go file GRAPH_LAYOUT_SLOT names, rule by rule, until one states a finding: where it
+// stands, how deep, what it imports, and what it calls.
+func layout_file(memory Memory_Handle) {
+  Memory_Handle_Invariants(memory, "layout_file.memory")
+  state := memory.Graph[GRAPH_STATE:]
+  if bool(layout_shared_place(memory)) {
+    return
+  }
+  if bool(layout_binary_place(memory)) {
+    return
+  }
+  if bool(layout_default_place(memory)) {
+    return
+  }
+  // The ancestors of the file's own directory decide its tier, which the imports clobber.
+  state[GRAPH_LAYOUT_ANCESTRY] = Sibling_Offset(layout_ancestry(memory))
+  if bool(layout_depth(memory)) {
+    return
+  }
+  if bool(layout_imports(memory)) {
+    return
+  }
+  layout_calls(memory)
+}
+
+// States the finding the notice store of the run holds at the Go file GRAPH_LAYOUT_SLOT names, at
+// the first column of its first line, cut at the store.
+func layout_state(memory Memory_Handle) {
+  Memory_Handle_Invariants(memory, "layout_state.memory")
+  slot := memory.Graph[GRAPH_STATE:][GRAPH_LAYOUT_SLOT]
+  memory.Diagnostics[slot] = Diagnostic{Tier: TIER_TWO, Rule: RULE_LAYOUT, Line: 1, Column: 1}
+  copy(memory.Notices[slot], memory.Notice)
+}
+
+// States a shared component file standing under an internal directory, or in package main.
+func layout_shared_place(memory Memory_Handle) (stated Boolean) {
+  defer func() { Boolean_Invariants(stated, "layout_shared_place.stated") }()
+  Memory_Handle_Invariants(memory, "layout_shared_place.memory")
+  if !bool(layout_shared(memory)) {
+    return false
+  }
+  table, notice := memory.Siblings, memory.Notice
+  slot := memory.Graph[GRAPH_STATE:][GRAPH_LAYOUT_SLOT]
+  file := table.Files[slot]
+  path := memory.Paths[slot][file.Path_Start:]
+  directory := path[:max(int(bytes.Last_Index_Byte(bytes.Slice(path), PATH_SEPARATOR)), 0)]
+  written := 0
+  opening := 0
+  for end := range len(directory) + 1 {
+    if end < len(directory) {
+      if directory[end] != PATH_SEPARATOR {
+        continue
+      }
+    }
+    if string(directory[opening:end]) == "internal" {
+      written = copy(notice, "A shared library permits no internal/ directory. Remove \"")
+      written += copy(notice[written:], directory[:end])
+      written += copy(notice[written:], "\".")
+      break
+    }
+    opening = end + 1
+  }
+  if written == 0 {
+    if string(table.Text[file.Clause_Start:file.Clause_End]) != "main" {
+      return false
+    }
+    written = copy(notice, "The shared library \"")
+    written += copy(
+      notice[written:],
+      memory.Layout.Text[:memory.Layout.Findings[LAYOUT_HEADER].Text_End],
+    )
+    written += copy(notice[written:], "/")
+    written += copy(notice[written:], path[:file.Top_End-file.Path_Start])
+    tail := "\" permits no package main. Move the entry point to a binary component."
+    written += copy(notice[written:], tail)
+  }
+  notice[min(written, len(notice)-1)] = 0
+  layout_state(memory)
+  return true
+}
+
+// States a binary component file whose package is no main and stands outside pkg, whose package
+// main stands below the component root, or which stands in a default directory.
+func layout_binary_place(memory Memory_Handle) (stated Boolean) {
+  defer func() { Boolean_Invariants(stated, "layout_binary_place.stated") }()
+  Memory_Handle_Invariants(memory, "layout_binary_place.memory")
+  if bool(layout_shared(memory)) {
+    return false
+  }
+  table, notice := memory.Siblings, memory.Notice
+  slot := memory.Graph[GRAPH_STATE:][GRAPH_LAYOUT_SLOT]
+  file := table.Files[slot]
+  path := memory.Paths[slot][file.Path_Start:]
+  top := path[:file.Top_End-file.Path_Start]
+  directory := path[:max(int(bytes.Last_Index_Byte(bytes.Slice(path), PATH_SEPARATOR)), 0)]
+  // A file at the component root stands in no directory of it, which the messages spell ".".
+  relative := directory[len(directory):]
+  if len(directory) > len(top) {
+    relative = directory[len(top)+1:]
+  }
+  first := relative
+  for index, symbol := range relative {
+    if symbol == PATH_SEPARATOR {
+      first = relative[:index]
+      break
+    }
+  }
+  written := 0
+  main := string(table.Text[file.Clause_Start:file.Clause_End]) == "main"
+  if !main {
+    if string(first) != "pkg" {
+      written = copy(notice, "Move ")
+      written += copy(notice[written:], relative)
+      if len(relative) == 0 {
+        written += copy(notice[written:], ".")
+      }
+      written += copy(notice[written:], " -> ")
+      written += copy(notice[written:], top)
+      written += copy(notice[written:], "/pkg")
+      if len(relative) > 0 {
+        written += copy(notice[written:], "/")
+        written += copy(notice[written:], relative)
+      }
+      written += copy(notice[written:], ".")
+    }
+  }
+  if written == 0 {
+    if main {
+      if len(relative) > 0 {
+        written = copy(notice, "The binary component \"")
+        written += copy(
+          notice[written:],
+          memory.Layout.Text[:memory.Layout.Findings[LAYOUT_HEADER].Text_End],
+        )
+        written += copy(notice[written:], "/")
+        written += copy(notice[written:], top)
+        written += copy(notice[written:], "\" has its main package at \"")
+        written += copy(notice[written:], relative)
+        written += copy(notice[written:], "\". Move the main package to the component root.")
+      }
+    }
+  }
+  if written == 0 {
+    if string(
+      directory[max(int(bytes.Last_Index_Byte(bytes.Slice(directory), PATH_SEPARATOR))+1, 0):],
+    ) ==
+      "default" {
+      written = copy(notice, "A binary component permits no default tier. ")
+      written += copy(notice[written:], "Bind the real world in package main. Remove \"")
+      written += copy(notice[written:], directory)
+      written += copy(notice[written:], "\".")
+    }
+  }
+  if written == 0 {
+    return false
+  }
+  notice[min(written, len(notice)-1)] = 0
+  layout_state(memory)
+  return true
+}
+
+// States a Go file in a default directory whose package clause, its _test aside, names no package
+// of its parent directory's name, at the clause.
+func layout_default_place(memory Memory_Handle) (stated Boolean) {
+  defer func() { Boolean_Invariants(stated, "layout_default_place.stated") }()
+  Memory_Handle_Invariants(memory, "layout_default_place.memory")
+  table, notice := memory.Siblings, memory.Notice
+  slot := memory.Graph[GRAPH_STATE:][GRAPH_LAYOUT_SLOT]
+  file := table.Files[slot]
+  path := memory.Paths[slot][file.Path_Start:]
+  directory := path[:max(int(bytes.Last_Index_Byte(bytes.Slice(path), PATH_SEPARATOR)), 0)]
+  cut := int(bytes.Last_Index_Byte(bytes.Slice(directory), PATH_SEPARATOR))
+  if string(directory[cut+1:]) != "default" {
+    return false
+  }
+  if cut < 0 {
+    return false
+  }
+  above := directory[:cut]
+  parent := above[int(bytes.Last_Index_Byte(bytes.Slice(above), PATH_SEPARATOR))+1:]
+  clause := table.Text[file.Clause_Start:file.Clause_End]
+  base := clause
+  if len(base) > len("_test") {
+    if string(base[len(base)-len("_test"):]) == "_test" {
+      base = base[:len(base)-len("_test")]
+    }
+  }
+  if string(base) == string(parent) {
+    return false
+  }
+  written := copy(notice, "The default package declares \"package ")
+  written += copy(notice[written:], clause)
+  written += copy(notice[written:], "\", not \"package ")
+  written += copy(notice[written:], parent)
+  written += copy(notice[written:], "\". The default package shadows the library it re-exports.")
+  notice[min(written, len(notice)-1)] = 0
+  layout_state(memory)
+  memory.Diagnostics[slot].Line, memory.Diagnostics[slot].Column = file.Clause_Line, file.Clause_Column
+  return true
+}
+
+// States a Go file, no test and no package main, whose package stands under more than one library
+// ancestor, and names them nearest first.
+func layout_depth(memory Memory_Handle) (stated Boolean) {
+  defer func() { Boolean_Invariants(stated, "layout_depth.stated") }()
+  Memory_Handle_Invariants(memory, "layout_depth.memory")
+  table, notice, text := memory.Siblings, memory.Notice, memory.Layout.Text
+  state := memory.Graph[GRAPH_STATE:]
+  file := table.Files[state[GRAPH_LAYOUT_SLOT]]
+  clause := table.Text[file.Clause_Start:file.Clause_End]
+  if bool(file.Test) {
+    return false
+  }
+  if string(clause) == "main" {
+    return false
+  }
+  if Ancestry(state[GRAPH_LAYOUT_ANCESTRY]) != ANCESTRY_SEVERAL {
+    return false
+  }
+  names := text[LAYOUT_NAMES : LAYOUT_NAMES+2*LAYOUT_REGION_SIZE]
+  names = names[:bytes.Index_Byte(bytes.Slice(names), 0)]
+  count := 1
+  for _, symbol := range names {
+    if symbol == ' ' {
+      count++
+    }
+  }
+  written := copy(notice, "The package \"")
+  written += copy(notice[written:], clause)
+  written += copy(notice[written:], "\" at \"")
+  written += copy(notice[written:], table.Text[file.Canonical_Start:file.Canonical_End])
+  written += copy(notice[written:], "\" is below the library tier. It has ")
+  digits := [strconv.DIGIT_TEXT_SIZE_MAXIMUM]byte{}
+  number := strconv.Unsigned_Integer(count)
+  size := strconv.Format_Unsigned_Integer_Into(
+    strconv.Buffer(digits[:]),
+    number,
+    strconv.DECIMAL_BASE,
+  )
+  written += copy(notice[written:], digits[:size])
+  written += copy(notice[written:], " non-main ancestors: [")
+  written += copy(notice[written:], names)
+  written += copy(notice[written:], "].")
+  notice[min(written, len(notice)-1)] = 0
+  layout_state(memory)
+  return true
+}
+
+// Reports whether the Go file GRAPH_LAYOUT_SLOT names stands in an impure package: a package main,
+// or in the shared component a default directory or the composition tier.
+func layout_impure(memory Memory_Handle) (impure Boolean) {
+  defer func() { Boolean_Invariants(impure, "layout_impure.impure") }()
+  Memory_Handle_Invariants(memory, "layout_impure.memory")
+  table := memory.Siblings
+  state := memory.Graph[GRAPH_STATE:]
+  file := table.Files[state[GRAPH_LAYOUT_SLOT]]
+  clause := string(table.Text[file.Clause_Start:file.Clause_End])
+  if clause == "main" {
+    return true
+  }
+  if clause == "main_test" {
+    return true
+  }
+  path := memory.Paths[state[GRAPH_LAYOUT_SLOT]][file.Path_Start:]
+  top := memory.Layout.Text[LAYOUT_TOP : LAYOUT_TOP+LAYOUT_REGION_SIZE]
+  top[copy(top[:LAYOUT_REGION_SIZE-1], path[:file.Top_End-file.Path_Start])] = 0
+  if !bool(layout_shared(memory)) {
+    return false
+  }
+  canonical := table.Text[file.Canonical_Start:file.Canonical_End]
+  last := canonical[int(bytes.Last_Index_Byte(bytes.Slice(canonical), PATH_SEPARATOR))+1:]
+  if string(last) == "default" {
+    return true
+  }
+  return Boolean(Ancestry(state[GRAPH_LAYOUT_ANCESTRY]) == ANCESTRY_ONE)
+}
+
+// States the first import of the Go file GRAPH_LAYOUT_SLOT names that breaks the layout: a package
+// of another binary component, an impure stdlib package from a pure file, or an impure first-party
+// package from a pure package that no instrumentation package list holds.
+func layout_imports(memory Memory_Handle) (stated Boolean) {
+  defer func() { Boolean_Invariants(stated, "layout_imports.stated") }()
+  Memory_Handle_Invariants(memory, "layout_imports.memory")
+  table, notice, state := memory.Siblings, memory.Notice, memory.Graph[GRAPH_STATE:]
+  file := table.Files[state[GRAPH_LAYOUT_SLOT]]
+  path := memory.Paths[state[GRAPH_LAYOUT_SLOT]][file.Path_Start:]
+  shared := layout_shared(memory)
+  tainted := layout_impure(memory)
+  state[GRAPH_LAYOUT_SHARED], state[GRAPH_LAYOUT_IMPURE] = 0, 0
+  if bool(shared) {
+    state[GRAPH_LAYOUT_SHARED] = 1
+  }
+  if bool(tainted) {
+    state[GRAPH_LAYOUT_IMPURE] = 1
+  }
+  module := memory.Layout.Text[:memory.Layout.Findings[LAYOUT_HEADER].Text_End]
+  composition := bool(shared)
+  if composition {
+    composition = Ancestry(state[GRAPH_LAYOUT_ANCESTRY]) == ANCESTRY_ONE
+  }
+  // The assertion library imports the stdlib its every port depends on.
+  aver := len(path) > len(AVER_DIRECTORY)
+  if aver {
+    aver = string(path[:len(AVER_DIRECTORY)+1]) == AVER_DIRECTORY+"/"
+  }
+  pure := string(table.Text[file.Clause_Start:file.Clause_End]) != "main"
+  if bool(file.Test) {
+    pure = false
+  }
+  if composition {
+    pure = false
+  }
+  for entry := file.End; entry < file.Imports_End; entry++ {
+    imported := table.Text[table.Names[entry].Start:table.Names[entry].End]
+    found := false
+    switch string(imported) {
+    case "os", "os/exec", "os/user", "os/signal", "flag", "runtime", "math/rand", "crypto/rand":
+      if pure {
+        found = !aver
+      }
+    }
+    if found {
+      written := copy(notice, "The stdlib import \"")
+      written += copy(notice[written:], imported)
+      written += copy(notice[written:], "\" is impure. See lint/README.md for the resolutions.")
+      notice[min(written, len(notice)-1)] = 0
+    }
+    // A first-party import names a component past the module path.
+    first_party := len(module) > 0
+    if first_party {
+      first_party = len(imported) > len(module)
+    }
+    if first_party {
+      first_party = string(imported[:len(module)]) == string(module)
+    }
+    if first_party {
+      first_party = imported[len(module)] == PATH_SEPARATOR
+    }
+    if !found {
+      if first_party {
+        state[GRAPH_LOOKUP] = entry
+        found = bool(layout_first_party(memory))
+      }
+    }
+    if found {
+      layout_state(memory)
+      memory.Diagnostics[state[GRAPH_LAYOUT_SLOT]].Line = table.Names[entry].Line
+      memory.Diagnostics[state[GRAPH_LAYOUT_SLOT]].Column = table.Names[entry].Column
+      return true
+    }
+  }
+  return false
+}
+
+// States the import GRAPH_LOOKUP names, a first-party package, when it breaks the layout for the
+// Go file GRAPH_LAYOUT_SLOT names: a binary component's file imports another binary component, or
+// a pure package imports a default directory or the composition tier of the shared component that
+// no instrumentation package list holds.
+func layout_first_party(memory Memory_Handle) (stated Boolean) {
+  defer func() { Boolean_Invariants(stated, "layout_first_party.stated") }()
+  Memory_Handle_Invariants(memory, "layout_first_party.memory")
+  table, notice, state := memory.Siblings, memory.Notice, memory.Graph[GRAPH_STATE:]
+  file := table.Files[state[GRAPH_LAYOUT_SLOT]]
+  path := memory.Paths[state[GRAPH_LAYOUT_SLOT]][file.Path_Start:]
+  own := path[:file.Top_End-file.Path_Start]
+  name := table.Names[state[GRAPH_LOOKUP]]
+  imported := table.Text[name.Start:name.End]
+  module := memory.Layout.Text[:memory.Layout.Findings[LAYOUT_HEADER].Text_End]
+  rest := imported[len(module)+1:]
+  glob := memory.Glob[GLOB_PATTERN_SIZE:GLOB_STORAGE_SIZE]
+  glob[copy(glob[:len(glob)-1], rest)] = 0
+  layout_subject(memory)
+  other := memory.Layout.Text[LAYOUT_TOP : LAYOUT_TOP+LAYOUT_REGION_SIZE]
+  other = other[:bytes.Index_Byte(bytes.Slice(other), 0)]
+  shared := layout_shared(memory)
+  written := 0
+  if state[GRAPH_LAYOUT_SHARED] == 0 {
+    if !bool(shared) {
+      if string(other) != string(own) {
+        written = copy(notice, "The binary component \"")
+        written += copy(notice[written:], module)
+        written += copy(notice[written:], "/")
+        written += copy(notice[written:], own)
+        written += copy(notice[written:], "\" imports the binary component \"")
+        written += copy(notice[written:], module)
+        written += copy(notice[written:], "/")
+        written += copy(notice[written:], other)
+        written += copy(notice[written:], "\". Move the shared code to the shared component.")
+      }
+    }
+  }
+  if written == 0 {
+    if state[GRAPH_LAYOUT_IMPURE] == 1 {
+      return false
+    }
+    if !bool(shared) {
+      return false
+    }
+    subject := memory.Layout.Text[LAYOUT_SUBJECT : LAYOUT_SUBJECT+LAYOUT_REGION_SIZE]
+    subject = subject[:bytes.Index_Byte(bytes.Slice(subject), 0)]
+    last := subject[int(bytes.Last_Index_Byte(bytes.Slice(subject), PATH_SEPARATOR))+1:]
+    tainted := string(last) == "default"
+    if !tainted {
+      tainted = layout_ancestry(memory) == ANCESTRY_ONE
+    }
+    if !tainted {
+      return false
+    }
+    // Write-only instrumentation feeds no impurity into what a pure package evaluates.
+    if bool(glob_listed(memory, GLOB_LIST_INSTRUMENTATION)) {
+      return false
+    }
+    written = copy(notice, "The dependency \"")
+    written += copy(notice[written:], imported)
+    written += copy(notice[written:], "\" is impure. A pure package imports only pure packages.")
+  }
+  notice[min(written, len(notice)-1)] = 0
+  return true
+}
+
+// States the first clock, stdout, or network selector of the Go file GRAPH_LAYOUT_SLOT names from
+// a pure file, or else its first selector that reaches one from a pure package.
+func layout_calls(memory Memory_Handle) {
+  Memory_Handle_Invariants(memory, "layout_calls.memory")
+  table, notice, state := memory.Siblings, memory.Notice, memory.Graph[GRAPH_STATE:]
+  file := table.Files[state[GRAPH_LAYOUT_SLOT]]
+  pure := string(table.Text[file.Clause_Start:file.Clause_End]) != "main"
+  if bool(file.Test) {
+    pure = false
+  }
+  if state[GRAPH_LAYOUT_SHARED] == 1 {
+    if Ancestry(state[GRAPH_LAYOUT_ANCESTRY]) == ANCESTRY_ONE {
+      pure = false
+    }
+  }
+  site, opening, tail := Sibling_Offset(0), "", ""
+  if file.Soft != 0 {
+    if pure {
+      site, opening = file.Soft, "The stdlib call "
+      tail = " is impure. See lint/README.md for the resolutions."
+    }
+  }
+  if site == 0 {
+    if file.Transitive != 0 {
+      if state[GRAPH_LAYOUT_IMPURE] == 0 {
+        site, opening = file.Transitive, "The transitive call "
+        tail = " is impure. A pure package calls only pure APIs."
+      }
+    }
+  }
+  if site == 0 {
+    return
+  }
+  name := table.Names[site]
+  written := copy(notice, opening)
+  written += copy(notice[written:], table.Text[name.Start:name.End])
+  written += copy(notice[written:], tail)
+  notice[min(written, len(notice)-1)] = 0
+  layout_state(memory)
+  memory.Diagnostics[state[GRAPH_LAYOUT_SLOT]].Line = name.Line
+  memory.Diagnostics[state[GRAPH_LAYOUT_SLOT]].Column = name.Column
+}
+
+// States each binary component the walk covers whole, from the root it opened on, that declares
+// no func Main in its top-level pkg directory, or several, at the component.
+func layout_entry(memory Memory_Handle) {
+  Memory_Handle_Invariants(memory, "layout_entry.memory")
+  table, text := memory.Siblings, memory.Layout.Text
+  root := text[LAYOUT_ROOT : LAYOUT_ROOT+LAYOUT_REGION_SIZE]
+  root = root[:bytes.Index_Byte(bytes.Slice(root), 0)]
+  for len(root) > 1 {
+    if string(root[:2]) != "./" {
+      break
+    }
+    root = root[2:]
+  }
+  for slot, file := range table.Files {
+    if !bool(file.Recorded) {
+      continue
+    }
+    top := memory.Paths[slot][file.Path_Start:file.Top_End]
+    if len(top) == 0 {
+      continue
+    }
+    if string(root) != "." {
+      if string(root) != string(top) {
+        continue
+      }
+    }
+    mains, first := 0, true
+    for other, member := range table.Files {
+      if !bool(member.Recorded) {
+        continue
+      }
+      if string(memory.Paths[other][member.Path_Start:member.Top_End]) != string(top) {
+        continue
+      }
+      if other < slot {
+        first = false
+      }
+      if bool(member.Test) {
+        continue
+      }
+      path := memory.Paths[other][member.Path_Start:]
+      directory := path[:max(int(bytes.Last_Index_Byte(bytes.Slice(path), PATH_SEPARATOR)), 0)]
+      if string(directory[min(len(top)+1, len(directory)):]) == "pkg" {
+        mains += int(member.Mains)
+      }
+    }
+    if !first {
+      continue
+    }
+    text[LAYOUT_TOP+copy(text[LAYOUT_TOP:LAYOUT_TOP+LAYOUT_REGION_SIZE-1], top)] = 0
+    if bool(layout_shared(memory)) {
+      continue
+    }
+    if mains == 1 {
+      continue
+    }
+    glob := memory.Glob[GLOB_PATTERN_SIZE:GLOB_STORAGE_SIZE]
+    glob[copy(glob, top)] = 0
+    quote := LAYOUT_QUOTE_MAIN_ABSENT
+    if mains > 1 {
+      quote = LAYOUT_QUOTE_MAIN_SEVERAL
+    }
+    layout_record(memory, LAYOUT_COMPONENT_OPENING, quote)
+  }
 }

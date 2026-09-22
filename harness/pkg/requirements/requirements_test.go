@@ -517,17 +517,57 @@ func Test_Tests_Refused(t *testing.T) {
   )
 }
 
+// Test_Tests_Rewritten verifies a requirements_test.go the caller rewrote goes unchecked, and the
+// check states that a rerun checks it.
+func Test_Tests_Rewritten(t *testing.T) {
+  output := run(
+    t,
+    checker_new(),
+    contract{
+      Path:      "package",
+      Markdown:  "\n# A\n\nBody.\n",
+      Test:      "package a\n\nvar wrong = 1\n",
+      Rewritten: true,
+    },
+  )
+  testify.Equal(
+    t,
+    "requirements_test.go: The file was rewritten by this run. Run the check again for its tests.\n",
+    output,
+  )
+}
+
+// Test_Tests_Declarations verifies Collect reads each leading declaration's name and line out of a
+// parse the caller made, and parses nothing itself.
+func Test_Tests_Declarations(t *testing.T) {
+  subject := checker_new()
+  syntax := syntax_new()
+  source := token.Source("package a\n\nfunc Test_A() {}\n\nfunc (r R) Test_B() {}\n")
+  state := ast.Parse_State{Syntax_Tree: *syntax.Syntax_Tree}
+  testify.True(t, bool(ast.Parse(&state, source).OK))
+  collected := requirements.Collect(
+    syntax,
+    requirements.Parsed_Source(source),
+    subject.Declarations,
+  )
+  testify.Equal(t, requirements.Declaration_Count(2), collected)
+  first, second := subject.Declarations[0], subject.Declarations[1]
+  testify.Equal(t, "Test_A", string(source[first.Start:first.End]))
+  testify.Equal(t, requirements.Declaration_Line(3), first.Line)
+  testify.Equal(t, "Test_B", string(source[second.Start:second.End]))
+  testify.Equal(t, requirements.Declaration_Line(5), second.Line)
+}
+
 // Test_Resume verifies Next stops for requirements_test.go only once the markdown checks are
 // done, and a check without findings ends at STATE_DONE.
 func Test_Resume(t *testing.T) {
   subject := checker_new()
-  syntax := syntax_new()
   contract_load(subject, contract{Path: "package", Markdown: CONTRACT, Test: CONTRACT_TEST})
   requirements.Begin(subject)
-  requirements.Next(subject, syntax)
+  requirements.Next(subject)
   testify.Equal(t, requirements.STATE_TEST, state_of(subject))
   test_load(subject, contract{Test: CONTRACT_TEST})
-  requirements.Next(subject, syntax)
+  requirements.Next(subject)
   testify.Equal(t, requirements.STATE_DONE, state_of(subject))
 }
 
@@ -542,14 +582,24 @@ func Test_Rewrite(t *testing.T) {
     {"\n# A\r", "\n# A\r\n"},
   }
   for _, one := range cases {
-    contract_load(subject, contract{Path: "package", Markdown: one[0], Test: ABSENT})
-    testify.True(t, bool(requirements.Rewrite(subject)), one[0])
-    count := subject.Numbers.Values[requirements.NUMBER_MARKDOWN_COUNT]
-    testify.Equal(t, one[1], string(subject.Markdown[:count]))
+    written, _ := rewritten(t, subject, one[0])
+    testify.Equal(t, one[1], written, one[0])
     // A rewritten contract states none of what the rewrite answers, thus a second one
     // changes nothing.
-    testify.False(t, bool(requirements.Rewrite(subject)), one[1])
+    written, _ = rewritten(t, subject, one[1])
+    testify.Equal(t, "", written, one[1])
   }
+  // The findings the rewrite answers go unstated, and the one it leaves names the line the
+  // rewritten contract holds it at.
+  written, output := rewritten(t, subject, "# A\nOne.\nTwo.\n\nThree.\nFour.\n")
+  testify.Equal(t, "\n# A\n\nOne.\nTwo.\nThree.\nFour.\n", written)
+  testify.Equal(
+    t,
+    "REQUIREMENTS.md:7: The section \"A\" has more than three lines. "+
+      "Write a maximum of three lines.\n"+
+      "requirements_test.go: The package has no requirements_test.go. Add requirements_test.go.\n",
+    output,
+  )
   // A heading past its bound stops the check there, thus the rewrite leaves the contract as
   // the check will state it.
   long := make([]byte, requirements.HEADING_SIZE_MAXIMUM+1)
@@ -557,10 +607,8 @@ func Test_Rewrite(t *testing.T) {
     long[index] = 'A'
   }
   oversized := "# " + string(long) + "\nBody."
-  contract_load(subject, contract{Path: "package", Markdown: oversized, Test: ABSENT})
-  testify.False(t, bool(requirements.Rewrite(subject)))
-  count := subject.Numbers.Values[requirements.NUMBER_MARKDOWN_COUNT]
-  testify.Equal(t, oversized, string(subject.Markdown[:count]))
+  written, _ = rewritten(t, subject, oversized)
+  testify.Equal(t, "", written)
 }
 
 // Test_Bounds verifies a file past its storage, past its heading table, or holding a heading past
@@ -633,7 +681,6 @@ func Test_Bounds(t *testing.T) {
 // nothing.
 func Test_Allocation(t *testing.T) {
   subject := checker_new()
-  syntax := syntax_new()
   contract_load(
     subject,
     contract{
@@ -642,7 +689,7 @@ func Test_Allocation(t *testing.T) {
       Test:     "package a\n\nconst X = 1\n",
     },
   )
-  testify.Zero_Allocation(t, func() { allocation_run(subject, syntax) })
+  testify.Zero_Allocation(t, func() { allocation_run(subject) })
   testify.Equal(t, requirements.STATE_DONE, state_of(subject))
   // A rune past ASCII takes the Unicode tables for its class and its upper case.
   contract_load(
@@ -653,10 +700,10 @@ func Test_Allocation(t *testing.T) {
       Test:     "package a\n\nfunc Test_X() {}\n",
     },
   )
-  testify.Zero_Allocation(t, func() { allocation_run(subject, syntax) })
+  testify.Zero_Allocation(t, func() { allocation_run(subject) })
   testify.Equal(t, requirements.STATE_DONE, state_of(subject))
   contract_load(subject, contract{Path: "package", Markdown: ABSENT, Test: ABSENT})
-  testify.Zero_Allocation(t, func() { allocation_run(subject, syntax) })
+  testify.Zero_Allocation(t, func() { allocation_run(subject) })
   testify.Equal(t, requirements.STATE_DONE, state_of(subject))
 }
 
@@ -680,10 +727,11 @@ const CONTRACT_TEST = "package a\n\nfunc Test_Contract() {}\n"
 const REWRITE_PAIR_COUNT = 2
 
 type contract struct {
-  Path     string
-  Impure   bool
-  Markdown string
-  Test     string
+  Path      string
+  Impure    bool
+  Markdown  string
+  Test      string
+  Rewritten bool
 }
 
 func syntax_new() (syntax requirements.Syntax) {
@@ -762,6 +810,8 @@ func checker_new() (checker *requirements.Checker) {
   checker.Name = make(requirements.Name_Bytes, requirements.NAME_SIZE_MAXIMUM)
   checker.Prior = make(requirements.Prior_Bytes, requirements.NAME_SIZE_MAXIMUM)
   checker.Message = make(requirements.Message_Bytes, requirements.MESSAGE_SIZE_MAXIMUM)
+  checker.Events = make(requirements.Events, requirements.EVENT_COUNT_MAXIMUM)
+  checker.Lines = make(requirements.Rewritten_Lines, requirements.LINE_TABLE_SIZE)
   return checker
 }
 
@@ -771,6 +821,7 @@ func contract_load(checker *requirements.Checker, one contract) {
   requirements.Load_Path(checker, requirements.Path_Count(copy(checker.Path, one.Path)))
   flags := checker.Flags.Values
   flags[requirements.FLAG_IMPURE] = requirements.Flag(one.Impure)
+  flags[requirements.FLAG_REWRITE_WANTED] = false
   flags[requirements.FLAG_HAS_MARKDOWN] = one.Markdown != ABSENT
   flags[requirements.FLAG_HAS_TEST] = one.Test != ABSENT
   requirements.Load(checker, 0)
@@ -781,18 +832,63 @@ func contract_load(checker *requirements.Checker, one contract) {
   test_load(checker, one)
 }
 
+// Loads requirements_test.go with the declarations of the caller's one parse of it, as the harness
+// does: none for a file the parser refused, and none the check places for one a fix rewrote.
 func test_load(checker *requirements.Checker, one contract) {
-  requirements.Load_Test(checker, requirements.Test_Count(copy(checker.Test, one.Test)))
+  count := copy(checker.Test, one.Test)
+  requirements.Load_Test(checker, requirements.Test_Count(count))
+  syntax := syntax_new()
+  state := ast.Parse_State{Syntax_Tree: *syntax.Syntax_Tree}
+  source := token.Source(checker.Test[:count])
+  read, collected := requirements.TEST_REFUSED, requirements.Declaration_Count(0)
+  if bool(ast.Parse(&state, source).OK) {
+    read = requirements.TEST_PARSED
+    collected = requirements.Collect(
+      syntax,
+      requirements.Parsed_Source(source),
+      checker.Declarations,
+    )
+  }
+  if one.Rewritten {
+    read = requirements.TEST_REWRITTEN
+  }
+  requirements.Load_Tests(checker, collected, read)
+}
+
+// Checks one contract under a fix to its end: the rewrite the check asks the caller to write, or
+// none, and each finding rendered as the harness does.
+func rewritten(
+  t *testing.T,
+  checker *requirements.Checker,
+  markdown string,
+) (written string, output string) {
+  t.Helper()
+  contract_load(checker, contract{Path: "package", Markdown: markdown, Test: ABSENT})
+  checker.Flags.Values[requirements.FLAG_REWRITE_WANTED] = true
+  requirements.Begin(checker)
+  for range requirements.STEP_COUNT_MAXIMUM {
+    requirements.Next(checker)
+    numbers := checker.Numbers.Values
+    switch numbers[requirements.NUMBER_STATE] {
+    case requirements.STATE_DONE:
+      return written, output
+    case requirements.STATE_REWRITE:
+      written = string(checker.Rewritten[:numbers[requirements.NUMBER_REWRITE_COUNT]])
+    case requirements.STATE_FINDING:
+      output += finding_text(checker)
+    }
+  }
+  t.Fatal("the check never ended")
+  return written, output
 }
 
 // Checks one contract to its end and renders each finding as the harness does.
 func run(t *testing.T, checker *requirements.Checker, one contract) (output string) {
   t.Helper()
   contract_load(checker, one)
-  syntax := syntax_new()
   requirements.Begin(checker)
   for range requirements.STEP_COUNT_MAXIMUM {
-    requirements.Next(checker, syntax)
+    requirements.Next(checker)
     switch checker.Numbers.Values[requirements.NUMBER_STATE] {
     case requirements.STATE_DONE:
       return output
@@ -828,10 +924,10 @@ func itoa(value int) (text string) {
   return text
 }
 
-func allocation_run(checker *requirements.Checker, syntax requirements.Syntax) {
+func allocation_run(checker *requirements.Checker) {
   requirements.Begin(checker)
   for range requirements.STEP_COUNT_MAXIMUM {
-    requirements.Next(checker, syntax)
+    requirements.Next(checker)
     if checker.Numbers.Values[requirements.NUMBER_STATE] == requirements.STATE_DONE {
       return
     }

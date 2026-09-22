@@ -5,13 +5,11 @@ package main
 import "runtime"
 
 import "local/james-orcales/harness/pkg"
-import "local/james-orcales/harness/pkg/requirements"
 import "local/james-orcales/shared/filepath"
-import "local/james-orcales/shared/go/ast"
-import "local/james-orcales/shared/go/token"
 import "local/james-orcales/shared/jlog/default"
 import shared_os "local/james-orcales/shared/os"
 import "local/james-orcales/shared/os/default"
+import "local/james-orcales/shared/sim/aver/default"
 import "local/james-orcales/shared/sim/nbio"
 import system_nbio "local/james-orcales/shared/sim/nbio/default"
 import "local/james-orcales/shared/sim/time"
@@ -67,7 +65,6 @@ func main() {
       Read:         harness.Read{Path: read_path},
       Arguments:    arguments,
       Memory:       run_memory,
-      Syntax:       main_syntax(),
       Format:       run_format_state,
       Command:      run_command,
       Directory:    harness.Directory{Current: current},
@@ -84,6 +81,16 @@ func main() {
     },
   }
   // Built once: a closure literal inside the pump would allocate on every pass.
+  workers := main_workers()
+  runner.Spread = harness.Spread{
+    Submit: func(lane harness.Lane_Handle) { main_submit(workers, lane) },
+    Reap: func(memory harness.Memory_Handle) (lane harness.Lane_Index) {
+      return main_reap(
+        workers,
+        memory,
+      )
+    },
+  }
   done := func() (finished bool) { return bool(main_queued(&runner)) }
   stats := runtime.MemStats{}
   runtime.ReadMemStats(&stats)
@@ -99,7 +106,6 @@ func main() {
 func main_pump(runner harness.Runner_Handle, driver nbio.Driver, done Pump_Done) {
   input := harness.Rearm_Input{
     Memory:    runner.Memory,
-    Syntax:    runner.Syntax,
     Progress:  &runner.Progress,
     Arguments: runner.Arguments,
     Command:   runner.Command,
@@ -125,6 +131,7 @@ func main_pump(runner harness.Runner_Handle, driver nbio.Driver, done Pump_Done)
       History:        &runner.History,
       Output:         runner.Output,
       Errors:         runner.Error_Output,
+      Spread:         runner.Spread,
     },
   }
   for !runner.Stopped(harness.Pass_Phase(runner.Progress.Phase)) {
@@ -138,6 +145,67 @@ func main_pump(runner harness.Runner_Handle, driver nbio.Driver, done Pump_Done)
       return
     }
   }
+}
+
+// Lane_Queue carries each submitted lane to a worker.
+type Lane_Queue chan harness.Lane_Handle
+
+// Lane_Queue_Invariants bounds the queue by the lane table.
+func Lane_Queue_Invariants(value Lane_Queue, _ aver.Namespace) {
+  aver.Always(value != nil, "A lane queue stands.")
+}
+
+// Workers is the pool that checks lanes at once: the queue that carries each lane to a worker, and
+// the queue that carries each checked lane back, in the order the checks end.
+type Workers struct {
+  // Queue carries each lane to a worker.
+  Queue Lane_Queue
+  // Checked carries each checked lane back.
+  Checked Lane_Queue
+}
+
+// Workers_Invariants composes the pool.
+func Workers_Invariants(value *Workers, namespace aver.Namespace) {
+  Lane_Queue_Invariants(value.Queue, namespace)
+  Lane_Queue_Invariants(value.Checked, namespace)
+}
+
+// Starts one worker for each processor, up to one for each lane, for as long as the process lives.
+func main_workers() (workers Workers) {
+  defer func() { Workers_Invariants(&workers, "main_workers.workers") }()
+  workers.Queue = make(Lane_Queue, harness.LANE_COUNT)
+  workers.Checked = make(Lane_Queue, harness.LANE_COUNT)
+  for range min(runtime.NumCPU(), harness.LANE_COUNT) {
+    go main_work(workers)
+  }
+  return workers
+}
+
+// Checks each lane the queue carries, and signals the lane checked.
+func main_work(workers Workers) {
+  Workers_Invariants(&workers, "main_work.workers")
+  for lane := range workers.Queue {
+    harness.Check_Lane(lane)
+    workers.Checked <- lane
+  }
+}
+
+// Hands one lane to the workers.
+func main_submit(workers Workers, lane harness.Lane_Handle) {
+  Workers_Invariants(&workers, "main_submit.workers")
+  harness.Lane_Handle_Invariants(lane, "main_submit.lane")
+  workers.Queue <- lane
+}
+
+// Hands back the next lane a worker checked, waiting for one where none is.
+func main_reap(workers Workers, memory harness.Memory_Handle) (index harness.Lane_Index) {
+  defer func() { harness.Lane_Index_Invariants(index, "main_reap.index") }()
+  Workers_Invariants(&workers, "main_reap.workers")
+  harness.Memory_Handle_Invariants(memory, "main_reap.memory")
+  lane := <-workers.Checked
+  // The worker writes the lane until it hands it back, thus the lane states itself past that.
+  harness.Lane_Handle_Invariants(lane, "main_reap.lane")
+  return lane.Index
 }
 
 // Reports whether one drive pass is over, which the run states of the phase it stands in.
@@ -186,17 +254,4 @@ func main_loop_memory() (memory system_nbio.Operating_System_Memory) {
   memory.Platform_Changes = make([]system_nbio.Kernel_Event, system_nbio.POLL_EVENTS_MAX)
   memory.Platform_Events = make([]system_nbio.Kernel_Event, system_nbio.POLL_EVENTS_MAX)
   return memory
-}
-
-// A constructor would state the one parse no file ever left, thus the root builds the parse stores.
-func main_syntax() (syntax requirements.Syntax) {
-  defer func() { requirements.Syntax_Invariants(syntax, "main_syntax.syntax") }()
-  tree := ast.Syntax_Tree{}
-  tree.Tokens.Values = make(ast.Tokens, ast.TOKEN_COUNT_MAXIMUM)
-  tree.Nodes.Values = make(ast.Nodes, ast.NODE_COUNT_MAXIMUM)
-  tree.Parents.Values = make(ast.Parents, ast.DEPTH_MAXIMUM)
-  tree.Last_Children.Values = make(ast.Last_Children, ast.DEPTH_MAXIMUM)
-  tree.Earlier_Children.Values = make(ast.Earlier_Children, ast.DEPTH_MAXIMUM)
-  starts := make(token.Line_Starts, token.LINE_COUNT_MAXIMUM)
-  return requirements.Syntax{Syntax_Tree: &tree, Lines: &token.Line_Index{Starts: starts}}
 }

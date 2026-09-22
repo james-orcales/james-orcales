@@ -171,6 +171,9 @@ const STATE_TEST Number = 2
 // STATE_DONE is a finished check.
 const STATE_DONE Number = 3
 
+// STATE_REWRITE asks the caller to write the rewrite of REQUIREMENTS.md before Next.
+const STATE_REWRITE Number = 4
+
 // PASS_PRESENCE decides whether the package owes a REQUIREMENTS.md.
 const PASS_PRESENCE Number = 0
 
@@ -189,8 +192,8 @@ const PASS_BODIES Number = 4
 // PASS_TEST_FILE asks for requirements_test.go, or flags its absence.
 const PASS_TEST_FILE Number = 5
 
-// PASS_TEST_PARSE collects the leading declarations of requirements_test.go.
-const PASS_TEST_PARSE Number = 6
+// PASS_TEST_DECLARATIONS takes the leading declarations the caller collected.
+const PASS_TEST_DECLARATIONS Number = 6
 
 // PASS_TESTS flags each leading declaration that is not its leaf's test.
 const PASS_TESTS Number = 7
@@ -198,16 +201,19 @@ const PASS_TESTS Number = 7
 // PASS_DONE ends the check.
 const PASS_DONE Number = 8
 
-// Heading_Message names a finding text that quotes the heading it stands on.
+// PASS_REPORT states what the walk of REQUIREMENTS.md recorded, past the rewrite it wrote.
+const PASS_REPORT Number = 9
+
+// Heading_Message names a finding the tree and name passes state on the heading it quotes.
 type Heading_Message Message
 
-// Heading_Message_Invariants admits each message that quotes a heading.
+// Heading_Message_Invariants admits each message those passes state.
 func Heading_Message_Invariants(value Heading_Message, namespace aver.Namespace) {
   aver.Tree(value, namespace).
     Range_Int(
     int(value),
-    int(MESSAGE_HEADING_CHARACTERS),
-    int(MESSAGE_HEADING_CASE),
+    int(MESSAGE_ORPHAN),
+    int(MESSAGE_LEAF_NAME),
   ).
     Ensure()
 }
@@ -221,7 +227,7 @@ func Message_Invariants(value Message, namespace aver.Namespace) {
     Range_Int(
     int(value),
     int(MESSAGE_MARKDOWN_ABSENT),
-    int(MESSAGE_CONFLICT_MARKER),
+    int(MESSAGE_TEST_REWRITTEN),
   ).
     Ensure()
 }
@@ -285,6 +291,10 @@ const MESSAGE_TEST_ORDER Message = 18
 
 // MESSAGE_CONFLICT_MARKER flags a line that opens on a merge conflict marker.
 const MESSAGE_CONFLICT_MARKER Message = 19
+
+// MESSAGE_TEST_REWRITTEN flags a test file the caller rewrote after the parse its declarations
+// came from.
+const MESSAGE_TEST_REWRITTEN Message = 20
 
 // NUMBER_STATE holds what Next left for the caller.
 const NUMBER_STATE = 0
@@ -388,8 +398,23 @@ const NUMBER_REWRITE_HELD = 32
 // NUMBER_REWRITE_NEXT is where the line after the scanned one opens.
 const NUMBER_REWRITE_NEXT = 33
 
+// NUMBER_TEST_READ holds what became of requirements_test.go past the caller's parse of it.
+const NUMBER_TEST_READ = 34
+
+// NUMBER_REWRITE_LINES holds the newlines the rewrite wrote.
+const NUMBER_REWRITE_LINES = 35
+
+// NUMBER_REWRITE_AT holds the line the rewrite wrote the walked line at.
+const NUMBER_REWRITE_AT = 36
+
+// NUMBER_EVENT_COUNT holds the findings the walk recorded.
+const NUMBER_EVENT_COUNT = 37
+
+// NUMBER_EVENT_CURSOR holds the next recorded finding a pass states.
+const NUMBER_EVENT_CURSOR = 38
+
 // NUMBER_SLOT_COUNT is how many numbers one check keeps.
-const NUMBER_SLOT_COUNT = 34
+const NUMBER_SLOT_COUNT = 39
 
 // FLAG_HAS_MARKDOWN records an exact-cased REQUIREMENTS.md.
 const FLAG_HAS_MARKDOWN = 0
@@ -430,8 +455,23 @@ const FLAG_REWRITE_BODY = 11
 // FLAG_REWRITE_FIT records that every write fit the rewrite storage.
 const FLAG_REWRITE_FIT = 12
 
-// FLAG_SLOT_COUNT is how many answers one check keeps.
-const FLAG_SLOT_COUNT = 13
+// FLAG_REWRITE_WANTED records a caller that writes the rewrite the walk asks for.
+const FLAG_REWRITE_WANTED = 13
+
+// FLAG_BOUNDED records a walk a bound stopped.
+const FLAG_BOUNDED = 14
+
+// FLAG_REWRITTEN records a contract the walk rewrote, whose findings name the rewritten lines.
+const FLAG_REWRITTEN = 15
+
+// FLAG_LINE_MARKED records a walked line that opens on a heading marker.
+const FLAG_LINE_MARKED = 16
+
+// FLAG_LINE_CONFLICT records a walked line that opens on a merge conflict marker.
+const FLAG_LINE_CONFLICT = 17
+
+// FLAG_SLOT_COUNT is how many flags one check keeps.
+const FLAG_SLOT_COUNT = 18
 
 // SECTION_BODY_MAXIMUM is the most body lines one section holds.
 const SECTION_BODY_MAXIMUM = 3
@@ -464,6 +504,10 @@ func Numbers_Invariants(value Numbers, _ aver.Namespace) {
     value[NUMBER_LEAF_CURSOR] < value[NUMBER_LEAF_COUNT]+1,
     "A leaf cursor stands inside its count.",
   )
+  aver.Always(
+    value[NUMBER_EVENT_CURSOR] < value[NUMBER_EVENT_COUNT]+1,
+    "An event cursor stands inside its count.",
+  )
 }
 
 // Number_Storage keeps the number table caller-owned.
@@ -473,7 +517,7 @@ type Number_Storage struct {
 }
 
 // Number_Storage_Invariants composes the number table.
-func Number_Storage_Invariants(value Number_Storage, namespace aver.Namespace) {
+func Number_Storage_Invariants(value *Number_Storage, namespace aver.Namespace) {
   Numbers_Invariants(value.Values, namespace)
 }
 
@@ -503,7 +547,7 @@ type Flag_Storage struct {
 }
 
 // Flag_Storage_Invariants composes the flag table.
-func Flag_Storage_Invariants(value Flag_Storage, namespace aver.Namespace) {
+func Flag_Storage_Invariants(value *Flag_Storage, namespace aver.Namespace) {
   Flags_Invariants(value.Values, namespace)
 }
 
@@ -523,6 +567,47 @@ type Rewritten_Bytes []byte
 func Rewritten_Bytes_Invariants(value Rewritten_Bytes, _ aver.Namespace) {
   aver.Always(len(value) == MARKDOWN_STORAGE_SIZE, "A rewrite store has complete length.")
   aver.Always(cap(value) == MARKDOWN_STORAGE_SIZE, "A rewrite store cannot grow.")
+}
+
+// EVENT_COUNT_MAXIMUM bounds the findings one walk records: each spends a byte of the contract.
+const EVENT_COUNT_MAXIMUM = MARKDOWN_STORAGE_SIZE
+
+// LINE_TABLE_SIZE holds one slot for each line a contract states, the first standing at one.
+const LINE_TABLE_SIZE = MARKDOWN_STORAGE_SIZE + 1
+
+// Event is one finding the walk recorded: its message, the heading it quotes, and its line.
+type Event struct {
+  // Message is what the finding states.
+  Message Message
+  // Heading is the heading the finding quotes, or ABSENT.
+  Heading Heading_Slot
+  // Line is the line the walk stood on.
+  Line Finding_Line
+}
+
+// Event_Invariants composes one recorded finding.
+func Event_Invariants(value *Event, namespace aver.Namespace) {
+  Message_Invariants(value.Message, namespace)
+  Heading_Slot_Invariants(value.Heading, namespace)
+  Finding_Line_Invariants(value.Line, namespace)
+}
+
+// Events holds the findings one walk recorded.
+type Events []Event
+
+// Events_Invariants fixes the store.
+func Events_Invariants(value Events, _ aver.Namespace) {
+  aver.Always(len(value) == EVENT_COUNT_MAXIMUM, "An event store has complete length.")
+  aver.Always(cap(value) == EVENT_COUNT_MAXIMUM, "An event store cannot grow.")
+}
+
+// Rewritten_Lines holds the line the rewrite wrote each walked line at.
+type Rewritten_Lines []Number
+
+// Rewritten_Lines_Invariants fixes the store.
+func Rewritten_Lines_Invariants(value Rewritten_Lines, _ aver.Namespace) {
+  aver.Always(len(value) == LINE_TABLE_SIZE, "A line table has complete length.")
+  aver.Always(cap(value) == LINE_TABLE_SIZE, "A line table cannot grow.")
 }
 
 // Test_Bytes holds one requirements_test.go, the caller's own source store.
@@ -646,7 +731,7 @@ type Heading struct {
 }
 
 // Heading_Invariants composes one heading.
-func Heading_Invariants(value Heading, namespace aver.Namespace) {
+func Heading_Invariants(value *Heading, namespace aver.Namespace) {
   Heading_Level_Invariants(value.Level, namespace)
   Heading_Line_Invariants(value.Line, namespace)
   Heading_Start_Invariants(value.Start, namespace)
@@ -668,7 +753,7 @@ type Opened_Heading struct {
 }
 
 // Opened_Heading_Invariants composes one heading a scan read.
-func Opened_Heading_Invariants(value Opened_Heading, namespace aver.Namespace) {
+func Opened_Heading_Invariants(value *Opened_Heading, namespace aver.Namespace) {
   Heading_Level_Invariants(value.Level, namespace)
   Heading_Line_Invariants(value.Line, namespace)
   Heading_Start_Invariants(value.Start, namespace)
@@ -741,7 +826,7 @@ type Leaf struct {
 }
 
 // Leaf_Invariants composes one leaf.
-func Leaf_Invariants(value Leaf, namespace aver.Namespace) {
+func Leaf_Invariants(value *Leaf, namespace aver.Namespace) {
   Leaf_Parent_Invariants(value.Parent, namespace)
   Leaf_Heading_Invariants(value.Heading, namespace)
 }
@@ -798,7 +883,7 @@ type Child_Leaf struct {
 }
 
 // Child_Leaf_Invariants composes one leaf standing under a #.
-func Child_Leaf_Invariants(value Child_Leaf, namespace aver.Namespace) {
+func Child_Leaf_Invariants(value *Child_Leaf, namespace aver.Namespace) {
   Child_Parent_Invariants(value.Parent, namespace)
   Child_Heading_Invariants(value.Heading, namespace)
 }
@@ -874,7 +959,7 @@ type Declaration struct {
 }
 
 // Declaration_Invariants composes one declaration.
-func Declaration_Invariants(value Declaration, namespace aver.Namespace) {
+func Declaration_Invariants(value *Declaration, namespace aver.Namespace) {
   Declaration_Start_Invariants(value.Start, namespace)
   Declaration_End_Invariants(value.End, namespace)
   Declaration_Line_Invariants(value.Line, namespace)
@@ -903,7 +988,7 @@ type Syntax struct {
 }
 
 // Syntax_Invariants composes what one parse borrows.
-func Syntax_Invariants(value Syntax, namespace aver.Namespace) {
+func Syntax_Invariants(value *Syntax, namespace aver.Namespace) {
   ast.Syntax_Tree_Handle_Invariants(value.Syntax_Tree, namespace)
   token.Line_Index_Handle_Invariants(value.Lines, namespace)
 }
@@ -931,6 +1016,10 @@ type Checker_Fields struct {
   Prior Prior_Bytes
   // Message holds the message of a finding.
   Message Message_Bytes
+  // Events holds the findings the walk of REQUIREMENTS.md recorded, in line order.
+  Events Events
+  // Lines holds the line the rewrite wrote each walked line at.
+  Lines Rewritten_Lines
   // Numbers holds every count, cursor, and member the check keeps.
   Numbers Number_Storage
   // Flags holds every yes or no the check keeps.
@@ -940,7 +1029,7 @@ type Checker_Fields struct {
 // Checker_Fields_Invariants composes every store the caller owns. The parse state and the line
 // index belong to the run that lends them, thus the run asserts them and this chain holds each
 // type once.
-func Checker_Fields_Invariants(value Checker_Fields, namespace aver.Namespace) {
+func Checker_Fields_Invariants(value *Checker_Fields, namespace aver.Namespace) {
   Path_Bytes_Invariants(value.Path, namespace)
   Markdown_Bytes_Invariants(value.Markdown, namespace)
   Rewritten_Bytes_Invariants(value.Rewritten, namespace)
@@ -951,8 +1040,10 @@ func Checker_Fields_Invariants(value Checker_Fields, namespace aver.Namespace) {
   Name_Bytes_Invariants(value.Name, namespace)
   Prior_Bytes_Invariants(value.Prior, namespace)
   Message_Bytes_Invariants(value.Message, namespace)
-  Number_Storage_Invariants(value.Numbers, namespace)
-  Flag_Storage_Invariants(value.Flags, namespace)
+  Events_Invariants(value.Events, namespace)
+  Rewritten_Lines_Invariants(value.Lines, namespace)
+  Number_Storage_Invariants(&value.Numbers, namespace)
+  Flag_Storage_Invariants(&value.Flags, namespace)
   // A count past its store names bytes the store never held, thus each count stands at
   // the store it counts rather than at a slot past the end of it.
   numbers := value.Numbers.Values
@@ -984,8 +1075,8 @@ type Checker struct {
 }
 
 // Checker_Invariants composes every check field.
-func Checker_Invariants(value Checker, namespace aver.Namespace) {
-  Checker_Fields_Invariants(value.Checker_Fields, namespace)
+func Checker_Invariants(value *Checker, namespace aver.Namespace) {
+  Checker_Fields_Invariants(&value.Checker_Fields, namespace)
 }
 
 // Checker_Handle is caller-owned check state.
@@ -996,7 +1087,7 @@ func Checker_Handle_Invariants(value Checker_Handle, namespace aver.Namespace) {
   if value == nil {
     return
   }
-  Checker_Invariants(*value, namespace)
+  Checker_Invariants(value, namespace)
 }
 
 // Begin starts the check of the package the stores and flags describe.
@@ -1012,15 +1103,13 @@ func Begin(checker Checker_Handle) {
   numbers[NUMBER_HEADING_CURSOR] = 0
   numbers[NUMBER_LEAF_CURSOR] = 0
 
-  numbers[NUMBER_DECLARATION_COUNT] = 0
   numbers[NUMBER_MESSAGE_COUNT] = 0
   numbers[NUMBER_NAME_COUNT] = 0
 }
 
 // Next advances to the next finding, to a request for requirements_test.go, or to the end.
-func Next(checker Checker_Handle, syntax Syntax) {
+func Next(checker Checker_Handle) {
   Checker_Handle_Invariants(checker, "next.checker")
-  Syntax_Invariants(syntax, "next.syntax")
   numbers := checker.Numbers.Values
   numbers[NUMBER_STATE] = STATE_STEP
   for range STEP_COUNT_MAXIMUM {
@@ -1032,6 +1121,8 @@ func Next(checker Checker_Handle, syntax Syntax) {
       step_presence(checker)
     case PASS_HEADINGS:
       step_heading(checker)
+    case PASS_REPORT:
+      step_report(checker)
     case PASS_NAMES:
       step_names(checker)
     case PASS_TREE:
@@ -1040,8 +1131,8 @@ func Next(checker Checker_Handle, syntax Syntax) {
       step_body(checker)
     case PASS_TEST_FILE:
       step_test_file(checker)
-    case PASS_TEST_PARSE:
-      step_test_parse(checker, syntax)
+    case PASS_TEST_DECLARATIONS:
+      step_test_declarations(checker)
     case PASS_TESTS:
       step_test(checker)
     case PASS_DONE:
@@ -1065,7 +1156,7 @@ func step_presence(checker Checker_Handle) {
     numbers[NUMBER_LINE_OFFSET] = 0
     numbers[NUMBER_LINE_NUMBER] = 1
     numbers[NUMBER_LINE_CHECK] = 0
-    checker.Flags.Values[FLAG_SEEN_HEADING] = false
+    walk_open(checker)
     return
   }
   numbers[NUMBER_PASS] = PASS_DONE
@@ -1110,6 +1201,8 @@ func step_heading(checker Checker_Handle) {
   switch numbers[NUMBER_LINE_CHECK] {
   case 0:
     line_measure(checker)
+    rewrite_line(checker)
+    checker.Lines[numbers[NUMBER_LINE_NUMBER]] = numbers[NUMBER_REWRITE_AT]
     heading_collect(checker)
   case 1:
     numbers[NUMBER_LINE_CHECK] = 2
@@ -1117,14 +1210,16 @@ func step_heading(checker Checker_Handle) {
     numbers[NUMBER_SCAN_START] = Number(heading.Start)
     numbers[NUMBER_SCAN_END] = Number(heading.End)
     scan_words_invalid(checker)
+    numbers[NUMBER_MESSAGE] = Number(MESSAGE_HEADING_CASE)
     if checker.Flags.Values[FLAG_HEADING_CASE] {
       if !bool(checker.Flags.Values[FLAG_SCAN_RESULT]) {
-        finding_quote(checker, Heading_Message(MESSAGE_HEADING_CASE))
+        event_record(checker)
         return
       }
     }
+    numbers[NUMBER_MESSAGE] = Number(MESSAGE_HEADING_CHARACTERS)
     if checker.Flags.Values[FLAG_SCAN_RESULT] {
-      finding_quote(checker, Heading_Message(MESSAGE_HEADING_CHARACTERS))
+      event_record(checker)
     }
   case 2:
     numbers[NUMBER_LINE_CHECK] = 3
@@ -1132,15 +1227,16 @@ func step_heading(checker Checker_Handle) {
     if preceded {
       preceded = bool(blank_before(checker))
     }
+    numbers[NUMBER_MESSAGE] = Number(MESSAGE_BLANK_BEFORE)
     if !preceded {
-      finding_quote(checker, Heading_Message(MESSAGE_BLANK_BEFORE))
+      event_record(checker)
     }
   case 3:
-    followed := bool(blank_after(checker))
-    line_advance(checker)
-    if !followed {
-      finding_quote(checker, Heading_Message(MESSAGE_BLANK_AFTER))
+    numbers[NUMBER_MESSAGE] = Number(MESSAGE_BLANK_AFTER)
+    if !bool(blank_after(checker)) {
+      event_record(checker)
     }
+    line_advance(checker)
   }
 }
 
@@ -1170,26 +1266,18 @@ func heading_collect(checker Checker_Handle) {
     heading_absent(checker)
     return
   }
+  numbers[NUMBER_FINDING_HEADING] = ABSENT
+  numbers[NUMBER_MESSAGE] = Number(MESSAGE_HEADING_OVERSIZED)
   if int(numbers[NUMBER_LINE_END]-start) > HEADING_SIZE_MAXIMUM {
-    numbers[NUMBER_PASS] = PASS_DONE
-    finding_file(
-      checker,
-      FILE_MARKDOWN,
-      Finding_Line(numbers[NUMBER_LINE_NUMBER]),
-      MESSAGE_HEADING_OVERSIZED,
-    )
+    walk_bound(checker)
     return
   }
+  numbers[NUMBER_MESSAGE] = Number(MESSAGE_HEADINGS_FULL)
   if int(numbers[NUMBER_HEADING_COUNT]) == len(checker.Headings) {
-    numbers[NUMBER_PASS] = PASS_DONE
-    finding_file(
-      checker,
-      FILE_MARKDOWN,
-      Finding_Line(numbers[NUMBER_LINE_NUMBER]),
-      MESSAGE_HEADINGS_FULL,
-    )
+    walk_bound(checker)
     return
   }
+  section_open(checker, Heading_Slot(numbers[NUMBER_HEADING_COUNT]))
   // A table states its length alone, thus each heading states its own parts where it is
   // recorded rather than nowhere at all.
   recorded := Opened_Heading{
@@ -1198,7 +1286,7 @@ func heading_collect(checker Checker_Handle) {
     Start: Heading_Start(start),
     End:   Heading_End(numbers[NUMBER_LINE_END]),
   }
-  Opened_Heading_Invariants(recorded, "heading_open.recorded")
+  Opened_Heading_Invariants(&recorded, "heading_open.recorded")
   checker.Headings[numbers[NUMBER_HEADING_COUNT]] = Heading{
     Level: recorded.Level,
     Line:  recorded.Line,
@@ -1214,34 +1302,220 @@ func heading_collect(checker Checker_Handle) {
 // first heading is a preamble.
 func heading_absent(checker Checker_Handle) {
   Checker_Handle_Invariants(checker, "heading_absent.checker")
-  numbers := checker.Numbers.Values
+  numbers, flags := checker.Numbers.Values, checker.Flags.Values
   markdown := checker.Markdown[:numbers[NUMBER_MARKDOWN_COUNT]]
   marked := numbers[NUMBER_LINE_OFFSET] < numbers[NUMBER_LINE_END]
   if marked {
     marked = markdown[numbers[NUMBER_LINE_OFFSET]] == '#'
   }
-  number := numbers[NUMBER_LINE_NUMBER]
+  flags[FLAG_LINE_MARKED] = Flag(marked)
   opening := markdown[numbers[NUMBER_LINE_OFFSET]:numbers[NUMBER_LINE_END]]
   opening = opening[:min(len(opening), CONFLICT_MARKER_SIZE)]
+  flags[FLAG_LINE_CONFLICT] = Flag(Conflict_Marker(Line_Opening(opening)))
   numbers[NUMBER_SCAN_START] = numbers[NUMBER_LINE_OFFSET]
   numbers[NUMBER_SCAN_END] = numbers[NUMBER_LINE_END]
-  line_advance(checker)
-  if Conflict_Marker(Line_Opening(opening)) {
-    finding_file(checker, FILE_MARKDOWN, Finding_Line(number), MESSAGE_CONFLICT_MARKER)
-    return
-  }
-  if marked {
-    finding_file(checker, FILE_MARKDOWN, Finding_Line(number), MESSAGE_HEADING_LEVEL)
-    return
-  }
   scan_blank(checker)
-  if checker.Flags.Values[FLAG_SCAN_RESULT] {
+  line_finding(checker)
+  line_body(checker)
+  line_advance(checker)
+}
+
+// Records the finding one walked line that is no heading states: a conflict marker, a heading of
+// no admitted level, or content before the first heading.
+func line_finding(checker Checker_Handle) {
+  Checker_Handle_Invariants(checker, "line_finding.checker")
+  numbers, flags := checker.Numbers.Values, checker.Flags.Values
+  numbers[NUMBER_FINDING_HEADING] = ABSENT
+  numbers[NUMBER_MESSAGE] = Number(MESSAGE_CONFLICT_MARKER)
+  if flags[FLAG_LINE_CONFLICT] {
+    event_record(checker)
     return
   }
-  if checker.Flags.Values[FLAG_SEEN_HEADING] {
+  numbers[NUMBER_MESSAGE] = Number(MESSAGE_HEADING_LEVEL)
+  if flags[FLAG_LINE_MARKED] {
+    event_record(checker)
     return
   }
-  finding_file(checker, FILE_MARKDOWN, Finding_Line(number), MESSAGE_PREAMBLE)
+  if flags[FLAG_SCAN_RESULT] {
+    return
+  }
+  if flags[FLAG_SEEN_HEADING] {
+    return
+  }
+  numbers[NUMBER_MESSAGE] = Number(MESSAGE_PREAMBLE)
+  event_record(checker)
+}
+
+// Counts one walked line that is no heading into the section it stands in: a marked line closes
+// the section, a blank one after a body line opens a gap, and a body line past one records the
+// gap, and past the third body line records the section's size.
+func line_body(checker Checker_Handle) {
+  Checker_Handle_Invariants(checker, "line_body.checker")
+  numbers, flags := checker.Numbers.Values, checker.Flags.Values
+  if flags[FLAG_LINE_MARKED] {
+    section_open(checker, Heading_Slot(ABSENT))
+    return
+  }
+  if flags[FLAG_SCAN_RESULT] {
+    if numbers[NUMBER_BODY_COUNT] > 0 {
+      flags[FLAG_BLANK] = true
+    }
+    return
+  }
+  if numbers[NUMBER_OPEN] == ABSENT {
+    return
+  }
+  numbers[NUMBER_FINDING_HEADING] = numbers[NUMBER_OPEN]
+  numbers[NUMBER_MESSAGE] = Number(MESSAGE_SECTION_GAP)
+  if flags[FLAG_BLANK] {
+    flags[FLAG_BLANK] = false
+    event_record(checker)
+  }
+  numbers[NUMBER_BODY_COUNT]++
+  numbers[NUMBER_MESSAGE] = Number(MESSAGE_SECTION_SIZE)
+  if numbers[NUMBER_BODY_COUNT] == SECTION_BODY_MAXIMUM+1 {
+    event_record(checker)
+  }
+}
+
+// Closes the open section, recording it when it holds no body line, and opens the one given, or
+// none.
+func section_open(checker Checker_Handle, opened Heading_Slot) {
+  Checker_Handle_Invariants(checker, "section_open.checker")
+  Heading_Slot_Invariants(opened, "section_open.opened")
+  numbers := checker.Numbers.Values
+  numbers[NUMBER_FINDING_HEADING] = numbers[NUMBER_OPEN]
+  numbers[NUMBER_MESSAGE] = Number(MESSAGE_SECTION_EMPTY)
+  if numbers[NUMBER_OPEN] != ABSENT {
+    if numbers[NUMBER_BODY_COUNT] == 0 {
+      event_record(checker)
+    }
+  }
+  numbers[NUMBER_OPEN], numbers[NUMBER_BODY_COUNT] = Number(opened), 0
+  checker.Flags.Values[FLAG_BLANK] = false
+}
+
+// Records the finding the message, heading, and line slots name, in line order.
+func event_record(checker Checker_Handle) {
+  Checker_Handle_Invariants(checker, "event_record.checker")
+  numbers := checker.Numbers.Values
+  // Each finding the walk records stands on a byte of the contract, thus the store holds
+  // every one of them.
+  aver.Always(
+    int(numbers[NUMBER_EVENT_COUNT]) < len(checker.Events),
+    "A walk records no more findings than its store holds.",
+  )
+  checker.Events[numbers[NUMBER_EVENT_COUNT]] = Event{
+    Message: Message(numbers[NUMBER_MESSAGE]),
+    Heading: Heading_Slot(numbers[NUMBER_FINDING_HEADING]),
+    Line:    Finding_Line(numbers[NUMBER_LINE_NUMBER]),
+  }
+  numbers[NUMBER_EVENT_COUNT]++
+}
+
+// Opens the walk of REQUIREMENTS.md: no finding recorded, no section open, and no byte rewritten.
+func walk_open(checker Checker_Handle) {
+  Checker_Handle_Invariants(checker, "walk_open.checker")
+  numbers, flags := checker.Numbers.Values, checker.Flags.Values
+  numbers[NUMBER_EVENT_COUNT], numbers[NUMBER_EVENT_CURSOR] = 0, 0
+  numbers[NUMBER_OPEN], numbers[NUMBER_BODY_COUNT] = ABSENT, 0
+  numbers[NUMBER_REWRITE_COUNT], numbers[NUMBER_REWRITE_HELD] = 0, ABSENT
+  numbers[NUMBER_REWRITE_LINES], numbers[NUMBER_REWRITE_AT] = 0, 0
+  flags[FLAG_SEEN_HEADING], flags[FLAG_BLANK] = false, false
+  flags[FLAG_BOUNDED], flags[FLAG_REWRITTEN] = false, false
+  flags[FLAG_REWRITE_OPEN], flags[FLAG_REWRITE_BODY], flags[FLAG_REWRITE_FIT] = false, false, true
+}
+
+// Stops the walk at a bound: the finding the slots name stands last, and the check states what it
+// recorded and nothing past it, thus it rewrites nothing either.
+func walk_bound(checker Checker_Handle) {
+  Checker_Handle_Invariants(checker, "walk_bound.checker")
+  event_record(checker)
+  checker.Flags.Values[FLAG_BOUNDED] = true
+  checker.Numbers.Values[NUMBER_PASS] = PASS_REPORT
+}
+
+// Closes the walk past its last line: the last section closes, and a rewrite the caller wants,
+// that fit its store and changed the contract, is asked for, and each heading then stands at the
+// line the rewrite wrote it at.
+func walk_close(checker Checker_Handle) {
+  Checker_Handle_Invariants(checker, "walk_close.checker")
+  numbers, flags := checker.Numbers.Values, checker.Flags.Values
+  section_open(checker, Heading_Slot(ABSENT))
+  numbers[NUMBER_LINE_OFFSET] = numbers[NUMBER_MARKDOWN_COUNT]
+  rewrite_flush(checker)
+  numbers[NUMBER_PASS] = PASS_REPORT
+  if !flags[FLAG_REWRITE_WANTED] {
+    return
+  }
+  if !flags[FLAG_REWRITE_FIT] {
+    return
+  }
+  written := checker.Rewritten[:numbers[NUMBER_REWRITE_COUNT]]
+  if string(written) == string(checker.Markdown[:numbers[NUMBER_MARKDOWN_COUNT]]) {
+    return
+  }
+  flags[FLAG_REWRITTEN] = true
+  for index := range numbers[NUMBER_HEADING_COUNT] {
+    heading := &checker.Headings[index]
+    heading.Line = Heading_Line(checker.Lines[heading.Line])
+  }
+  numbers[NUMBER_STATE] = STATE_REWRITE
+}
+
+// States the findings the walk recorded on its headings and lines, then turns to the tree, or ends
+// the check past a bound.
+func step_report(checker Checker_Handle) {
+  Checker_Handle_Invariants(checker, "step_report.checker")
+  numbers, flags := checker.Numbers.Values, checker.Flags.Values
+  if numbers[NUMBER_EVENT_CURSOR] < numbers[NUMBER_EVENT_COUNT] {
+    event_state(checker)
+    return
+  }
+  numbers[NUMBER_PASS] = PASS_DONE
+  if flags[FLAG_BOUNDED] {
+    return
+  }
+  numbers[NUMBER_PASS] = PASS_TREE
+  numbers[NUMBER_HEADING_CURSOR] = 0
+  numbers[NUMBER_PARENT] = ABSENT
+  flags[FLAG_HAS_CHILD] = false
+  headings_stated(checker)
+}
+
+// States the next recorded finding the pass owns: the sections' own in the body pass, and every
+// other one in the report. A rewritten contract answers its blank lines, thus those go unstated,
+// and each other one names the line the rewrite wrote.
+func event_state(checker Checker_Handle) {
+  Checker_Handle_Invariants(checker, "event_state.checker")
+  numbers, flags := checker.Numbers.Values, checker.Flags.Values
+  event := checker.Events[numbers[NUMBER_EVENT_CURSOR]]
+  numbers[NUMBER_EVENT_CURSOR]++
+  bodied := false
+  switch event.Message {
+  case MESSAGE_SECTION_SIZE, MESSAGE_SECTION_GAP, MESSAGE_SECTION_EMPTY:
+    bodied = true
+  }
+  if bodied != (numbers[NUMBER_PASS] == PASS_BODIES) {
+    return
+  }
+  line := event.Line
+  if flags[FLAG_REWRITTEN] {
+    switch event.Message {
+    case MESSAGE_BLANK_BEFORE, MESSAGE_BLANK_AFTER, MESSAGE_SECTION_GAP:
+      return
+    }
+    line = Finding_Line(checker.Lines[line])
+  }
+  numbers[NUMBER_FINDING_HEADING] = Number(event.Heading)
+  if event.Message == MESSAGE_SECTION_EMPTY {
+    heading := checker.Headings[event.Heading]
+    if !heading.Leaf {
+      return
+    }
+    line = Finding_Line(heading.Line)
+  }
+  finding_file(checker, FILE_MARKDOWN, line, event.Message)
 }
 
 // Walks the headings into leaves: a # with no ### child is a leaf, and so is each ###.
@@ -1268,7 +1542,7 @@ func step_tree(checker Checker_Handle) {
       Parent:  Child_Parent(numbers[NUMBER_PARENT]),
       Heading: Child_Heading(cursor),
     }
-    Child_Leaf_Invariants(child, "tree_step.child")
+    Child_Leaf_Invariants(&child, "tree_step.child")
     checker.Leaves[numbers[NUMBER_LEAF_COUNT]] = Leaf{
       Parent:  Leaf_Parent(child.Parent),
       Heading: Leaf_Heading(child.Heading),
@@ -1319,13 +1593,7 @@ func step_names(checker Checker_Handle) {
   numbers := checker.Numbers.Values
   if numbers[NUMBER_LEAF_CURSOR] == numbers[NUMBER_LEAF_COUNT] {
     numbers[NUMBER_PASS] = PASS_BODIES
-    numbers[NUMBER_LINE_OFFSET] = 0
-    numbers[NUMBER_LINE_NUMBER] = 1
-    numbers[NUMBER_LINE_CHECK] = 0
-    numbers[NUMBER_OPEN] = ABSENT
-    numbers[NUMBER_BODY_COUNT] = 0
-    checker.Flags.Values[FLAG_BLANK] = false
-    numbers[NUMBER_HEADING_CURSOR] = 0
+    numbers[NUMBER_EVENT_CURSOR] = 0
     numbers[NUMBER_LEAF_CURSOR] = 0
     return
   }
@@ -1403,103 +1671,11 @@ func scan_duplicate(checker Checker_Handle) {
 func step_body(checker Checker_Handle) {
   Checker_Handle_Invariants(checker, "step_body.checker")
   numbers := checker.Numbers.Values
-  if numbers[NUMBER_LINE_CHECK] == 1 {
-    body_line(checker)
+  if numbers[NUMBER_EVENT_CURSOR] < numbers[NUMBER_EVENT_COUNT] {
+    event_state(checker)
     return
   }
-  line_measure(checker)
-  markdown := checker.Markdown[:numbers[NUMBER_MARKDOWN_COUNT]]
-  cursor := numbers[NUMBER_HEADING_CURSOR]
-  if cursor < numbers[NUMBER_HEADING_COUNT] {
-    if Number(checker.Headings[cursor].Line) == numbers[NUMBER_LINE_NUMBER] {
-      numbers[NUMBER_HEADING_CURSOR]++
-      numbers[NUMBER_NEXT_OPEN] = cursor
-      body_close(checker)
-      return
-    }
-  }
-  marked := numbers[NUMBER_LINE_OFFSET] < numbers[NUMBER_LINE_END]
-  if marked {
-    marked = markdown[numbers[NUMBER_LINE_OFFSET]] == '#'
-  }
-  if marked {
-    numbers[NUMBER_NEXT_OPEN] = ABSENT
-    body_close(checker)
-    return
-  }
-  numbers[NUMBER_SCAN_START] = numbers[NUMBER_LINE_OFFSET]
-  numbers[NUMBER_SCAN_END] = numbers[NUMBER_LINE_END]
-  scan_blank(checker)
-  if checker.Flags.Values[FLAG_SCAN_RESULT] {
-    if numbers[NUMBER_BODY_COUNT] > 0 {
-      checker.Flags.Values[FLAG_BLANK] = true
-    }
-    line_advance(checker)
-    return
-  }
-  if numbers[NUMBER_OPEN] == ABSENT {
-    line_advance(checker)
-    return
-  }
-  numbers[NUMBER_LINE_CHECK] = 1
-  if checker.Flags.Values[FLAG_BLANK] {
-    checker.Flags.Values[FLAG_BLANK] = false
-    numbers[NUMBER_FINDING_HEADING] = numbers[NUMBER_OPEN]
-    number := numbers[NUMBER_LINE_NUMBER]
-    finding_quote(checker, Heading_Message(MESSAGE_SECTION_GAP))
-    numbers[NUMBER_LINE] = number
-  }
-}
-
-// Counts one body line of the open section, flagging the line past its bound.
-func body_line(checker Checker_Handle) {
-  Checker_Handle_Invariants(checker, "body_line.checker")
-  numbers := checker.Numbers.Values
-  numbers[NUMBER_BODY_COUNT]++
-  number := numbers[NUMBER_LINE_NUMBER]
-  line_advance(checker)
-  if numbers[NUMBER_BODY_COUNT] != SECTION_BODY_MAXIMUM+1 {
-    return
-  }
-  numbers[NUMBER_FINDING_HEADING] = numbers[NUMBER_OPEN]
-  finding_quote(checker, Heading_Message(MESSAGE_SECTION_SIZE))
-  numbers[NUMBER_LINE] = number
-}
-
-// Closes the open section, flagging a leaf with no body, then opens the next one.
-func body_close(checker Checker_Handle) {
-  Checker_Handle_Invariants(checker, "body_close.checker")
-  numbers := checker.Numbers.Values
-  closed := numbers[NUMBER_OPEN]
-  empty := Flag(numbers[NUMBER_BODY_COUNT] == 0)
-  // A table states its length alone, and a bundle body is straight-line, thus the range
-  // one slot of it stands in is stated where a slot is written rather than nowhere.
-  opened := numbers[NUMBER_NEXT_OPEN]
-  Heading_Slot_Invariants(Heading_Slot(opened), "body_close.opened")
-  numbers[NUMBER_OPEN] = opened
-  numbers[NUMBER_BODY_COUNT] = 0
-  checker.Flags.Values[FLAG_BLANK] = false
-  line_advance(checker)
-  body_stated(checker, Heading_Slot(closed), empty)
-}
-
-// States a leaf section that closed carrying no body line. A section closes where the next
-// heading stands and where the file ends alike, thus both ways of closing state it.
-func body_stated(checker Checker_Handle, closed Heading_Slot, empty Flag) {
-  Checker_Handle_Invariants(checker, "body_stated.checker")
-  Heading_Slot_Invariants(closed, "body_stated.closed")
-  Flag_Invariants(empty, "body_stated.empty")
-  if closed == Heading_Slot(ABSENT) {
-    return
-  }
-  if !checker.Headings[closed].Leaf {
-    return
-  }
-  if !bool(empty) {
-    return
-  }
-  checker.Numbers.Values[NUMBER_FINDING_HEADING] = Number(closed)
-  finding_quote(checker, Heading_Message(MESSAGE_SECTION_EMPTY))
+  numbers[NUMBER_PASS] = PASS_TEST_FILE
 }
 
 // Asks for requirements_test.go, or flags its absence.
@@ -1511,45 +1687,118 @@ func step_test_file(checker Checker_Handle) {
     finding_file(checker, FILE_TEST, 0, MESSAGE_TEST_ABSENT)
     return
   }
-  numbers[NUMBER_PASS] = PASS_TEST_PARSE
+  numbers[NUMBER_PASS] = PASS_TEST_DECLARATIONS
   numbers[NUMBER_STATE] = STATE_TEST
 }
 
-// Collects the leading declarations of the test file. A source the parser refuses has its own
-// diagnostic, thus its tests go unchecked rather than flagged twice.
-func step_test_parse(checker Checker_Handle, syntax Syntax) {
-  Checker_Handle_Invariants(checker, "step_test_parse.checker")
-  Syntax_Invariants(syntax, "step_test_parse.syntax")
+// Test_Read is what became of requirements_test.go past the caller's parse of it.
+type Test_Read Number
+
+// Test_Read_Invariants admits each end the file met.
+func Test_Read_Invariants(value Test_Read, namespace aver.Namespace) {
+  aver.Tree(value, namespace).
+    Enum_3_Int(
+    int(value),
+    int(TEST_PARSED),
+    int(TEST_REFUSED),
+    int(TEST_REWRITTEN),
+  ).
+    Ensure()
+}
+
+// TEST_PARSED is a file the parser took, whose declarations the caller collected.
+const TEST_PARSED Test_Read = 0
+
+// TEST_REFUSED is a file the parser refused, which holds no declaration the check can read.
+const TEST_REFUSED Test_Read = 1
+
+// TEST_REWRITTEN is a file the caller rewrote after its parse, whose lines moved.
+const TEST_REWRITTEN Test_Read = 2
+
+// Declaration_Count is how many leading declarations one test file holds, up to the table.
+type Declaration_Count Number
+
+// Declaration_Count_Invariants bounds the count by the declaration table.
+func Declaration_Count_Invariants(value Declaration_Count, namespace aver.Namespace) {
+  aver.Tree(value, namespace).
+    Range_Int(int(value), COUNT_MINIMUM, HEADING_COUNT_MAXIMUM).
+    Ensure()
+}
+
+// Load_Tests records the leading declarations the caller collected into the declaration table,
+// and what became of requirements_test.go past its parse.
+func Load_Tests(checker Checker_Handle, count Declaration_Count, read Test_Read) {
+  Checker_Handle_Invariants(checker, "load_tests.checker")
+  Declaration_Count_Invariants(count, "load_tests.count")
+  Test_Read_Invariants(read, "load_tests.read")
+  checker.Numbers.Values[NUMBER_DECLARATION_COUNT] = Number(count)
+  checker.Numbers.Values[NUMBER_TEST_READ] = Number(read)
+}
+
+// Takes the leading declarations of the test file. A source the parser refused has its own
+// diagnostic, thus its tests go unchecked rather than flagged twice, and one the caller rewrote
+// states lines its declarations no longer stand on, thus a rerun checks it.
+func step_test_declarations(checker Checker_Handle) {
+  Checker_Handle_Invariants(checker, "step_test_declarations.checker")
   numbers := checker.Numbers.Values
   numbers[NUMBER_PASS] = PASS_DONE
-  source := token.Source(checker.Test[:numbers[NUMBER_TEST_COUNT]])
-  view := ast.Parse_State{Syntax_Tree: *syntax.Syntax_Tree}
-  state := &view
-  parsed := ast.Parse(state, source)
-  if !bool(parsed.OK) {
+  switch Test_Read(numbers[NUMBER_TEST_READ]) {
+  case TEST_REFUSED:
+    return
+  case TEST_REWRITTEN:
+    finding_file(checker, FILE_TEST, 0, MESSAGE_TEST_REWRITTEN)
     return
   }
-  indexed := token.Index_Lines(syntax.Lines, source)
-  root := ast.Node_At(state, ast.Index(parsed.Root))
-  child := ast.Index(root.First_Child)
+  numbers[NUMBER_PASS] = PASS_TESTS
+  numbers[NUMBER_LEAF_CURSOR] = 0
+}
+
+// Parsed_Source is a Go file the parser took: a package clause at least, up to the source bound.
+type Parsed_Source []byte
+
+// Parsed_Source_Invariants bounds a clean parse's source by the shortest Go file and the bound.
+func Parsed_Source_Invariants(value Parsed_Source, namespace aver.Namespace) {
+  aver.Tree(value, namespace).
+    Range_Int(len(value), PARSED_SOURCE_SIZE_MINIMUM, SOURCE_SIZE_MAXIMUM).
+    Ensure()
+}
+
+// PARSED_SOURCE_SIZE_MINIMUM is the shortest Go file: its package clause alone.
+const PARSED_SOURCE_SIZE_MINIMUM = len("package a")
+
+// Collect reads the leading declarations of requirements_test.go out of the caller's own clean
+// parse of it, the name each states and the line it stands on, into the table, and states how
+// many it read. The file is parsed once, by the caller, thus Collect parses nothing.
+func Collect(
+  syntax Syntax,
+  source Parsed_Source,
+  declarations Declarations,
+) (count Declaration_Count) {
+  defer func() { Declaration_Count_Invariants(count, "collect.count") }()
+  Syntax_Invariants(&syntax, "collect.syntax")
+  Parsed_Source_Invariants(source, "collect.source")
+  Declarations_Invariants(declarations, "collect.declarations")
+  state := &ast.Parse_State{Syntax_Tree: *syntax.Syntax_Tree}
+  indexed := token.Index_Lines(syntax.Lines, token.Source(source))
+  // A clean parse roots the file at the first slot.
+  child := ast.Index(ast.Node_At(state, ast.INDEX_FIRST).First_Child)
   for range ast.NODE_COUNT_MAXIMUM {
     if child == ast.INDEX_ABSENT {
       break
     }
-    if int(numbers[NUMBER_DECLARATION_COUNT]) == len(checker.Declarations) {
+    if int(count) == len(declarations) {
       break
     }
     node := ast.Node_At(state, child)
     child = ast.Index(node.Next)
-    // The token that names one top-level declaration, or none for what is no
-    // declaration: the package name, an import, a comment, or a blank line.
-    numbers[NUMBER_NAME_TOKEN] = Number(ast.INDEX_ABSENT)
+    // The token that names one top-level declaration, or none for what is no declaration: the
+    // package name, an import, a comment, or a blank line. A method's receiver comes first,
+    // thus its name is the first identifier, not the first child.
+    named := ast.Index(ast.INDEX_ABSENT)
     switch node.Kind {
     case ast.NODE_CONSTANT, ast.NODE_VARIABLE, ast.NODE_TYPE:
-      numbers[NUMBER_NAME_TOKEN] = Number(node.Token)
+      named = ast.Index(node.Token)
     case ast.NODE_FUNCTION:
-      // A method's receiver comes first, thus the name is the first identifier,
-      // not the first child.
       part := ast.Index(node.First_Child)
       for range ast.NODE_COUNT_MAXIMUM {
         if part == ast.INDEX_ABSENT {
@@ -1557,33 +1806,28 @@ func step_test_parse(checker Checker_Handle, syntax Syntax) {
         }
         held := ast.Node_At(state, part)
         if held.Kind == ast.NODE_IDENTIFIER {
-          numbers[NUMBER_NAME_TOKEN] = Number(held.Token)
+          named = ast.Index(held.Token)
           break
         }
         part = ast.Index(held.Next)
       }
     }
-    if numbers[NUMBER_NAME_TOKEN] == Number(ast.INDEX_ABSENT) {
+    if named == ast.INDEX_ABSENT {
       continue
     }
-    token_index := ast.Token_Index(numbers[NUMBER_NAME_TOKEN])
-    named := ast.Token_At(state, token_index)
+    held := ast.Token_At(state, ast.Token_Index(named))
     line := Number(0)
     if indexed {
-      index := syntax.Lines
-      line = Number(token.Position_Of(index, named.Offset).Line)
+      line = Number(token.Position_Of(syntax.Lines, held.Offset).Line)
     }
-    named_slot := Declaration{
-      Start: Declaration_Start(named.Offset),
-      End:   Declaration_End(int(named.Offset) + int(named.Size)),
+    declarations[count] = Declaration{
+      Start: Declaration_Start(held.Offset),
+      End:   Declaration_End(int(held.Offset) + int(held.Size)),
       Line:  Declaration_Line(line),
     }
-    Declaration_Invariants(named_slot, "step_test_parse.named_slot")
-    checker.Declarations[numbers[NUMBER_DECLARATION_COUNT]] = named_slot
-    numbers[NUMBER_DECLARATION_COUNT]++
+    count++
   }
-  numbers[NUMBER_PASS] = PASS_TESTS
-  numbers[NUMBER_LEAF_CURSOR] = 0
+  return count
 }
 
 // Compares one leaf's test name with the declaration in its slot.
@@ -1602,9 +1846,13 @@ func step_test(checker Checker_Handle) {
   if slot < numbers[NUMBER_DECLARATION_COUNT] {
     declaration := checker.Declarations[slot]
     line = Number(declaration.Line)
-    name := string(checker.Test[declaration.Start:declaration.End])
-    if name == string(checker.Name[:numbers[NUMBER_NAME_COUNT]]) {
-      return
+    // A file that changed since the caller's parse of it may end before a declaration of
+    // that parse, which then names no test at all.
+    if int(declaration.End) < int(numbers[NUMBER_TEST_COUNT])+1 {
+      name := string(checker.Test[declaration.Start:declaration.End])
+      if name == string(checker.Name[:numbers[NUMBER_NAME_COUNT]]) {
+        return
+      }
     }
   }
   finding_file(checker, FILE_TEST, Finding_Line(line), MESSAGE_TEST_ORDER)
@@ -1883,21 +2131,7 @@ func line_advance(checker Checker_Handle) {
   numbers := checker.Numbers.Values
   numbers[NUMBER_LINE_CHECK] = 0
   if numbers[NUMBER_LINE_END] == numbers[NUMBER_MARKDOWN_COUNT] {
-    switch numbers[NUMBER_PASS] {
-    case PASS_HEADINGS:
-      numbers[NUMBER_PASS] = PASS_TREE
-      numbers[NUMBER_HEADING_CURSOR] = 0
-      numbers[NUMBER_PARENT] = ABSENT
-      checker.Flags.Values[FLAG_HAS_CHILD] = false
-      headings_stated(checker)
-    case PASS_BODIES:
-      numbers[NUMBER_PASS] = PASS_TEST_FILE
-      closed := numbers[NUMBER_OPEN]
-      empty := Flag(numbers[NUMBER_BODY_COUNT] == 0)
-      numbers[NUMBER_OPEN] = ABSENT
-      numbers[NUMBER_BODY_COUNT] = 0
-      body_stated(checker, Heading_Slot(closed), empty)
-    }
+    walk_close(checker)
     return
   }
   // The ending is one line whichever bytes a host spends on it, thus a carriage return
@@ -2159,6 +2393,8 @@ func message_opening(message Message) (text Message_Opening) {
     return "The content is before the first heading. Start the file with a heading."
   case MESSAGE_TEST_ABSENT:
     return "The package has no requirements_test.go. Add requirements_test.go."
+  case MESSAGE_TEST_REWRITTEN:
+    return "The file was rewritten by this run. Run the check again for its tests."
   case MESSAGE_TEST_ORDER:
     return MESSAGE_TEXT_TEST_ORDER
   case MESSAGE_ORPHAN:
@@ -2293,77 +2529,6 @@ func Heading_Prefix_Invariants(value Heading_Prefix, namespace aver.Namespace) {
     Ensure()
 }
 
-// Rewrite puts a blank line on each side of every heading and takes the blank lines out from
-// between two body lines, then loads what it wrote in place of the contract, and reports whether
-// the contract changed. It leaves alone a contract whose check stops at a bound, and one whose
-// rewrite would outgrow its storage.
-func Rewrite(checker Checker_Handle) (rewritten Flag) {
-  defer func() { Flag_Invariants(rewritten, "rewrite.rewritten") }()
-  Checker_Handle_Invariants(checker, "rewrite.checker")
-  numbers, flags := checker.Numbers.Values, checker.Flags.Values
-  markdown := checker.Markdown[:numbers[NUMBER_MARKDOWN_COUNT]]
-  if len(markdown) == len(checker.Markdown) {
-    return false
-  }
-  if !bool(rewrite_bounded(checker)) {
-    return false
-  }
-  numbers[NUMBER_REWRITE_COUNT], numbers[NUMBER_REWRITE_HELD] = 0, ABSENT
-  numbers[NUMBER_LINE_OFFSET] = 0
-  flags[FLAG_REWRITE_OPEN], flags[FLAG_REWRITE_BODY], flags[FLAG_REWRITE_FIT] = false, false, true
-  // The text after the final newline is a line of its own, thus the last line is the one no
-  // newline closes.
-  for range MARKDOWN_STORAGE_SIZE {
-    line_measure(checker)
-    rewrite_line(checker)
-    if !bool(rewrite_closed(checker)) {
-      break
-    }
-    numbers[NUMBER_LINE_OFFSET] = numbers[NUMBER_REWRITE_NEXT]
-  }
-  numbers[NUMBER_LINE_OFFSET] = numbers[NUMBER_MARKDOWN_COUNT]
-  rewrite_flush(checker)
-  written := checker.Rewritten[:numbers[NUMBER_REWRITE_COUNT]]
-  if !flags[FLAG_REWRITE_FIT] {
-    return false
-  }
-  if string(written) == string(markdown) {
-    return false
-  }
-  numbers[NUMBER_MARKDOWN_COUNT] = Number(copy(checker.Markdown, written))
-  return true
-}
-
-// Reports whether a check of the contract reads every line: a heading past its bound, or one
-// past the heading table, stops it there, and the rewrite answers nothing past that.
-func rewrite_bounded(checker Checker_Handle) (bounded Flag) {
-  defer func() { Flag_Invariants(bounded, "rewrite_bounded.bounded") }()
-  Checker_Handle_Invariants(checker, "rewrite_bounded.checker")
-  numbers := checker.Numbers.Values
-  headings := 0
-  numbers[NUMBER_LINE_OFFSET] = 0
-  for range MARKDOWN_STORAGE_SIZE {
-    line_measure(checker)
-    prefix := rewrite_prefix(checker)
-    if prefix > HEADING_PREFIX_NONE {
-      headings++
-      size := int(numbers[NUMBER_LINE_END]-numbers[NUMBER_LINE_OFFSET]) - int(prefix)
-      if size > HEADING_SIZE_MAXIMUM {
-        return false
-      }
-    }
-    if headings > HEADING_COUNT_MAXIMUM {
-      return false
-    }
-    rewrite_next(checker)
-    if !bool(rewrite_closed(checker)) {
-      return true
-    }
-    numbers[NUMBER_LINE_OFFSET] = numbers[NUMBER_REWRITE_NEXT]
-  }
-  return true
-}
-
 // Records where the line after the measured one opens: past its ending, whichever bytes a host
 // spent on it.
 func rewrite_next(checker Checker_Handle) {
@@ -2452,6 +2617,7 @@ func rewrite_line(checker Checker_Handle) {
       flags[FLAG_REWRITE_BODY] = true
     }
   }
+  numbers[NUMBER_REWRITE_AT] = numbers[NUMBER_REWRITE_LINES] + 1
   numbers[NUMBER_SCAN_START], numbers[NUMBER_SCAN_END] = start, numbers[NUMBER_REWRITE_NEXT]
   rewrite_copy(checker)
 }
@@ -2479,6 +2645,7 @@ func rewrite_heading(checker Checker_Handle) {
   if !bool(rewrite_preceded(checker)) {
     rewrite_blank(checker)
   }
+  numbers[NUMBER_REWRITE_AT] = numbers[NUMBER_REWRITE_LINES] + 1
   numbers[NUMBER_SCAN_START] = numbers[NUMBER_LINE_OFFSET]
   numbers[NUMBER_SCAN_END] = numbers[NUMBER_REWRITE_NEXT]
   rewrite_copy(checker)
@@ -2548,6 +2715,11 @@ func rewrite_copy(checker Checker_Handle) {
     return
   }
   numbers[NUMBER_REWRITE_COUNT] += Number(copy(checker.Rewritten[count:], span))
+  for _, symbol := range span {
+    if symbol == '\n' {
+      numbers[NUMBER_REWRITE_LINES]++
+    }
+  }
 }
 
 // Writes one newline, for a heading the file ends on.
@@ -2561,6 +2733,7 @@ func rewrite_newline(checker Checker_Handle) {
   }
   checker.Rewritten[count] = '\n'
   numbers[NUMBER_REWRITE_COUNT]++
+  numbers[NUMBER_REWRITE_LINES]++
 }
 
 // Fixable reports whether the open finding is one Rewrite answers: a blank line missing around a

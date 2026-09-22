@@ -84,16 +84,27 @@ method carries its receiver before the name the slot states.
 A requirements_test.go the parser refuses holds no declaration the check can read, thus the order
 check does not run for it and the check states nothing of its slots.
 
+### Rewritten
+
+A requirements_test.go the caller rewrote after its parse holds declarations at lines the file no
+longer states, thus the order check does not run for it and the check states that a rerun does.
+
+### Declarations
+
+Collect reads the leading declarations out of the caller's own clean parse of requirements_test.go,
+thus the check parses no file of its own.
+
 # Resume
 
-Next stops at each finding and at the request for requirements_test.go. The caller reports or
-loads, then calls Next again, until the check is done.
+Next stops at each finding, at the request for requirements_test.go, and at a rewrite. The caller
+reports, loads the file with the declarations it collected, or writes the rewrite, then calls Next
+again, until the check is done. The check walks REQUIREMENTS.md once.
 
 # Rewrite
 
-Rewrite puts a blank line on each side of every heading and takes the blank lines out from between
-two body lines, the three findings a contract states with one answer. It leaves alone a contract
-whose check stops at a bound, and one whose rewrite would outgrow its storage.
+Under a fix, the one walk writes the contract with a blank line on each side of every heading and
+none between two body lines; the findings that answers go unstated, and the rest name rewritten
+lines. A check stopped at a bound, or a rewrite past its storage, rewrites nothing.
 
 # Bounds
 

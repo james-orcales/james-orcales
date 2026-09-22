@@ -26,15 +26,20 @@ program, thus the run writes `harness: the argument vector names no program` and
 
 ### Configuration
 
-A run decodes `harness.json` in its working directory by `harness/pkg/configuration` before the
-walk. An unopenable or unreadable file fails that step; an undecodable one writes `harness:
-harness.json: [<key> ]<fault> at byte <offset>`, keyed for absent keys and globs, and exits 1.
+A run decodes `harness.json` by `harness/pkg/configuration` before the walk; an unreadable file
+fails that step. An undecodable one writes `harness: harness.json: [<key> ]<fault>[: "<text>"][ at
+byte <offset>]`, the byte as `shared/encoding/json` states it, and exits 1.
 
 ### Configuration Paths
 
 Past the packages, a wildcard-free path list entry names a directory with a trailing slash and a
 file without, as the host states it; a package list names no file. Each other entry, and one naming
 nothing, is tier two at `harness.json`, rule `slashes`, in lint's words and list order.
+
+### Ignore
+
+A path an `ignore` glob of `harness.json` matches, as lint matches one, stands outside the run: a
+directory the walk never opens, and a file it never checks.
 
 ### Argument
 
@@ -106,6 +111,11 @@ A run with no diagnostic writes `✓ all checks passed`, then `elapsed_sec=<s.mm
 With `-json` it writes `{"passed":true,"elapsed_sec":"<s.mmm>"}`, a string since flatjson holds no
 float.
 
+### Elapsed
+
+A run with a diagnostic writes `elapsed_sec=<s.mmm>` past its findings, and with `-json`
+`{"passed":false,"elapsed_sec":"<s.mmm>"}`. A failed step writes none.
+
 # Format
 
 ### Clean
@@ -155,6 +165,111 @@ form exceeds its storage`, since indentation spends bytes the source never held.
 A clean Go file importing a stdlib package lint bans yields tier two diagnostic `Banned import
 "<path>" belongs to stdlib family "<family>". Use shared package.`, rule `imports`, at its first
 such import, with lint's families and gateway exemptions.
+
+### Name Rules
+
+A clean Go file breaking a rule of `harness/pkg/naming`, over the word table of `harness.json`,
+yields tier two diagnostic with its message, rule `names`, at the name. A file importing a banned
+package states that import alone.
+
+### Shadows
+
+A clean Go file whose function declares a name its scopes, or a sibling file of its package clause,
+declare yields tier two diagnostic `The variable "<name>" shadows a variable in an outer scope.
+Write a different name.`, rule `shadows`, there. A package the run cannot record judges no sibling.
+
+### Recursion
+
+A Go file whose bare-name call closes a cycle among its package's functions yields tier two
+diagnostic `The function <f> recurses. Write a loop instead.`, or for a longer one `The functions
+recurse in a cycle. Write a loop instead. <f> → <g> → <f>`, rule `recursion`, past exempt files.
+
+### Lanes
+
+The root's spread checks up to `LANE_COUNT` Go files at once, in any order, by no name table;
+names and purity are taken in file order. A table that took a name renames the bytes of each file
+it can reach, parsing none again, thus a run states what one file at a time states.
+
+# Layout
+
+The repository is one Go module, and each top-level directory of Go code is a component: the
+shared one `harness.json` names, and each other one a binary. A finding is tier two, rule `layout`.
+
+### Single Module
+
+A run reads `go.mod` past `harness.json`: none states `There is no go.mod at the repository root.
+The linter needs the module anchor.`, and the walk states each nested `go.mod` and each `go.work`.
+
+### Shared Component
+
+The shared component holds no internal directory, stating `A shared library permits no internal/
+directory. Remove "<directory>".`, and no package main, stating `The shared library "<import>"
+permits no package main. Move the entry point to a binary component.`
+
+### Binary Component
+
+A binary component holds each package but main under its top-level pkg directory, else the file
+states `Move <directory> -> <component>/pkg/<directory>.`
+
+### Binary Isolation
+
+A binary component imports no package of another, else the import states `The binary component
+"<import>" imports the binary component "<import>". Move the shared code to the shared component.`
+
+### Main Package
+
+A binary component's package main stands at its root, else the file states `The binary component
+"<import>" has its main package at "<directory>". Move the main package to the component root.`
+
+### Entry Point
+
+A binary component the walk covers whole declares one func Main in its pkg directory, else it
+states `The binary component "<import>" declares no func Main in pkg/.`, or more than one, and why.
+
+### Tier Depth
+
+A package, no test and no main, stands under one library ancestor at most, a v<N> segment and a
+binary's pkg aside: `The package "<p>" at "<dir>" is below the library tier. It has <n> ...`
+
+### Impure Imports
+
+A pure file, no test, main, composition tier, or aver file, imports no os, os/exec, os/user,
+os/signal, flag, runtime, math/rand, or crypto/rand: `The stdlib import "<path>" is impure. ...`
+
+### Impure Calls
+
+Such a file selects no clock, stdout, or network API lint lists, each of time, fmt, net, and
+net/http, else it states `The stdlib call <path>.<name> is impure. See lint/README.md ...`
+
+### Transitive Purity
+
+A pure package imports no default directory or composition tier of the shared component, but an
+instrumentation package: `The dependency "<path>" is impure. A pure package imports only ...`
+
+### Transitive Stdlib
+
+A pure package, its tests included, selects no API lint lists as reaching an impure one, else it
+states `The transitive call <path>.<name> is impure. A pure package calls only pure APIs.`
+
+### Binary Purity
+
+A binary component's package main alone stands impure, thus the purity rules bind each package
+under its pkg directory whatever its depth, and release its package main.
+
+### Binary Default Tier
+
+A binary component holds no default directory, else the file states `A binary component permits
+no default tier. Bind the real world in package main. Remove "<directory>".`
+
+### Library Purity
+
+A shared package stands pure but for a default directory and the composition tier, whose files
+alone the purity rules release.
+
+### Default Package Impurity
+
+A default directory declares its parent's package, its _test aside, else the clause states `The
+default package declares "package <c>", not "package <p>". The default package shadows ...`
 
 # Allocation
 

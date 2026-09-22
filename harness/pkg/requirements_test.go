@@ -1,6 +1,5 @@
 package harness_test
 
-import "fmt"
 import "testing"
 import "unsafe"
 
@@ -18,6 +17,23 @@ import "local/james-orcales/shared/sim/prng"
 import "local/james-orcales/shared/sim/time"
 import "local/james-orcales/shared/strings"
 import "local/james-orcales/shared/testify"
+
+func Test_Gateway_Relative_Path(t *testing.T) {
+  memory, format_state, command, directory := memory_new()
+  subject := fixture_new(t, memory, format_state, command, directory, 1)
+  fixture_file(t, subject, harness.CONFIGURATION_PATH, shared_configuration())
+  fixture_directory(t, subject, "shared")
+  fixture_directory(t, subject, "shared/os")
+  fixture_package_directory(t, subject, "shared/os/default")
+  fixture_default_contract(t, subject, "shared/os/default", "os")
+  fixture_file(t, subject, "shared/os/default/host.go", "package os\n\nimport \"syscall\"\n")
+  for _, path := range []string{"shared/os/default", "./shared/os/default"} {
+    testify.True(t, fixture_run(subject, []string{"harness", path, "-fix"}))
+    output := fixture_output(subject)
+    testify.False(t, bool(strings.Contains(strings.Text(output), "Banned import")), path, output)
+    testify.Equal(t, harness.EXIT_SUCCESS, subject.Runner.Status, path, output)
+  }
+}
 
 // Test_Diagnostics_Tier_One verifies an auto-fixable diagnostic carries its fix.
 func Test_Diagnostics_Tier_One(t *testing.T) {
@@ -83,23 +99,34 @@ func Test_Command_Configuration(t *testing.T) {
   testify.Equal(t, "", fixture_output(subject))
   testify.Equal(
     t,
-    "harness: harness.json: shared_component is absent at byte 1\n",
+    "harness: harness.json: shared_component is absent\n",
     fixture_errors(subject),
   )
   subject = fixture_new(t, memory, format_state, command, directory, 1)
   fixture_package_directory(t, subject, "package")
-  globbed := CONFIGURATION[:len(CONFIGURATION)-len(`"ignore":[],"word_replacements":{"a":[]}}`)]
-  globbed += `"ignore":["a?"],"word_replacements":{"a":[]}}`
+  globbed := CONFIGURATION[:len(CONFIGURATION)-len(`"ignore":[],"word_replacements":{"util":[]}}`)]
+  globbed += `"ignore":["a?"],"word_replacements":{"util":[]}}`
   fixture_file(t, subject, harness.CONFIGURATION_PATH, globbed)
   testify.True(t, fixture_run(subject, []string{"harness", "package"}))
   testify.Equal(
     t,
-    fmt.Sprintf(
-      "harness: harness.json: ignore entry holds ? or [; write * or ** at byte %d\n",
-      len(globbed)-len(`"a?"],"word_replacements":{"a":[]}}`),
-    ),
+    "harness: harness.json: ignore entry holds ? or [; write * or **: \"a?\"\n",
     fixture_errors(subject),
   )
+  // A source that is no JSON value names the byte the decoder stopped on, counted from one,
+  // and an unknown key quotes itself.
+  sources := [...]string{`{"shared_component":`, `{"a\u0001":1}`}
+  lines := [...]string{
+    "harness: harness.json: invalid JSON at byte 21\n",
+    "harness: harness.json: unknown key: \"a?\"\n",
+  }
+  for index, source := range sources {
+    subject = fixture_new(t, memory, format_state, command, directory, 1)
+    fixture_package_directory(t, subject, "package")
+    fixture_file(t, subject, harness.CONFIGURATION_PATH, source)
+    testify.True(t, fixture_run(subject, []string{"harness", "package"}))
+    testify.Equal(t, lines[index], fixture_errors(subject))
+  }
   subject = fixture_new(t, memory, format_state, command, directory, 1)
   fixture_package_directory(t, subject, "package")
   fixture_remove(t, subject, harness.CONFIGURATION_PATH)
@@ -148,6 +175,33 @@ func Test_Command_Configuration_Paths(t *testing.T) {
         `{"path":"harness.json","line":0,"column":0,"tier":2,"rule":"slashes",`,
       ),
     ),
+  )
+}
+
+// Test_Command_Ignore verifies an ignored directory and an ignored file state nothing, and the
+// files beside them still do.
+func Test_Command_Ignore(t *testing.T) {
+  memory, format_state, command, directory := memory_new()
+  subject := fixture_new(t, memory, format_state, command, directory, 1)
+  fixture_file(t, subject, harness.CONFIGURATION_PATH, shared_configuration())
+  fixture_directory(t, subject, "shared")
+  fixture_package_directory(t, subject, "shared/a")
+  fixture_directory(t, subject, "shared/b")
+  ignored := strings_replace(
+    shared_configuration(),
+    `"ignore":[]`,
+    `"ignore":["shared/b/**","shared/a/c.go"]`,
+  )
+  fixture_file(t, subject, harness.CONFIGURATION_PATH, ignored)
+  fixture_file(t, subject, "shared/a/a.go", "package a\n\nfunc F() {\n  F()\n}\n")
+  fixture_file(t, subject, "shared/a/c.go", "package a\n\nfunc G() {\n  G()\n}\n")
+  fixture_file(t, subject, "shared/b/b.go", UNFORMATTED)
+  testify.True(t, fixture_run(subject, []string{"harness", "shared"}))
+  testify.Equal(t, harness.EXIT_FAILURE, subject.Runner.Status)
+  testify.Equal(
+    t,
+    "shared/a/a.go:4:3: The function F recurses. Write a loop instead.\n",
+    fixture_output(subject),
   )
 }
 
@@ -363,7 +417,8 @@ func Test_Command_History(t *testing.T) {
   for index, script := range scripts {
     subject := fixture_new(t, memory, format_state, command, directory, 1)
     subject.Loop.Spawn = history_spawn(script)
-    fixture_package_directory(t, subject, "package")
+    fixture_directory(t, subject, "package")
+    fixture_binary(t, subject, "package")
     fixture_file(t, subject, "package/m.go", "package main\n\nfunc main() {}\n")
     testify.True(t, fixture_run(subject, []string{"harness", "package"}))
     if outputs[index] == "" {
@@ -476,7 +531,7 @@ func Test_Command_Passed(t *testing.T) {
       fixture_package_directory(t, subject, "package")
       fixture_file(t, subject, "package/a.go", CLEAN)
       testify.True(t, fixture_run(subject, one.Arguments))
-      output := fixture_output(subject)
+      output := fixture_written(subject)
       opened := strings.Has_Prefix(strings.Text(output), strings.Text(one.Prefix))
       testify.True(t, bool(opened), output)
       closed := strings.Has_Suffix(strings.Text(output), strings.Text(one.Suffix))
@@ -492,6 +547,40 @@ func Test_Command_Passed(t *testing.T) {
         testify.True(t, character-'0' < 10, output)
       }
     }
+  }
+}
+
+// Test_Command_Elapsed verifies a run with a diagnostic closes on the elapsed seconds, as text
+// and as flat JSON.
+func Test_Command_Elapsed(t *testing.T) {
+  memory, format_state, command, directory := memory_new()
+  cases := []struct {
+    Arguments []string
+    Prefix    string
+    Suffix    string
+  }{
+    {[]string{"harness", "package"}, "package/a.go: not formatted\nelapsed_sec=", "\n"},
+    {
+      []string{"harness", "package", "-json"},
+      `"message":"not formatted"}` + "\n" + `{"passed":false,"elapsed_sec":"`,
+      "\"}\n",
+    },
+  }
+  for _, one := range cases {
+    subject := fixture_new(t, memory, format_state, command, directory, 1)
+    fixture_package_directory(t, subject, "package")
+    fixture_file(t, subject, "package/a.go", UNFORMATTED)
+    testify.True(t, fixture_run(subject, one.Arguments))
+    testify.Equal(t, harness.EXIT_FAILURE, subject.Runner.Status)
+    output := fixture_written(subject)
+    opening := int(strings.Index(strings.Text(output), strings.Text(one.Prefix)))
+    testify.True(t, opening > -1, output)
+    closed := strings.Has_Suffix(strings.Text(output), strings.Text(one.Suffix))
+    testify.True(t, bool(closed), output)
+    elapsed := output[opening+len(one.Prefix) : len(output)-len(one.Suffix)]
+    point := len(elapsed) - len(".000")
+    testify.True(t, point > 0, output)
+    testify.Equal(t, byte('.'), elapsed[point], output)
   }
 }
 
@@ -520,10 +609,8 @@ func Test_Format_Refused(t *testing.T) {
   testify.Equal(t, harness.Diagnostic_Line(3), runner.Diagnostic.Line)
   testify.Equal(t, harness.Diagnostic_Column(9), runner.Diagnostic.Column)
   runner = checked(memory, format_state, command, directory, GROUPED)
-  testify.Equal(t, harness.RULE_REFUSED, runner.Diagnostic.Rule)
-  testify.Equal(t, harness.Refusal(ast.FAILURE_DECLARATION_GROUP), runner.Diagnostic.Failure)
-  testify.Equal(t, harness.Diagnostic_Line(3), runner.Diagnostic.Line)
-  testify.Equal(t, harness.Diagnostic_Column(8), runner.Diagnostic.Column)
+  testify.Equal(t, harness.TIER_ONE, runner.Diagnostic.Tier)
+  testify.Equal(t, "package a\n\nimport \"x\"\n", string(runner.Diagnostic.Fix))
   // A source of more lines than one index holds places no token, thus the refusal names
   // the file alone rather than a position the index never took.
   tall := make([]byte, 0, token.LINE_COUNT_MAXIMUM+len(REFUSED))
@@ -638,6 +725,7 @@ func Test_Format_Unprintable(t *testing.T) {
   testify.Equal(
     t,
     "package/wide.go: canonical form exceeds its storage\n"+
+      "elapsed_sec=0.000\n"+
       `{"path":"package/wide.go","line":0,"column":0,"tier":2,`+
       `"rule":"unprintable",`+
       `"message":"canonical form exceeds its storage"}`+
@@ -651,6 +739,7 @@ func Test_Format_Unprintable(t *testing.T) {
 func Test_Format_Imports(t *testing.T) {
   memory, format_state, command, directory := memory_new()
   subject := fixture_new(t, memory, format_state, command, directory, 1)
+  fixture_file(t, subject, harness.CONFIGURATION_PATH, shared_configuration())
   for _, path := range []string{
     "shared",
     "shared/a",
@@ -663,6 +752,9 @@ func Test_Format_Imports(t *testing.T) {
   } {
     fixture_package_directory(t, subject, path)
   }
+  // The os port stands above its default tier, which the composition tier then binds.
+  fixture_file(t, subject, "shared/os/o.go", "package os\n")
+  fixture_default_contract(t, subject, "shared/os/default", "os")
   fixture_file(t, subject, "shared/a/a.go", "package a\n\nimport \"fmt\"\nimport \"strings\"\n")
   fixture_file(
     t,
@@ -684,6 +776,621 @@ func Test_Format_Imports(t *testing.T) {
       "shared/c/c.go:3:8: Banned import \"math/rand/v2\" belongs to stdlib family \"rand\". "+
       "Use shared package.\n",
     fixture_output(subject),
+  )
+}
+
+// Test_Format_Name_Rules verifies a clean file breaking a naming rule states it at the name, in
+// text
+// and flat JSON, and a file importing a banned package states the import alone.
+func Test_Format_Name_Rules(t *testing.T) {
+  memory, format_state, command, directory := memory_new()
+  banned := "The identifier \\\"util_table\\\" contains the banned substring \\\"util\\\". " +
+    "Write a different name."
+  imported := "Banned import \\\"strings\\\" belongs to stdlib family \\\"strings\\\". " +
+    "Use shared package."
+  for _, flags := range [][]string{{}, {"-json"}} {
+    subject := fixture_new(t, memory, format_state, command, directory, 1)
+    fixture_file(t, subject, harness.CONFIGURATION_PATH, shared_configuration())
+    for _, path := range []string{"shared", "shared/a", "shared/b", "shared/c"} {
+      fixture_package_directory(t, subject, path)
+    }
+    fixture_file(t, subject, "shared/a/a.go", "package a\n\nvar util_table = 1\n")
+    fixture_file(t, subject, "shared/b/b.go", "package b\n\nimport \"strings\"\n\nvar util = 1\n")
+    fixture_file(t, subject, "shared/c/c.go", "package c\n\nvar table = 1\n")
+    testify.True(t, fixture_run(subject, append([]string{"harness", "shared"}, flags...)))
+    testify.Equal(t, harness.EXIT_FAILURE, subject.Runner.Status)
+    want := "shared/a/a.go:3:5: " +
+      unescaped(banned) +
+      "\n" +
+      "shared/b/b.go:3:8: " +
+      unescaped(imported) +
+      "\n"
+    if len(flags) > 0 {
+      want = `{"path":"shared/a/a.go","line":3,"column":5,"tier":2,"rule":"names","message":"` +
+        banned +
+        "\"}\n" +
+        `{"path":"shared/b/b.go","line":3,"column":8,"tier":2,"rule":"imports","message":"` +
+        imported +
+        "\"}\n"
+    }
+    testify.Equal(t, want, fixture_output(subject))
+  }
+}
+
+// Takes the escapes of a flat JSON message back out of it.
+func unescaped(message string) (text string) {
+  built := make([]byte, 0, len(message))
+  for index := 0; index < len(message); index++ {
+    if message[index] == '\\' {
+      index++
+    }
+    built = append(built, message[index])
+  }
+  return string(built)
+}
+
+// Test_Format_Shadows verifies a name hiding one of its own scopes, or a top-level name a sibling
+// file declares, states the shadow, an external test package shares no name with its library, and
+// a builtin a sibling calls is no top-level name.
+func Test_Format_Shadows(t *testing.T) {
+  memory, format_state, command, directory := memory_new()
+  message := "The variable \\\"value\\\" shadows a variable in an outer scope. Write a different name."
+  for _, flags := range [][]string{{}, {"-json"}} {
+    subject := fixture_new(t, memory, format_state, command, directory, 1)
+    fixture_file(t, subject, harness.CONFIGURATION_PATH, shared_configuration())
+    for _, path := range []string{"shared", "shared/a", "shared/c"} {
+      fixture_package_directory(t, subject, path)
+    }
+    fixture_file(t, subject, "shared/a/a.go", "package a\n\nfunc value() {}\n")
+    fixture_file(t, subject, "shared/a/b.go", "package a\n\nfunc F() {\n  value := 1\n}\n")
+    fixture_file(
+      t,
+      subject,
+      "shared/a/e_test.go",
+      "package a_test\n\nfunc G() {\n  value := 1\n}\n",
+    )
+    // A call names no declaration, thus a local that spells a builtin a sibling calls stands.
+    fixture_file(t, subject, "shared/a/f.go", "package a\n\nfunc H() {\n  copy(a, b)\n}\n")
+    fixture_file(t, subject, "shared/a/g.go", "package a\n\nfunc K() {\n  copy := 1\n}\n")
+    fixture_file(
+      t,
+      subject,
+      "shared/c/c.go",
+      "package c\n\nfunc F(value int) {\n  {\n    value := 1\n  }\n}\n",
+    )
+    testify.True(t, fixture_run(subject, append([]string{"harness", "shared"}, flags...)))
+    testify.Equal(t, harness.EXIT_FAILURE, subject.Runner.Status)
+    want := "shared/a/b.go:4:3: " +
+      unescaped(message) +
+      "\n" +
+      "shared/c/c.go:5:5: " +
+      unescaped(message) +
+      "\n"
+    if len(flags) > 0 {
+      want = `{"path":"shared/a/b.go","line":4,"column":3,"tier":2,"rule":"shadows","message":"` +
+        message +
+        "\"}\n" +
+        `{"path":"shared/c/c.go","line":5,"column":5,"tier":2,"rule":"shadows","message":"` +
+        message +
+        "\"}\n"
+    }
+    testify.Equal(t, want, fixture_output(subject))
+  }
+}
+
+// Test_Format_Recursion verifies a function calling itself, and a cycle across two files, each
+// state the call that closes it, while a method call and a file opted out of the ban state nothing.
+func Test_Format_Recursion(t *testing.T) {
+  memory, format_state, command, directory := memory_new()
+  subject := fixture_new(t, memory, format_state, command, directory, 1)
+  fixture_file(t, subject, harness.CONFIGURATION_PATH, shared_configuration())
+  for _, path := range []string{"shared", "shared/a", "shared/b", "shared/m", "shared/x"} {
+    fixture_package_directory(t, subject, path)
+  }
+  exempt := strings_replace(
+    shared_configuration(),
+    `"opt_out_recursion_ban":[]`,
+    `"opt_out_recursion_ban":["shared/x/**"]`,
+  )
+  fixture_file(t, subject, harness.CONFIGURATION_PATH, exempt)
+  fixture_file(t, subject, "shared/a/a.go", "package a\n\nfunc F() {\n  F()\n}\n")
+  fixture_file(t, subject, "shared/b/b.go", "package b\n\nfunc F() {\n  G()\n}\n")
+  fixture_file(t, subject, "shared/b/c.go", "package b\n\nfunc G() {\n  go F()\n}\n")
+  fixture_file(
+    t,
+    subject,
+    "shared/m/m.go",
+    "package m\n\ntype T int\n\nfunc (value T) F() {\n  value.F()\n}\n",
+  )
+  fixture_file(t, subject, "shared/x/x.go", "package x\n\nfunc F() {\n  F()\n}\n")
+  testify.True(t, fixture_run(subject, []string{"harness", "shared"}))
+  testify.Equal(t, harness.EXIT_FAILURE, subject.Runner.Status)
+  testify.Equal(
+    t,
+    "shared/a/a.go:4:3: The function F recurses. Write a loop instead.\n"+
+      "shared/b/c.go:4:6: The functions recurse in a cycle. Write a loop instead. F → G → F\n",
+    fixture_output(subject),
+  )
+}
+
+// Test_Format_Lanes verifies a run holds up to LANE_COUNT Go files at the root's spread at once,
+// states the same whatever order the spread checks them in, and renames a name a later file
+// declares in a file checked before it.
+func Test_Format_Lanes(t *testing.T) {
+  memory, format_state, command, directory := memory_new()
+  written := [ORDER_COUNT]string{}
+  held := [ORDER_COUNT]Held_Lanes{{Checked: true}, {Checked: false}}
+  for order := range written {
+    subject := lanes_fixture(t, memory, format_state, command, directory)
+    spread := &held[order]
+    subject.Runner.Spread.Submit = func(lane harness.Lane_Handle) { held_submit(spread, lane) }
+    subject.Runner.Spread.Reap = func(memory harness.Memory_Handle) (lane harness.Lane_Index) {
+      return held_reap(spread, memory)
+    }
+    testify.True(t, fixture_run(subject, []string{"harness", "package"}))
+    written[order] = fixture_output(subject)
+  }
+  // Each Go file is parsed once, the contract test beside the files among them, even in a run
+  // whose table took a name.
+  testify.Equal(t, harness.LANE_COUNT+2, held[0].Submitted)
+  testify.Equal(t, harness.LANE_COUNT+2, held[1].Submitted)
+  testify.Equal(t, 1, held[0].Deepest)
+  testify.Equal(t, harness.LANE_COUNT, held[1].Deepest)
+  testify.Equal(t, written[0], written[1])
+  testify.True(t, bool(strings.Contains(strings.Text(written[0]), "package/a.go: not formatted")))
+  subject := lanes_fixture(t, memory, format_state, command, directory)
+  testify.True(t, fixture_run(subject, []string{"harness", "package", "-fix"}))
+  testify.Equal(t, REFERENCE_RENAMED, fixture_read(t, subject, "package/a.go"))
+  last := string(rune('a'+harness.LANE_COUNT)) + ".go"
+  testify.Equal(t, DECLARATION_RENAMED, fixture_read(t, subject, "package/"+last))
+}
+
+// Held_Lanes is a spread that holds the lanes it is handed: the lanes it holds unchecked, the most
+// it held at once, and whether it checks each lane as it is handed one. One that does not checks
+// nothing until the run reaps a lane, then checks every lane it holds, the last handed first, and
+// hands back the lane the run read last, thus the run closes its lanes out of file order.
+type Held_Lanes struct {
+  // Lanes holds the lanes handed over and not yet checked.
+  Lanes []harness.Lane_Handle
+  // Deepest is the most lanes held at once.
+  Deepest int
+  // Checked is whether each lane is checked as it is handed over.
+  Checked bool
+  // Submitted is how many lanes the run handed over.
+  Submitted int
+}
+
+// Takes one lane into the spread.
+func held_submit(held *Held_Lanes, lane harness.Lane_Handle) {
+  held.Lanes = append(held.Lanes, lane)
+  held.Submitted++
+  held.Deepest = max(held.Deepest, len(held.Lanes))
+  if held.Checked {
+    harness.Check_Lane(lane)
+    held.Lanes = held.Lanes[:0]
+  }
+}
+
+// Checks every lane the spread holds, the last handed over first, and hands back a lane the run
+// holds: the one it read first when the spread checks each lane as it comes, the one it read last
+// when it does not.
+func held_reap(held *Held_Lanes, memory harness.Memory_Handle) (lane harness.Lane_Index) {
+  for index := len(held.Lanes) - 1; index > -1; index-- {
+    harness.Check_Lane(held.Lanes[index])
+  }
+  held.Lanes = held.Lanes[:0]
+  if held.Checked {
+    return harness.Lane_Oldest(memory)
+  }
+  newest := -1
+  for index := range memory.Lanes {
+    if !bool(memory.Held[index]) {
+      continue
+    }
+    if newest < 0 {
+      newest = index
+    }
+    if memory.Lanes[index].Slot > memory.Lanes[newest].Slot {
+      newest = index
+    }
+  }
+  return harness.Lane_Index(newest)
+}
+
+// ORDER_COUNT is how many orders the lanes test checks a run's lanes in: submitted, and reversed.
+const ORDER_COUNT = 2
+
+// One package of a file past the lane table: the first spells the name the last declares, and
+// every file between is clean.
+func lanes_fixture(
+  t *testing.T,
+  memory harness.Memory,
+  format_state harness.Format,
+  command harness.Command,
+  directory harness.Directory,
+) (subject *fixture) {
+  subject = fixture_new(t, memory, format_state, command, directory, 1)
+  fixture_package_directory(t, subject, "package")
+  fixture_file(t, subject, "package/a.go", REFERENCE)
+  for index := 1; index < harness.LANE_COUNT; index++ {
+    fixture_file(t, subject, "package/"+string(rune('a'+index))+".go", CLEAN)
+  }
+  last := string(rune('a'+harness.LANE_COUNT)) + ".go"
+  fixture_file(t, subject, "package/"+last, DECLARATION)
+  return subject
+}
+
+// Test_Layout_Single_Module verifies a tree holding no go.mod states it at go.mod, and a nested
+// go.mod and a go.work each state themselves.
+func Test_Layout_Single_Module(t *testing.T) {
+  memory, format_state, command, directory := memory_new()
+  subject := fixture_new(t, memory, format_state, command, directory, 1)
+  fixture_package_directory(t, subject, "package")
+  fixture_file(t, subject, "package/a.go", CLEAN)
+  fixture_remove(t, subject, "go.mod")
+  testify.True(t, fixture_run(subject, []string{"harness", "package"}))
+  testify.Equal(t, harness.EXIT_FAILURE, subject.Runner.Status)
+  testify.Equal(
+    t,
+    "go.mod: There is no go.mod at the repository root. The linter needs the module anchor.\n",
+    fixture_output(subject),
+  )
+  subject = fixture_new(t, memory, format_state, command, directory, 1)
+  fixture_package_directory(t, subject, "package")
+  fixture_file(t, subject, "package/a.go", CLEAN)
+  fixture_file(t, subject, "package/go.mod", "module other\n")
+  fixture_file(t, subject, "package/go.work", "go 1.26\n")
+  testify.True(t, fixture_run(subject, []string{"harness", "package"}))
+  testify.Equal(
+    t,
+    "package/go.mod: A nested go.mod divides the repository into more than one module. "+
+      "Remove \"package/go.mod\".\n"+
+      "package/go.work: A go.work makes a workspace with more than one module. "+
+      "Remove \"package/go.work\".\n",
+    fixture_output(subject),
+  )
+}
+
+// Test_Layout_Shared_Component verifies the shared component states an internal directory and a
+// package main, and a library package stands.
+func Test_Layout_Shared_Component(t *testing.T) {
+  layout_expect(
+    t,
+    "shared",
+    []string{
+      "shared/internal/a.go",
+      "package internal\n",
+      "shared/m/m.go",
+      "package main\n\nfunc main() {}\n",
+      "shared/fine/f.go",
+      "package fine\n",
+    },
+    []string{
+      "shared/internal/a.go:1:1: A shared library permits no internal/ directory. " +
+        "Remove \"shared/internal\".",
+      "shared/m/m.go:1:1: The shared library \"local/fixture/shared\" permits no package main. " +
+        "Move the entry point to a binary component.",
+    },
+    []string{"shared/fine/f.go:"},
+  )
+}
+
+// Test_Layout_Binary_Component verifies a binary component states a package outside pkg, at its
+// root or below it, and its pkg packages and package main stand.
+func Test_Layout_Binary_Component(t *testing.T) {
+  layout_expect(
+    t,
+    "tool",
+    []string{
+      "tool/main.go",
+      "package main\n\nfunc main() {}\n",
+      "tool/pkg/p.go",
+      "package pkg\n\nfunc Main() {}\n",
+      "tool/lib/l.go",
+      "package lib\n",
+      "tool/r.go",
+      "package tool\n",
+    },
+    []string{
+      "tool/lib/l.go:1:1: Move lib -> tool/pkg/lib.",
+      "tool/r.go:1:1: Move . -> tool/pkg.",
+    },
+    []string{"tool/pkg/p.go:", "tool/main.go:"},
+  )
+}
+
+// Test_Layout_Binary_Isolation verifies a binary component importing another states the import,
+// and one importing the shared component stands.
+func Test_Layout_Binary_Isolation(t *testing.T) {
+  layout_expect(
+    t,
+    "tool",
+    []string{
+      "tool/main.go",
+      "package main\n\nfunc main() {}\n",
+      "tool/pkg/p.go",
+      "package pkg\n\nimport \"local/fixture/other/pkg\"\n\nfunc Main() {}\n",
+      "tool/pkg/q/q.go",
+      "package q\n\nimport \"local/fixture/shared/fine\"\n",
+    },
+    []string{
+      "tool/pkg/p.go:3:8: The binary component \"local/fixture/tool\" imports the binary " +
+        "component \"local/fixture/other\". Move the shared code to the shared component.",
+    },
+    []string{"tool/pkg/q/q.go:"},
+  )
+}
+
+// Test_Layout_Main_Package verifies a package main below the component root states it.
+func Test_Layout_Main_Package(t *testing.T) {
+  layout_expect(
+    t,
+    "tool",
+    []string{
+      "tool/cmd/main.go",
+      "package main\n\nfunc main() {}\n",
+      "tool/pkg/p.go",
+      "package pkg\n\nfunc Main() {}\n",
+    },
+    []string{
+      "tool/cmd/main.go:1:1: The binary component \"local/fixture/tool\" has its main package at " +
+        "\"cmd\". Move the main package to the component root.",
+    },
+    []string{"tool/pkg/p.go:"},
+  )
+}
+
+// Test_Layout_Entry_Point verifies a binary component the walk covers states no func Main and
+// several at the component, a test's func Main counts for nothing, and a narrower walk states none.
+func Test_Layout_Entry_Point(t *testing.T) {
+  absent := "tool: The binary component \"local/fixture/tool\" declares no func Main in pkg/. " +
+    "Declare a func Main in pkg/."
+  layout_expect(
+    t,
+    "tool",
+    []string{
+      "tool/main.go",
+      "package main\n\nfunc main() {}\n",
+      "tool/pkg/p.go",
+      "package pkg\n",
+      "tool/pkg/p_test.go",
+      "package pkg\n\nfunc Main() {}\n",
+    },
+    []string{absent},
+    nil,
+  )
+  layout_expect(
+    t,
+    "tool/pkg",
+    []string{
+      "tool/main.go", "package main\n\nfunc main() {}\n",
+      "tool/pkg/p.go", "package pkg\n",
+    },
+    nil,
+    []string{"tool: "},
+  )
+  layout_expect(
+    t,
+    "tool",
+    []string{
+      "tool/main.go",
+      "package main\n\nfunc main() {}\n",
+      "tool/pkg/p.go",
+      "package pkg\n\nfunc Main() {}\n",
+      "tool/pkg/q.go",
+      "package pkg\n\nfunc Main() {}\n",
+    },
+    []string{
+      "tool: The binary component \"local/fixture/tool\" declares more than one func Main in " +
+        "pkg/. Declare only one func Main.",
+    },
+    nil,
+  )
+}
+
+// Test_Layout_Tier_Depth verifies a package under two library ancestors states them, while a
+// version segment and a binary's pkg count for none.
+func Test_Layout_Tier_Depth(t *testing.T) {
+  layout_expect(
+    t,
+    ".",
+    []string{
+      "shared/a/a.go",
+      "package a\n",
+      "shared/a/b/b.go",
+      "package b\n",
+      "shared/a/b/c/c.go",
+      "package c\n",
+      "shared/a/v2/d/d.go",
+      "package d\n",
+      "tool/main.go",
+      "package main\n\nfunc main() {}\n",
+      "tool/pkg/p.go",
+      "package pkg\n\nfunc Main() {}\n",
+      "tool/pkg/x/x.go",
+      "package x\n",
+      "tool/pkg/x/y/y.go",
+      "package y\n",
+    },
+    []string{
+      "shared/a/b/c/c.go:1:1: The package \"c\" at \"a/b/c\" is below the library tier. " +
+        "It has 2 non-main ancestors: [a/b a].",
+    },
+    []string{"shared/a/b/b.go:", "shared/a/v2/d/d.go:", "tool/pkg/x/y/y.go:"},
+  )
+}
+
+// Test_Layout_Impure_Imports verifies a pure file importing an impure stdlib package states it,
+// while a test and the composition tier stand.
+func Test_Layout_Impure_Imports(t *testing.T) {
+  layout_expect(
+    t,
+    "shared",
+    []string{
+      "shared/p/p.go",
+      "package p\n\nimport \"runtime\"\n",
+      "shared/p/p_test.go",
+      "package p\n\nimport \"runtime\"\n",
+      "shared/p/q/q.go",
+      "package q\n\nimport \"runtime\"\n",
+    },
+    []string{
+      "shared/p/p.go:3:8: The stdlib import \"runtime\" is impure. " +
+        "See lint/README.md for the resolutions.",
+    },
+    []string{"shared/p/p_test.go:", "shared/p/q/q.go:"},
+  )
+}
+
+// Test_Layout_Impure_Calls verifies a pure file selecting the clock states it, and a test stands.
+func Test_Layout_Impure_Calls(t *testing.T) {
+  clock := "package p\n\nimport \"time\"\n\nfunc F() {\n  time.Now()\n}\n"
+  layout_expect(
+    t,
+    "shared",
+    []string{
+      "shared/p/p.go", clock,
+      "shared/p/p_test.go", clock,
+    },
+    []string{
+      "shared/p/p.go:6:3: The stdlib call time.Now is impure. " +
+        "See lint/README.md for the resolutions.",
+    },
+    []string{"shared/p/p_test.go:"},
+  )
+}
+
+// Test_Layout_Transitive_Purity verifies a pure package importing a default directory states it,
+// and one importing an instrumentation package stands.
+func Test_Layout_Transitive_Purity(t *testing.T) {
+  layout_expect(
+    t,
+    "shared",
+    []string{
+      "shared/port/o.go",
+      "package port\n",
+      "shared/port/default/d.go",
+      "package port\n",
+      "shared/probe/p.go",
+      "package probe\n",
+      "shared/probe/default/d.go",
+      "package probe\n",
+      "shared/user/u.go",
+      "package user\n\nimport \"local/fixture/shared/port/default\"\n",
+      "shared/watch/w.go",
+      "package watch\n\nimport \"local/fixture/shared/probe/default\"\n",
+    },
+    []string{
+      "shared/user/u.go:3:8: The dependency \"local/fixture/shared/port/default\" is impure. " +
+        "A pure package imports only pure packages.",
+    },
+    []string{"shared/watch/w.go:"},
+  )
+}
+
+// Test_Layout_Transitive_Stdlib verifies a pure package selecting an API that reaches the clock
+// states it, its tests included.
+func Test_Layout_Transitive_Stdlib(t *testing.T) {
+  deadline := "package w\n\nimport \"context\"\n\nfunc F() {\n  context.WithTimeout()\n}\n"
+  layout_expect(
+    t,
+    "shared",
+    []string{
+      "shared/w/w.go", deadline,
+      "shared/w/w_test.go", deadline,
+    },
+    []string{
+      "shared/w/w.go:6:3: The transitive call context.WithTimeout is impure. " +
+        "A pure package calls only pure APIs.",
+      "shared/w/w_test.go:6:3: The transitive call context.WithTimeout is impure. " +
+        "A pure package calls only pure APIs.",
+    },
+    nil,
+  )
+}
+
+// Test_Layout_Binary_Purity verifies a binary's pkg package importing an impure stdlib package
+// states it, and its package main stands.
+func Test_Layout_Binary_Purity(t *testing.T) {
+  layout_expect(
+    t,
+    "tool",
+    []string{
+      "tool/main.go",
+      "package main\n\nimport \"runtime\"\n\nfunc main() {}\n",
+      "tool/pkg/p.go",
+      "package pkg\n\nfunc Main() {}\n",
+      "tool/pkg/x/y/y.go",
+      "package y\n\nimport \"runtime\"\n",
+    },
+    []string{
+      "tool/pkg/x/y/y.go:3:8: The stdlib import \"runtime\" is impure. " +
+        "See lint/README.md for the resolutions.",
+    },
+    []string{"tool/main.go:"},
+  )
+}
+
+// Test_Layout_Binary_Default_Tier verifies a binary's default directory states it.
+func Test_Layout_Binary_Default_Tier(t *testing.T) {
+  layout_expect(
+    t,
+    "tool",
+    []string{
+      "tool/main.go",
+      "package main\n\nfunc main() {}\n",
+      "tool/pkg/p.go",
+      "package pkg\n\nfunc Main() {}\n",
+      "tool/pkg/default/d.go",
+      "package pkg\n",
+    },
+    []string{
+      "tool/pkg/default/d.go:1:1: A binary component permits no default tier. " +
+        "Bind the real world in package main. Remove \"tool/pkg/default\".",
+    },
+    nil,
+  )
+}
+
+// Test_Layout_Library_Purity verifies a shared library package importing an impure stdlib package
+// states it, and its default directory, the composition tier, stands.
+func Test_Layout_Library_Purity(t *testing.T) {
+  layout_expect(
+    t,
+    "shared",
+    []string{
+      "shared/lib/l.go",
+      "package lib\n\nimport \"runtime\"\n",
+      "shared/lib/default/d.go",
+      "package lib\n\nimport \"runtime\"\n",
+    },
+    []string{
+      "shared/lib/l.go:3:8: The stdlib import \"runtime\" is impure. " +
+        "See lint/README.md for the resolutions.",
+    },
+    []string{"shared/lib/default/d.go:"},
+  )
+}
+
+// Test_Layout_Default_Package_Impurity verifies a default directory declaring another package
+// states it at the clause, and one declaring its parent's test package stands.
+func Test_Layout_Default_Package_Impurity(t *testing.T) {
+  layout_expect(
+    t,
+    "shared",
+    []string{
+      "shared/lib/l.go",
+      "package lib\n",
+      "shared/lib/default/d.go",
+      "package other\n",
+      "shared/lib/default/d_test.go",
+      "package lib_test\n",
+    },
+    []string{
+      "shared/lib/default/d.go:1:9: The default package declares \"package other\", " +
+        "not \"package lib\". The default package shadows the library it re-exports.",
+    },
+    []string{"shared/lib/default/d_test.go:"},
   )
 }
 
@@ -791,7 +1498,7 @@ const REFERENCE_RENAMED = "package a\n\nvar held = some_value\n"
 // REFUSED is a file the parser refuses as bad syntax at the brace.
 const REFUSED = "package a\n\nfunc f( {}\n"
 
-// GROUPED is valid Go the parser refuses as a declaration group at the parenthesis.
+// GROUPED is valid Go the formatter expands into separate declarations.
 const GROUPED = "package a\n\nimport (\n\t\"x\"\n)\n"
 
 // CONTRACT_MARKDOWN is the smallest REQUIREMENTS.md that breaks no rule.
@@ -823,9 +1530,18 @@ type fixture struct {
 }
 
 // Builds one checked runner over fresh stores.
-func checked_new(source string) (runner *harness.Runner) {
+func checked_new(source string) (runner *Checked) {
   memory, format_state, command, directory := memory_new()
   return checked(memory, format_state, command, directory, source)
+}
+
+// Checked is one source a runner checked, and the diagnostic the check states.
+type Checked struct {
+  *harness.Runner
+  // Diagnostic is what the check states.
+  Diagnostic harness.Diagnostic
+  // Syntax is the parse stores the check stands on.
+  Syntax requirements.Syntax
 }
 
 // Checks one source through a runner that owns memory, as a run would after reading it.
@@ -835,7 +1551,7 @@ func checked(
   command harness.Command,
   directory harness.Directory,
   source string,
-) (runner *harness.Runner) {
+) (runner *Checked) {
   // A check reads no clock, and a run field is asserted whole, thus the test binds one.
   simulation := nbio.Sim{}
   clocks := make([]nbio.Sim_Clock, 1)
@@ -860,11 +1576,11 @@ func checked(
       Clocks:      clocks,
     },
   )
-  runner = &harness.Runner{
+  runner = &Checked{Runner: &harness.Runner{}, Syntax: syntax_new()}
+  *runner.Runner = harness.Runner{
     Runner_Fields: harness.Runner_Fields{
       Read:      harness.Read{Path: read_path_new()},
       Memory:    &memory,
-      Syntax:    syntax_new(),
       Format:    format_state,
       Command:   command,
       Directory: directory,
@@ -941,12 +1657,12 @@ func fixture_new(
     Runner_Fields: harness.Runner_Fields{
       Read:         harness.Read{Path: read_path_new()},
       Work_Queued:  harness.Runner_Work_Queued,
+      Spread:       harness.Spread{Submit: harness.Check_Lane, Reap: harness.Lane_Oldest},
       Stopped:      harness.Runner_Stopped,
       Output:       nbio.Memory_To_Stream(&subject.Output),
       Error_Output: nbio.Memory_To_Stream(&subject.Errors),
       Clock:        nbio.Sim_Clock_To_Clock(&clocks[0]),
       Memory:       &memory,
-      Syntax:       syntax_new(),
       Format:       format_state,
       Command:      command,
       Directory:    directory,
@@ -971,6 +1687,7 @@ func fixture_new(
     return fixture_queued(subject)
   }
   fixture_file(t, subject, harness.CONFIGURATION_PATH, CONFIGURATION)
+  fixture_file(t, subject, harness.MODULE_PATH, MODULE)
   return subject
 }
 
@@ -1050,6 +1767,8 @@ func memory_new() (
   for index := range memory.Packages {
     size := filepath.PATH_SIZE_MAXIMUM
     memory.Packages[index].Path = make(harness.Package_Path, 0, size)
+    count := requirements.HEADING_COUNT_MAXIMUM
+    memory.Packages[index].Declarations = make(requirements.Declarations, count)
   }
   memory.File_Packages = make(harness.Package_Indices, harness.FILE_COUNT_MAXIMUM)
   memory.History_Output = make(harness.History_Output, harness.HISTORY_OUTPUT_SIZE)
@@ -1057,8 +1776,13 @@ func memory_new() (
   memory.History_Name = make(harness.History_Name, harness.HISTORY_NAME_SIZE)
   memory_link(&memory)
   memory_configuration(&memory)
-  memory.Notice = make(harness.Notice_Store, harness.MESSAGE_SIZE_MAXIMUM)
+  memory_diagnostics(&memory)
+  memory.Siblings = harness.New_Siblings()
+  memory.Layout = harness.New_Layout()
+  memory.Graph = make(harness.Graph_Store, harness.GRAPH_STORE_SIZE)
+  memory.Glob = make(harness.Glob_Storage, harness.GLOB_STORAGE_SIZE)
   memory.Requirements = checker_new(memory)
+  memory_lanes(&memory, format_state)
   return memory, format_state, command, directory
 }
 
@@ -1073,6 +1797,8 @@ func checker_new(memory harness.Memory) (checker *requirements.Checker) {
   checker.Name = make(requirements.Name_Bytes, requirements.NAME_SIZE_MAXIMUM)
   checker.Prior = make(requirements.Prior_Bytes, requirements.NAME_SIZE_MAXIMUM)
   checker.Message = make(requirements.Message_Bytes, requirements.MESSAGE_SIZE_MAXIMUM)
+  checker.Events = make(requirements.Events, requirements.EVENT_COUNT_MAXIMUM)
+  checker.Lines = make(requirements.Rewritten_Lines, requirements.LINE_TABLE_SIZE)
   checker.Path = make(requirements.Path_Bytes, requirements.PATH_STORAGE_SIZE)
   checker.Test = requirements.Test_Bytes(memory.Source)
   checker.Numbers.Values = make(requirements.Numbers, requirements.NUMBER_SLOT_COUNT)
@@ -1097,6 +1823,10 @@ func requirements_run(
   t.Helper()
   subject := fixture_new(t, memory, format_state, command, walk_directory, seed)
   fixture_directory(t, subject, directory)
+  // A package main stands at the root of a binary component, which holds its func Main in pkg.
+  if strings.Has_Prefix(strings.Text(source), "package main\n") {
+    fixture_binary(t, subject, directory)
+  }
   fixture_file(t, subject, directory+"/a.go", source)
   if markdown != REQUIREMENTS_ABSENT {
     fixture_file(t, subject, directory+"/REQUIREMENTS.md", markdown)
@@ -1316,13 +2046,13 @@ func fixture_run(subject *fixture, arguments []string) (stopped bool) {
       History:        &subject.Runner.History,
       Output:         subject.Runner.Output,
       Errors:         subject.Runner.Error_Output,
+      Spread:         subject.Runner.Spread,
     }
     now := time.Clock_Now_Monotonic(subject.Runner.Clock)
     elapsed := harness.Elapsed(now - subject.Runner.Start)
     for harness.Rearm(
       harness.Rearm_Input{
         Memory:    subject.Runner.Memory,
-        Syntax:    subject.Runner.Syntax,
         State:     state,
         Progress:  &subject.Runner.Progress,
         Elapsed:   elapsed,
@@ -1348,7 +2078,31 @@ func fixture_queued(subject *fixture) (finished bool) {
   return bool(subject.Runner.Work_Queued(phase))
 }
 
+// States what a run wrote to its output, past the elapsed seconds a run with a diagnostic closes
+// on, which Test_Command_Elapsed reads whole.
 func fixture_output(subject *fixture) (output string) {
+  output = fixture_written(subject)
+  line_start := len(output) - 1
+  for line_start > 0 {
+    if output[line_start-1] == '\n' {
+      break
+    }
+    line_start--
+  }
+  line_start = max(line_start, 0)
+  for _, opening := range []string{harness.ELAPSED_OPENING, `{"passed":false,`} {
+    if len(output)-line_start < len(opening) {
+      continue
+    }
+    if output[line_start:line_start+len(opening)] == opening {
+      return output[:line_start]
+    }
+  }
+  return output
+}
+
+// States what a run wrote to its output, whole.
+func fixture_written(subject *fixture) (output string) {
   return string(subject.Output.Memory[:subject.Output.Cursor])
 }
 
@@ -1707,10 +2461,85 @@ func memory_link(memory harness.Memory_Handle) {
   memory.Target = make(harness.Link_Target, harness.LINK_TARGET_SIZE)
 }
 
+// MODULE is the go.mod a fixture tree holds at its root.
+const MODULE = "module local/fixture\n\ngo 1.26\n"
+
 // CONFIGURATION is the smallest harness.json a run decodes.
-const CONFIGURATION = `{"shared_component":"s","instrumentation_packages":[],` +
+const CONFIGURATION = `{"shared_component":"package","instrumentation_packages":[],` +
   `"opt_out_assertion_mandate_packages":[],` +
-  `"opt_out_recursion_ban":[],"opt_out_interface_ban":[],"ignore":[],"word_replacements":{"a":[]}}`
+  `"opt_out_recursion_ban":[],"opt_out_interface_ban":[],"ignore":[],"word_replacements":{"util":[]}}`
+
+// States the smallest harness.json whose shared component is the shared directory, which the
+// gateways of the stdlib ports stand under.
+func shared_configuration() (source string) {
+  return strings_replace(
+    CONFIGURATION,
+    `"shared_component":"package"`,
+    `"shared_component":"shared"`,
+  )
+}
+
+// Makes the component at the root a binary one: the shared component is the shared directory, and
+// the component holds its func Main in a pkg package of its own contract.
+func fixture_binary(t *testing.T, subject *fixture, root string) {
+  t.Helper()
+  fixture_file(t, subject, harness.CONFIGURATION_PATH, shared_configuration())
+  fixture_package_directory(t, subject, root+"/pkg")
+  fixture_file(t, subject, root+"/pkg/p.go", "package pkg\n\nfunc Main() {}\n")
+}
+
+// Writes the contract test of a default directory under the package clause its parent names.
+func fixture_default_contract(t *testing.T, subject *fixture, path string, clause string) {
+  t.Helper()
+  fixture_file(
+    t,
+    subject,
+    path+"/requirements_test.go",
+    "package "+clause+"\n\nfunc Test_Contract(t *T) {}\n",
+  )
+}
+
+// Runs the harness over a tree of the given files, the shared component the shared directory, and
+// expects each given line in what it wrote and none of the absent fragments.
+func layout_expect(t *testing.T, root string, sources []string, lines []string, absent []string) {
+  t.Helper()
+  memory, format_state, command, directory := memory_new()
+  subject := fixture_new(t, memory, format_state, command, directory, 1)
+  fixture_file(t, subject, harness.CONFIGURATION_PATH, layout_configuration())
+  made := map[string]bool{}
+  for index := 0; index < len(sources); index += 2 {
+    path := sources[index]
+    for cut := range len(path) {
+      if path[cut] != '/' {
+        continue
+      }
+      if made[path[:cut]] {
+        continue
+      }
+      made[path[:cut]] = true
+      fixture_directory(t, subject, path[:cut])
+    }
+    fixture_file(t, subject, path, sources[index+1])
+  }
+  testify.True(t, fixture_run(subject, []string{"harness", root}))
+  written := fixture_written(subject)
+  for _, line := range lines {
+    testify.True(t, bool(strings.Contains(strings.Text(written), strings.Text(line+"\n"))), written)
+  }
+  for _, fragment := range absent {
+    testify.False(t, bool(strings.Contains(strings.Text(written), strings.Text(fragment))), written)
+  }
+}
+
+// States the harness.json of a layout tree: the shared directory is the shared component, and
+// the probe tree an instrumentation package.
+func layout_configuration() (source string) {
+  return strings_replace(
+    shared_configuration(),
+    `"instrumentation_packages":[]`,
+    `"instrumentation_packages":["shared/probe/**"]`,
+  )
+}
 
 // Takes the file at the path out of the tree, the way a host that never wrote it would hold none.
 func fixture_remove(t *testing.T, subject *fixture, path string) {
@@ -1739,10 +2568,31 @@ func fixture_widen(subject *fixture, size int) {
   }
 }
 
+// Builds the stores of the diagnostics the declaration pass leaves, and of the notice each states.
+func memory_diagnostics(memory harness.Memory_Handle) {
+  memory.Notice = make(harness.Notice_Store, harness.MESSAGE_SIZE_MAXIMUM)
+  memory.Diagnostics = make(harness.File_Diagnostics, harness.FILE_COUNT_MAXIMUM)
+  memory.Sizes = make(harness.File_Sizes, harness.SIZE_TABLE_SIZE)
+  memory.Order = make(harness.File_Order, harness.FILE_COUNT_MAXIMUM)
+  memory.Notices = make(harness.Notice_Table, harness.FILE_COUNT_MAXIMUM)
+  for slot := range memory.Notices {
+    memory.Notices[slot] = make(harness.Notice_Store, harness.MESSAGE_SIZE_MAXIMUM)
+  }
+}
+
+// Builds the lane table, which views every other store, thus past them.
+func memory_lanes(memory harness.Memory_Handle, format_state harness.Format) {
+  memory.Lanes, memory.Held = make(harness.Lane_Table, harness.LANE_COUNT), make(
+    harness.Lane_Marks,
+    harness.LANE_COUNT,
+  )
+  harness.New_Lanes(memory, format_state)
+}
+
 // Builds the stores harness.json decodes into.
 func memory_configuration(memory harness.Memory_Handle) {
   memory.Configuration = &configuration.Configuration{
-    Source: make(configuration.Source_Store, configuration.SOURCE_STORAGE_SIZE),
+    Tokens: make(configuration.Tokens, configuration.TOKEN_COUNT_MAXIMUM),
     Text:   make(configuration.Text, configuration.SOURCE_SIZE_MAXIMUM),
     Values: make(configuration.Values, configuration.VALUE_COUNT_MAXIMUM),
     Cells:  make(configuration.Cells, configuration.CELL_COUNT),
