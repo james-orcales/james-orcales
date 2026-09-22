@@ -1,9 +1,9 @@
 
 # Parse
 
-Parse scans a source into the token run, runs the grammar program over it into the node arena,
-and returns a Parse_Result naming the root, both extents, and why it stopped. The caller owns
-every store and the package holds none of its own, thus a parse allocates nothing.
+Parse scans a source into the token run and runs the grammar program over it into the node arena.
+Its Parse_Result names the root, the run extents, the arena, the error log, and the earliest
+refusal. The caller owns every store and the package holds none, thus a parse allocates nothing.
 
 # Nodes
 
@@ -93,69 +93,70 @@ counts the lines. A run is taken one time however often a step asks for it.
 
 # Refused Syntax
 
-Valid Go this grammar drops must fail, and must fail with the code named below. A caller
-therefore never reads a dropped form as a bare syntax error. A form the linter merely rejects is
-not dropped: it parses, so the linter can judge the tree and name the rule itself.
+Every form of valid Go parses. A form the linter refuses parses whole, logs its code below at the
+token that broke the rule, and the parse reads on, thus one parse names every refusal a source
+states. Only a source Go refuses too, or one that overruns a bound, stops the parse.
 
 ### Interface Methods
 
-An interface holding a method fails with FAILURE_INTERFACE_METHOD, whether it stands as a
-declaration, a parameter type, or a field type. Only a constraint element parses, and a method
-declaration parses because the linter bans the interface and never the method.
+An interface holding a method logs FAILURE_INTERFACE_METHOD at the method name, in a declaration,
+a parameter type, or a field type. The method parses as a field holding its signature as a
+function type. A method declaration parses clean, because the linter bans only the interface.
 
 ### Wide Identifiers
 
-A name holding a byte at or above 128 fails with FAILURE_WIDE_IDENTIFIER. A comment and a string
-literal still carry any byte.
+A name holding a byte at or above 128 logs FAILURE_WIDE_IDENTIFIER. The scanner reads a wide
+letter or digit into the name it stands in, as Go does, thus the tree holds the name whole. A
+comment and a string literal still carry any byte.
 
 ### Iota
 
-The iota identifier fails with FAILURE_IOTA wherever it stands, because it ties a constant value
+The iota identifier logs FAILURE_IOTA wherever it stands, because it ties a constant value
 to the order its declaration happens to sit in.
 
 ### Refused Signs
 
-The conditional and, the conditional or, the less-or-equal, and the greater-or-equal each fail
-with FAILURE_REFUSED_SIGN wherever they stand. Nested ifs state what a joined condition states,
-and a strict comparison states what an order sign with equality states.
+The conditional and, the conditional or, the less-or-equal, and the greater-or-equal each log
+FAILURE_REFUSED_SIGN and bind at Go's own level, thus the tree reads as Go reads it. Nested ifs
+state a joined condition, and a strict comparison states an order sign with equality.
 
 ### Dot Imports
 
-An import that binds no name fails with FAILURE_DOT_IMPORT, because it spills a whole package
+An import bound to the period logs FAILURE_DOT_IMPORT, and the period is its name node, because it spills a whole package
 into the file and leaves no way to read where a name came from.
 
 ### Blank Imports
 
-An import bound to the blank name fails with FAILURE_BLANK_IMPORT, because it takes a package
+An import bound to the blank name logs FAILURE_BLANK_IMPORT, because it takes a package
 for its effects alone and no call states that it ran.
 
 ### Constant Case
 
 A constant name that is no uppercase word, or run of uppercase words joined by single
-underscores, fails with FAILURE_CONSTANT_CASE. The rule binds a constant at any scope, and a
+underscores, logs FAILURE_CONSTANT_CASE. The rule binds a constant at any scope, and a
 variable name answers to none of it.
 
 ### Bare Loops
 
-A for that no clause constrains fails with FAILURE_BARE_LOOP: a bare for, a three-clause for
+A for that no clause constrains logs FAILURE_BARE_LOOP: a bare for, a three-clause for
 with every clause empty, and a for whose only condition is the true literal. A range says the
 same thing in a form of its own and reads as the assertion it is.
 
 ### Unnamed Results
 
-A signature result that carries no name fails with FAILURE_UNNAMED_RESULT. A result names itself
+A signature result that carries no name logs FAILURE_UNNAMED_RESULT. A result names itself
 and its type, thus a result standing as a type alone names nothing.
 
 ### Type Aliases
 
-A type declaration bound by the assignment sign fails with FAILURE_TYPE_ALIAS. An alias gives one
+A type declaration bound by the assignment sign logs FAILURE_TYPE_ALIAS at that sign. An alias gives one
 type a second name, and a reader who meets the second name learns nothing about the first.
 
 ### Closure Bodies
 
-A function literal whose body holds anything but calls fails with FAILURE_CLOSURE_BODY. Only the
-last may return one call, and a grouped call is a call. Logic a closure hides stays out of reach
-of a test, and a named function lays it open.
+A function literal whose body holds anything but calls logs FAILURE_CLOSURE_BODY, one time for
+each statement that breaks the rule. Only the last may return one call, and a grouped call is a
+call. Logic a closure hides stays out of reach of a test, and a named function lays it open.
 
 ### Missing Package Clause
 
@@ -176,7 +177,7 @@ a run of groupings deeper than the grammar program may call itself.
 
 ### Fallthrough
 
-A case that runs on into the case behind it fails with FAILURE_FALLTHROUGH. A case closes where
+A case that runs on into the case behind it logs FAILURE_FALLTHROUGH. A case closes where
 its statements close, thus a reader of one case reads the whole of what it runs.
 
 ### Broken Syntax
@@ -191,7 +192,7 @@ How a caller reads a refusal back.
 ### Codes
 
 The Failure a Parse_Result carries reads FAILURE_NONE after a clean parse and the code of the
-refused form otherwise. Each code is distinct, thus a caller switches on it rather than on a
+refusal at the earliest token otherwise. Each code is distinct, thus a caller switches on it rather than on a
 message.
 
 ### Messages
@@ -201,15 +202,21 @@ sentence is a compile-time constant, thus naming a failure allocates nothing.
 
 ### Position
 
-The Failure_Token a Parse_Result carries names the run position of the token the parse stopped
-at, and it stays inside the run the scan wrote, thus reading it back through Token_At is always
+The Failure_Token a Parse_Result carries names the run position of the token the earliest
+refusal stands at, and it stays inside the run the scan wrote, thus reading it back through Token_At is always
 safe.
+
+### Error Log
+
+The caller supplies a log of 256 entries. Each refusal lands in the log in parse order, Error_Count
+bounds what it wrote, and past 256 the log keeps the first 256. A stop joins the log behind every
+refusal met before it, and a parse empties the log a parse before it wrote.
 
 ### Tree
 
-A refused source still returns the tree that was built, because a linter reads more from a
-partial tree than from nothing. A refused token carries an error node, and a source that overran
-the token count returns no tree at all.
+A source a rule refuses returns the whole tree. A stopped source returns the tree built so far,
+because a linter reads more from a partial tree than from nothing. A stopped token carries an
+error node, and a source that overran the token count returns no tree at all.
 
 # Approximate Forms
 
@@ -238,9 +245,9 @@ where Go reports it unterminated.
 
 # Bounds
 
-A parse holds at most 131,072 tokens and 131,064 nodes. One Parse_State descriptor spans 128
-bytes. Caller supplies exact token and node stores plus three stacks of 256 indexes. Empty line
-count rides in a byte token already padded out, thus file spacing costs a parse nothing.
+A parse holds at most 131,072 tokens and 131,064 nodes. One Parse_State descriptor spans 152 bytes.
+Caller supplies exact token and node stores, three stacks of 256 indexes, and a 256-refusal log.
+An empty line count rides in a padded byte token, thus file spacing costs a parse nothing.
 
 # Tail
 

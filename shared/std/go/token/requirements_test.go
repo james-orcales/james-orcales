@@ -328,13 +328,50 @@ func test_identifiers(t *testing.T) {
     t,
     []token.Kind{token.KIND_ILLEGAL},
     scan_kinds("\xff"),
-    "a byte above ASCII opens no identifier",
+    "a byte that encodes no letter opens no identifier",
   )
   testify.Equal(
     t,
     []token.Kind{token.KIND_IDENTIFIER, token.KIND_ILLEGAL},
     scan_kinds("a\xff"),
-    "a byte above ASCII ends an identifier",
+    "a byte that encodes no letter ends an identifier",
+  )
+  testify.Equal(
+    t,
+    []token.Kind{token.KIND_IDENTIFIER, token.KIND_SEMICOLON},
+    scan_kinds("é"),
+    "a wide letter opens an identifier",
+  )
+  testify.Equal(
+    t,
+    []token.Kind{token.KIND_IDENTIFIER, token.KIND_SEMICOLON},
+    scan_kinds("aé١"),
+    "a wide letter and a wide digit continue an identifier",
+  )
+  testify.Equal(
+    t,
+    []token.Kind{token.KIND_IDENTIFIER, token.KIND_SEMICOLON},
+    scan_kinds("𝒜ア𝒜"),
+    "a letter of the widest encoding opens and continues an identifier",
+  )
+  widest := make([]byte, token.SOURCE_SIZE_MAXIMUM)
+  copy(widest, "é")
+  for slot_size := len("é"); slot_size < len(widest); slot_size++ {
+    widest[slot_size] = 'a'
+  }
+  testify.Equal(
+    t,
+    []token.Kind{token.KIND_IDENTIFIER, token.KIND_SEMICOLON},
+    scan_kinds(string(widest)),
+    "a wide letter opens the widest source as one identifier",
+  )
+  testify.Equal(
+    t,
+    []token.Kind{
+      token.KIND_ILLEGAL, token.KIND_ILLEGAL, token.KIND_IDENTIFIER, token.KIND_SEMICOLON,
+    },
+    scan_kinds("١a"),
+    "a wide digit opens no identifier",
   )
   source := token.Source("Ada_Case")
   scanner := token.Scanner{Source: source}

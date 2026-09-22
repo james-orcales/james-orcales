@@ -225,6 +225,11 @@ func Test_Failure_Reports_Position(t *testing.T) {
   test_failures_position(t)
 }
 
+// Test_Failure_Reports_Error_Log binds the Error Log leaf before fixture declarations.
+func Test_Failure_Reports_Error_Log(t *testing.T) {
+  test_error_log(t)
+}
+
 // Test_Failure_Reports_Tree binds the Syntax_Tree specification leaf before fixture declarations.
 func Test_Failure_Reports_Tree(t *testing.T) {
   test_errors(t)
@@ -299,7 +304,7 @@ const TEST_NODE_SIZE = 20
 
 const TEST_TOKEN_SIZE = 12
 
-const TEST_STATE_SIZE = 128
+const TEST_STATE_SIZE = 152
 
 func parse_state() (state *ast.Parse_State) {
   tree := ast.Syntax_Tree{
@@ -317,6 +322,9 @@ func parse_state() (state *ast.Parse_State) {
     },
     Earlier_Children: ast.Earlier_Child_Storage{
       Values: make(ast.Earlier_Children, ast.DEPTH_MAXIMUM),
+    },
+    Errors: ast.Error_Storage{
+      Values: make(ast.Errors, ast.ERROR_COUNT_MAXIMUM),
     },
   }
   return &ast.Parse_State{Syntax_Tree: tree}
@@ -505,6 +513,14 @@ func test_types(t *testing.T) {
 
 func test_functions(t *testing.T) {
   state := parse_state()
+  // A receiver that names no parameter may still name a generic type, because the bracket run
+  // behind the type closes the list rather than opening an element type.
+  accepts(t, state, TEST_HEAD+"func (Pair[T]) f() (a A) {\n}\n",
+    []ast.Node_Kind{ast.NODE_RECEIVER, ast.NODE_GENERIC})
+  accepts(t, state, TEST_HEAD+"func (Map[K, V]) f() (a A) {\n}\n",
+    []ast.Node_Kind{ast.NODE_RECEIVER, ast.NODE_GENERIC})
+  accepts(t, state, TEST_HEAD+"func f(a [SIZE]T) {\n}\n",
+    []ast.Node_Kind{ast.NODE_PARAMETER_NAME, ast.NODE_ARRAY_TYPE})
   accepts(t, state, TEST_HEAD+"func f() {\n}\n",
     []ast.Node_Kind{ast.NODE_FUNCTION, ast.NODE_BLOCK})
   accepts(t, state, TEST_HEAD+"func f(a A, b B) (c C) {\n}\n",
@@ -570,6 +586,8 @@ func test_type_parameters(t *testing.T) {
 func test_statements(t *testing.T) {
   state := parse_state()
   body := TEST_HEAD + "func f() {\n"
+  accepts(t, state, statement_source(body, "Done:\n;\n\na()"),
+    []ast.Node_Kind{ast.NODE_LABEL})
   accepts(t, state, statement_source(body, "a := 1"), []ast.Node_Kind{ast.NODE_DEFINE})
   accepts(t, state, statement_source(body, "a = 1"), []ast.Node_Kind{ast.NODE_ASSIGN})
   accepts(t, state, statement_source(body, "a += 1"),
@@ -678,6 +696,61 @@ func refuses(
   testify.False(t, bool(tree.OK), "a refused parse of %.24q reports so", text)
   testify.Equal(t, code, ast.Failure(state), "the state keeps the refusal of %.24q", text)
   reads_refusal(t, state, tree)
+  logged(t, state, tree, text, code)
+  if stops(code) {
+    return
+  }
+  kinds := walk_kinds(state, ast.Index(tree.Root), nil)
+  testify.Not_Contains(t, kinds, ast.NODE_ERROR,
+    "the valid Go of %.24q parses whole under its refusal", text)
+  for index := range int(tree.Error_Count) {
+    one := state.Errors.Values[index]
+    testify.False(t, bool(stops(one.Code)),
+      "the valid Go of %.24q logs no stop", text)
+  }
+}
+
+// Parses one refused source and states the tree holds a node of the kind the form it refused
+// states.
+func accepts_refused(t *testing.T, state *ast.Parse_State, text string, want ast.Node_Kind) {
+  t.Helper()
+  tree := ast.Parse(state, token.Source(text))
+  testify.False(t, bool(tree.OK), "the parse of %q refuses it", text)
+  kinds := walk_kinds(state, ast.Index(tree.Root), nil)
+  testify.Contains(t, kinds, want, "the tree of %q holds kind %d", text, int(want))
+}
+
+// States that the log of one refused parse holds the refusal the result names first.
+func logged(
+  t *testing.T,
+  state *ast.Parse_State,
+  tree ast.Parse_Result,
+  text string,
+  code ast.Failure_Code,
+) {
+  t.Helper()
+  testify.Positive(t, int(tree.Error_Count), "the log of %.24q holds its refusal", text)
+  found := false
+  for index := range int(tree.Error_Count) {
+    one := state.Errors.Values[index]
+    if one.Code == code {
+      found = true
+    }
+    testify.False(t, one.Token < tree.Failure_Token,
+      "the result of %.24q names the earliest refusal", text)
+  }
+  testify.True(t, found, "the log of %.24q names code %d", text, int(code))
+}
+
+// Reports whether a code stops the parse, which only a source Go refuses too or a bound the
+// source overran does.
+func stops(code ast.Failure_Code) (yes bool) {
+  switch code {
+  case ast.FAILURE_SYNTAX, ast.FAILURE_PACKAGE_CLAUSE, ast.FAILURE_TOKEN_COUNT,
+    ast.FAILURE_NODE_COUNT, ast.FAILURE_NESTING_DEPTH:
+    return true
+  }
+  return false
 }
 
 // States what a caller that holds the state alone reads back from a refused parse: the token it
@@ -708,6 +781,9 @@ func reads_refusal(t *testing.T, state *ast.Parse_State, tree ast.Parse_Result) 
 
 func test_declaration_groups(t *testing.T) {
   state := parse_state()
+  // A comment between the keyword and the parenthesis is trivia, thus the group still opens.
+  counts(t, state, TEST_HEAD+"const /* a */ (\nA = 1\nB = 2\n)\n", ast.NODE_CONSTANT, 2)
+  counts(t, state, TEST_HEAD+"var /* a */ (\na = 1\n)\n", ast.NODE_VARIABLE, 1)
   // A group states one declaration for each name it holds, thus the tree holds one node
   // for each of them and the print writes them ungrouped.
   accepts(
@@ -768,6 +844,14 @@ func test_interface_methods(t *testing.T) {
   } {
     refuses(t, state, TEST_HEAD+one, method)
   }
+  // A method parses as a field that names it and holds its signature as a function type.
+  ast.Parse(state, token.Source(TEST_HEAD+"type R interface {\nRead(p []byte) (n int)\n}\n"))
+  kinds := walk_kinds(state, ast.INDEX_FIRST, nil)
+  for _, one := range []ast.Node_Kind{
+    ast.NODE_FIELD, ast.NODE_FIELD_NAME, ast.NODE_FUNCTION_TYPE, ast.NODE_RESULT,
+  } {
+    testify.Contains(t, kinds, one, "the method holds kind %d", int(one))
+  }
   for _, one := range []string{
     "type R interface{}\n",
     "type R interface{ any }\n",
@@ -791,6 +875,14 @@ func test_interface_methods(t *testing.T) {
 func test_wide_identifiers(t *testing.T) {
   state := parse_state()
   refuses(t, state, TEST_HEAD+"var é = 1\n", ast.FAILURE_WIDE_IDENTIFIER)
+  refuses(t, state, TEST_HEAD+"var aé1 = 1\n", ast.FAILURE_WIDE_IDENTIFIER)
+  refuses(t, state, TEST_HEAD+"func f() {\nπ()\n}\n", ast.FAILURE_WIDE_IDENTIFIER)
+  // A wide name is one identifier, thus the tree holds it whole.
+  source := TEST_HEAD + "var aé1 = 1\n"
+  ast.Parse(state, token.Source(source))
+  run := ast.Parse_State_Token_Run(state)
+  testify.Equal(t, "aé1", string(token.Text(token.Source(source), run[4])),
+    "the wide name scans as one token")
   accepts(t, state, TEST_HEAD+"var a = \"é\"\n", []ast.Node_Kind{ast.NODE_STRING})
   accepts(t, state, TEST_HEAD+"// é\nvar a = 1\n", []ast.Node_Kind{ast.NODE_COMMENT})
 }
@@ -883,6 +975,38 @@ func test_refused_signs(t *testing.T) {
   refuses(t, state, statement_source(body, "for a && b {\nc()\n}"), refused)
   refuses(t, state, statement_source(body, "switch {\ncase a <= b:\nc()\n}"), refused)
   refuses(t, state, TEST_HEAD+"const HELD = 1 <= 2\n", refused)
+  // A refused sign binds at Go's own level, thus the tree it leaves reads as Go reads it.
+  for _, one := range []struct {
+    Source string
+    Root   string
+  }{
+    {Source: "var a = b || c && d\n", Root: "||"},
+    {Source: "var a = b && c || d\n", Root: "||"},
+    {Source: "var a = b == c && d != e\n", Root: "&&"},
+    {Source: "var a = b + c <= d * e\n", Root: "<="},
+    {Source: "var a = b >= c || d\n", Root: "||"},
+  } {
+    source := TEST_HEAD + one.Source
+    tree := ast.Parse(state, token.Source(source))
+    root := ast.INDEX_ABSENT
+    for slot := ast.INDEX_FIRST; slot < ast.Index(tree.Node_Count); slot++ {
+      node := ast.Node_At(state, slot)
+      if node.Kind != ast.NODE_BINARY {
+        continue
+      }
+      if ast.Node_At(state, ast.Index(node.Parent)).Kind != ast.NODE_BINARY {
+        root = slot
+      }
+    }
+    testify.Equal(
+      t,
+      one.Root,
+      string(token.Text(token.Source(source),
+        ast.Token_At(state, ast.Node_At(state, root).Token))),
+      "the outermost operation of %q is its loosest sign",
+      one.Source,
+    )
+  }
   accepts(
     t,
     state,
@@ -900,6 +1024,8 @@ func test_dot_imports(t *testing.T) {
   dot := ast.FAILURE_DOT_IMPORT
   refuses(t, state, TEST_HEAD+"import . \"io\"\n", dot)
   refuses(t, state, TEST_HEAD+"import \"os\"\nimport . \"io\"\n", dot)
+  refuses(t, state, TEST_HEAD+"import (\n. \"io\"\n\"os\"\n)\n", dot)
+  accepts_refused(t, state, TEST_HEAD+"import . \"io\"\n", ast.NODE_IMPORT_NAME)
   accepts(t, state, TEST_HEAD+"import \"io\"\n", []ast.Node_Kind{ast.NODE_IMPORT})
   accepts(t, state, TEST_HEAD+"var a = b.c\n", []ast.Node_Kind{ast.NODE_SELECTOR})
 }
@@ -995,6 +1121,8 @@ func test_type_aliases(t *testing.T) {
   refuses(t, state, TEST_HEAD+"type T = pkg.U\n", alias)
   refuses(t, state, TEST_HEAD+"type T[K any] = U[K]\n", alias)
   refuses(t, state, TEST_HEAD+"func f() {\ntype T = U\n_ = a\n}\n", alias)
+  refuses(t, state, TEST_HEAD+"type (\nT = U\nV W\n)\n", alias)
+  accepts_refused(t, state, TEST_HEAD+"type T = pkg.U\n", ast.NODE_SELECTOR)
   accepts(t, state, TEST_HEAD+"type T U\n", []ast.Node_Kind{ast.NODE_TYPE})
   accepts(t, state, TEST_HEAD+"type T pkg.U\n", []ast.Node_Kind{ast.NODE_SELECTOR})
   accepts(t, state, TEST_HEAD+"var a = b\n", []ast.Node_Kind{ast.NODE_VARIABLE})
@@ -1436,6 +1564,7 @@ func test_errors(t *testing.T) {
     TEST_HEAD + "func f() {\na # b\n}\n",
     TEST_HEAD + "func f() {\na b\n}\n",
     TEST_HEAD + "type T map[",
+    TEST_HEAD + "var a, 1 = 2\n",
   }
   for _, one := range broken {
     result := ast.Parse(state, token.Source(one))
@@ -1462,6 +1591,61 @@ func test_errors(t *testing.T) {
     root,
     "a source past the token count returns no tree",
   )
+}
+
+func test_error_log(t *testing.T) {
+  state := parse_state()
+  // Each refused form the source states lands in the log in the order the parse met it, and
+  // the result names the earliest.
+  source := TEST_HEAD + "import . \"io\"\n" +
+    "type T = U\n" +
+    "const a = iota\n" +
+    "func f() A {\nif b && c {\nd()\n}\n}\n"
+  tree := ast.Parse(state, token.Source(source))
+  want := []ast.Failure_Code{
+    ast.FAILURE_DOT_IMPORT,
+    ast.FAILURE_TYPE_ALIAS,
+    ast.FAILURE_REFUSED_SIGN,
+    ast.FAILURE_CONSTANT_CASE,
+    ast.FAILURE_UNNAMED_RESULT,
+    ast.FAILURE_IOTA,
+  }
+  testify.Equal(t, len(want), int(tree.Error_Count), "the log holds every refusal")
+  held := []ast.Failure_Code{}
+  for index := range int(tree.Error_Count) {
+    held = append(held, state.Errors.Values[index].Code)
+  }
+  testify.Elements_Match(t, want, held, "the log names each refused form")
+  testify.Equal(t, ast.FAILURE_DOT_IMPORT, tree.Failure, "the result names the earliest")
+  testify.Equal(t, ast.FAILURE_DOT_IMPORT, ast.Failure(state), "the state keeps it")
+  testify.Equal(
+    t,
+    ".",
+    string(token.Text(token.Source(source), ast.Token_At(state, tree.Failure_Token))),
+    "the earliest refusal names its token",
+  )
+  // The log fills and holds no more, however many refusals the source states.
+  spent := []byte(TEST_HEAD + "var a = []int{")
+  for range ast.ERROR_COUNT_MAXIMUM + 1 {
+    spent = append(spent, "iota, "...)
+  }
+  spent = append(spent, "}\n"...)
+  full := ast.Parse(state, token.Source(spent))
+  testify.Equal(t, ast.ERROR_COUNT_MAXIMUM, int(full.Error_Count), "the log fills")
+  testify.Equal(t, ast.FAILURE_IOTA, full.Failure, "a full log names the earliest")
+  // One refusal and two refusals count as they stand.
+  one := ast.Parse(state, token.Source(TEST_HEAD+"const A = iota\n"))
+  testify.Equal(t, 1, int(one.Error_Count), "one refusal counts one")
+  two := ast.Parse(state, token.Source(TEST_HEAD+"const A, B = iota, iota\n"))
+  testify.Equal(t, 2, int(two.Error_Count), "two refusals count two")
+  // A clean parse logs nothing, and a later parse on the state forgets the log before it.
+  clean := ast.Parse(state, token.Source(TEST_HEAD+"var a = 1\n"))
+  testify.Equal(t, 0, int(clean.Error_Count), "a clean parse logs nothing")
+  // A stop still logs what the parse met before it.
+  stopped := ast.Parse(state, token.Source(TEST_HEAD+"import . \"io\"\nvar a = )\n"))
+  testify.Equal(t, ast.FAILURE_DOT_IMPORT, stopped.Failure, "the earliest refusal leads")
+  testify.Equal(t, 2, int(stopped.Error_Count), "the stop joins the refusal before it")
+  testify.Equal(t, ast.FAILURE_SYNTAX, state.Errors.Values[1].Code, "the stop comes last")
 }
 
 // Wraps one statement in the shortest file that can hold it.
@@ -1592,7 +1776,7 @@ func test_failures_codes(t *testing.T) {
 
 func test_failures_messages(t *testing.T) {
   seen := map[string]bool{}
-  for code := range int(ast.FAILURE_NESTING_DEPTH) + 1 {
+  for code := range int(ast.FAILURE_CODE_MAXIMUM) + 1 {
     text := string(ast.Failure_Message(ast.Failure_Code(code)))
     testify.Not_Empty(t, text, "code %d reads as a sentence", code)
     testify.False(t, seen[text], "code %d reads as a sentence of its own", code)
@@ -1687,7 +1871,7 @@ func footprint_bounds(t *testing.T) {
   testify.Equal(
     t,
     ast.ENTRY_MAXIMUM,
-    ast.ENTRY_IMPORT_MEMBERS,
+    ast.ENTRY_METHOD,
     "the widest entry names the step the final rule opens at",
   )
   testify.Equal(

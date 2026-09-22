@@ -18,9 +18,9 @@ general comment holding a line feed closes its line.
 
 # Identifiers
 
-An identifier opens with an ASCII letter or an underscore and continues with letters, digits, and
-underscores. A byte at or above 128 opens no identifier, because this repository writes every
-declared name in ASCII.
+An identifier opens with a letter or an underscore and continues with letters, digits, and
+underscores, as Go admits them: a wide letter opens one and a wide digit continues one. A byte
+at or above 128 that encodes no letter or digit opens no identifier and scans as KIND_ILLEGAL.
 
 # Keywords
 

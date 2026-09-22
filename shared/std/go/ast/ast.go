@@ -1,6 +1,6 @@
 // Package ast parses Go source into a node arena. The caller owns one Parse_State and every
-// node is a slot in caller storage, thus a parse allocates nothing. The grammar it accepts is the
-// subset this repository's linter permits. The grammar is a program of small steps rather than a
+// node is a slot in caller storage, thus a parse allocates nothing. The grammar reads all of Go,
+// and logs each form this repository's linter refuses. The grammar is a program of small steps rather than a
 // function for each rule, because a rule function runs only where its syntax stands and would owe
 // every read position and every arena count at a call site that never meets most of them.
 package ast
@@ -61,14 +61,20 @@ const NODE_COUNT_BARE = 2
 // PRECEDENCE_NONE marks a token that binds no binary expression.
 const PRECEDENCE_NONE Precedence = 0
 
-// PRECEDENCE_COMPARISON is the level of the four comparison operators this dialect states.
-const PRECEDENCE_COMPARISON Precedence = 1
+// PRECEDENCE_DISJUNCTION is the level of the conditional or, the loosest operator Go states.
+const PRECEDENCE_DISJUNCTION Precedence = 1
+
+// PRECEDENCE_CONJUNCTION is the level of the conditional and.
+const PRECEDENCE_CONJUNCTION Precedence = 2
+
+// PRECEDENCE_COMPARISON is the level of the six comparison operators.
+const PRECEDENCE_COMPARISON Precedence = 3
 
 // PRECEDENCE_ADDITION is the level of addition, subtraction, and the two or operators.
-const PRECEDENCE_ADDITION Precedence = 2
+const PRECEDENCE_ADDITION Precedence = 4
 
 // PRECEDENCE_MULTIPLICATION is the level of the products, the shifts, and the two and operators.
-const PRECEDENCE_MULTIPLICATION Precedence = 3
+const PRECEDENCE_MULTIPLICATION Precedence = 5
 
 // EMBEDDED_WALK_MAXIMUM caps the walk from a field to the identifier it embeds. A pointer, a
 // qualifier, and a type argument list each add one step, and nothing Go admits adds many.
@@ -94,49 +100,49 @@ const FAILURE_SYNTAX Failure_Code = 1
 
 // FAILURE_INTERFACE_METHOD marks an interface that holds a method. The linter bans the
 // interface, not the method: a method declaration parses and the linter judges it on its own.
-const FAILURE_INTERFACE_METHOD Failure_Code = 2
+const FAILURE_INTERFACE_METHOD Failure_Code = 3
 
 // FAILURE_WIDE_IDENTIFIER marks a name holding a byte at or above 128.
-const FAILURE_WIDE_IDENTIFIER Failure_Code = 3
+const FAILURE_WIDE_IDENTIFIER Failure_Code = 4
 
 // FAILURE_IOTA marks the iota identifier, which ties a constant value to declaration order.
-const FAILURE_IOTA Failure_Code = 4
+const FAILURE_IOTA Failure_Code = 5
 
-// FAILURE_REFUSED_SIGN marks a sign this dialect states no form for: the conditional and and the
-// conditional or, which are nested ifs written flat, and the two order signs that hold equality,
-// which a strict comparison states.
-const FAILURE_REFUSED_SIGN Failure_Code = 5
+// FAILURE_REFUSED_SIGN marks a sign the linter refuses: the conditional and and the conditional
+// or, which are nested ifs written flat, and the two order signs that hold equality, which a
+// strict comparison states.
+const FAILURE_REFUSED_SIGN Failure_Code = 6
 
-// FAILURE_DOT_IMPORT marks an import that binds no name, which spills a package into the file.
-const FAILURE_DOT_IMPORT Failure_Code = 6
+// FAILURE_DOT_IMPORT marks an import bound to the period, which spills a package into the file.
+const FAILURE_DOT_IMPORT Failure_Code = 7
 
 // FAILURE_BLANK_IMPORT marks an import bound to the blank name, which is a package taken for its
 // effects alone.
-const FAILURE_BLANK_IMPORT Failure_Code = 7
+const FAILURE_BLANK_IMPORT Failure_Code = 8
 
 // FAILURE_CONSTANT_CASE marks a constant name that is no run of uppercase words.
-const FAILURE_CONSTANT_CASE Failure_Code = 8
+const FAILURE_CONSTANT_CASE Failure_Code = 9
 
 // FAILURE_BARE_LOOP marks a for that no clause constrains, which runs forever.
-const FAILURE_BARE_LOOP Failure_Code = 9
+const FAILURE_BARE_LOOP Failure_Code = 10
 
 // FAILURE_UNNAMED_RESULT marks a signature result that carries no name.
-const FAILURE_UNNAMED_RESULT Failure_Code = 10
+const FAILURE_UNNAMED_RESULT Failure_Code = 11
 
 // FAILURE_TYPE_ALIAS marks a type declaration bound by the assignment sign, which gives one
 // type a second name instead of declaring a type of its own.
-const FAILURE_TYPE_ALIAS Failure_Code = 11
+const FAILURE_TYPE_ALIAS Failure_Code = 12
 
 // FAILURE_CLOSURE_BODY marks a function literal whose body holds anything but calls, which
 // hides logic a named function would lay open to a test.
-const FAILURE_CLOSURE_BODY Failure_Code = 12
+const FAILURE_CLOSURE_BODY Failure_Code = 13
 
 // FAILURE_FALLTHROUGH marks a case that runs on into the case behind it, which states a flow no
 // reader of the case alone can see.
-const FAILURE_FALLTHROUGH Failure_Code = 13
+const FAILURE_FALLTHROUGH Failure_Code = 14
 
 // FAILURE_PACKAGE_CLAUSE marks a file that opens with anything but the package keyword.
-const FAILURE_PACKAGE_CLAUSE Failure_Code = 14
+const FAILURE_PACKAGE_CLAUSE Failure_Code = 2
 
 // FAILURE_TOKEN_COUNT marks a source holding more tokens than one run admits.
 const FAILURE_TOKEN_COUNT Failure_Code = 15
@@ -588,17 +594,11 @@ func Suffix_Kind_Invariants(value Suffix_Kind, namespace aver.Namespace) {
 // Precedence is the binding level of a binary operator.
 type Precedence int
 
-// Precedence_Invariants admits the level of a token that binds nothing and the three levels this
-// dialect states.
+// Precedence_Invariants admits the level of a token that binds nothing and the five levels Go
+// states.
 func Precedence_Invariants(value Precedence, namespace aver.Namespace) {
   aver.Tree(value, namespace).
-    Enum_4_Int(
-    int(value),
-    int(PRECEDENCE_NONE),
-    int(PRECEDENCE_COMPARISON),
-    int(PRECEDENCE_ADDITION),
-    int(PRECEDENCE_MULTIPLICATION),
-  ).
+    Range_Int(int(value), int(PRECEDENCE_NONE), int(PRECEDENCE_MULTIPLICATION)).
     Ensure()
 }
 
@@ -743,8 +743,73 @@ func Earlier_Child_Storage_Invariants(
   Earlier_Children_Invariants(value.Values, namespace)
 }
 
-// Syntax_Tree is the token run and the node arena one parse writes, which is all a reader of the
-// tree walks.
+// ERROR_COUNT_MAXIMUM caps the error log. A file the linter admits logs nothing, and a file that
+// breaks a rule most often breaks few, thus a log this wide names more than any author fixes in
+// one pass.
+const ERROR_COUNT_MAXIMUM = 256
+
+// ERROR_COUNT_MINIMUM is the empty log, which a clean parse writes.
+const ERROR_COUNT_MINIMUM = 0
+
+// Error is one refusal a parse logged: the rule the source broke and the token that broke it. The
+// zero value is no refusal, thus an empty slot of the log reads as the end of it.
+type Error struct {
+  // Code names the rule, or FAILURE_NONE for no refusal.
+  Code Failure_Code
+  // Token is the run position of the token that broke the rule.
+  Token Token_Index
+}
+
+// Error_Invariants composes one refusal.
+func Error_Invariants(value *Error, namespace aver.Namespace) {
+  Failure_Code_Invariants(value.Code, namespace)
+  Token_Index_Invariants(value.Token, namespace)
+}
+
+// Errors keeps the error log caller-owned and unable to grow.
+type Errors []Error
+
+// Errors_Invariants fixes the log to its bound.
+func Errors_Invariants(value Errors, _ aver.Namespace) {
+  aver.Always(len(value) == ERROR_COUNT_MAXIMUM, "Error storage has complete length.")
+  aver.Always(cap(value) == ERROR_COUNT_MAXIMUM, "Error storage cannot grow.")
+}
+
+// Error_Storage keeps the error log composable under parse state.
+type Error_Storage struct {
+  // Values stays wrapped because validated state inherits this field.
+  Values Errors
+}
+
+// Error_Storage_Invariants fixes caller error memory.
+func Error_Storage_Invariants(value *Error_Storage, namespace aver.Namespace) {
+  Errors_Invariants(value.Values, namespace)
+}
+
+// Error_Storage_Handle gives the log of one parse one identity. Each step of the grammar carries
+// it on to the one refusal it may write.
+type Error_Storage_Handle *Error_Storage
+
+// Error_Storage_Handle_Invariants composes a present log.
+func Error_Storage_Handle_Invariants(value Error_Storage_Handle, namespace aver.Namespace) {
+  if value == nil {
+    return
+  }
+  Error_Storage_Invariants(value, namespace)
+}
+
+// Error_Count is how many refusals one parse logged.
+type Error_Count int32
+
+// Error_Count_Invariants states every log from the empty one to the widest.
+func Error_Count_Invariants(value Error_Count, namespace aver.Namespace) {
+  aver.Tree(value, namespace).
+    Range_Int32(int32(value), ERROR_COUNT_MINIMUM, ERROR_COUNT_MAXIMUM).
+    Ensure()
+}
+
+// Syntax_Tree is the token run, the node arena, and the error log one parse writes, which is all
+// a reader of the tree walks.
 type Syntax_Tree struct {
   // Tokens is the token run of the source, ending in one end-of-file token.
   Tokens Token_Storage
@@ -759,6 +824,8 @@ type Syntax_Tree struct {
   // Earlier_Children holds the child before the final one at each nesting depth, which is
   // what an operator needs to unlink the operand it takes back.
   Earlier_Children Earlier_Child_Storage
+  // Errors holds each refusal the parse met, in the order it met them.
+  Errors Error_Storage
 }
 
 // Syntax_Tree_Invariants composes every store the caller supplies.
@@ -768,6 +835,7 @@ func Syntax_Tree_Invariants(value *Syntax_Tree, namespace aver.Namespace) {
   Parent_Storage_Invariants(&value.Parents, namespace)
   Last_Child_Storage_Invariants(&value.Last_Children, namespace)
   Earlier_Child_Storage_Invariants(&value.Earlier_Children, namespace)
+  Error_Storage_Invariants(&value.Errors, namespace)
 }
 
 // Syntax_Tree_Handle gives the caller-owned tree storage one identity.
@@ -785,10 +853,10 @@ func Syntax_Tree_Handle_Invariants(value Syntax_Tree_Handle, namespace aver.Name
 type Parse_State struct {
   // Syntax_Tree is the tree the parse writes.
   Syntax_Tree
-  // Failure is why the last parse stopped, or FAILURE_NONE when it ran clean.
+  // Failure is the earliest refusal of the last parse, or FAILURE_NONE when it ran clean.
   Failure Failure_Code
-  // Failure_Token is the run position of the token the last parse refused. It carries no
-  // meaning while Failure reads FAILURE_NONE.
+  // Failure_Token is the run position of the token the last parse refused first. It carries
+  // no meaning while Failure reads FAILURE_NONE.
   Failure_Token Token_Index
 }
 
@@ -1018,6 +1086,8 @@ type Machine struct {
   Arena Arena
   // Flags holds the readings the grammar carries across its rules.
   Flags Machine_Flags
+  // Log holds each refusal the run met and read on past.
+  Log Error_Storage_Handle
 }
 
 // Machine_Invariants composes every store and every cursor of one run.
@@ -1026,6 +1096,7 @@ func Machine_Invariants(value *Machine, namespace aver.Namespace) {
   Run_Cursors_Invariants(&value.Run, namespace)
   Arena_Invariants(&value.Arena, namespace)
   Machine_Flags_Invariants(&value.Flags, namespace)
+  Error_Storage_Handle_Invariants(value.Log, namespace)
 }
 
 // Machine_Handle gives one run of the grammar program one identity.
@@ -1059,9 +1130,9 @@ func Node_Count_Invariants(value Node_Count, namespace aver.Namespace) {
     Ensure()
 }
 
-// Parse_Result is what one parse returns: the root it built, the extent of the run and the arena it
-// wrote, and why it stopped. It stands apart from the caller storage, because a reader of the
-// storage walks the tree by its links and never owes a count one parse wrote.
+// Parse_Result is what one parse returns: the root it built, the extent of the run, the arena, and
+// the log it wrote, and the earliest refusal. It stands apart from the caller storage, because a
+// reader of the storage walks the tree by its links and never owes a count one parse wrote.
 type Parse_Result struct {
   // Root is the file node, or INDEX_ABSENT when the scan refused the source.
   Root Root
@@ -1069,10 +1140,12 @@ type Parse_Result struct {
   Token_Count Token_Count
   // Node_Count bounds the arena the parse wrote.
   Node_Count Node_Count
-  // Failure is why the parse stopped, or FAILURE_NONE when it ran clean.
+  // Error_Count bounds the log the parse wrote.
+  Error_Count Error_Count
+  // Failure is the earliest refusal, or FAILURE_NONE when the parse ran clean.
   Failure Failure_Code
-  // Failure_Token is the run position of the token the parse refused. It carries no meaning
-  // while Failure reads FAILURE_NONE.
+  // Failure_Token is the run position of the token the parse refused first. It carries no
+  // meaning while Failure reads FAILURE_NONE.
   Failure_Token Token_Index
   // OK reports whether the parse ran clean, which is Failure reading FAILURE_NONE.
   OK Boolean
@@ -1083,6 +1156,7 @@ func Parse_Result_Invariants(value *Parse_Result, namespace aver.Namespace) {
   Root_Invariants(value.Root, namespace)
   Token_Count_Invariants(value.Token_Count, namespace)
   Node_Count_Invariants(value.Node_Count, namespace)
+  Error_Count_Invariants(value.Error_Count, namespace)
   Failure_Code_Invariants(value.Failure, namespace)
   Token_Index_Invariants(value.Failure_Token, namespace)
   Boolean_Invariants(value.OK, namespace)
@@ -1244,8 +1318,8 @@ const OPCODE_TYPE_PARAMETERS Opcode = 17
 // generic type rather than one more parameter name.
 const OPCODE_QUALIFIES Opcode = 18
 
-// OPCODE_FIELD_NAMED tests whether the field at the read spells its name out.
-const OPCODE_FIELD_NAMED Opcode = 19
+// OPCODE_NAMED tests whether the field or the parameter at the read spells its name out.
+const OPCODE_NAMED Opcode = 19
 
 // OPCODE_BARRED_BRACE tests whether a control clause bars the brace at the read from opening a
 // composite literal.
@@ -1345,8 +1419,11 @@ const OPCODE_CLOSE_STARS Opcode = 48
 // OPCODE_MINIMUM is the return, the smallest opcode.
 const OPCODE_MINIMUM = uint8(OPCODE_RETURN)
 
-// OPCODE_MAXIMUM is the close of a run of stars, the largest opcode.
-const OPCODE_MAXIMUM = uint8(OPCODE_CLOSE_STARS)
+// OPCODE_NOTE logs the token at the read for the cause its operand names, and reads on.
+const OPCODE_NOTE Opcode = 49
+
+// OPCODE_MAXIMUM is the note, the largest opcode.
+const OPCODE_MAXIMUM = uint8(OPCODE_NOTE)
 
 // Opcode is the action of one step of the grammar program.
 type Opcode uint8
@@ -1397,7 +1474,7 @@ const STEP_SIZE = 2
 
 // STEP_COUNT is how many steps the program holds. Registration reads no length of a string,
 // thus the count is spelled out and the bounds test holds it to the program.
-const STEP_COUNT = 959
+const STEP_COUNT = 973
 
 // PLACE_MINIMUM is the first step of the program.
 const PLACE_MINIMUM = 0
@@ -1456,34 +1533,22 @@ func Frame_Depth_Invariants(value Frame_Depth, namespace aver.Namespace) {
 // Held_Level is the level of the operator one binary rule stepped past.
 type Held_Level Precedence
 
-// Held_Level_Invariants admits the level of a token that binds nothing and the three levels this
-// dialect states.
+// Held_Level_Invariants admits the level of a token that binds nothing and the five levels Go
+// states.
 func Held_Level_Invariants(value Held_Level, namespace aver.Namespace) {
   aver.Tree(value, namespace).
-    Enum_4_Int(
-    int(value),
-    int(PRECEDENCE_NONE),
-    int(PRECEDENCE_COMPARISON),
-    int(PRECEDENCE_ADDITION),
-    int(PRECEDENCE_MULTIPLICATION),
-  ).
+    Range_Int(int(value), int(PRECEDENCE_NONE), int(PRECEDENCE_MULTIPLICATION)).
     Ensure()
 }
 
 // Callee_Level is the level the rule one step calls runs at.
 type Callee_Level Precedence
 
-// Callee_Level_Invariants admits the level of a rule that holds no operator and the three levels
-// this dialect states.
+// Callee_Level_Invariants admits the level of a rule that holds no operator and the five levels
+// Go states.
 func Callee_Level_Invariants(value Callee_Level, namespace aver.Namespace) {
   aver.Tree(value, namespace).
-    Enum_4_Int(
-    int(value),
-    int(PRECEDENCE_NONE),
-    int(PRECEDENCE_COMPARISON),
-    int(PRECEDENCE_ADDITION),
-    int(PRECEDENCE_MULTIPLICATION),
-  ).
+    Range_Int(int(value), int(PRECEDENCE_NONE), int(PRECEDENCE_MULTIPLICATION)).
     Ensure()
 }
 
@@ -1568,8 +1633,9 @@ func Frame_Handle_Invariants(value Frame_Handle, namespace aver.Namespace) {
 const STEP_BUDGET = TOKEN_COUNT_MAXIMUM * 64
 
 // Parse scans a source into the token run and runs the grammar program over it into the arena. A
-// source the grammar rejects still returns the tree that was built, with an error node at the
-// token that failed, because a linter reads more from a partial tree than from nothing.
+// form of valid Go the linter refuses still parses, and its refusal lands in the log. A source Go
+// refuses too stops the parse and still returns the tree that was built, with an error node at
+// the token that failed, because a linter reads more from a partial tree than from nothing.
 func Parse(subject Parse_State_Handle, source token.Source) (tree Parse_Result) {
   defer func() { Parse_Result_Invariants(&tree, "parse.tree") }()
   Parse_State_Handle_Invariants(subject, "parse.subject")
@@ -1593,6 +1659,12 @@ func Parse(subject Parse_State_Handle, source token.Source) (tree Parse_Result) 
     Failure_Token: 0,
   }
   opened := Arena_Cursors{Count: ARENA_COUNT_MINIMUM, Depth: DEPTH_MINIMUM}
+  // A log a parse before this one wrote reads as refusals of this one, thus the parse empties
+  // it first.
+  for slot := range ERROR_COUNT_MAXIMUM {
+    subject.Errors.Values[slot] = Error{Code: FAILURE_NONE, Token: 0}
+  }
+  log := Error_Storage_Handle(&subject.Errors)
   machine := Machine{
     Tokens: subject.Tokens,
     Run:    Run_Cursors{Count: count, Position: 0, Blank: 0},
@@ -1604,6 +1676,10 @@ func Parse(subject Parse_State_Handle, source token.Source) (tree Parse_Result) 
       Cursors:          opened,
     },
     Flags: Machine_Flags{Plain_Brace: false, Type_Assertion: false},
+    Log: log,
+  }
+  if !bool(scanned) {
+    log_error(log, FAILURE_TOKEN_COUNT, 0)
   }
   if bool(scanned) {
     // The file opens ahead of the program, thus every step of it reads an arena that
@@ -1619,29 +1695,77 @@ func Parse(subject Parse_State_Handle, source token.Source) (tree Parse_Result) 
     subject.Last_Children.Values[0] = INDEX_ABSENT
     subject.Earlier_Children.Values[0] = INDEX_ABSENT
     refusal := descend(&machine, PRODUCTION_FILE, PRECEDENCE_NONE, 0)
+    log_error(log, refusal.Cause, refusal.Token)
     tree.Root = Root(INDEX_FIRST)
     tree.Node_Count = Node_Count(machine.Arena.Cursors.Count)
-    tree.Failure = refusal.Cause
-    tree.Failure_Token = refusal.Token
-    tree.OK = Boolean(refusal.Cause == FAILURE_NONE)
   }
-  tree = name_wide_identifier(held, tree, source)
-  // The import pass runs first, because an import stands ahead of every declaration and the
-  // failure a caller reads should be the one its author meets first.
-  tree = name_blank_import(held, tree, source)
-  tree = name_constant_case(held, tree, source)
-  tree = name_bare_loop(held, tree, source)
-  tree = name_fallthrough(held, tree)
-  tree = name_unnamed_result(held, tree)
-  tree = name_closure_statement(held, tree)
-  tree = name_closure_call(held, tree)
-  tree = name_banned_identifier(held, tree, source)
+  // Each pass reads the whole tree the parse built and logs every refusal it meets, thus the
+  // log holds each form the author must fix and not only the first.
+  written := tree.Node_Count
+  name_wide_identifier(held, tree.Token_Count, log, source)
+  name_blank_import(held, written, log, source)
+  name_constant_case(held, written, log, source)
+  name_bare_loop(held, written, log, source)
+  name_fallthrough(held, written, log)
+  name_unnamed_result(held, written, log)
+  name_closure_body(held, written, log)
+  name_banned_identifier(held, written, log, source)
+  logged, first := log_result(log)
+  tree.Error_Count = logged
+  tree.Failure = first.Cause
+  tree.Failure_Token = first.Token
+  tree.OK = Boolean(first.Cause == FAILURE_NONE)
   subject.Failure = tree.Failure
   subject.Failure_Token = tree.Failure_Token
   empty_tokens(held, tree.Token_Count)
   empty_nodes(held, tree.Node_Count)
   return tree
 }
+
+// Writes one refusal into the first empty slot of the log, where the log has one. No refusal
+// writes nothing, thus every stop and every rule logs through here alike.
+func log_error(log Error_Storage_Handle, code Failure_Code, position Token_Index) {
+  Error_Storage_Handle_Invariants(log, "log_error.log")
+  Failure_Code_Invariants(code, "log_error.code")
+  Token_Index_Invariants(position, "log_error.position")
+  if code == FAILURE_NONE {
+    return
+  }
+  for slot := range ERROR_COUNT_MAXIMUM {
+    if log.Values[slot].Code == FAILURE_NONE {
+      log.Values[slot] = Error{Code: code, Token: position}
+      return
+    }
+  }
+}
+
+// Reads the log one parse wrote: how many refusals it holds, and the one at the earliest token,
+// which is the refusal its author meets first.
+func log_result(log Error_Storage_Handle) (count Error_Count, first Refusal) {
+  defer func() {
+    Error_Count_Invariants(count, "log_result.count")
+    Refusal_Invariants(&first, "log_result.first")
+  }()
+  Error_Storage_Handle_Invariants(log, "log_result.log")
+  count = ERROR_COUNT_MINIMUM
+  first = Refusal{Cause: FAILURE_NONE, Token: 0}
+  for slot := range ERROR_COUNT_MAXIMUM {
+    entry := log.Values[slot]
+    if entry.Code == FAILURE_NONE {
+      break
+    }
+    count = count + 1
+    earliest := first.Cause == FAILURE_NONE
+    if entry.Token < first.Token {
+      earliest = true
+    }
+    if earliest {
+      first = Refusal{Cause: entry.Code, Token: entry.Token}
+    }
+  }
+  return count, first
+}
+
 
 // Empties every token past the run one parse wrote, up to the first slot no parse wrote. A parse
 // before this one may have written a longer run, and a token it left would read as part of this
@@ -1881,6 +2005,8 @@ func step(machine Machine_Handle, frame Frame_Handle) (control Control, refusal 
     calls = true
     frame.Callee = PRODUCTION_BINARY
     frame.Callee_Level = Callee_Level(frame.Held)
+  case OPCODE_NOTE:
+    log_error(machine.Log, Failure_Code(operand), position)
   }
   frame.Place = frame.Place + 1
   if !calls {
@@ -1941,8 +2067,9 @@ func production_entry(production Production) (place Entry_Place) {
   return Entry_Place(high*ENTRY_BASE + low)
 }
 
-// Reads the token at the read, the token behind it, and the token behind that one. A read past
-// the run names the end token, which is what the run holds there.
+// Reads the token at the read, the token behind it, and the token behind that one. A comment is
+// trivia every step takes on its own, thus the look past the read steps over it. A read past the
+// run names the end token, which is what the run holds there.
 func window(
   tokens Token_Storage,
   run Run_Cursors,
@@ -1958,12 +2085,17 @@ func window(
   count := int(run.Count)
   at = tokens.Values[position].Kind
   after = token.KIND_END_OF_FILE
-  if position+1 < count {
-    after = tokens.Values[position+1].Kind
-  }
   second = token.KIND_END_OF_FILE
-  if position+2 < count {
-    second = tokens.Values[position+2].Kind
+  for place := position + 1; place < count; place++ {
+    kind := tokens.Values[place].Kind
+    if kind == token.KIND_COMMENT {
+      continue
+    }
+    if after != token.KIND_END_OF_FILE {
+      second = kind
+      break
+    }
+    after = kind
   }
   return at, after, second
 }
@@ -2077,7 +2209,7 @@ func test_scan(
       return true
     }
     return false
-  case OPCODE_FIELD_NAMED:
+  case OPCODE_NAMED:
     if at != token.KIND_IDENTIFIER {
       return false
     }
@@ -2094,10 +2226,11 @@ func test_scan(
   return holds
 }
 
-// Reports whether the bracket run behind the name at the read ends the field. An identifier ahead
-// of a bracket reads two ways: a name before an array or slice type, or a generic type the field
-// embeds. The token behind the closing bracket tells them apart, because a field that ends there
-// embedded a type and one that reads on named it.
+// Reports whether the bracket run behind the name at the read ends the field or the parameter. An
+// identifier ahead of a bracket reads two ways: a name before an array or slice type, or a
+// generic type the field embeds or the parameter states alone. The token behind the closing
+// bracket tells them apart, because one that ends there stated a type and one that reads on
+// named it.
 func closes_field(tokens Token_Storage, run Run_Cursors) (yes Boolean) {
   defer func() { Boolean_Invariants(yes, "closes_field.yes") }()
   Token_Storage_Invariants(&tokens, "closes_field.tokens")
@@ -2126,6 +2259,8 @@ func closes_field(tokens Token_Storage, run Run_Cursors) (yes Boolean) {
         // token at the least, thus the read stays inside the run.
         switch values[place+1].Kind {
         case token.KIND_SEMICOLON, token.KIND_BRACE_RIGHT:
+          return true
+        case token.KIND_PARENTHESIS_RIGHT, token.KIND_COMMA:
           return true
         case token.KIND_STRING, token.KIND_COMMENT:
           return true
@@ -2674,7 +2809,12 @@ func binary_precedence(kind token.Kind) (level Precedence) {
   defer func() { Precedence_Invariants(level, "binary_precedence.level") }()
   token.Kind_Invariants(kind, "binary_precedence.kind")
   switch kind {
-  case token.KIND_EQUAL, token.KIND_NOT_EQUAL, token.KIND_LESS, token.KIND_GREATER:
+  case token.KIND_LOGICAL_OR:
+    return PRECEDENCE_DISJUNCTION
+  case token.KIND_LOGICAL_AND:
+    return PRECEDENCE_CONJUNCTION
+  case token.KIND_EQUAL, token.KIND_NOT_EQUAL, token.KIND_LESS, token.KIND_GREATER,
+    token.KIND_LESS_EQUAL, token.KIND_GREATER_EQUAL:
     return PRECEDENCE_COMPARISON
   case token.KIND_PLUS, token.KIND_MINUS, token.KIND_OR, token.KIND_EXCLUSIVE_OR:
     return PRECEDENCE_ADDITION
@@ -2771,51 +2911,45 @@ func Failure_Message(code Failure_Code) (text Message) {
   return "Read the tree."
 }
 
-// Names a refused byte at or above 128 for what it is. The scanner calls such a byte illegal,
-// and only the source tells a stray byte apart from a name Go would have taken, thus the reading
-// happens here where the source is still in reach.
+// Names each identifier that holds a byte at or above 128. The scanner reads a wide letter into
+// the name it stands in, as Go does, and only the source tells a wide name apart from a narrow
+// one, thus the reading happens here where the source is still in reach.
 func name_wide_identifier(
   subject Syntax_Tree_Handle,
-  tree Parse_Result,
+  count Token_Count,
+  log Error_Storage_Handle,
   source token.Source,
-) (named Parse_Result) {
-  defer func() { Parse_Result_Invariants(&named, "name_wide_identifier.named") }()
+) {
   Syntax_Tree_Handle_Invariants(subject, "name_wide_identifier.subject")
-  Parse_Result_Invariants(&tree, "name_wide_identifier.tree")
+  Token_Count_Invariants(count, "name_wide_identifier.count")
+  Error_Storage_Handle_Invariants(log, "name_wide_identifier.log")
   token.Source_Invariants(source, "name_wide_identifier.source")
-  if tree.Failure != FAILURE_SYNTAX {
-    return tree
+  for position := range int(count) {
+    one := subject.Tokens.Values[position]
+    if one.Kind != token.KIND_IDENTIFIER {
+      continue
+    }
+    for _, value := range source[one.Offset : int(one.Offset)+int(one.Size)] {
+      if !(value < WIDE_BYTE_MINIMUM) {
+        log_error(log, FAILURE_WIDE_IDENTIFIER, Token_Index(position))
+        break
+      }
+    }
   }
-  one := subject.Tokens.Values[tree.Failure_Token]
-  if one.Kind != token.KIND_ILLEGAL {
-    return tree
-  }
-  if !(int(one.Offset) < len(source)) {
-    return tree
-  }
-  if source[one.Offset] < WIDE_BYTE_MINIMUM {
-    return tree
-  }
-  tree.Failure = FAILURE_WIDE_IDENTIFIER
-  tree.OK = false
-  return tree
 }
 
 // Names an import bound to the blank name. The name reads from the source, which no parse step
 // carries, thus the pass runs here where the source is still in reach.
 func name_blank_import(
   subject Syntax_Tree_Handle,
-  tree Parse_Result,
+  count Node_Count,
+  log Error_Storage_Handle,
   source token.Source,
-) (named Parse_Result) {
-  defer func() { Parse_Result_Invariants(&named, "name_blank_import.named") }()
+) {
   Syntax_Tree_Handle_Invariants(subject, "name_blank_import.subject")
-  Parse_Result_Invariants(&tree, "name_blank_import.tree")
+  Node_Count_Invariants(count, "name_blank_import.count")
+  Error_Storage_Handle_Invariants(log, "name_blank_import.log")
   token.Source_Invariants(source, "name_blank_import.source")
-  if tree.Failure != FAILURE_NONE {
-    return tree
-  }
-  count := tree.Node_Count
   for slot := INDEX_FIRST; slot < Index(count); slot++ {
     if subject.Nodes.Values[slot].Kind != NODE_IMPORT_NAME {
       continue
@@ -2825,29 +2959,22 @@ func name_blank_import(
     if string(name) != BLANK_NAME {
       continue
     }
-    tree.Failure = FAILURE_BLANK_IMPORT
-    tree.OK = false
-    tree.Failure_Token = Token_Index(subject.Nodes.Values[slot].Token)
-    return tree
+    log_error(log, FAILURE_BLANK_IMPORT, Token_Index(subject.Nodes.Values[slot].Token))
   }
-  return tree
 }
 
 // Names a constant that is no run of uppercase words joined by single underscores. The name
 // reads from the source, which no parse step carries, thus the pass runs here.
 func name_constant_case(
   subject Syntax_Tree_Handle,
-  tree Parse_Result,
+  count Node_Count,
+  log Error_Storage_Handle,
   source token.Source,
-) (named Parse_Result) {
-  defer func() { Parse_Result_Invariants(&named, "name_constant_case.named") }()
+) {
   Syntax_Tree_Handle_Invariants(subject, "name_constant_case.subject")
-  Parse_Result_Invariants(&tree, "name_constant_case.tree")
+  Node_Count_Invariants(count, "name_constant_case.count")
+  Error_Storage_Handle_Invariants(log, "name_constant_case.log")
   token.Source_Invariants(source, "name_constant_case.source")
-  if tree.Failure != FAILURE_NONE {
-    return tree
-  }
-  count := tree.Node_Count
   for slot := INDEX_FIRST; slot < Index(count); slot++ {
     if subject.Nodes.Values[slot].Kind != NODE_CONSTANT_NAME {
       continue
@@ -2889,12 +3016,8 @@ func name_constant_case(
     if screams {
       continue
     }
-    tree.Failure = FAILURE_CONSTANT_CASE
-    tree.OK = false
-    tree.Failure_Token = Token_Index(subject.Nodes.Values[slot].Token)
-    return tree
+    log_error(log, FAILURE_CONSTANT_CASE, Token_Index(subject.Nodes.Values[slot].Token))
   }
-  return tree
 }
 
 // Names a loop that no clause constrains: a bare for, a three-clause for with every clause
@@ -2902,17 +3025,14 @@ func name_constant_case(
 // says so with a range, which is a form of its own and reads as the assertion it is.
 func name_bare_loop(
   subject Syntax_Tree_Handle,
-  tree Parse_Result,
+  count Node_Count,
+  log Error_Storage_Handle,
   source token.Source,
-) (named Parse_Result) {
-  defer func() { Parse_Result_Invariants(&named, "name_bare_loop.named") }()
+) {
   Syntax_Tree_Handle_Invariants(subject, "name_bare_loop.subject")
-  Parse_Result_Invariants(&tree, "name_bare_loop.tree")
+  Node_Count_Invariants(count, "name_bare_loop.count")
+  Error_Storage_Handle_Invariants(log, "name_bare_loop.log")
   token.Source_Invariants(source, "name_bare_loop.source")
-  if tree.Failure != FAILURE_NONE {
-    return tree
-  }
-  count := tree.Node_Count
   for slot := INDEX_FIRST; slot < Index(count); slot++ {
     if subject.Nodes.Values[slot].Kind != NODE_FOR {
       continue
@@ -2936,24 +3056,20 @@ func name_bare_loop(
     if !bare {
       continue
     }
-    tree.Failure = FAILURE_BARE_LOOP
-    tree.OK = false
-    tree.Failure_Token = Token_Index(subject.Nodes.Values[slot].Token)
-    return tree
+    log_error(log, FAILURE_BARE_LOOP, Token_Index(subject.Nodes.Values[slot].Token))
   }
-  return tree
 }
 
 // Names a signature result that carries no name. A result that names itself holds its name and
 // its type, thus a result holding one child alone is a type standing on its own.
-func name_unnamed_result(subject Syntax_Tree_Handle, tree Parse_Result) (named Parse_Result) {
-  defer func() { Parse_Result_Invariants(&named, "name_unnamed_result.named") }()
+func name_unnamed_result(
+  subject Syntax_Tree_Handle,
+  count Node_Count,
+  log Error_Storage_Handle,
+) {
   Syntax_Tree_Handle_Invariants(subject, "name_unnamed_result.subject")
-  Parse_Result_Invariants(&tree, "name_unnamed_result.tree")
-  if tree.Failure != FAILURE_NONE {
-    return tree
-  }
-  count := tree.Node_Count
+  Node_Count_Invariants(count, "name_unnamed_result.count")
+  Error_Storage_Handle_Invariants(log, "name_unnamed_result.log")
   for slot := INDEX_FIRST; slot < Index(count); slot++ {
     if subject.Nodes.Values[slot].Kind != NODE_RESULT {
       continue
@@ -2973,81 +3089,55 @@ func name_unnamed_result(subject Syntax_Tree_Handle, tree Parse_Result) (named P
     if carries_name {
       continue
     }
-    tree.Failure = FAILURE_UNNAMED_RESULT
-    tree.OK = false
-    tree.Failure_Token = Token_Index(subject.Nodes.Values[slot].Token)
-    return tree
+    log_error(log, FAILURE_UNNAMED_RESULT, Token_Index(subject.Nodes.Values[slot].Token))
   }
-  return tree
 }
 
-// Names a statement of a function literal that is no call and no return, and a return that
-// stands ahead of another statement, because a call behind a return never runs. Trivia states
-// nothing the closure runs, thus a comment or an empty line between calls passes.
-func name_closure_statement(subject Syntax_Tree_Handle, tree Parse_Result) (named Parse_Result) {
-  defer func() { Parse_Result_Invariants(&named, "name_closure_statement.named") }()
-  Syntax_Tree_Handle_Invariants(subject, "name_closure_statement.subject")
-  Parse_Result_Invariants(&tree, "name_closure_statement.tree")
-  if tree.Failure != FAILURE_NONE {
-    return tree
-  }
+// Names a statement of a function literal that is no call and no return, a return that stands
+// ahead of another statement, because a call behind a return never runs, and a statement or a
+// grouping inside one that holds anything but one call or one grouping. Trivia states nothing
+// the closure runs, thus a comment or an empty line between calls passes. A statement that breaks
+// both readings is one refusal, thus one pass judges both and logs it once.
+func name_closure_body(
+  subject Syntax_Tree_Handle,
+  count Node_Count,
+  log Error_Storage_Handle,
+) {
+  Syntax_Tree_Handle_Invariants(subject, "name_closure_body.subject")
+  Node_Count_Invariants(count, "name_closure_body.count")
+  Error_Storage_Handle_Invariants(log, "name_closure_body.log")
   nodes := subject.Nodes.Values
-  count := tree.Node_Count
   for slot := INDEX_FIRST; slot < Index(count); slot++ {
-    block := Index(nodes[slot].Parent)
-    if nodes[block].Kind != NODE_BLOCK {
-      continue
-    }
-    if nodes[nodes[block].Parent].Kind != NODE_FUNCTION_LITERAL {
-      continue
-    }
     kind := nodes[slot].Kind
-    if kind == NODE_COMMENT {
-      continue
+    refused := false
+    block := Index(nodes[slot].Parent)
+    inside := nodes[block].Kind == NODE_BLOCK
+    if nodes[nodes[block].Parent].Kind != NODE_FUNCTION_LITERAL {
+      inside = false
     }
-    if kind == NODE_BLANK {
-      continue
-    }
-    refused := kind != NODE_EXPRESSION_STATEMENT
-    if kind == NODE_RETURN {
-      refused = false
-      for sibling := Index(nodes[slot].Next); sibling != INDEX_ABSENT; {
-        if nodes[sibling].Kind != NODE_COMMENT {
-          if nodes[sibling].Kind != NODE_BLANK {
-            refused = true
-            break
+    if inside {
+      refused = kind != NODE_EXPRESSION_STATEMENT
+      if kind == NODE_COMMENT {
+        refused = false
+      }
+      if kind == NODE_BLANK {
+        refused = false
+      }
+      if kind == NODE_RETURN {
+        refused = false
+        for sibling := Index(nodes[slot].Next); sibling != INDEX_ABSENT; {
+          if nodes[sibling].Kind != NODE_COMMENT {
+            if nodes[sibling].Kind != NODE_BLANK {
+              refused = true
+              break
+            }
           }
+          sibling = Index(nodes[sibling].Next)
         }
-        sibling = Index(nodes[sibling].Next)
       }
     }
-    if !refused {
-      continue
-    }
-    tree.Failure = FAILURE_CLOSURE_BODY
-    tree.OK = false
-    tree.Failure_Token = Token_Index(nodes[slot].Token)
-    return tree
-  }
-  return tree
-}
-
-// Names a statement of a function literal, or a grouping inside one, that holds anything but one
-// call or one grouping. A return of two values holds two children, thus it fails here too, and
-// a grouping climbs to the statement it stands in, because only that statement says it is judged.
-func name_closure_call(subject Syntax_Tree_Handle, tree Parse_Result) (named Parse_Result) {
-  defer func() { Parse_Result_Invariants(&named, "name_closure_call.named") }()
-  Syntax_Tree_Handle_Invariants(subject, "name_closure_call.subject")
-  Parse_Result_Invariants(&tree, "name_closure_call.tree")
-  if tree.Failure != FAILURE_NONE {
-    return tree
-  }
-  nodes := subject.Nodes.Values
-  count := tree.Node_Count
-  for slot := INDEX_FIRST; slot < Index(count); slot++ {
-    // The statement pass refuses every other statement kind, and trivia holds no
-    // child, thus only these three stand to be judged.
-    kind := nodes[slot].Kind
+    // A grouping climbs to the statement it stands in, because only that statement says it
+    // is judged, and a return of two values holds two children.
     judged := kind == NODE_EXPRESSION_STATEMENT
     if kind == NODE_RETURN {
       judged = true
@@ -3055,63 +3145,58 @@ func name_closure_call(subject Syntax_Tree_Handle, tree Parse_Result) (named Par
     if kind == NODE_PARENTHESIS {
       judged = true
     }
-    if !judged {
-      continue
-    }
     statement := slot
     for nodes[statement].Kind == NODE_PARENTHESIS {
       statement = Index(nodes[statement].Parent)
     }
-    block := Index(nodes[statement].Parent)
+    block = Index(nodes[statement].Parent)
     if nodes[block].Kind != NODE_BLOCK {
-      continue
+      judged = false
     }
     if nodes[nodes[block].Parent].Kind != NODE_FUNCTION_LITERAL {
-      continue
+      judged = false
     }
-    held := 0
-    call := false
-    for child := Index(nodes[slot].First_Child); child != INDEX_ABSENT; {
-      child_kind := nodes[child].Kind
-      if child_kind != NODE_COMMENT {
-        if child_kind != NODE_BLANK {
-          held++
-          call = child_kind == NODE_CALL
-          if child_kind == NODE_PARENTHESIS {
-            call = true
+    if judged {
+      held := 0
+      call := false
+      for child := Index(nodes[slot].First_Child); child != INDEX_ABSENT; {
+        child_kind := nodes[child].Kind
+        if child_kind != NODE_COMMENT {
+          if child_kind != NODE_BLANK {
+            held++
+            call = child_kind == NODE_CALL
+            if child_kind == NODE_PARENTHESIS {
+              call = true
+            }
           }
         }
+        child = Index(nodes[child].Next)
       }
-      child = Index(nodes[child].Next)
-    }
-    if held == 1 {
-      if call {
-        continue
+      if held != 1 {
+        refused = true
+      }
+      if !call {
+        refused = true
       }
     }
-    tree.Failure = FAILURE_CLOSURE_BODY
-    tree.OK = false
-    tree.Failure_Token = Token_Index(nodes[slot].Token)
-    return tree
+    if refused {
+      log_error(log, FAILURE_CLOSURE_BODY, Token_Index(nodes[slot].Token))
+    }
   }
-  return tree
 }
 
-// Names the banned identifier a clean parse still holds. It reads the source, which no parse step
+// Names each banned identifier the tree holds. It reads the source, which no parse step
 // carries, thus the pass runs here where the source is still in reach.
 func name_banned_identifier(
   subject Syntax_Tree_Handle,
-  tree Parse_Result,
+  count Node_Count,
+  log Error_Storage_Handle,
   source token.Source,
-) (named Parse_Result) {
-  defer func() { Parse_Result_Invariants(&named, "name_banned_identifier.named") }()
+) {
   Syntax_Tree_Handle_Invariants(subject, "name_banned_identifier.subject")
-  Parse_Result_Invariants(&tree, "name_banned_identifier.tree")
+  Node_Count_Invariants(count, "name_banned_identifier.count")
+  Error_Storage_Handle_Invariants(log, "name_banned_identifier.log")
   token.Source_Invariants(source, "name_banned_identifier.source")
-  if tree.Failure != FAILURE_NONE {
-    return tree
-  }
-  count := tree.Node_Count
   for slot := INDEX_FIRST; slot < Index(count); slot++ {
     if subject.Nodes.Values[slot].Kind != NODE_IDENTIFIER {
       continue
@@ -3119,15 +3204,11 @@ func name_banned_identifier(
     one := subject.Tokens.Values[subject.Nodes.Values[slot].Token]
     constant := source[one.Offset : int(one.Offset)+int(one.Size)]
     if string(constant) == IOTA_NAME {
-      tree.Failure = FAILURE_IOTA
-      tree.OK = false
-      tree.Failure_Token = Token_Index(
+      log_error(log, FAILURE_IOTA, Token_Index(
         subject.Nodes.Values[slot].Token,
-      )
-      return tree
+      ))
     }
   }
-  return tree
 }
 
 // ENTRY_BASE is one more than the widest seven-bit byte. A byte of a constant string above
@@ -3194,8 +3275,8 @@ const TYPE_PARAMETERS = string(rune(OPCODE_TYPE_PARAMETERS)) + NO_OPERAND
 // QUALIFIES is the step of OPCODE_QUALIFIES.
 const QUALIFIES = string(rune(OPCODE_QUALIFIES)) + NO_OPERAND
 
-// FIELD_NAMED is the step of OPCODE_FIELD_NAMED.
-const FIELD_NAMED = string(rune(OPCODE_FIELD_NAMED)) + NO_OPERAND
+// NAMED is the step of OPCODE_NAMED.
+const NAMED = string(rune(OPCODE_NAMED)) + NO_OPERAND
 
 // BARRED_BRACE is the step of OPCODE_BARRED_BRACE.
 const BARRED_BRACE = string(rune(OPCODE_BARRED_BRACE)) + NO_OPERAND
@@ -3235,6 +3316,9 @@ const UNNAME = string(rune(OPCODE_UNNAME)) + NO_OPERAND
 
 // REJECT is the action of OPCODE_REJECT; its operand follows it.
 const REJECT = string(rune(OPCODE_REJECT))
+
+// NOTE is the action of OPCODE_NOTE; its operand follows it.
+const NOTE = string(rune(OPCODE_NOTE))
 
 // SET_PLAIN is the step of OPCODE_SET_PLAIN.
 const SET_PLAIN = string(rune(OPCODE_SET_PLAIN)) + NO_OPERAND
@@ -3926,9 +4010,15 @@ const PRODUCTION_IMPORT_GROUP Production = 98
 // PRODUCTION_IMPORT_MEMBERS is one import of that run and the run behind it.
 const PRODUCTION_IMPORT_MEMBERS Production = 99
 
+// PRODUCTION_METHOD is one method an interface states, and the elements behind it.
+const PRODUCTION_METHOD Production = 100
+
 // PRODUCTION_GROUP_VALUE_TAIL is the type and the values one grouped member states. Every run
 // calls it, thus it is the rule a call reaches last.
-const PRODUCTION_GROUP_VALUE_TAIL Production = 100
+const PRODUCTION_GROUP_VALUE_TAIL Production = 101
+
+// METHOD_PRODUCTION names PRODUCTION_METHOD as an operand.
+const METHOD_PRODUCTION = string(rune(PRODUCTION_METHOD))
 
 // PACKAGE_CLAUSE_PRODUCTION names PRODUCTION_PACKAGE_CLAUSE as an operand.
 const PACKAGE_CLAUSE_PRODUCTION = string(rune(PRODUCTION_PACKAGE_CLAUSE))
@@ -4633,9 +4723,13 @@ const ENTRY_IMPORT_GROUP = ENTRY_TYPE_MEMBERS +
 const ENTRY_IMPORT_MEMBERS = ENTRY_IMPORT_GROUP +
   len(IMPORT_GROUP_PROGRAM)/STEP_SIZE
 
+// ENTRY_METHOD is the step PRODUCTION_METHOD opens at.
+const ENTRY_METHOD = ENTRY_IMPORT_MEMBERS +
+  len(IMPORT_MEMBERS_PROGRAM)/STEP_SIZE
+
 // ENTRY_MAXIMUM is the step the final rule opens at. Registration reads no length of a string,
 // thus the step is spelled out and the bounds test holds it to the program.
-const ENTRY_MAXIMUM = 953
+const ENTRY_MAXIMUM = 965
 
 // ENTRIES names the step each rule opens at, in the order of the rules.
 const ENTRIES = string(rune(ENTRY_FILE/ENTRY_BASE)) +
@@ -4838,6 +4932,8 @@ const ENTRIES = string(rune(ENTRY_FILE/ENTRY_BASE)) +
   string(rune(ENTRY_IMPORT_GROUP%ENTRY_BASE)) +
   string(rune(ENTRY_IMPORT_MEMBERS/ENTRY_BASE)) +
   string(rune(ENTRY_IMPORT_MEMBERS%ENTRY_BASE)) +
+  string(rune(ENTRY_METHOD/ENTRY_BASE)) +
+  string(rune(ENTRY_METHOD%ENTRY_BASE)) +
   string(rune(ENTRY_GROUP_VALUE_TAIL/ENTRY_BASE)) +
   string(rune(ENTRY_GROUP_VALUE_TAIL%ENTRY_BASE))
 
@@ -4942,7 +5038,25 @@ const PROGRAM = FILE_PROGRAM +
   TYPE_GROUP_PROGRAM +
   TYPE_MEMBERS_PROGRAM +
   IMPORT_GROUP_PROGRAM +
-  IMPORT_MEMBERS_PROGRAM
+  IMPORT_MEMBERS_PROGRAM +
+  METHOD_PROGRAM
+
+// METHOD_PROGRAM reads one method as a field that names it and holds its signature as a function
+// type, and reads the elements behind it.
+const METHOD_PROGRAM = OPEN +
+  FIELD_NODE +
+  NAME +
+  FIELD_NAME_NODE +
+  OPEN +
+  FUNCTION_TYPE_NODE +
+  CALL +
+  SIGNATURE_PRODUCTION +
+  CLOSE +
+  CLOSE +
+  CALL +
+  END_LINE_PRODUCTION +
+  TAIL +
+  ELEMENTS_PRODUCTION
 
 // FILE_PROGRAM takes the trivia ahead of the package clause into the file, and reads the clause
 // and every declaration behind it.
@@ -5065,8 +5179,8 @@ const IMPORT_MEMBERS_PROGRAM = ACCEPT +
   TAIL +
   IMPORT_MEMBERS_PRODUCTION
 
-// IMPORT_PATH_PROGRAM reads one path and its optional name. A blank import parses, because the
-// linter must see the form it rejects.
+// IMPORT_PATH_PROGRAM reads one path and its optional name. A blank import and a dot import
+// parse, because the linter must see the form it rejects.
 const IMPORT_PATH_PROGRAM = OPEN +
   IMPORT_NODE +
   AT +
@@ -5077,8 +5191,13 @@ const IMPORT_PATH_PROGRAM = OPEN +
   AT +
   PERIOD_TOKEN +
   WHEN +
-  REJECT +
+  NOTE +
   DOT_IMPORT_CAUSE +
+  AT +
+  PERIOD_TOKEN +
+  WHEN +
+  TAKE +
+  IMPORT_NAME_NODE +
   AT +
   STRING_TOKEN +
   UNLESS +
@@ -5227,8 +5346,10 @@ const TYPE_DECLARATION_PROGRAM = AFTER +
   AT +
   ASSIGN_TOKEN +
   WHEN +
-  REJECT +
+  NOTE +
   TYPE_ALIAS_CAUSE +
+  ACCEPT +
+  ASSIGN_TOKEN +
   CALL +
   TYPE_PRODUCTION +
   CLOSE +
@@ -5255,8 +5376,10 @@ const TYPE_MEMBERS_PROGRAM = ACCEPT +
   AT +
   ASSIGN_TOKEN +
   WHEN +
-  REJECT +
+  NOTE +
   TYPE_ALIAS_CAUSE +
+  ACCEPT +
+  ASSIGN_TOKEN +
   CALL +
   TYPE_PRODUCTION +
   CLOSE +
@@ -5465,14 +5588,7 @@ const RESULT_PARAMETER_PROGRAM = OPEN + RESULT_NODE + TAIL + PARAMETER_BODY_PROD
 // PARAMETER_BODY_PROGRAM reads the names ahead of the type. A name is optional and only its
 // follower tells the two forms apart, so an identifier ahead of a type opener is a name and an
 // identifier ahead of anything else is the type itself.
-const PARAMETER_BODY_PROGRAM = AT +
-  IDENTIFIER_TOKEN +
-  UNLESS +
-  TAIL +
-  PARAMETER_TYPE_PRODUCTION +
-  AFTER_OPENS_TYPE +
-  OR_AFTER +
-  COMMA_TOKEN +
+const PARAMETER_BODY_PROGRAM = NAMED +
   UNLESS +
   TAIL +
   PARAMETER_TYPE_PRODUCTION +
@@ -5758,7 +5874,7 @@ const FIELDS_PROGRAM = SKIP_EMPTY +
 // an identifier ahead of anything else is an embedded type.
 const FIELD_PROGRAM = OPEN +
   FIELD_NODE +
-  FIELD_NAMED +
+  NAMED +
   UNLESS +
   TAIL +
   FIELD_TYPE_PRODUCTION +
@@ -5792,7 +5908,7 @@ const INTERFACE_TYPE_PROGRAM = OPEN +
   ELEMENTS_PRODUCTION
 
 // ELEMENTS_PROGRAM reads each element up to the closing brace. The linter bans a method set, thus
-// every element is a constraint.
+// a method logs its refusal and every other element is a constraint.
 const ELEMENTS_PROGRAM = SKIP_EMPTY +
   ACCEPT +
   BRACE_RIGHT_TOKEN +
@@ -5805,8 +5921,15 @@ const ELEMENTS_PROGRAM = SKIP_EMPTY +
   AND_AFTER +
   PARENTHESIS_LEFT_TOKEN +
   WHEN +
-  REJECT +
+  NOTE +
   INTERFACE_METHOD_CAUSE +
+  AT +
+  IDENTIFIER_TOKEN +
+  AND_AFTER +
+  PARENTHESIS_LEFT_TOKEN +
+  WHEN +
+  TAIL +
+  METHOD_PRODUCTION +
   CALL +
   CONSTRAINT_PRODUCTION +
   CALL +
@@ -5986,6 +6109,8 @@ const LABEL_PROGRAM = OPEN +
   CASE_TOKEN +
   OR_AT +
   DEFAULT_TOKEN +
+  OR_AT +
+  SEMICOLON_TOKEN +
   WHEN +
   CLOSE +
   WHEN +
@@ -6301,15 +6426,15 @@ const EXPRESSION_LIST_PROGRAM = CALL +
 const BINARY_PROGRAM = CALL + UNARY_PRODUCTION + TAIL + BINARY_OPERATORS_PRODUCTION
 
 // BINARY_OPERATORS_PROGRAM reads each operator that binds tighter than the level the rule runs at.
-// A sign this dialect states no form for fails where it stands, thus every form that holds an
-// operation answers for it and none of them reads it.
-const BINARY_OPERATORS_PROGRAM = REFUSES_SIGN +
-  WHEN +
-  REJECT +
-  REFUSED_SIGN_CAUSE +
-  ABOVE +
+// A sign the linter refuses binds at Go's own level and logs its refusal where it stands, thus
+// every form that holds an operation answers for it and none of them reads it.
+const BINARY_OPERATORS_PROGRAM = ABOVE +
   UNLESS +
   RETURN +
+  REFUSES_SIGN +
+  WHEN +
+  NOTE +
+  REFUSED_SIGN_CAUSE +
   HOLD +
   WRAP +
   BINARY_NODE +
@@ -6632,22 +6757,18 @@ const ELEMENT_VALUE_PROGRAM = AT +
 // Names a case that runs on into the case behind it. A case closes where its statements close,
 // thus a reader of one case reads the whole of what it runs, and a word that runs on states a
 // flow that reader never sees.
-func name_fallthrough(subject Syntax_Tree_Handle, tree Parse_Result) (named Parse_Result) {
-  defer func() { Parse_Result_Invariants(&named, "name_fallthrough.named") }()
+func name_fallthrough(
+  subject Syntax_Tree_Handle,
+  count Node_Count,
+  log Error_Storage_Handle,
+) {
   Syntax_Tree_Handle_Invariants(subject, "name_fallthrough.subject")
-  Parse_Result_Invariants(&tree, "name_fallthrough.tree")
-  if tree.Failure != FAILURE_NONE {
-    return tree
-  }
-  count := tree.Node_Count
+  Node_Count_Invariants(count, "name_fallthrough.count")
+  Error_Storage_Handle_Invariants(log, "name_fallthrough.log")
   for slot := INDEX_FIRST; slot < Index(count); slot++ {
     if subject.Nodes.Values[slot].Kind != NODE_FALLTHROUGH {
       continue
     }
-    tree.Failure = FAILURE_FALLTHROUGH
-    tree.OK = false
-    tree.Failure_Token = Token_Index(subject.Nodes.Values[slot].Token)
-    return tree
+    log_error(log, FAILURE_FALLTHROUGH, Token_Index(subject.Nodes.Values[slot].Token))
   }
-  return tree
 }

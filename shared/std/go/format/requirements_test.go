@@ -272,6 +272,9 @@ func parse_state() (state *ast.Parse_State) {
     Earlier_Children: ast.Earlier_Child_Storage{
       Values: make(ast.Earlier_Children, ast.DEPTH_MAXIMUM),
     },
+    Errors: ast.Error_Storage{
+      Values: make(ast.Errors, ast.ERROR_COUNT_MAXIMUM),
+    },
   }
   return &ast.Parse_State{Syntax_Tree: tree}
 }

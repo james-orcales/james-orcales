@@ -1,9 +1,11 @@
 // Package token scans Go source text into tokens. It holds the lexical layer only: the caller
-// owns the source bytes and the cursor, thus a scan allocates nothing. The grammar it accepts is
-// the subset this repository's linter permits, so an identifier is ASCII and nothing else.
+// owns the source bytes and the cursor, thus a scan allocates nothing. An identifier holds the
+// letters and digits Go admits, wide ones among them, and the parser names a wide one.
 package token
 
 import "local/james-orcales/shared/std/sim/aver/default"
+import "local/james-orcales/shared/std/unicode/ucd"
+import "local/james-orcales/shared/std/unicode/utf8"
 
 // SOURCE_SIZE_MINIMUM admits the empty source, which scans to KIND_END_OF_FILE at once.
 const SOURCE_SIZE_MINIMUM = 0
@@ -1024,6 +1026,11 @@ func scan_token(tail Tail) (result Scan_Token_Result) {
         Newline: comment.Newline,
       }
     }
+  case wide_word_size(tail, true) != 0:
+    word := scan_identifier(tail)
+    return Scan_Token_Result{
+      Kind: Scanned_Kind(word.Kind), Size: word.Size, Newline: false,
+    }
   }
   operator := scan_operator(tail)
   if bool(operator.Found) {
@@ -1131,7 +1138,11 @@ Word:
       value-'A' < 'Z'-'A'+1, value-'0' < '9'-'0'+1:
       width++
     default:
-      break Word
+      wide := wide_word_size(tail[width:], false)
+      if wide == 0 {
+        break Word
+      }
+      width = width + int(wide)
     }
   }
   // The keyword table stands here rather than behind a body of its own, because every word a
@@ -1142,6 +1153,47 @@ Word:
     kind = Word_Kind(keyword.Kind)
   }
   return Scan_Identifier_Result{Kind: kind, Size: Token_Size(width)}
+}
+
+// Wide_Size is the width of one wide character a name holds, or zero where the tail opens on none.
+type Wide_Size int
+
+// Wide_Size_Invariants states no character and every width a wide character spans. A character
+// below 128 spans one byte, thus no wide character does.
+func Wide_Size_Invariants(value Wide_Size, namespace aver.Namespace) {
+  aver.Tree(value, namespace).
+    Enum_4_Int(
+    int(value),
+    utf8.CHARACTER_SIZE_HOLE,
+    utf8.CHARACTER_SIZE_TWO,
+    utf8.CHARACTER_SIZE_THREE,
+    utf8.CHARACTER_SIZE_MAXIMUM,
+  ).
+    Ensure()
+}
+
+// Reports the width of the wide letter that opens this tail, or where the tail opens no name,
+// the wide digit that does. A byte below 128, or one that encodes no character, opens none.
+func wide_word_size(tail Tail, opens Boolean) (size Wide_Size) {
+  defer func() { Wide_Size_Invariants(size, "wide_word_size.size") }()
+  Tail_Invariants(tail, "wide_word_size.tail")
+  Boolean_Invariants(opens, "wide_word_size.opens")
+  if tail[0] < byte(utf8.CHARACTER_SELF) {
+    return 0
+  }
+  // A character spans a few bytes at most, thus the decode reads only the head of the tail.
+  head := tail[:min(len(tail), utf8.CHARACTER_SIZE_MAXIMUM)]
+  character, width := utf8.Decode_Character(utf8.Bytes(head))
+  if bool(ucd.Is_Letter(ucd.Character(character))) {
+    return Wide_Size(width)
+  }
+  if bool(opens) {
+    return 0
+  }
+  if bool(ucd.Is_Digit(ucd.Character(character))) {
+    return Wide_Size(width)
+  }
+  return 0
 }
 
 // Keyword_Result keeps keyword class and presence at one output boundary.
