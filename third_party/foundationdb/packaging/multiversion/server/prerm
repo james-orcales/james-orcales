@@ -1,3 +1,0 @@
-#!/usr/bin/env bash
-
-update-alternatives --remove fdbserver /usr/lib/foundationdb-@FDB_VERSION@@FDB_BUILDTIME_STRING@/sbin/fdbserver

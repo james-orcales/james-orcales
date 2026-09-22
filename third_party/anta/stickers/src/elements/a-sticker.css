@@ -1,9 +1,0 @@
-@layer anta {
-  a-sticker {
-    --sticker-size: 256px;
-
-    display: inline-block;
-    width: var(--sticker-size);
-    height: var(--sticker-size);
-  }
-}

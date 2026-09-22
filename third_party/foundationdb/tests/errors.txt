@@ -1,6 +1,0 @@
-testTitle=WorkerErrorsTest
-runSetup=false
-clearAfterTest=false
-useDB=false
-
-    testName=WorkerErrors

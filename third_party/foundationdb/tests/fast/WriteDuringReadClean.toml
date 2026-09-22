@@ -1,8 +1,0 @@
-[configuration]
-StderrSeverity = 30
-
-[[test]]
-testTitle = 'WriteDuringReadTest'
-
-    [[test.workload]]
-    testName = 'WriteDuringRead'
