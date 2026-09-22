@@ -11,9 +11,9 @@ import (
 	"testing"
 
 	"local/james-orcales/maddox/internal"
-	"local/james-orcales/shared/math/bits"
-	"local/james-orcales/shared/sim/nbio"
-	"local/james-orcales/shared/sim/time"
+	"local/james-orcales/shared/std/math/bits"
+	"local/james-orcales/shared/std/sim/nbio"
+	"local/james-orcales/shared/std/sim/time"
 )
 
 // The requirements tests mirror REQUIREMENTS.md: one leaf per heading, in heading

@@ -4,14 +4,14 @@ package main
 
 import (
 	"local/james-orcales/maddox/internal"
-	"local/james-orcales/shared/jlog/default"
-	shared_os "local/james-orcales/shared/os"
-	"local/james-orcales/shared/os/default"
-	"local/james-orcales/shared/sim/nbio"
-	system_nbio "local/james-orcales/shared/sim/nbio/default"
-	"local/james-orcales/shared/sim/time"
-	system_time "local/james-orcales/shared/sim/time/default"
-	"local/james-orcales/shared/slices"
+	"local/james-orcales/shared/std/jlog/default"
+	shared_os "local/james-orcales/shared/std/os"
+	"local/james-orcales/shared/std/os/default"
+	"local/james-orcales/shared/std/sim/nbio"
+	system_nbio "local/james-orcales/shared/std/sim/nbio/default"
+	"local/james-orcales/shared/std/sim/time"
+	system_time "local/james-orcales/shared/std/sim/time/default"
+	"local/james-orcales/shared/std/slices"
 )
 
 // STANDARD_OUTPUT is the descriptor the report is written to.
@@ -80,7 +80,7 @@ func main() {
 func main_pump(
 	system shared_os.OS, driver nbio.Driver, runner maddox.Runner_Handle, done Pump_Done,
 ) {
-	shared_os.OS_Invariants(system, "main_pump.system")
+	shared_os.OS_Invariants(&system, "main_pump.system")
 	for maddox.Rearm(runner) {
 	}
 	if maddox.Stopped(runner) {
@@ -106,7 +106,7 @@ func main_pump_done(runner maddox.Runner_Handle) (finished maddox.Queue_State) {
 
 // The loop is gone or broken, so the diagnostic bypasses it.
 func main_fail(system shared_os.OS, err error) {
-	shared_os.OS_Invariants(system, "main_fail.system")
+	shared_os.OS_Invariants(&system, "main_fail.system")
 	os.Standard_Error_Write([]byte("maddox: " + err.Error() + "\n"))
 	os.OS_Exit(system, shared_os.Exit_Code(maddox.EXIT_FAILURE))
 }
@@ -123,7 +123,7 @@ func main_terminal(descriptor os.Descriptor) (status maddox.Terminal_Status) {
 
 // Converts the host description into the report's snapshot.
 func main_machine(machine os.Machine) (specs maddox.Machine_Specs) {
-	os.Machine_Invariants(machine, "main_machine.machine")
+	os.Machine_Invariants(&machine, "main_machine.machine")
 	return maddox.Machine_Specs{
 		CPU_Model: maddox.Processor_Model(machine.Processor_Model),
 		CPU_Arch: maddox.Processor_Architecture(

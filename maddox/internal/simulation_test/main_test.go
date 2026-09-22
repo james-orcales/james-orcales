@@ -3,7 +3,7 @@ package simulation_test
 import (
 	"testing"
 
-	"local/james-orcales/shared/sim/aver/default"
+	"local/james-orcales/shared/std/sim/aver/default"
 )
 
 // TestMain wires the coverage recorder over the internal tree ("../**"): every

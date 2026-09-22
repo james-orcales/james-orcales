@@ -8,14 +8,14 @@ import (
 	"fmt"
 	"unsafe"
 
-	"local/james-orcales/shared/cli"
-	"local/james-orcales/shared/math/bits"
-	"local/james-orcales/shared/math/fixedpoint"
-	"local/james-orcales/shared/math/scalar"
-	"local/james-orcales/shared/sim/aver/default"
-	"local/james-orcales/shared/sim/nbio"
-	"local/james-orcales/shared/sim/time"
-	"local/james-orcales/shared/strings"
+	"local/james-orcales/shared/std/cli"
+	"local/james-orcales/shared/std/math/bits"
+	"local/james-orcales/shared/std/math/fixedpoint"
+	"local/james-orcales/shared/std/math/scalar"
+	"local/james-orcales/shared/std/sim/aver/default"
+	"local/james-orcales/shared/std/sim/nbio"
+	"local/james-orcales/shared/std/sim/time"
+	"local/james-orcales/shared/std/strings"
 )
 
 // RUN_DEADLINE bounds one run. A benchmark states no deadline of its own, thus this sits far past
@@ -617,7 +617,7 @@ type Runner struct {
 // Runner_Invariants composes the runner's state.
 func Runner_Invariants(value Runner, namespace aver.Namespace) {
 	nbio.IO_Invariants(value.IO, namespace)
-	time.Clock_Invariants(value.Clock, namespace)
+	time.Clock_Invariants(&value.Clock, namespace)
 	Machine_Specs_Invariants(value.Machine, namespace)
 	Main_Start_Invariants(value.Start, namespace)
 	Sampler_Invariants(value.Sampler, namespace)
