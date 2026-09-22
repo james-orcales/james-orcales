@@ -383,7 +383,7 @@ func polling_loop(
 ) (loop nbio.Timeline, driver nbio.Driver, host time.Clock) {
 	memory.Nodes = []nbio.Sim_Node{{
 		Name:     make([]byte, nbio.SIM_PATH_COMPONENT_BYTES_MAXIMUM),
-		Contents: make([]byte, nbio.SIM_FILE_BYTES_MAXIMUM),
+		Contents: make([]byte, NODE_CONTENTS_BYTES),
 	}}
 	memory.Descriptors = []nbio.Sim_Descriptor{{
 		Address_IP: make([]byte, nbio.IPV6_ADDRESS_BYTES),
@@ -533,3 +533,6 @@ func allocation_eventually_and_never(t *testing.T) {
 		t.Fatal("Asserter_Never arming should not allocate")
 	}
 }
+
+// NODE_CONTENTS_BYTES is the storage each simulated node holds, thus the file capacity.
+const NODE_CONTENTS_BYTES = 1024

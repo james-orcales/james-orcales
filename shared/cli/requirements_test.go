@@ -1953,6 +1953,9 @@ func drive_parser(
 const CLI_SIM_OPERATION_CAPACITY = 8
 const CLI_SIM_COMPLETION_CAPACITY = CLI_SIM_OPERATION_CAPACITY * 2
 const CLI_SIM_NODE_CAPACITY = 32
+
+// CLI_SIM_NODE_CONTENTS_BYTES is the storage each simulated node holds, thus the file capacity.
+const CLI_SIM_NODE_CONTENTS_BYTES = 1024
 const CLI_SIM_DESCRIPTOR_CAPACITY = 16
 const CLI_SIM_EVENT_CAPACITY = 1
 const CLI_SIM_DEADLINE = time.MICROSECOND
@@ -1968,7 +1971,7 @@ func cli_sim_loop(seed uint64) (loop nbio.IO, driver nbio.Driver) {
 	clocks := [CLI_SIM_CLOCK_CAPACITY]nbio.Sim_Clock{}
 	nodes := [CLI_SIM_NODE_CAPACITY]nbio.Sim_Node{}
 	node_names := [CLI_SIM_NODE_CAPACITY * nbio.SIM_PATH_COMPONENT_BYTES_MAXIMUM]byte{}
-	node_contents := [CLI_SIM_NODE_CAPACITY * nbio.SIM_FILE_BYTES_MAXIMUM]byte{}
+	node_contents := [CLI_SIM_NODE_CAPACITY * CLI_SIM_NODE_CONTENTS_BYTES]byte{}
 	descriptors := [CLI_SIM_DESCRIPTOR_CAPACITY]nbio.Sim_Descriptor{}
 	descriptor_addresses := [CLI_SIM_DESCRIPTOR_CAPACITY * 2 * nbio.IPV6_ADDRESS_BYTES]byte{}
 	operations := [CLI_SIM_OPERATION_CAPACITY]nbio.Sim_Operation{}
@@ -1976,8 +1979,8 @@ func cli_sim_loop(seed uint64) (loop nbio.IO, driver nbio.Driver) {
 	for index := range nodes {
 		name_start := index * nbio.SIM_PATH_COMPONENT_BYTES_MAXIMUM
 		name_end := name_start + nbio.SIM_PATH_COMPONENT_BYTES_MAXIMUM
-		content_start := index * nbio.SIM_FILE_BYTES_MAXIMUM
-		content_end := content_start + nbio.SIM_FILE_BYTES_MAXIMUM
+		content_start := index * CLI_SIM_NODE_CONTENTS_BYTES
+		content_end := content_start + CLI_SIM_NODE_CONTENTS_BYTES
 		nodes[index].Name = node_names[name_start:name_end:name_end]
 		nodes[index].Contents = node_contents[content_start:content_end:content_end]
 	}

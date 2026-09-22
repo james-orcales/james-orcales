@@ -36,7 +36,7 @@ func retry_loop(
 	surface, driver := nbio.New_Simulated_IO(state, 0, resolution, nbio.Sim_Memory{
 		Nodes: []nbio.Sim_Node{{
 			Name:     make([]byte, nbio.SIM_PATH_COMPONENT_BYTES_MAXIMUM),
-			Contents: make([]byte, nbio.SIM_FILE_BYTES_MAXIMUM),
+			Contents: make([]byte, NODE_CONTENTS_BYTES),
 		}},
 		Descriptors: []nbio.Sim_Descriptor{{
 			Address_IP: make([]byte, nbio.IPV6_ADDRESS_BYTES),
@@ -86,3 +86,6 @@ func run_retry(
 	outcome.Elapsed = time.Duration(retry_state.Completion.Ready_At - started)
 	return outcome
 }
+
+// NODE_CONTENTS_BYTES is the storage each simulated node holds, thus the file capacity.
+const NODE_CONTENTS_BYTES = 1024

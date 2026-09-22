@@ -570,6 +570,9 @@ const STANDARD_FILESYSTEM_SERIAL_CAPACITY = 1
 // STANDARD_FILESYSTEM_NODE_CAPACITY leaves simulator-reserved half beside fixture nodes.
 const STANDARD_FILESYSTEM_NODE_CAPACITY = 2 * STANDARD_FILESYSTEM_NODE_COUNT
 
+// STANDARD_FILESYSTEM_NODE_CONTENTS_BYTES is the storage each simulated node holds, thus the file capacity.
+const STANDARD_FILESYSTEM_NODE_CONTENTS_BYTES = 1024
+
 // STANDARD_FILESYSTEM_PATH_CAPACITY lets traversal retain every fixture node.
 const STANDARD_FILESYSTEM_PATH_CAPACITY = STANDARD_FILESYSTEM_NODE_COUNT
 
@@ -891,7 +894,7 @@ func standard_filesystem_loop(seed uint64) (loop nbio.IO, driver nbio.Driver) {
 	operations := [STANDARD_FILESYSTEM_OPERATION_CAPACITY]nbio.Sim_Operation{}
 	for index := range nodes {
 		nodes[index].Name = make([]byte, nbio.SIM_PATH_COMPONENT_BYTES_MAXIMUM)
-		nodes[index].Contents = make([]byte, nbio.SIM_FILE_BYTES_MAXIMUM)
+		nodes[index].Contents = make([]byte, STANDARD_FILESYSTEM_NODE_CONTENTS_BYTES)
 	}
 	for index := range descriptors {
 		descriptors[index].Address_IP = make([]byte, nbio.IPV6_ADDRESS_BYTES)
