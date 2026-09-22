@@ -44,7 +44,7 @@ const TEST = "test"
 const USAGE = "usage: fuzzstall <rate> <go test argument...>\n" +
 	"rate: new interesting inputs per window, as in 90/30s\n" +
 	"window alone: a positive whole number of seconds, which asks for one input — as in 30s\n" +
-	"example: fuzzstall 90/30s -fuzz=Fuzz_Parse ./shared/cli"
+	"example: fuzzstall 90/30s -fuzz=Fuzz_Parse ./shared/std/cli"
 
 // INTERESTING_FIELD is the field a `go test -fuzz` progress line writes its count behind.
 // It is the one field of that line this program reads.

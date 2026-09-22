@@ -106,7 +106,7 @@ func Test_Rate_Malformed(t *testing.T) {
 // it reaches `go test` verbatim, dashes included.
 func Test_Command_Split(t *testing.T) {
 	command_line := fuzzstall.Command_Line{
-		"fuzzstall", "30s", "-fuzz=Fuzz_Parse", "./shared/cli"}
+		"fuzzstall", "30s", "-fuzz=Fuzz_Parse", "./shared/std/cli"}
 	if err := fuzzstall.Command_Check(command_line); err != nil {
 		t.Fatalf("Command_Check: %v", err)
 	}
@@ -118,7 +118,7 @@ func Test_Command_Split(t *testing.T) {
 		t.Errorf("path = %q, want %q", command.Path, fuzzstall.GO)
 	}
 	// -fuzz is go test's flag: had the wrapper claimed it, the run would lose its target.
-	want := "test -fuzz=Fuzz_Parse ./shared/cli"
+	want := "test -fuzz=Fuzz_Parse ./shared/std/cli"
 	if strings.Join([]string(command.Arguments), " ") != want {
 		t.Errorf("arguments = %v, want [%s]", command.Arguments, want)
 	}
@@ -315,7 +315,7 @@ type step struct {
 
 // Returns the command line that watches one package over window_text.
 func watch(window_text string) (command_line fuzzstall.Command_Line) {
-	return fuzzstall.Command_Line{"fuzzstall", window_text, "./shared/cli"}
+	return fuzzstall.Command_Line{"fuzzstall", window_text, "./shared/std/cli"}
 }
 
 // Returns the clock reading a scripted step lands on, counted in whole seconds off an

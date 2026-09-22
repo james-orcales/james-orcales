@@ -478,7 +478,7 @@ func harness_command_line(
 	}
 	command_line = append(command_line, configuration.Rate_Text)
 	for range configuration.Argument_Count - 2 {
-		command_line = append(command_line, "./shared/cli")
+		command_line = append(command_line, "./shared/std/cli")
 	}
 	return command_line
 }
