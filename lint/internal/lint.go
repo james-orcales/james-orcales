@@ -21,8 +21,8 @@ import (
 	"local/james-orcales/lint/internal/diagnostic"
 	"local/james-orcales/lint/internal/resolution"
 	"local/james-orcales/lint/internal/source"
-	"local/james-orcales/shared/strconv"
-	"local/james-orcales/shared/unicode/ucd"
+	"local/james-orcales/shared/std/strconv"
+	"local/james-orcales/shared/std/unicode/ucd"
 )
 
 // Hi bounds for Distinct_Boundary axes on string lengths. Each constant
@@ -4189,7 +4189,7 @@ func check_no_panic(
 	token_file := file_set.File(file.Pos())
 	if token_file != nil {
 		directory := path.Dir(path.Clean(token_file.Name()))
-		if directory_within(directory, "shared/sim/aver") {
+		if directory_within(directory, "shared/std/sim/aver") {
 			return nil
 		}
 	}
@@ -4217,7 +4217,7 @@ func check_no_panic_node(
 		Position: file_set.Position(callee.Pos()),
 		Name:     "panic",
 		Want:     "aver.Always",
-		Message: "Do not call panic outside shared/sim/aver. " +
+		Message: "Do not call panic outside shared/std/sim/aver. " +
 			"Replace it with aver.Always.",
 	})
 	return true
@@ -4238,7 +4238,7 @@ func unquote_literal(text string) (unquoted string, err error) {
 // AVER_DIRECTORY roots the assertion library. Every shared port depends on aver, so routing
 // aver back through any port closes an import cycle; aver thus imports stdlib directly, and
 // every stdlib import gate stops at this subtree.
-const AVER_DIRECTORY = "shared/sim/aver"
+const AVER_DIRECTORY = "shared/std/sim/aver"
 
 // Reports whether a file sits in aver's subtree.
 func file_within_aver(file_path string) (within bool) {
@@ -4834,7 +4834,7 @@ func check_no_generics(
 	if token_file != nil {
 		// Shared collection primitives and assertions must accept caller-owned types.
 		switch path.Dir(token_file.Name()) {
-		case "shared/testify", "shared/slices", "shared/sort":
+		case "shared/std/testify", "shared/std/slices", "shared/std/sort":
 			return nil
 		}
 		if source.Path_Matches_Glob(path.Dir(token_file.Name()), instrumentation) {
@@ -5160,8 +5160,8 @@ func method_is_aver_assertion_builder(
 		return false
 	}
 	directory := path.Dir(path.Clean(token_file.Name()))
-	if directory != "shared/sim/aver" {
-		if directory != "shared/sim/aver/default" {
+	if directory != "shared/std/sim/aver" {
+		if directory != "shared/std/sim/aver/default" {
 			return false
 		}
 	}
@@ -5958,10 +5958,10 @@ func directory_is_crypto_stdlib(directory string, m Component_Information) (yes 
 	}
 	relative := strings.Trim_Prefix(directory, m.Root+"/")
 	switch relative {
-	case "crypto/ecdsa", "crypto/ed25519", "crypto/elliptic", "crypto/hkdf",
-		"crypto/hmac", "crypto/md5", "crypto/pbkdf2", "crypto/pkix", "crypto/rsa",
-		"crypto/sha1", "crypto/sha256", "crypto/sha512", "crypto/subtle",
-		"crypto/x509":
+	case "std/crypto/ecdsa", "std/crypto/ed25519", "std/crypto/elliptic", "std/crypto/hkdf",
+		"std/crypto/hmac", "std/crypto/md5", "std/crypto/pbkdf2", "std/crypto/pkix",
+		"std/crypto/rsa", "std/crypto/sha1", "std/crypto/sha256", "std/crypto/sha512",
+		"std/crypto/subtle", "std/crypto/x509":
 		return true
 	}
 	return false
@@ -6365,7 +6365,7 @@ func check_driver_type(
 	if shared == "" {
 		return nil
 	}
-	driver_path := shared + "/sim/nbio"
+	driver_path := shared + "/std/sim/nbio"
 	gateway := source.IO_Gateway(components)
 	for _, pf := range parsed_files {
 		if strings.Has_Suffix(pf.Path, "_test.go") {
@@ -6500,10 +6500,10 @@ func io_gateway_import_diagnostics(
 		diags = append(diags, Diagnostic{
 			Position: pf.File_Set.Position(implementation.Pos()),
 			Name:     "io-gateway",
-			Want:     "Route IO through shared/sim/nbio.",
+			Want:     "Route IO through shared/std/sim/nbio.",
 			Message: fmt.Sprintf(
 				"Only sim/nbio/default can import %q. "+
-					"Route IO through shared/sim/nbio.",
+					"Route IO through shared/std/sim/nbio.",
 				import_path),
 			Tier: 2,
 		})
@@ -6585,9 +6585,9 @@ func io_gateway_call_diagnostic(pf Parsed_File, selector *ast.SelectorExpr) (dia
 	return Diagnostic{
 		Position: pf.File_Set.Position(selector.Pos()),
 		Name:     "io-gateway",
-		Want:     "Route IO through shared/sim/nbio.",
+		Want:     "Route IO through shared/std/sim/nbio.",
 		Message: "The call " + identifier.Name + "." + selector.Sel.Name +
-			" does raw IO. Route it through shared/sim/nbio.",
+			" does raw IO. Route it through shared/std/sim/nbio.",
 		Tier: 2,
 	}
 }

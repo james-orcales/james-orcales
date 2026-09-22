@@ -47,8 +47,8 @@ func Test_Parsed_File_Source(t *testing.T) {
 // Test_Component_Root verifies Root carries the top-level directory.
 func Test_Component_Root(t *testing.T) {
 	t.Parallel()
-	c := source.Component{Root: "shared/cli"}
-	if c.Root != "shared/cli" {
+	c := source.Component{Root: "shared/std/cli"}
+	if c.Root != "shared/std/cli" {
 		t.Fatal("Root must carry the top-level directory")
 	}
 }
@@ -56,8 +56,8 @@ func Test_Component_Root(t *testing.T) {
 // Test_Component_Import_Path verifies Import Path carries the import path.
 func Test_Component_Import_Path(t *testing.T) {
 	t.Parallel()
-	c := source.Component{Import_Path: "example.com/shared/cli"}
-	if c.Import_Path != "example.com/shared/cli" {
+	c := source.Component{Import_Path: "example.com/shared/std/cli"}
+	if c.Import_Path != "example.com/shared/std/cli" {
 		t.Fatal("Import_Path must carry the import path")
 	}
 }

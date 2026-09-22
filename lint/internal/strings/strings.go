@@ -2,9 +2,9 @@
 package strings
 
 import (
-	"local/james-orcales/shared/sim/aver/default"
-	"local/james-orcales/shared/unicode/ucd"
-	"local/james-orcales/shared/unicode/utf8"
+	"local/james-orcales/shared/std/sim/aver/default"
+	"local/james-orcales/shared/std/unicode/ucd"
+	"local/james-orcales/shared/std/unicode/utf8"
 )
 
 // TEXT_SIZE_MAXIMUM matches largest bounded lint input.

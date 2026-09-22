@@ -1,58 +1,58 @@
 {
   "shared_component": "shared",
   "instrumentation_packages": [
-          "shared/sim/aver/**",
-          "shared/snap/**",
-          "shared/jlog/**"
+          "shared/std/sim/aver/**",
+          "shared/std/snap/**",
+          "shared/std/jlog/**"
   ],
   "pure_but_indeterministic_packages": [
     "lint/internal/",
     "sloc/internal/**",
-    "shared/sync/diode/",
-    "shared/sim/aver/",
-    "shared/jlog/",
-    "shared/snap/"
+    "shared/std/sync/diode/",
+    "shared/std/sim/aver/",
+    "shared/std/jlog/",
+    "shared/std/snap/"
   ],
   "ignore": [
           "install_golang.sh",
           "nix/**",
-          "shared/sim/aver/enforcement_noop*",
+          "shared/std/sim/aver/enforcement_noop*",
           "build.go",
           "home/**",
           "documentation/youtube/**",
           "shared_lua/**",
-          "shared/crypto/ecdsa/**",
-          "shared/crypto/ed25519/**",
-          "shared/crypto/elliptic/**",
-          "shared/crypto/rsa/**",
-          "shared/crypto/subtle/**",
-          "shared/crypto/x509/**"
+          "shared/std/crypto/ecdsa/**",
+          "shared/std/crypto/ed25519/**",
+          "shared/std/crypto/elliptic/**",
+          "shared/std/crypto/rsa/**",
+          "shared/std/crypto/subtle/**",
+          "shared/std/crypto/x509/**"
   ],
   "opt_out_interface_ban": [
           "lint/internal/",
-          "shared/backoff/",
-          "shared/crypto/prng/",
-          "shared/encoding/binary/",
-          "shared/encoding/flatjson/",
-          "shared/jlog/",
-          "shared/sim/aver/**",
-          "shared/sim/nbio/",
-          "shared/sim/time/",
-          "shared/slices/",
-          "shared/snap/**",
-          "shared/sort/",
-          "shared/testify/"
+          "shared/std/backoff/",
+          "shared/std/crypto/prng/",
+          "shared/std/encoding/binary/",
+          "shared/std/encoding/flatjson/",
+          "shared/std/jlog/",
+          "shared/std/sim/aver/**",
+          "shared/std/sim/nbio/",
+          "shared/std/sim/time/",
+          "shared/std/slices/",
+          "shared/std/snap/**",
+          "shared/std/sort/",
+          "shared/std/testify/"
   ],
   "opt_out_recursion_ban": [
-          "shared/text/glob/**",
-          "shared/go/**"
+          "shared/std/text/glob/**",
+          "shared/std/go/**"
   ],
   "opt_out_assertion_mandate_packages": [
           "**",
           "!shared/**",
           "shared/vsr/**",
-          "shared/testify/**",
-          "shared/sim/nbio/**",
+          "shared/std/testify/**",
+          "shared/std/sim/nbio/**",
 
           "!maddox/**",
           "!sloc/**",

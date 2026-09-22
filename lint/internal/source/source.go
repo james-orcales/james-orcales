@@ -37,7 +37,7 @@ const BINARY_PACKAGE_DIRECTORY = "pkg"
 // whether that module is the shared library, and which directories hold non-main
 // Go packages (the Go-ancestor set the tier-depth rule uses).
 type Component struct {
-	// Root is the component's top-level directory, e.g. "shared/cli" or "lint".
+	// Root is the component's top-level directory, e.g. "shared/std/cli" or "lint".
 	Root string
 	// Import_Path is the component's full import path.
 	Import_Path string
@@ -689,7 +689,7 @@ func import_path_under_component(input *Import_Path_Under_Component_Input) (yes 
 
 // Time_Gateway keeps the host clock in the simulation subtree.
 func Time_Gateway(components *Component_Index) (gateway string) {
-	return shared_library_directory(components, "sim/time/default")
+	return shared_library_directory(components, "std/sim/time/default")
 }
 
 // Returns the workspace-relative directory named by relative within the shared library
@@ -724,13 +724,13 @@ func Shared_Import(components *Component_Index) (import_path string) {
 
 // IO_Gateway keeps the operating-system backend in the simulation subtree.
 func IO_Gateway(components *Component_Index) (gateway string) {
-	return shared_library_directory(components, "sim/nbio/default")
+	return shared_library_directory(components, "std/sim/nbio/default")
 }
 
 // Syscall_Gateways permits the process bindings that sim/nbio cannot supply.
 // The raw-IO ban stays active for all other imports in these directories.
 func Syscall_Gateways(components *Component_Index) (gateways []string) {
-	directory := shared_library_directory(components, "os/default")
+	directory := shared_library_directory(components, "std/os/default")
 	if directory == "" {
 		return nil
 	}

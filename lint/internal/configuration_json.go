@@ -4,7 +4,7 @@ import (
 	"fmt"
 
 	"local/james-orcales/lint/internal/strings"
-	"local/james-orcales/shared/unicode/utf8"
+	"local/james-orcales/shared/std/unicode/utf8"
 )
 
 func configuration_json_decode(

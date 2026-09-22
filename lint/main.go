@@ -21,7 +21,7 @@ func main() {
 	}
 	// Re-root Fsys at the repo's single root go.mod so component discovery
 	// always has the module anchor above every file. Without this,
-	// running on a subpackage (e.g. ./shared/snap/v2) would walk
+	// running on a subpackage (e.g. ./shared/std/snap/v2) would walk
 	// a Fsys with no go.mod in reach, and the doctrine checks would
 	// degrade to per-file mode — flagging composition-tier packages that
 	// should be exempt. Scope_Prefix narrows output back to what the user asked for.

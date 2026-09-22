@@ -135,13 +135,13 @@ declaration order.
 
 ### Panic
 
-Only `shared/sim/aver/**` calls `panic`; assertion enforcement owns that mechanism. Every other
+Only `shared/std/sim/aver/**` calls `panic`; assertion enforcement owns that mechanism. Every other
 package uses `aver.Always` so assertion reachability stays observable.
 
 ### Generics
 
 Outside packages listed in lint.json's `instrumentation_packages` and exact packages
-`shared/testify`, `shared/slices`, and `shared/sort`, type and func declarations have no type
+`shared/std/testify`, `shared/std/slices`, and `shared/std/sort`, type and func declarations have no type
 parameters. Shared exceptions cover source and tests, but not child packages. Instrumentation may
 use type parameters so one adapter can observe arbitrary types without production dependencies.
 
@@ -182,7 +182,7 @@ returned. This keeps callback logic in named functions while permitting bounded 
 
 ### Methods
 
-All methods banned except `Assertion_Builder` methods in `shared/sim/aver` and its `default` tier.
+All methods banned except `Assertion_Builder` methods in `shared/std/sim/aver` and its `default` tier.
 Make every other method free function with receiver as first parameter.
 
 ### Self Recursion
@@ -357,7 +357,7 @@ Internal code takes time.Timeline, and the harness drives it.
 
 Raw IO stdlib lives only in sim/nbio/default and sim/time/default. Instrumentation,
 tests, generated files, and package main are exempt. os/default may import syscall alone. Route
-other raw IO through shared/sim/nbio.
+other raw IO through shared/std/sim/nbio.
 
 ### Seed
 

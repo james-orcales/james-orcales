@@ -41,7 +41,7 @@ const DOCTRINE_BINARY_PACKAGE_MAIN = "// Package entry is a fixture.\n" +
 	"package entry\n\n// Main is a fixture entry point.\nfunc Main() { return }\n"
 
 const FIXTURE_INVARIANT_IMPORT_PATH = "github.com/james-orcales/james-orcales/" +
-	"shared/sim/aver/v2/aver_default"
+	"shared/std/sim/aver/v2/aver_default"
 const FIXTURE_INVARIANT_IMPORT = "import \"" + FIXTURE_INVARIANT_IMPORT_PATH + "\"\n"
 
 // Fixture_const_hi declares a file-scope upper bound used by Distinct_Boundary
@@ -71,7 +71,7 @@ const FIXTURE_DECLARATION_CALLEE_PAIR = "func g() (a *int, b *int) {\n" +
 // need an accompanying .go file but don't care about its specific shape.
 const FIXTURE_CLEAN_GO = "package main\n\n" +
 	"import \"github.com/james-orcales/james-orcales/" +
-	"shared/sim/aver/v2\"\n\n" +
+	"shared/std/sim/aver/v2\"\n\n" +
 	"const FIXTURE_HI = 100\n\n" +
 	"func f() (result int) {\n" +
 	"\tdefer func() {\n" +
@@ -2534,7 +2534,7 @@ func value_at(values []int, index int) (result int) { return values[index] }
 // Test_Shared_Generics_Exemptions keeps exceptions limited to exact package paths.
 func Test_Shared_Generics_Exemptions(t *testing.T) {
 	t.Parallel()
-	for _, directory := range []string{"shared/testify", "shared/slices", "shared/sort"} {
+	for _, directory := range []string{"shared/std/testify", "shared/std/slices", "shared/std/sort"} {
 		for _, suffix := range []string{"", "_extra", "/nested"} {
 			for _, filename := range []string{"generic.go", "generic_test.go"} {
 				t.Run(directory+suffix+"/"+filename, func(t *testing.T) {
@@ -2842,8 +2842,8 @@ func Test_No_Method_Assertion_Builder_Allowed(t *testing.T) {
 		"func (builder *Assertion_Builder) assertion_plan() (next *Assertion_Builder) {\n" +
 		"\treturn builder\n}\n"
 	for _, filename := range []string{
-		"shared/sim/aver/enforcement.go",
-		"shared/sim/aver/default/aver_default_noop.go",
+		"shared/std/sim/aver/enforcement.go",
+		"shared/std/sim/aver/default/aver_default_noop.go",
 	} {
 		diags, err := lint.Check_Source(filename, source_text)
 		if err != nil {
@@ -2869,11 +2869,11 @@ func Test_No_Method_Assertion_Builder_Boundary(t *testing.T) {
 		Package  string
 		Receiver string
 	}{
-		{Filename: "shared/sim/aver/enforcement.go", Package: "aver", Receiver: "Other"},
-		{Filename: "shared/sim/aver/child/method.go", Package: "aver",
+		{Filename: "shared/std/sim/aver/enforcement.go", Package: "aver", Receiver: "Other"},
+		{Filename: "shared/std/sim/aver/child/method.go", Package: "aver",
 			Receiver: "Assertion_Builder"},
 		{Filename: "other/enforcement.go", Package: "aver", Receiver: "Assertion_Builder"},
-		{Filename: "shared/sim/aver/enforcement.go", Package: "other",
+		{Filename: "shared/std/sim/aver/enforcement.go", Package: "other",
 			Receiver: "Assertion_Builder"},
 		{Filename: "fixture_test.go", Package: "fixture_test", Receiver: "Assertion_Builder"},
 	}

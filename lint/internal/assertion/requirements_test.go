@@ -61,7 +61,7 @@ func Test_Invariants_Signature(t *testing.T) {
 	by_value := parse(t, &parse_input{
 		Path: "pkg/rule.go",
 		Source_Text: "package fixture\n\n" +
-			"import aver \"fixture/shared/sim/aver/default\"\n\n" +
+			"import aver \"fixture/shared/std/sim/aver/default\"\n\n" +
 			"// Widget is a fixture.\ntype Widget struct {\n" +
 			"\t// X is a fixture.\n\tX int\n}\n\n" +
 			"// Widget_Invariants is a fixture.\n" +
@@ -75,7 +75,7 @@ func Test_Invariants_Signature(t *testing.T) {
 	scalar := parse(t, &parse_input{
 		Path: "pkg/rule.go",
 		Source_Text: "package fixture\n\n" +
-			"import aver \"fixture/shared/sim/aver/default\"\n\n" +
+			"import aver \"fixture/shared/std/sim/aver/default\"\n\n" +
 			"// Level is a fixture.\ntype Level int8\n\n" +
 			"// Level_Invariants is a fixture.\n" +
 			"func Level_Invariants(v Level, namespace aver.Namespace) {\n" +
@@ -87,7 +87,7 @@ func Test_Invariants_Signature(t *testing.T) {
 	scalar_pointer := parse(t, &parse_input{
 		Path: "pkg/rule.go",
 		Source_Text: "package fixture\n\n" +
-			"import aver \"fixture/shared/sim/aver/default\"\n\n" +
+			"import aver \"fixture/shared/std/sim/aver/default\"\n\n" +
 			"// Level is a fixture.\ntype Level int8\n\n" +
 			"// Level_Invariants is a fixture.\n" +
 			"func Level_Invariants(v *Level, namespace aver.Namespace) {\n" +
@@ -100,7 +100,7 @@ func Test_Invariants_Signature(t *testing.T) {
 	inherited := parse(t, &parse_input{
 		Path: "pkg/rule.go",
 		Source_Text: "package fixture\n\n" +
-			"import aver \"fixture/shared/sim/aver/default\"\n\n" +
+			"import aver \"fixture/shared/std/sim/aver/default\"\n\n" +
 			"// Widget is a fixture.\ntype Widget struct {\n" +
 			"\t// X is a fixture.\n\tX int\n}\n\n" +
 			"// Widget_Invariants is a fixture.\n" +
@@ -327,7 +327,7 @@ func Test_Invariants_Helper_Constants(t *testing.T) {
 	// A qualified constant states the boundary it crosses, thus one shared bound serves every
 	// type that names it and no type has to copy the number.
 	qualified := "package fixture\n\n" +
-		"import (\n\taver \"fixture/shared/sim/aver/default\"\n" +
+		"import (\n\taver \"fixture/shared/std/sim/aver/default\"\n" +
 		"\tbound \"fixture/other\"\n)\n\n" +
 		"// Value is a fixture.\ntype Value int\n\n" +
 		"// Value_Invariants is a fixture.\n" +
@@ -436,7 +436,7 @@ func Test_Invariants_Field_Composition(t *testing.T) {
 	pf := parse(t, &parse_input{
 		Path: "pkg/rule.go",
 		Source_Text: "package fixture\n\n" +
-			"import (\n\taver \"fixture/shared/sim/aver/default\"\n" +
+			"import (\n\taver \"fixture/shared/std/sim/aver/default\"\n" +
 			"\tforeign \"fixture/foreign\"\n)\n\n" +
 			"const Token_Min = 0\n\nconst Token_Max = 8\n\n" +
 			"// Token is a fixture.\ntype Token string\n\n" +
@@ -471,7 +471,7 @@ func Test_Invariants_Field_Composition(t *testing.T) {
 	external := parse(t, &parse_input{
 		Path: "other/token.go",
 		Source_Text: "package other\n\n" +
-			"import aver \"fixture/shared/sim/aver/default\"\n\n" +
+			"import aver \"fixture/shared/std/sim/aver/default\"\n\n" +
 			"const Token_Min = 0\n\nconst Token_Max = 8\n\n" +
 			"// Token is a fixture.\ntype Token string\n\n" +
 			"// Token_Invariants is a fixture.\n" +
@@ -481,7 +481,7 @@ func Test_Invariants_Field_Composition(t *testing.T) {
 	composed := parse(t, &parse_input{
 		Path: "pkg/composed.go",
 		Source_Text: "package fixture\n\n" +
-			"import (\n\taver \"fixture/shared/sim/aver/default\"\n" +
+			"import (\n\taver \"fixture/shared/std/sim/aver/default\"\n" +
 			"\texternal \"fixture/other\"\n)\n\n" +
 			"const Count_Min = 0\n\nconst Count_Max = 4\n\n" +
 			"// Count is a fixture.\ntype Count int\n\n" +
@@ -537,7 +537,7 @@ func Test_Invariants_Inline_Form(t *testing.T) {
 		}
 	}
 	boolean := "package fixture\n\n" +
-		"import aver \"fixture/shared/sim/aver/default\"\n\n" +
+		"import aver \"fixture/shared/std/sim/aver/default\"\n\n" +
 		"// Flag is a fixture.\ntype Flag bool\n\n" +
 		"// Flag_Invariants is a fixture.\n" +
 		"func Flag_Invariants(v Flag, namespace aver.Namespace) {\n" +
@@ -579,7 +579,7 @@ func Test_Invariants_Defined_Pointers(t *testing.T) {
 func Test_Invariants_Embedded_Fields(t *testing.T) {
 	t.Parallel()
 	head := "package fixture\n\n" +
-		"import aver \"fixture/shared/sim/aver/default\"\n\n" +
+		"import aver \"fixture/shared/std/sim/aver/default\"\n\n" +
 		"const Mark_Min = 0\n\nconst Mark_Max = 8\n\n" +
 		"// Mark is a fixture.\ntype Mark int\n\n" +
 		"// Mark_Invariants is a fixture.\n" +
@@ -641,7 +641,7 @@ func Test_Invariants_Parameter_Helper(t *testing.T) {
 	pf := parse(t, &parse_input{
 		Path: "pkg/rule.go",
 		Source_Text: "package fixture\n\n" +
-			"import (\n\taver \"fixture/shared/sim/aver/default\"\n" +
+			"import (\n\taver \"fixture/shared/std/sim/aver/default\"\n" +
 			"\tforeign \"fixture/foreign\"\n)\n\n" +
 			"const Token_Min = 0\n\nconst Token_Max = 8\n\n" +
 			"// Token is a fixture.\ntype Token string\n\n" +
@@ -670,7 +670,7 @@ func Test_Invariants_Output_Helper(t *testing.T) {
 	pf := parse(t, &parse_input{
 		Path: "pkg/rule.go",
 		Source_Text: "package fixture\n\n" +
-			"import (\n\taver \"fixture/shared/sim/aver/default\"\n" +
+			"import (\n\taver \"fixture/shared/std/sim/aver/default\"\n" +
 			"\tforeign \"fixture/foreign\"\n)\n\n" +
 			"const Token_Min = 0\n\nconst Token_Max = 8\n\n" +
 			"// Token is a fixture.\ntype Token string\n\n" +
@@ -691,7 +691,7 @@ func Test_Invariants_Output_Helper(t *testing.T) {
 	correct := parse(t, &parse_input{
 		Path: "pkg/correct_output.go",
 		Source_Text: "package fixture\n\n" +
-			"import aver \"fixture/shared/sim/aver/default\"\n\n" +
+			"import aver \"fixture/shared/std/sim/aver/default\"\n\n" +
 			"const Token_Min = 0\n\nconst Token_Max = 8\n\n" +
 			"// Token is a fixture.\ntype Token string\n\n" +
 			"// Token_Invariants is a fixture.\n" +
@@ -810,7 +810,7 @@ func raw_type_helper_subject(t *testing.T) {
 	diags := check_source(parse(t, &parse_input{
 		Path: "pkg/rule.go",
 		Source_Text: "package fixture\n\n" +
-			"import aver \"fixture/shared/sim/aver/default\"\n\n" +
+			"import aver \"fixture/shared/std/sim/aver/default\"\n\n" +
 			"// Token is a fixture.\ntype Token int\n\n" +
 			"// Holder is a fixture.\ntype Holder struct {\n" +
 			"\t// Tok is a fixture.\n\tTok Token\n}\n\n" +
@@ -883,7 +883,7 @@ func Test_Invariants_Small_Slices(t *testing.T) {
 func Test_Invariants_Fixed_Arrays(t *testing.T) {
 	t.Parallel()
 	code := "package fixture\n\n" +
-		"import aver \"fixture/shared/sim/aver/default\"\n\n" +
+		"import aver \"fixture/shared/std/sim/aver/default\"\n\n" +
 		"// WIDTH is a fixture.\nconst WIDTH = 64\n\n" +
 		"// Cell is a fixture.\ntype Cell int\n\n" +
 		"// Cell_Invariants is a fixture.\n" +
@@ -953,7 +953,7 @@ func Test_Simulation_Presence(t *testing.T) {
 func Test_Simulation_Contents(t *testing.T) {
 	t.Parallel()
 	sim := "package simulation_test\n\nimport (\n\t\"testing\"\n\n" +
-		"\taver \"fixture/shared/sim/aver/default\"\n)\n\n" +
+		"\taver \"fixture/shared/std/sim/aver/default\"\n)\n\n" +
 		"func TestMain(m *testing.M) {\n" +
 		"\taver.Run_Test_Main(m, \"../**\")\n}\n"
 	if diagnosed(simulation_diagnostics(simulation_files(t, sim)), "simulation") {
@@ -991,7 +991,7 @@ func Test_Simulation_Entry(t *testing.T) {
 	t.Parallel()
 	sim := "package simulation_test\n\nimport (\n\t\"testing\"\n\n" +
 		"\t\"github.com/james-orcales/james-orcales/pkg/pkg\"\n" +
-		"\taver \"fixture/shared/sim/aver/default\"\n)\n\n" +
+		"\taver \"fixture/shared/std/sim/aver/default\"\n)\n\n" +
 		"func TestMain(m *testing.M) {\n" +
 		"\taver.Run_Test_Main(m, \"../**\")\n}\n\n" +
 		"func Fuzz_Main(f *testing.F) {\n\tpkg.Extra()\n}\n"
@@ -1020,7 +1020,7 @@ func Test_Simulation_Entry(t *testing.T) {
 func Test_Simulation_Blackbox(t *testing.T) {
 	t.Parallel()
 	sim := "package simulation\n\nimport (\n\t\"testing\"\n\n" +
-		"\taver \"fixture/shared/sim/aver/default\"\n)\n\n" +
+		"\taver \"fixture/shared/std/sim/aver/default\"\n)\n\n" +
 		"func TestMain(m *testing.M) {\n" +
 		"\taver.Run_Test_Main(m, \"../**\")\n}\n\n" +
 		"func Fuzz_Main(f *testing.F) {\n\tf.Fuzz(func(t *testing.T, data []byte) {})\n}\n"
@@ -1120,7 +1120,7 @@ func parameter_helper_correct(t *testing.T) {
 	correct := parse(t, &parse_input{
 		Path: "pkg/correct.go",
 		Source_Text: "package fixture\n\n" +
-			"import aver \"fixture/shared/sim/aver/default\"\n\n" +
+			"import aver \"fixture/shared/std/sim/aver/default\"\n\n" +
 			"const Token_Min = 0\n\nconst Token_Max = 8\n\n" +
 			"// Token is a fixture.\ntype Token string\n\n" +
 			"// Token_Invariants is a fixture.\n" +
@@ -1135,7 +1135,7 @@ func parameter_helper_correct(t *testing.T) {
 	addressed := parse(t, &parse_input{
 		Path: "pkg/addressed.go",
 		Source_Text: "package fixture\n\n" +
-			"import aver \"fixture/shared/sim/aver/default\"\n\n" +
+			"import aver \"fixture/shared/std/sim/aver/default\"\n\n" +
 			"const Token_Min = 0\n\nconst Token_Max = 8\n\n" +
 			"// Token is a fixture.\ntype Token string\n\n" +
 			"// Token_Invariants is a fixture.\n" +
@@ -1155,7 +1155,7 @@ func parameter_helper_correct(t *testing.T) {
 	unaddressed := parse(t, &parse_input{
 		Path: "pkg/unaddressed.go",
 		Source_Text: "package fixture\n\n" +
-			"import aver \"fixture/shared/sim/aver/default\"\n\n" +
+			"import aver \"fixture/shared/std/sim/aver/default\"\n\n" +
 			"const Token_Min = 0\n\nconst Token_Max = 8\n\n" +
 			"// Token is a fixture.\ntype Token string\n\n" +
 			"// Token_Invariants is a fixture.\n" +
@@ -1180,7 +1180,7 @@ func parameter_helper_shadowed(t *testing.T) {
 	shadowed := parse(t, &parse_input{
 		Path: "pkg/shadowed.go",
 		Source_Text: "package fixture\n\n" +
-			"import aver \"fixture/shared/sim/aver/default\"\n\n" +
+			"import aver \"fixture/shared/std/sim/aver/default\"\n\n" +
 			"const Token_Min = 0\n\nconst Token_Max = 8\n\n" +
 			"// Token is a fixture.\ntype Token string\n\n" +
 			"// Token_Invariants is a fixture.\n" +
@@ -1203,7 +1203,7 @@ func parameter_helper_external(t *testing.T) {
 	external := parse(t, &parse_input{
 		Path: "other/input.go",
 		Source_Text: "package other\n\n" +
-			"import aver \"fixture/shared/sim/aver/default\"\n\n" +
+			"import aver \"fixture/shared/std/sim/aver/default\"\n\n" +
 			"const Input_Min = -4\n\nconst Input_Max = 4\n\n" +
 			"// Input is a fixture.\ntype Input int\n\n" +
 			"// Input_Invariants is a fixture.\n" +
@@ -1228,7 +1228,7 @@ func field_subject_isolation(t *testing.T) {
 	pf := parse(t, &parse_input{
 		Path: "pkg/field_isolation.go",
 		Source_Text: "package fixture\n\n" +
-			"import aver \"fixture/shared/sim/aver/default\"\n\n" +
+			"import aver \"fixture/shared/std/sim/aver/default\"\n\n" +
 			"const Token_Min = 0\n\nconst Token_Max = 8\n\n" +
 			"// Token is a fixture.\ntype Token int\n\n" +
 			"// Token_Invariants is a fixture.\n" +
@@ -1256,7 +1256,7 @@ func parameter_subject_isolation(t *testing.T) {
 	pf := parse(t, &parse_input{
 		Path: "pkg/parameter_isolation.go",
 		Source_Text: "package fixture\n\n" +
-			"import aver \"fixture/shared/sim/aver/default\"\n\n" +
+			"import aver \"fixture/shared/std/sim/aver/default\"\n\n" +
 			"const Token_Min = 0\n\nconst Token_Max = 8\n\n" +
 			"// Token is a fixture.\ntype Token int\n\n" +
 			"// Token_Invariants is a fixture.\n" +
@@ -1282,7 +1282,7 @@ func output_subject_isolation(t *testing.T) {
 	pf := parse(t, &parse_input{
 		Path: "pkg/output_isolation.go",
 		Source_Text: "package fixture\n\n" +
-			"import aver \"fixture/shared/sim/aver/default\"\n\n" +
+			"import aver \"fixture/shared/std/sim/aver/default\"\n\n" +
 			"const Token_Min = 0\n\nconst Token_Max = 8\n\n" +
 			"// Token is a fixture.\ntype Token int\n\n" +
 			"// Token_Invariants is a fixture.\n" +
@@ -1310,7 +1310,7 @@ func cross_package_constant_isolation(t *testing.T) {
 	local := parse(t, &parse_input{
 		Path: "pkg/local_constants.go",
 		Source_Text: "package fixture\n\n" +
-			"import aver \"fixture/shared/sim/aver/default\"\n\n" +
+			"import aver \"fixture/shared/std/sim/aver/default\"\n\n" +
 			"// Value is a fixture.\ntype Value int\n\n" +
 			"// Value_Invariants is a fixture.\n" +
 			"func Value_Invariants(value Value, namespace aver.Namespace) {\n" +
@@ -1329,7 +1329,7 @@ func qualified_base_resolves(t *testing.T) {
 	foreign := parse(t, &parse_input{
 		Path: "other/target.go",
 		Source_Text: "package other\n\n" +
-			"import aver \"fixture/shared/sim/aver/default\"\n\n" +
+			"import aver \"fixture/shared/std/sim/aver/default\"\n\n" +
 			"const Span_Min = 0\n\nconst Span_Max = 8\n\n" +
 			"// Request_Target is a fixture.\ntype Request_Target string\n\n" +
 			"// Request_Target_Invariants is a fixture.\n" +
@@ -1340,7 +1340,7 @@ func qualified_base_resolves(t *testing.T) {
 	local := parse(t, &parse_input{
 		Path: "pkg/parsed.go",
 		Source_Text: "package fixture\n\n" +
-			"import (\n\taver \"fixture/shared/sim/aver/default\"\n" +
+			"import (\n\taver \"fixture/shared/std/sim/aver/default\"\n" +
 			"\tproxy \"fixture/other\"\n)\n\n" +
 			"const Span_Min = 0\n\nconst Span_Max = 8\n\n" +
 			"// Parsed_Request_Target is a fixture.\n" +
@@ -1361,7 +1361,7 @@ func cross_package_helper_isolation(t *testing.T) {
 	foreign := parse(t, &parse_input{
 		Path: "other/token.go",
 		Source_Text: "package other\n\n" +
-			"import aver \"fixture/shared/sim/aver/default\"\n\n" +
+			"import aver \"fixture/shared/std/sim/aver/default\"\n\n" +
 			"const Token_Min = 0\n\nconst Token_Max = 8\n\n" +
 			"// Token is a fixture.\ntype Token int\n\n" +
 			"// Token_Invariants is a fixture.\n" +
@@ -1371,7 +1371,7 @@ func cross_package_helper_isolation(t *testing.T) {
 	local := parse(t, &parse_input{
 		Path: "pkg/local_helper.go",
 		Source_Text: "package fixture\n\n" +
-			"import (\n\taver \"fixture/shared/sim/aver/default\"\n" +
+			"import (\n\taver \"fixture/shared/std/sim/aver/default\"\n" +
 			"\tforeign \"fixture/other\"\n)\n\n" +
 			"const Token_Min = 0\n\nconst Token_Max = 8\n\n" +
 			"// Token is a fixture.\ntype Token int\n\n" +
@@ -1434,7 +1434,7 @@ func check_fixture(t *testing.T, code string) (diags []diagnostic.Diagnostic) {
 // judgment, without introducing an argument bundle merely to share fixture text.
 func integer_helper_source(body string) (code string) {
 	return "package fixture\n\n" +
-		"import aver \"fixture/shared/sim/aver/default\"\n\n" +
+		"import aver \"fixture/shared/std/sim/aver/default\"\n\n" +
 		"const Value_Min = -4\n\nconst Value_Third = -1\n\n" +
 		"const Value_Fourth = 1\n\nconst Value_Max = 4\n\n" +
 		"// Value is a fixture.\ntype Value int\n\n" +
@@ -1456,7 +1456,7 @@ const CHAINED_SLICE chained_subject = "Readings"
 // Only a walk to the end of that chain can see the kind the subject owes its mandate to.
 func chained_helper_source(subject chained_subject, body string) (code string) {
 	return "package fixture\n\n" +
-		"import aver \"fixture/shared/sim/aver/default\"\n\n" +
+		"import aver \"fixture/shared/std/sim/aver/default\"\n\n" +
 		"const Span_Min = 0\n\nconst Span_Max = 8\n\n" +
 		"// Reading_Representation is a fixture.\ntype Reading_Representation int\n\n" +
 		"// Reading_Representation_Invariants is a fixture.\n" +
@@ -1484,7 +1484,7 @@ func chained_helper_source(subject chained_subject, body string) (code string) {
 // input whose bundling would improve the API.
 func float_helper_source(body string) (code string) {
 	return "package fixture\n\n" +
-		"import aver \"fixture/shared/sim/aver/default\"\n\n" +
+		"import aver \"fixture/shared/std/sim/aver/default\"\n\n" +
 		"const Value_Min = -4\n\nconst Value_Max = 4\n\n" +
 		"// Value is a fixture.\ntype Value float64\n\n" +
 		"// Value_Invariants is a fixture.\n" +
@@ -1496,7 +1496,7 @@ func float_helper_source(body string) (code string) {
 // primitive preset the leaf is proving.
 func boolean_helper_source(body string) (code string) {
 	return "package fixture\n\n" +
-		"import aver \"fixture/shared/sim/aver/default\"\n\n" +
+		"import aver \"fixture/shared/std/sim/aver/default\"\n\n" +
 		"const Value_Min = -4\n\nconst Value_Max = 4\n\n" +
 		"// Value is a fixture.\ntype Value bool\n\n" +
 		"// Value_Invariants is a fixture.\n" +
@@ -1507,7 +1507,7 @@ func boolean_helper_source(body string) (code string) {
 // Builds a defined byte-slice helper, the same counted shape as Report_Invariants.
 func count_helper_source(body string) (code string) {
 	return "package fixture\n\n" +
-		"import aver \"fixture/shared/sim/aver/default\"\n\n" +
+		"import aver \"fixture/shared/std/sim/aver/default\"\n\n" +
 		"const Value_Min = 0\n\nconst Value_Max = 32\n\n" +
 		"// Value is a fixture.\ntype Value []byte\n\n" +
 		"// Value_Invariants is a fixture.\n" +
@@ -1525,7 +1525,7 @@ func small_slice_message(bound string) (message string) {
 // form and the bound under judgment.
 func small_slice_source(body string, bound string) (code string) {
 	return "package fixture\n\n" +
-		"import aver \"fixture/shared/sim/aver/default\"\n\n" +
+		"import aver \"fixture/shared/std/sim/aver/default\"\n\n" +
 		"// MEMBERS_MIN is a fixture.\nconst MEMBERS_MIN = 0\n\n" +
 		"// MEMBERS_MAX is a fixture.\nconst MEMBERS_MAX = " + bound + "\n\n" +
 		"// Member is a fixture.\ntype Member int\n\n" +
@@ -1551,7 +1551,7 @@ func small_slice_source(body string, bound string) (code string) {
 // A same-shaped fluent builder owned by another package cannot impersonate aver.Assertions.
 func foreign_scalar_helper_source() (code string) {
 	return "package fixture\n\n" +
-		"import (\n\taver \"fixture/shared/sim/aver/default\"\n" +
+		"import (\n\taver \"fixture/shared/std/sim/aver/default\"\n" +
 		"\tforeign \"fixture/other\"\n)\n\n" +
 		"const Value_Min = -4\n\nconst Value_Max = 4\n\n" +
 		"// Value is a fixture.\ntype Value int\n\n" +
@@ -1564,7 +1564,7 @@ func foreign_scalar_helper_source() (code string) {
 // The mandated literal qualifier keeps helper bodies visually and statically canonical.
 func aliased_scalar_helper_source() (code string) {
 	return "package fixture\n\n" +
-		"import contract \"fixture/shared/sim/aver/default\"\n\n" +
+		"import contract \"fixture/shared/std/sim/aver/default\"\n\n" +
 		"const Value_Min = -4\n\nconst Value_Max = 4\n\n" +
 		"// Value is a fixture.\ntype Value int\n\n" +
 		"// Value_Invariants is a fixture.\n" +
@@ -1674,7 +1674,7 @@ func simulation_files(t *testing.T, sim string) (files []source.Parsed_File) {
 func simulation_fixture_source(call string) (code string) {
 	return "package simulation_test\n\n" +
 		"import (\n\t\"testing\"\n\n" +
-		"\taver \"fixture/shared/sim/aver/default\"\n)\n\n" +
+		"\taver \"fixture/shared/std/sim/aver/default\"\n)\n\n" +
 		"func TestMain(m *testing.M) {\n\t" + call + "\n}\n\n" +
 		"func Fuzz_Main(f *testing.F) {\n\t" +
 		"f.Fuzz(func(t *testing.T, data []byte) {})\n}\n"
@@ -1683,7 +1683,7 @@ func simulation_fixture_source(call string) (code string) {
 // INHERITED_FIELD_HEAD declares a struct over a scalar and a struct field, its composing bundle,
 // and a defined type over it. Each case appends that defined type's own bundle.
 const INHERITED_FIELD_HEAD = "package fixture\n\n" +
-	"import aver \"fixture/shared/sim/aver/default\"\n\n" +
+	"import aver \"fixture/shared/std/sim/aver/default\"\n\n" +
 	"const Mark_Min = 0\n\nconst Mark_Max = 8\n\n" +
 	"// Mark is a fixture.\ntype Mark int\n\n" +
 	"// Mark_Invariants is a fixture.\n" +
@@ -1770,7 +1770,7 @@ func assert_inherited_struct_is_composed(t *testing.T) {
 // DEFINED_POINTER_HEAD declares a scalar, a struct over it, and a defined pointer to that struct.
 // Each case appends the pointer's own bundle body.
 const DEFINED_POINTER_HEAD = "package fixture\n\n" +
-	"import aver \"fixture/shared/sim/aver/default\"\n\n" +
+	"import aver \"fixture/shared/std/sim/aver/default\"\n\n" +
 	"const Mark_Min = 0\n\nconst Mark_Max = 8\n\n" +
 	"// Mark is a fixture.\ntype Mark int\n\n" +
 	"// Mark_Invariants is a fixture.\n" +
@@ -1829,7 +1829,7 @@ func assert_defined_pointer_body(t *testing.T) {
 func assert_defined_pointer_pointee(t *testing.T) {
 	t.Helper()
 	scalar := "package fixture\n\n" +
-		"import aver \"fixture/shared/sim/aver/default\"\n\n" +
+		"import aver \"fixture/shared/std/sim/aver/default\"\n\n" +
 		"const Mark_Min = 0\n\nconst Mark_Max = 8\n\n" +
 		"// Mark is a fixture.\ntype Mark int\n\n" +
 		"// Mark_Invariants is a fixture.\n" +
@@ -1847,7 +1847,7 @@ func assert_defined_pointer_pointee(t *testing.T) {
 		t.Fatal("non-struct pointee owes the same body")
 	}
 	orphan := "package fixture\n\n" +
-		"import aver \"fixture/shared/sim/aver/default\"\n\n" +
+		"import aver \"fixture/shared/std/sim/aver/default\"\n\n" +
 		"// Raw is a fixture.\ntype Raw int\n\n" +
 		"// Raw_Pointer is a fixture.\ntype Raw_Pointer *Raw\n\n" +
 		"// Raw_Pointer_Invariants is a fixture.\n" +
@@ -1859,7 +1859,7 @@ func assert_defined_pointer_pointee(t *testing.T) {
 		t.Fatal("pointee without helper must be flagged on the pointer helper")
 	}
 	unnamed := "package fixture\n\n" +
-		"import aver \"fixture/shared/sim/aver/default\"\n\n" +
+		"import aver \"fixture/shared/std/sim/aver/default\"\n\n" +
 		"// Blob is a fixture.\ntype Blob *[]byte\n\n" +
 		"// Blob_Invariants is a fixture.\n" +
 		"func Blob_Invariants(v Blob, namespace aver.Namespace) {\n" +
@@ -1877,7 +1877,7 @@ func assert_defined_pointer_foreign(t *testing.T) {
 	external := parse(t, &parse_input{
 		Path: "other/token.go",
 		Source_Text: "package other\n\n" +
-			"import aver \"fixture/shared/sim/aver/default\"\n\n" +
+			"import aver \"fixture/shared/std/sim/aver/default\"\n\n" +
 			"const Token_Min = 0\n\nconst Token_Max = 8\n\n" +
 			"// Token is a fixture.\ntype Token string\n\n" +
 			"// Token_Invariants is a fixture.\n" +
@@ -1885,7 +1885,7 @@ func assert_defined_pointer_foreign(t *testing.T) {
 			"\taver.Tree(v, namespace)." +
 			"Range_Int(len(v), Token_Min, Token_Max).Ensure()\n}\n"})
 	head := "package fixture\n\n" +
-		"import (\n\taver \"fixture/shared/sim/aver/default\"\n" +
+		"import (\n\taver \"fixture/shared/std/sim/aver/default\"\n" +
 		"\texternal \"fixture/other\"\n)\n\n" +
 		"// Token_Pointer is a fixture.\ntype Token_Pointer *external.Token\n\n" +
 		"// Token_Pointer_Invariants is a fixture.\n" +
@@ -1914,7 +1914,7 @@ func assert_defined_pointer_chain(t *testing.T) {
 	external := parse(t, &parse_input{
 		Path: "other/token.go",
 		Source_Text: "package other\n\n" +
-			"import aver \"fixture/shared/sim/aver/default\"\n\n" +
+			"import aver \"fixture/shared/std/sim/aver/default\"\n\n" +
 			"const Token_Min = 0\n\nconst Token_Max = 8\n\n" +
 			"// Token is a fixture.\ntype Token string\n\n" +
 			"// Token_Invariants is a fixture.\n" +
@@ -1928,7 +1928,7 @@ func assert_defined_pointer_chain(t *testing.T) {
 			"\tif v == nil {\n\t\treturn\n\t}\n" +
 			"\tToken_Invariants(*v, namespace)\n}\n"})
 	head := "package fixture\n\n" +
-		"import (\n\taver \"fixture/shared/sim/aver/default\"\n" +
+		"import (\n\taver \"fixture/shared/std/sim/aver/default\"\n" +
 		"\texternal \"fixture/other\"\n)\n\n" +
 		"// Token_State is a fixture.\ntype Token_State external.Token_Handle\n\n" +
 		"// Token_State_Invariants is a fixture.\n" +

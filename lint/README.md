@@ -149,17 +149,17 @@ binary, never shared library → binary.
 Within a module, non-main packages may nest **at most one level deep**:
 
 ```
-shared/snap/snap.go           ← library tier
-shared/snap/default/x.go      ← composition tier (one deeper, OK)
-shared/snap/default/y/y.go    ← too deep, flagged
+shared/std/snap/snap.go           ← library tier
+shared/std/snap/default/x.go      ← composition tier (one deeper, OK)
+shared/std/snap/default/y/y.go    ← too deep, flagged
 ```
 
 Major-version directories (`v2`, `v3`, …) are invisible to this count — they're a
 Go module-versioning convention, not a real package layer:
 
 ```
-shared/snap/v2/snap.go           ← still library tier (v2 doesn't count)
-shared/snap/v2/default/x.go      ← still composition tier
+shared/std/snap/v2/snap.go           ← still library tier (v2 doesn't count)
+shared/std/snap/v2/default/x.go      ← still composition tier
 ```
 
 The two positions differ in what they're allowed to touch:
@@ -176,7 +176,7 @@ The two positions differ in what they're allowed to touch:
 Library tier — pure, every dependency is a field:
 
 ```go
-// shared/snap/snap.go
+// shared/std/snap/snap.go
 package snap
 
 type Snapper struct {
@@ -190,7 +190,7 @@ func (s *Snapper) Run() { fmt.Fprintln(s.Output, s.Get_Caller()) }
 Composition tier — the one place where the binding to the real world lives:
 
 ```go
-// shared/snap/default/wire.go
+// shared/std/snap/default/wire.go
 package snap
 
 import (
@@ -233,7 +233,7 @@ because ambient sources cannot supply deterministic coverage. Pure library suite
 The file is in a library-tier package and touches impure stdlib state. Example:
 
 ```go
-// shared/snap/snap.go
+// shared/std/snap/snap.go
 package snap
 
 import "os"  // ← flagged: library tier may not bind impure state
@@ -255,7 +255,7 @@ Three fixes:
 3. **Move the binding to a composition-tier sub-package:**
 
    ```
-   shared/snap/
+   shared/std/snap/
    ├── snap.go              ← pure types
    └── default/
        └── wire.go          ← package snap; imports "os", wires Default
@@ -273,10 +273,10 @@ package clause. The composition-tier package re-exports its library and must
 shadow the library's name so the API reads as if no split had happened.
 
 ```go
-// flagged: shared/snap/default/wire.go
+// flagged: shared/std/snap/default/wire.go
 package wire
 
-// clean: shared/snap/default/wire.go
+// clean: shared/std/snap/default/wire.go
 package snap
 ```
 

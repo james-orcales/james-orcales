@@ -16,7 +16,7 @@ import (
 
 	"local/james-orcales/lint/internal/diagnostic"
 	"local/james-orcales/lint/internal/source"
-	"local/james-orcales/shared/strconv"
+	"local/james-orcales/shared/std/strconv"
 )
 
 // ASSERTIONS_BUILDER_LINKS_MAX bounds static expansion because a helper larger than a function's
@@ -1033,7 +1033,7 @@ func helper_default_package(
 ) (import_path string) {
 	shared := source.Shared_Import(components)
 	if shared != "" {
-		return shared + "/sim/aver/default"
+		return shared + "/std/sim/aver/default"
 	}
 	for _, candidate := range imports {
 		if strings.Has_Suffix(candidate, "/sim/aver/default") {

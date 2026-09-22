@@ -9,10 +9,10 @@ import (
 	"testing/fstest"
 
 	"local/james-orcales/lint/internal"
-	"local/james-orcales/shared/sim/aver/default"
-	library "local/james-orcales/shared/snap"
-	"local/james-orcales/shared/snap/default"
-	"local/james-orcales/shared/strconv"
+	"local/james-orcales/shared/std/sim/aver/default"
+	library "local/james-orcales/shared/std/snap"
+	"local/james-orcales/shared/std/snap/default"
+	"local/james-orcales/shared/std/strconv"
 )
 
 func quote_text(text string) (quoted string) {
@@ -1738,7 +1738,7 @@ func F(r *http.Request) (h http.Header) {
 }
 `,
 			},
-			Want_Diag: "Route IO through shared/sim/nbio",
+			Want_Diag: "Route IO through shared/std/sim/nbio",
 		},
 		{
 			Name: "library calls net.Dial",
@@ -2004,9 +2004,9 @@ func Test_No_Impure_Stdlib_Composition_Tier_Part2(t *testing.T) {
 		{
 			Name: "composition tier under versioned library allowed",
 			Files: map[string]string{
-				"shared/go.mod":          DOCTRINE_SHARED_LIBRARY_GO_MODULE,
-				"shared/snap/v2/snap.go": fixture_package("snap"),
-				"shared/snap/v2/snap_default/" +
+				"shared/go.mod":              DOCTRINE_SHARED_LIBRARY_GO_MODULE,
+				"shared/std/snap/v2/snap.go": fixture_package("snap"),
+				"shared/std/snap/v2/snap_default/" +
 					"snap_default.go": `// Package snap_default is a fixture.
 package snap_default
 
@@ -2543,9 +2543,9 @@ func Test_Library_Tier_Depth(t *testing.T) {
 			Files: map[string]string{
 				"shared/" +
 					"go.mod": DOCTRINE_SHARED_LIBRARY_GO_MODULE,
-				"shared/snap/snap.go":         fixture_package("snap"),
-				"shared/snap/v2/snap.go":      fixture_package("snap"),
-				"shared/snap/v2/sub/child.go": fixture_package("child"),
+				"shared/std/snap/snap.go":         fixture_package("snap"),
+				"shared/std/snap/v2/snap.go":      fixture_package("snap"),
+				"shared/std/snap/v2/sub/child.go": fixture_package("child"),
 			},
 			Forbid: []string{"is below the library tier"},
 		},
@@ -3383,7 +3383,7 @@ func json_string_list_map_text(values map[string][]string) (text string) {
 // The lint.json documents that decode cleanly: the full document, one with every
 // list empty, and one carrying ignore globs.
 func parse_configuration_valid_cases() (cases []parse_configuration_case) {
-	instrumentation := []string{"shared/sim/aver/**"}
+	instrumentation := []string{"shared/std/sim/aver/**"}
 	return []parse_configuration_case{
 		{
 			Name: "valid full document",
@@ -3413,7 +3413,7 @@ func parse_configuration_valid_cases() (cases []parse_configuration_case) {
 			Name: "broader assertion exemption over instrumentation accepted",
 			Input: configuration_document(map[string]any{
 				"instrumentation_packages":           instrumentation,
-				"opt_out_assertion_mandate_packages": []string{"shared/sim/**"},
+				"opt_out_assertion_mandate_packages": []string{"shared/std/sim/**"},
 			}),
 			Want_Shared: "example.com/lib",
 			Want_List:   instrumentation,
@@ -3470,8 +3470,8 @@ func parse_configuration_error_cases() (cases []parse_configuration_case) {
 		{
 			Name: "explicit instrumentation assertion exemption rejected",
 			Input: configuration_document(map[string]any{
-				"instrumentation_packages":           []string{"shared/snap/**"},
-				"opt_out_assertion_mandate_packages": []string{"shared/snap/**"},
+				"instrumentation_packages":           []string{"shared/std/snap/**"},
+				"opt_out_assertion_mandate_packages": []string{"shared/std/snap/**"},
 			}),
 			Want_Err: true,
 		},

@@ -25,7 +25,7 @@ One component: a top-level directory of Go source in the single-module repo.
 
 ### Root
 
-Root is the component's top-level directory, such as shared/cli or lint.
+Root is the component's top-level directory, such as shared/std/cli or lint.
 
 ### Import Path
 
