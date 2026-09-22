@@ -22,7 +22,13 @@
           "documentation/youtube/**",
           "rust-toolchain.toml",
           "gameboy_emulator/test_roms/**",
-          "shared_lua/**"
+          "shared_lua/**",
+          "shared/crypto/ecdsa/**",
+          "shared/crypto/ed25519/**",
+          "shared/crypto/elliptic/**",
+          "shared/crypto/rsa/**",
+          "shared/crypto/subtle/**",
+          "shared/crypto/x509/**"
   ],
   "opt_out_interface_ban": [
           "lint/internal/",

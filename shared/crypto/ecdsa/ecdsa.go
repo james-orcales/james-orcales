@@ -32,6 +32,7 @@ import (
 	"crypto/subtle"
 	"errors"
 	"io"
+	"local/james-orcales/shared/sim/prng"
 	"math/big"
 
 	"golang.org/x/crypto/cryptobyte"
@@ -324,8 +325,7 @@ func (priv *PrivateKey) Sign(random io.Reader, digest []byte, opts crypto.Signer
 	if random == nil {
 		return signRFC6979(priv, digest, opts)
 	}
-	random = rand.CustomReader(random)
-	return SignASN1(random, priv, digest)
+	return signASN1(random, priv, digest)
 }
 
 // GenerateKey generates a new ECDSA private key for the specified curve.
@@ -333,7 +333,8 @@ func (priv *PrivateKey) Sign(random io.Reader, digest []byte, opts crypto.Signer
 // Since Go 1.26, a secure source of random bytes is always used, and the Reader is
 // ignored unless GODEBUG=cryptocustomrand=1 is set. This setting will be removed
 // in a future Go release. Instead, use [testing/cryptotest.SetGlobalRandom].
-func GenerateKey(c elliptic.Curve, r io.Reader) (*PrivateKey, error) {
+func GenerateKey(c elliptic.Curve, generator *prng.Xoshiro) (*PrivateKey, error) {
+	r := entropy(generator)
 	if boring.Enabled && rand.IsDefaultReader(r) {
 		x, y, d, err := boring.GenerateKeyECDSA(c.Params().Name)
 		if err != nil {
@@ -342,8 +343,6 @@ func GenerateKey(c elliptic.Curve, r io.Reader) (*PrivateKey, error) {
 		return &PrivateKey{PublicKey: PublicKey{Curve: c, X: bbig.Dec(x), Y: bbig.Dec(y)}, D: bbig.Dec(d)}, nil
 	}
 	boring.UnreachableExceptTests()
-
-	r = rand.CustomReader(r)
 
 	switch c.Params() {
 	case elliptic.P224().Params():
@@ -379,7 +378,11 @@ func generateFIPS[P ecdsa.Point[P]](curve elliptic.Curve, c *ecdsa.Curve[P], ran
 // is always used, and the Reader is ignored unless GODEBUG=cryptocustomrand=1
 // is set. This setting will be removed in a future Go release. Instead, use
 // [testing/cryptotest.SetGlobalRandom].
-func SignASN1(r io.Reader, priv *PrivateKey, hash []byte) ([]byte, error) {
+func SignASN1(generator *prng.Xoshiro, priv *PrivateKey, hash []byte) ([]byte, error) {
+	return signASN1(entropy(generator), priv, hash)
+}
+
+func signASN1(r io.Reader, priv *PrivateKey, hash []byte) ([]byte, error) {
 	if boring.Enabled && rand.IsDefaultReader(r) {
 		b, err := boringPrivateKey(priv)
 		if err != nil {
@@ -388,8 +391,6 @@ func SignASN1(r io.Reader, priv *PrivateKey, hash []byte) ([]byte, error) {
 		return boring.SignMarshalECDSA(b, hash)
 	}
 	boring.UnreachableExceptTests()
-
-	r = rand.CustomReader(r)
 
 	switch priv.Curve.Params() {
 	case elliptic.P224().Params():

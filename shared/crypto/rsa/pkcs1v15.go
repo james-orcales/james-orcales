@@ -12,6 +12,7 @@ import (
 	"crypto/subtle"
 	"errors"
 	"io"
+	"local/james-orcales/shared/sim/prng"
 )
 
 // This file implements encryption and decryption using PKCS #1 v1.5 padding.
@@ -47,7 +48,8 @@ type PKCS1v15DecryptOptions struct {
 // [EncryptOAEP] and [DecryptOAEP] instead.
 //
 // [draft-irtf-cfrg-rsa-guidance-05]: https://www.ietf.org/archive/id/draft-irtf-cfrg-rsa-guidance-05.html#name-rationale
-func EncryptPKCS1v15(random io.Reader, pub *PublicKey, msg []byte) ([]byte, error) {
+func EncryptPKCS1v15(generator *prng.Xoshiro, pub *PublicKey, msg []byte) ([]byte, error) {
+	random := entropy(generator)
 	if fips140only.Enforced() {
 		return nil, errors.New("crypto/rsa: use of PKCS#1 v1.5 encryption is not allowed in FIPS 140-only mode")
 	}
@@ -69,8 +71,6 @@ func EncryptPKCS1v15(random io.Reader, pub *PublicKey, msg []byte) ([]byte, erro
 		return boring.EncryptRSAPKCS1(bkey, msg)
 	}
 	boring.UnreachableExceptTests()
-
-	random = rand.CustomReader(random)
 
 	// EM = 0x00 || 0x02 || PS || 0x00 || M
 	em := make([]byte, k)

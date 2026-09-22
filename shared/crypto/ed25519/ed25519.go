@@ -20,12 +20,10 @@ import (
 	"crypto/internal/fips140/ed25519"
 	"crypto/internal/fips140cache"
 	"crypto/internal/fips140only"
-	"crypto/internal/rand"
-	cryptorand "crypto/rand"
 	"crypto/subtle"
 	"errors"
-	"internal/godebug"
 	"io"
+	"local/james-orcales/shared/sim/prng"
 	"strconv"
 )
 
@@ -137,8 +135,6 @@ type Options struct {
 // HashFunc returns o.Hash.
 func (o *Options) HashFunc() crypto.Hash { return o.Hash }
 
-var cryptocustomrand = godebug.New("cryptocustomrand")
-
 // GenerateKey generates a public/private key pair using entropy from random.
 //
 // If random is nil, a secure random source is used. (Before Go 1.26, a custom
@@ -148,17 +144,8 @@ var cryptocustomrand = godebug.New("cryptocustomrand")
 //
 // The output of this function is deterministic, and equivalent to reading
 // [SeedSize] bytes from random, and passing them to [NewKeyFromSeed].
-func GenerateKey(random io.Reader) (PublicKey, PrivateKey, error) {
-	if random == nil {
-		if cryptocustomrand.Value() == "1" {
-			random = cryptorand.Reader
-			if !rand.IsDefaultReader(random) {
-				cryptocustomrand.IncNonDefault()
-			}
-		} else {
-			random = rand.Reader
-		}
-	}
+func GenerateKey(generator *prng.Xoshiro) (PublicKey, PrivateKey, error) {
+	random := entropy(generator)
 
 	seed := make([]byte, SeedSize)
 	if _, err := io.ReadFull(random, seed); err != nil {

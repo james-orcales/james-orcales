@@ -67,7 +67,7 @@ var errZeroParam = errors.New("zero parameter")
 // is set. This setting will be removed in a future Go release. Instead, use
 // [testing/cryptotest.SetGlobalRandom].
 func Sign(rand io.Reader, priv *PrivateKey, hash []byte) (r, s *big.Int, err error) {
-	sig, err := SignASN1(rand, priv, hash)
+	sig, err := signASN1(rand, priv, hash)
 	if err != nil {
 		return nil, nil, err
 	}

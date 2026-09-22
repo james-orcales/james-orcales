@@ -55,6 +55,7 @@ import (
 	"fmt"
 	"internal/godebug"
 	"io"
+	"local/james-orcales/shared/sim/prng"
 	"math"
 	"math/big"
 )
@@ -309,7 +310,8 @@ func checkPublicKeySize(k *PublicKey) error {
 // in a future Go release. Instead, use [testing/cryptotest.SetGlobalRandom].
 //
 // [Minimum key size]: https://pkg.go.dev/crypto/rsa#hdr-Minimum_key_size
-func GenerateKey(random io.Reader, bits int) (*PrivateKey, error) {
+func GenerateKey(generator *prng.Xoshiro, bits int) (*PrivateKey, error) {
+	random := entropy(generator)
 	if err := checkKeySize(bits); err != nil {
 		return nil, err
 	}
@@ -349,8 +351,6 @@ func GenerateKey(random io.Reader, bits int) (*PrivateKey, error) {
 		}
 		return key, nil
 	}
-
-	random = rand.CustomReader(random)
 
 	if fips140only.Enforced() && bits < 2048 {
 		return nil, errors.New("crypto/rsa: use of keys smaller than 2048 bits is not allowed in FIPS 140-only mode")
@@ -426,15 +426,14 @@ func GenerateKey(random io.Reader, bits int) (*PrivateKey, error) {
 // reasons. Use [GenerateKey] instead.
 //
 // [On the Security of Multi-prime RSA]: http://www.cacr.math.uwaterloo.ca/techreports/2006/cacr2006-16.pdf
-func GenerateMultiPrimeKey(random io.Reader, nprimes int, bits int) (*PrivateKey, error) {
+func GenerateMultiPrimeKey(generator *prng.Xoshiro, nprimes int, bits int) (*PrivateKey, error) {
 	if nprimes == 2 {
-		return GenerateKey(random, bits)
+		return GenerateKey(generator, bits)
 	}
+	random := entropy(generator)
 	if fips140only.Enforced() {
 		return nil, errors.New("crypto/rsa: multi-prime RSA is not allowed in FIPS 140-only mode")
 	}
-
-	random = rand.CustomReader(random)
 
 	priv := new(PrivateKey)
 	priv.E = 65537
