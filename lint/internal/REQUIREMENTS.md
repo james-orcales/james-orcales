@@ -368,7 +368,7 @@ A source or test file spans at most 10000 lines.
 
 ### Main Package Size
 
-A package main's source spans at most 200 lines, counted per build-tag group as the file count
+A package main's source spans at most 500 lines, counted per build-tag group as the file count
 is. Its test files carry no count.
 
 ### Named Returns

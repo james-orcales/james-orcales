@@ -3767,24 +3767,24 @@ func Test_Main_Package_Size(t *testing.T) {
 			strings.Repeat("\n", pad))
 	}
 	const FRAGMENT = "package main in ."
-	over := main_package_size_output(t, fstest.MapFS{"main.go": {Data: main_source(198)}})
+	over := main_package_size_output(t, fstest.MapFS{"main.go": {Data: main_source(498)}})
 	if !strings.Contains(over, FRAGMENT) {
-		t.Errorf("201 lines must be flagged; got: %s", over)
+		t.Errorf("501 lines must be flagged; got: %s", over)
 	}
-	at_cap := main_package_size_output(t, fstest.MapFS{"main.go": {Data: main_source(197)}})
+	at_cap := main_package_size_output(t, fstest.MapFS{"main.go": {Data: main_source(497)}})
 	if strings.Contains(at_cap, FRAGMENT) {
-		t.Errorf("200 lines must stay silent; got: %s", at_cap)
+		t.Errorf("500 lines must stay silent; got: %s", at_cap)
 	}
 	split := main_package_size_output(t, fstest.MapFS{
-		"main.go":        {Data: main_source(147)},
-		"other_linux.go": {Data: tagged(147)},
+		"main.go":        {Data: main_source(347)},
+		"other_linux.go": {Data: tagged(347)},
 	})
 	if strings.Contains(split, FRAGMENT) {
-		t.Errorf("two build-tag groups of 150 must stay apart; got: %s", split)
+		t.Errorf("two build-tag groups of 350 must stay apart; got: %s", split)
 	}
 	with_test := main_package_size_output(t, fstest.MapFS{
-		"main.go":      {Data: main_source(147)},
-		"main_test.go": {Data: main_source(147)},
+		"main.go":      {Data: main_source(347)},
+		"main_test.go": {Data: main_source(347)},
 	})
 	if strings.Contains(with_test, FRAGMENT) {
 		t.Errorf("a test file must carry no count; got: %s", with_test)

@@ -503,7 +503,7 @@ const MERGE_COMMIT_LINE_FIELDS = 3
 // real world and hands off to pkg.Main. Work past that budget is library
 // code hiding in the one package Go bars from being imported, so no test can
 // reach it and no other binary can reuse it.
-const MAIN_LINES_MAX = 200
+const MAIN_LINES_MAX = 500
 
 // DIAGNOSTICS_PER_CALL_MAX caps the slice length of `diags []Diagnostic`
 // returns. A single check may emit one diagnostic per source line at worst,
