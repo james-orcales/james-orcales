@@ -11,11 +11,16 @@ Tier one diagnostic is auto-fixable. It carries the fix: the whole file as it sh
 
 Tier two diagnostic is not auto-fixable. It carries no fix.
 
+### Every Finding
+
+A Go file whose form the check accepts states each finding of each rule, by line and column, then
+in the order found. A file the parser refuses states each refusal its parse logged, the same way.
+
 # Command
 
 ### Usage
 
-`shared/cli` parses `harness <directory> [-json] [-fix]`; `<directory>` is one Go package. A refused
+`shared/std/cli` parses `harness <directory> [-json] [-fix]`; `<directory>` is one Go package. A refused
 command line writes `harness: <error>` and exits 1, each byte below a space as `?` and the error cut
 at the line store, since it names what a host typed. `-h` writes help and exits 0.
 
@@ -28,7 +33,7 @@ program, thus the run writes `harness: the argument vector names no program` and
 
 A run decodes `harness.json` by `harness/pkg/configuration` before the walk; an unreadable file
 fails that step. An undecodable one writes `harness: harness.json: [<key> ]<fault>[: "<text>"][ at
-byte <offset>]`, the byte as `shared/encoding/json` states it, and exits 1.
+byte <offset>]`, the byte as `shared/std/encoding/json` states it, and exits 1.
 
 ### Configuration Paths
 
@@ -67,7 +72,7 @@ contract, thus the walk passes it over. A directory too deep for its contract fa
 
 ### Json
 
-With `-json`, each diagnostic is one line of `shared/encoding/flatjson`: `path`, `line`, `column`,
+With `-json`, each diagnostic is one line of `shared/std/encoding/flatjson`: `path`, `line`, `column`,
 `tier`, `rule`, `message`. A diagnostic without a position has line and column 0.
 
 ### Fix
@@ -120,7 +125,7 @@ A run with a diagnostic writes `elapsed_sec=<s.mmm>` past its findings, and with
 
 ### Clean
 
-Go file that stands in the canonical form of `shared/go/format` yields no diagnostic.
+Go file that stands in the canonical form of `shared/std/go/format` yields no diagnostic.
 
 ### Unformatted
 
@@ -133,6 +138,10 @@ one opening with a byte order mark opens no package clause, thus the parser refu
 Go file the parser refuses yields tier two diagnostic, since a refused tree has no fix. Its line
 is `<path>:<line>:<column>: <message>`: where the refused token stands, then the parser's message.
 A file of more lines than one index holds names no position, thus its line states the path alone.
+
+### Test Closures
+
+A _test.go file's closure may hold logic: its refusals past its closure bodies alone refuse it.
 
 ### Indentation
 
@@ -163,14 +172,14 @@ form exceeds its storage`, since indentation spends bytes the source never held.
 ### Imports
 
 A clean Go file importing a stdlib package lint bans yields tier two diagnostic `Banned import
-"<path>" belongs to stdlib family "<family>". Use shared package.`, rule `imports`, at its first
-such import, with lint's families and gateway exemptions.
+"<path>" belongs to stdlib family "<family>". Use shared package.`, rule `imports`, at each such
+import, with lint's families and gateway exemptions.
 
 ### Name Rules
 
 A clean Go file breaking a rule of `harness/pkg/naming`, over the word table of `harness.json`,
-yields tier two diagnostic with its message, rule `names`, at the name. A file importing a banned
-package states that import alone.
+yields tier two diagnostic with its message, rule `names`, at each name, beside each banned
+import the file makes.
 
 ### Shadows
 
@@ -270,6 +279,28 @@ alone the purity rules release.
 
 A default directory declares its parent's package, its _test aside, else the clause states `The
 default package declares "package <c>", not "package <p>". The default package shadows ...`
+
+# Memory
+
+A run holds 150 MiB. A store that fills states what it could not hold, as tier two rule `capacity`
+at the file, and the run fails.
+
+### Budget
+
+`New_Memory` allocates at most `MEMORY_SIZE_MAXIMUM` bytes: the 150 MiB less the loop's stores
+and the runtime's own. The run lends shared/os no self-exec workspace, since it never replaces
+its image.
+
+### Packages
+
+A run checks its Go files package by package, and judges a package's siblings and call graph once
+its last file closes. The next package reuses the stores, thus a run holds one package's names.
+
+### Capacity
+
+A file past the sibling, record, scope, naming finding, report, or declaration table, or the line
+index, states `The file outgrows the <table>.` or `The run outgrows the report table.` and what it
+leaves undone. A tree past a walk text store fails at `walk`: `: more than 131072 path bytes held`.
 
 # Allocation
 

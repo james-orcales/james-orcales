@@ -5,16 +5,16 @@ package main
 import "runtime"
 
 import "local/james-orcales/harness/pkg"
-import "local/james-orcales/shared/filepath"
-import "local/james-orcales/shared/jlog/default"
-import shared_os "local/james-orcales/shared/os"
-import "local/james-orcales/shared/os/default"
-import "local/james-orcales/shared/sim/aver/default"
-import "local/james-orcales/shared/sim/nbio"
-import system_nbio "local/james-orcales/shared/sim/nbio/default"
-import "local/james-orcales/shared/sim/time"
-import system_time "local/james-orcales/shared/sim/time/default"
-import "local/james-orcales/shared/slices"
+import "local/james-orcales/shared/std/filepath"
+import "local/james-orcales/shared/std/jlog/default"
+import shared_os "local/james-orcales/shared/std/os"
+import "local/james-orcales/shared/std/os/default"
+import "local/james-orcales/shared/std/sim/aver/default"
+import "local/james-orcales/shared/std/sim/nbio"
+import system_nbio "local/james-orcales/shared/std/sim/nbio/default"
+import "local/james-orcales/shared/std/sim/time"
+import system_time "local/james-orcales/shared/std/sim/time/default"
+import "local/james-orcales/shared/std/slices"
 
 // STANDARD_OUTPUT is the descriptor diagnostics go to.
 const STANDARD_OUTPUT nbio.File = 1
@@ -35,7 +35,8 @@ type Pump_Done func() (finished bool)
 const LOOP_FAILURE = "harness: failed to drive the loop\n"
 
 func main() {
-  system := os.New_Operating_System(&os.Host{Self_Exec: main_self_exec_workspace()})
+  // The harness never replaces its image, thus the host lends no self-exec workspace.
+  system := os.New_Operating_System(&os.Host{})
   state := system_nbio.Operating_System{}
   clock := system_time.New_Operating_System_Clock()
   memory := main_loop_memory()
@@ -213,23 +214,6 @@ func main_queued(runner harness.Runner_Handle) (finished harness.Boolean) {
   defer func() { harness.Boolean_Invariants(finished, "main_queued.finished") }()
   harness.Runner_Handle_Invariants(runner, "main_queued.runner")
   return runner.Work_Queued(harness.Driven_Phase(runner.Progress.Phase))
-}
-
-// The host requires exec storage; harness never replaces its image, so the pages stay untouched.
-func main_self_exec_workspace() (workspace os.Self_Exec_Workspace_Pointer) {
-  defer func() {
-    os.Self_Exec_Workspace_Pointer_Invariants(workspace, "main_self_exec.workspace")
-  }()
-  path := make(os.Self_Exec_Path_Bytes, os.SELF_EXEC_PATH_STORAGE_BYTES)
-  arguments := make(os.Self_Exec_Argument_Bytes, os.SELF_EXEC_VECTOR_STORAGE_BYTES)
-  environment := make(os.Self_Exec_Environment_Bytes, os.SELF_EXEC_VECTOR_STORAGE_BYTES)
-  count := os.SELF_EXEC_VECTOR_POINTER_COUNT
-  argument_pointers := make(os.Self_Exec_Argument_Pointer_Vector, count)
-  environment_pointers := make(os.Self_Exec_Environment_Pointer_Vector, count)
-  workspace = &os.Self_Exec_Workspace{Path: &path, Arguments: &arguments}
-  workspace.Environment, workspace.Argument_Pointers = &environment, &argument_pointers
-  workspace.Environment_Pointers = &environment_pointers
-  return workspace
 }
 
 // Sizes every bounded queue the backend retains for one operation at a time.

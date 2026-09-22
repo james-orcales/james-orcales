@@ -4,7 +4,7 @@
 // judge states the one rule the commit breaks.
 package vcs
 
-import "local/james-orcales/shared/sim/aver/default"
+import "local/james-orcales/shared/std/sim/aver/default"
 
 // SUBJECT_SIZE_MAXIMUM is the widest subject a commit carries: a review tool cuts one near 72 to
 // 100 characters, and a wider one scrolls.

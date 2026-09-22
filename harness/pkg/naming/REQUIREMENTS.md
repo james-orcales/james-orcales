@@ -1,7 +1,7 @@
 
 # Naming
 
-Check states the first name one parsed Go file breaks, as lint states it: the byte it stands at and
+Check commits each name one parsed Go file breaks, as lint states it: the byte it stands at and
 the message. The caller owns the tree, the source, the word table, and every store.
 
 ### Name Style
@@ -24,8 +24,8 @@ Rename it to a noun form.`, unless the word is a noun lint lists, such as `strin
 ### Quantity Suffixes
 
 In a function, `:=` of `len` or `cap` ends in count or size, of a stdlib Index in offset, of a Len
-or Cap method in size; a counted loop steps an index; `make` sizes a count, or a size of bytes.
-Else it states `The name <name> has the role <roles>. Rename <name> -> <rename>.`
+or Cap method in size; a counted loop steps an index; `make` sizes a count, or a size of bytes. Else
+it states `The name <name> has the role <roles>. Rename <name> -> <rename>.`, a rename per role.
 
 ### Arithmetic Suffixes
 
@@ -87,11 +87,17 @@ lists and the first of one lint lists as reaching one, with their imports, and c
 
 ### Order
 
-Check states the first finding in source order: the file stem at byte zero, then each import and
-name. At one name, a table word comes first, then quantity, arithmetic, participle, and extremum.
-A shadow comes past every other finding.
+Check commits every finding in source order: the file stem at byte zero, then each import and name.
+At one name, each table word comes first, then quantity, arithmetic, participle, and each extremum.
+The shadows come past every other finding.
+
+### Every
+
+A file breaking several rules, or one rule at several names, states each finding, one per rule at
+one name and one per word a word rule reads.
 
 ### Bounds
 
-A message past the store is cut at it, and each byte of a table replacement or an import path below
-a space stands as `?`, since `harness.json` and the file are untrusted.
+A message past its store is cut, a finding past its store dropped but counted, and a name past
+the scope or record store marks it full. Each byte of a table replacement or an import path below a
+space stands as `?`, since the input is untrusted.

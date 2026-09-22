@@ -3,11 +3,11 @@ package requirements_test
 import "testing"
 
 import "local/james-orcales/harness/pkg/requirements"
-import "local/james-orcales/shared/go/ast"
-import "local/james-orcales/shared/go/token"
-import "local/james-orcales/shared/testify"
-import "local/james-orcales/shared/unicode/ucd"
-import "local/james-orcales/shared/unicode/utf8"
+import "local/james-orcales/shared/std/go/ast"
+import "local/james-orcales/shared/std/go/token"
+import "local/james-orcales/shared/std/testify"
+import "local/james-orcales/shared/std/unicode/ucd"
+import "local/james-orcales/shared/std/unicode/utf8"
 
 // Test_Coverage_Presence verifies a package without REQUIREMENTS.md is flagged.
 func Test_Coverage_Presence(t *testing.T) {
@@ -546,7 +546,8 @@ func Test_Tests_Declarations(t *testing.T) {
   state := ast.Parse_State{Syntax_Tree: *syntax.Syntax_Tree}
   testify.True(t, bool(ast.Parse(&state, source).OK))
   collected := requirements.Collect(
-    syntax,
+    syntax.Syntax_Tree,
+    syntax.Lines.Starts,
     requirements.Parsed_Source(source),
     subject.Declarations,
   )
@@ -741,6 +742,7 @@ func syntax_new() (syntax requirements.Syntax) {
   state.Parents.Values = make(ast.Parents, ast.DEPTH_MAXIMUM)
   state.Last_Children.Values = make(ast.Last_Children, ast.DEPTH_MAXIMUM)
   state.Earlier_Children.Values = make(ast.Earlier_Children, ast.DEPTH_MAXIMUM)
+  state.Errors.Values = make(ast.Errors, ast.ERROR_COUNT_MAXIMUM)
   starts := make(token.Line_Starts, token.LINE_COUNT_MAXIMUM)
   return requirements.Syntax{Syntax_Tree: state, Lines: &token.Line_Index{Starts: starts}}
 }
@@ -797,6 +799,7 @@ func checker_new() (checker *requirements.Checker) {
   tree.Parents.Values = make(ast.Parents, ast.DEPTH_MAXIMUM)
   tree.Last_Children.Values = make(ast.Last_Children, ast.DEPTH_MAXIMUM)
   tree.Earlier_Children.Values = make(ast.Earlier_Children, ast.DEPTH_MAXIMUM)
+  tree.Errors.Values = make(ast.Errors, ast.ERROR_COUNT_MAXIMUM)
   checker = &requirements.Checker{}
   checker.Markdown = make(requirements.Markdown_Bytes, requirements.MARKDOWN_STORAGE_SIZE)
   checker.Rewritten = make(requirements.Rewritten_Bytes, requirements.MARKDOWN_STORAGE_SIZE)
@@ -844,7 +847,8 @@ func test_load(checker *requirements.Checker, one contract) {
   if bool(ast.Parse(&state, source).OK) {
     read = requirements.TEST_PARSED
     collected = requirements.Collect(
-      syntax,
+      syntax.Syntax_Tree,
+      syntax.Lines.Starts,
       requirements.Parsed_Source(source),
       checker.Declarations,
     )

@@ -3,8 +3,8 @@ package configuration_test
 import "testing"
 
 import "local/james-orcales/harness/pkg/configuration"
-import "local/james-orcales/shared/encoding/json"
-import "local/james-orcales/shared/testify"
+import "local/james-orcales/shared/std/encoding/json"
+import "local/james-orcales/shared/std/testify"
 
 // Test_Parse_Shape verifies an object of the seven keys parses whatever whitespace stands between
 // its tokens, and a key whose value is of another type states that key.
@@ -33,7 +33,7 @@ func Test_Parse_Shape(t *testing.T) {
 }
 
 // Test_Parse_Values verifies each string decodes into one value naming its key, a replacement
-// names its word, and each string decodes as shared/encoding/json decodes it.
+// names its word, and each string decodes as shared/std/encoding/json decodes it.
 func Test_Parse_Values(t *testing.T) {
   subject := configuration_new()
   source := `{"shared_component":"shared","instrumentation_packages":["a/**"],` +
@@ -183,7 +183,8 @@ func Test_Parse_Order(t *testing.T) {
   testify.False(t, bool(configuration.Entry_Next(subject)))
 }
 
-// Test_Parse_Faults verifies a source that is no JSON value states the byte shared/encoding/json
+// Test_Parse_Faults verifies a source that is no JSON value states the byte
+// shared/std/encoding/json
 // states, an unknown key names itself, a repeated key names its key, and past every member an
 // absent key or an empty value names its key.
 func Test_Parse_Faults(t *testing.T) {

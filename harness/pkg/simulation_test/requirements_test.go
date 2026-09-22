@@ -11,13 +11,13 @@ import "local/james-orcales/harness/pkg"
 import "local/james-orcales/harness/pkg/configuration"
 import "local/james-orcales/harness/pkg/requirements"
 import "local/james-orcales/harness/pkg/vcs"
-import "local/james-orcales/shared/filepath"
-import "local/james-orcales/shared/go/ast"
-import "local/james-orcales/shared/go/token"
-import "local/james-orcales/shared/sim/nbio"
-import "local/james-orcales/shared/sim/prng"
-import "local/james-orcales/shared/sim/time"
-import "local/james-orcales/shared/strings"
+import "local/james-orcales/shared/std/filepath"
+import "local/james-orcales/shared/std/go/ast"
+import "local/james-orcales/shared/std/go/token"
+import "local/james-orcales/shared/std/sim/nbio"
+import "local/james-orcales/shared/std/sim/prng"
+import "local/james-orcales/shared/std/sim/time"
+import "local/james-orcales/shared/std/strings"
 
 // Test_Simulation sweeps seeds over every outcome a run reaches: usage, a failed walk, a clean
 // package, and a package holding each diagnostic.
@@ -28,7 +28,7 @@ func Test_Simulation(t *testing.T) {
   }
   for seed := uint64(1); seed < SEED_COUNT+1; seed++ {
     subject := fixture_new(t, memory, format_state, command, directory, seed)
-    // A command line naming no directory is one shared/cli refuses, thus the run
+    // A command line naming no directory is one shared/std/cli refuses, thus the run
     // states the refusal and exits failed rather than walks nothing.
     fixture_run(t, subject, []string{"harness"})
     fixture_refused(t, subject)
@@ -221,9 +221,9 @@ func fixture_table(
   fixture_run(t, subject, []string{"harness", "full"})
   // Each Go file is refused or bans an import and each package owes a contract it holds none
   // of, thus the run states one line per slot of both tables rather than stops at the first,
-  // and one line for the history.
+  // one more for the impurity of the one import, and one line for the history.
   packages := fixture_lines(fixture_written(subject))
-  if packages != harness.FILE_COUNT_MAXIMUM+harness.PACKAGE_COUNT_MAXIMUM+1 {
+  if packages != harness.FILE_COUNT_MAXIMUM+harness.PACKAGE_COUNT_MAXIMUM+2 {
     t.Fatalf(
       "a full package table stated %d findings, failing %q",
       packages,
@@ -2086,20 +2086,20 @@ func fixture_imported(
     "package d\n\nimport \"go/ast\"\n",
     "e/e.go",
     "package e\n\nimport \"container/" + string(wide) + "\"\n",
-    "os/default/o.go",
+    "std/os/default/o.go",
     "package os\n\nimport \"os\"\nimport \"os/exec\"\nimport \"strings\"\n",
-    "sim/nbio/default/n.go",
+    "std/sim/nbio/default/n.go",
     "package nbio\n\nimport \"os/signal\"\nimport \"syscall\"\n",
-    "sim/time/default/t.go",
+    "std/sim/time/default/t.go",
     "package time\n\nimport \"os/exec\"\nimport \"syscall\"\n",
-    "sim/aver/v.go",
+    "std/sim/aver/v.go",
     "package aver\n\nimport \"strings\"\n",
     // Each port stands above its default tier, which the composition tier then binds.
-    "os/p.go",
+    "std/os/p.go",
     "package os\n",
-    "sim/nbio/p.go",
+    "std/sim/nbio/p.go",
     "package nbio\n",
-    "sim/time/p.go",
+    "std/sim/time/p.go",
     "package time\n",
   }
   for _, path := range []string{
@@ -2109,14 +2109,15 @@ func fixture_imported(
     "shared/c",
     "shared/d",
     "shared/e",
-    "shared/os",
-    "shared/os/default",
-    "shared/sim",
-    "shared/sim/nbio",
-    "shared/sim/nbio/default",
-    "shared/sim/time",
-    "shared/sim/time/default",
-    "shared/sim/aver",
+    "shared/std",
+    "shared/std/os",
+    "shared/std/os/default",
+    "shared/std/sim",
+    "shared/std/sim/nbio",
+    "shared/std/sim/nbio/default",
+    "shared/std/sim/time",
+    "shared/std/sim/time/default",
+    "shared/std/sim/aver",
   } {
     fixture_directory(t, subject, path)
   }
@@ -2126,14 +2127,14 @@ func fixture_imported(
   fixture_run(t, subject, []string{"harness", "shared"})
   for _, found := range []string{
     "shared/a/a.go:7:8: Banned import \"uuid\" belongs to stdlib family \"uuid\".",
-    "shared/os/default/o.go:5:8: Banned import \"strings\"",
-    "shared/sim/time/default/t.go:3:8: Banned import \"os/exec\" belongs to stdlib family \"os\".",
+    "shared/std/os/default/o.go:5:8: Banned import \"strings\"",
+    "shared/std/sim/time/default/t.go:3:8: Banned import \"os/exec\" belongs to stdlib family \"os\".",
   } {
     if !fixture_holds(fixture_written(subject), found) {
       t.Fatalf("an import run wrote no %q", found)
     }
   }
-  for _, absent := range []string{"shared/sim/nbio/default/n.go", "shared/sim/aver/v.go"} {
+  for _, absent := range []string{"shared/std/sim/nbio/default/n.go", "shared/std/sim/aver/v.go"} {
     if fixture_holds(fixture_written(subject), absent+":") {
       t.Fatalf("an import run faulted the gateway file %s", absent)
     }
@@ -2829,7 +2830,7 @@ func fixture_declarations() (source string) {
 // DECLARATION_FILE_BYTES holds that file: one line per slot, and the package clause.
 const DECLARATION_FILE_BYTES = (requirements.HEADING_COUNT_MAXIMUM + 1) * 32
 
-// A stream that takes part of one diagnostic line: shared/sim/nbio states a short write as an
+// A stream that takes part of one diagnostic line: shared/std/sim/nbio states a short write as an
 // error of its own, thus the run fails step report rather than leaves a host reading a line cut
 // at the byte the stream stopped on.
 func fixture_short_line(
@@ -2935,7 +2936,7 @@ func fixture_silent(t *testing.T, subject *fixture, held string) {
   }
 }
 
-// A command line shared/cli refuses: the run names the program, states the error, and exits
+// A command line shared/std/cli refuses: the run names the program, states the error, and exits
 // failed, thus a host reads which command line was wrong rather than a walk that never ran.
 func fixture_refused(t *testing.T, subject *fixture) {
   t.Helper()
@@ -5840,7 +5841,7 @@ func fixture_fixed_json(
   fixture_silent(t, subject, `"rule":"unformatted"`)
 }
 
-// The command lines shared/cli refuses past a missing directory: an unknown flag, and a second
+// The command lines shared/std/cli refuses past a missing directory: an unknown flag, and a second
 // positional the program declares no slot for.
 func fixture_line(
   t *testing.T,

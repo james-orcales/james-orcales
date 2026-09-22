@@ -2,7 +2,7 @@
 # Parse
 
 Parse decodes `harness.json`, which holds the shape of `lint.json`, through
-`shared/encoding/json` into caller stores.
+`shared/std/encoding/json` into caller stores.
 
 ### Shape
 
@@ -12,7 +12,7 @@ string arrays, and string arrays `instrumentation_packages`, `ignore`, `opt_out_
 
 ### Values
 
-Each string decodes into one value that names its key, as `shared/encoding/json` decodes it; a
+Each string decodes into one value that names its key, as `shared/std/encoding/json` decodes it; a
 replacement also names its word. `shared_component` and `word_replacements` hold at least one byte
 and one word.
 
@@ -34,7 +34,7 @@ them: ignore, instrumentation, assertion opt-outs, recursion opt-outs, interface
 
 ### Faults
 
-Parse states the first fault: a source that is no JSON value, at the byte `shared/encoding/json`
+Parse states the first fault: a source that is no JSON value, at the byte `shared/std/encoding/json`
 states; a root other than an object; an unknown key, naming it; a repeated key; then an absent key
 or an empty value.
 

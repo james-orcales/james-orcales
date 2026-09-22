@@ -1,12 +1,13 @@
 // Package configuration decodes harness.json, the policy file that holds the shape of lint.json,
 // into stores the caller owns. It reads no file: the caller reads the bytes and hands them over.
-// shared/encoding/json decodes them into tokens, and Parse states the first fault the shape meets.
+// shared/std/encoding/json decodes them into tokens, and Parse states the first fault the shape
+// meets.
 package configuration
 
-import "local/james-orcales/shared/encoding/json"
-import "local/james-orcales/shared/sim/aver/default"
-import "local/james-orcales/shared/unicode/ucd"
-import "local/james-orcales/shared/unicode/utf8"
+import "local/james-orcales/shared/std/encoding/json"
+import "local/james-orcales/shared/std/sim/aver/default"
+import "local/james-orcales/shared/std/unicode/ucd"
+import "local/james-orcales/shared/std/unicode/utf8"
 
 // SOURCE_SIZE_MAXIMUM bounds the file Parse decodes. The file holds a handful of lists and the
 // word table, thus the bound only stops a file no author wrote.
@@ -362,7 +363,7 @@ func Recorded_Fault_Invariants(value Recorded_Fault, namespace aver.Namespace) {
     Ensure()
 }
 
-// Fault_Offset is the byte a syntax fault stands on, counted as shared/encoding/json counts the
+// Fault_Offset is the byte a syntax fault stands on, counted as shared/std/encoding/json counts the
 // bytes it read: one past the last byte of a source that ends inside a value.
 type Fault_Offset int
 

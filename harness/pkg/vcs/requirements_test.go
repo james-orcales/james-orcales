@@ -3,7 +3,7 @@ package vcs_test
 import "testing"
 
 import "local/james-orcales/harness/pkg/vcs"
-import "local/james-orcales/shared/testify"
+import "local/james-orcales/shared/std/testify"
 
 // Test_Commits_Subject_Size verifies a subject past the cap is flagged, merge or not, and one at
 // the cap is not.

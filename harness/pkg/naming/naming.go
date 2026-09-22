@@ -6,10 +6,10 @@ package naming
 
 import "local/james-orcales/harness/pkg/configuration"
 import "local/james-orcales/harness/pkg/requirements"
-import "local/james-orcales/shared/filepath"
-import "local/james-orcales/shared/go/ast"
-import "local/james-orcales/shared/go/token"
-import "local/james-orcales/shared/sim/aver/default"
+import "local/james-orcales/shared/std/filepath"
+import "local/james-orcales/shared/std/go/ast"
+import "local/james-orcales/shared/std/go/token"
+import "local/james-orcales/shared/std/sim/aver/default"
 
 // SOURCE_STORAGE_SIZE is the store a source stands in: one byte past the widest source.
 const SOURCE_STORAGE_SIZE = requirements.SOURCE_SIZE_MAXIMUM + 1
@@ -257,8 +257,8 @@ const CELL_JUDGED = 42
 // CELL_DECLARED is the name the shadow walk takes.
 const CELL_DECLARED = 43
 
-// CELL_SHADOW is 1 when the finding is a shadow.
-const CELL_SHADOW = 44
+// CELL_KIND is the kind of the finding the message store holds.
+const CELL_KIND = 44
 
 // CELL_GRAPH_START is the first recorded name of the call graph, past the top-level names.
 const CELL_GRAPH_START = 45
@@ -281,15 +281,92 @@ const CELL_TRANSITIVE_IMPORT = 50
 // CELL_MAIN_COUNT is how many free functions named Main the file declares.
 const CELL_MAIN_COUNT = 51
 
+// CELL_FINDING_COUNT is how many findings one check committed, those past the store included.
+const CELL_FINDING_COUNT = 52
+
+// CELL_SCOPE_FULL is 1 once a name found the scope store full, and stood unjudged by the scopes.
+const CELL_SCOPE_FULL = 53
+
+// CELL_RECORD_FULL is 1 once a name found the record table full, and stood unrecorded.
+const CELL_RECORD_FULL = 54
+
+// CELL_RECORDED is the node the next record names.
+const CELL_RECORDED = 55
+
 // CELL_COUNT is how many slots the state holds.
-const CELL_COUNT = 52
+const CELL_COUNT = 56
+
+// FINDING_KIND_NAME is a finding of a naming rule.
+const FINDING_KIND_NAME = 0
+
+// FINDING_KIND_SHADOW is a shadow.
+const FINDING_KIND_SHADOW = 1
+
+// FINDING_KIND_OTHER is a finding a caller states of its own.
+const FINDING_KIND_OTHER = 2
+
+// FINDING_COUNT_MAXIMUM bounds the findings one file holds, past the fill at the first slot.
+const FINDING_COUNT_MAXIMUM = 1024
+
+// FINDING_HEADER is the slot that holds the fill: its offset is the next free slot, its start the
+// next free byte of the text store.
+const FINDING_HEADER = 0
+
+// FINDING_FIRST is the first slot that holds a finding.
+const FINDING_FIRST = 1
+
+// FINDING_TEXT_SIZE_MAXIMUM bounds the bytes of those findings' messages.
+const FINDING_TEXT_SIZE_MAXIMUM = 1 << 17
+
+// Finding_Entry is one finding of a file: the byte it stands at, its kind, and its message in the
+// text store.
+type Finding_Entry struct {
+  // Offset is the byte the finding stands at.
+  Offset State_Cell
+  // Kind is the kind of the finding.
+  Kind State_Cell
+  // Start is the first byte of the message.
+  Start State_Cell
+  // End is one past its last byte.
+  End State_Cell
+}
+
+// Finding_Entry_Invariants composes one finding.
+func Finding_Entry_Invariants(value *Finding_Entry, namespace aver.Namespace) {
+  State_Cell_Invariants(value.Offset, namespace)
+  State_Cell_Invariants(value.Kind, namespace)
+  State_Cell_Invariants(value.Start, namespace)
+  State_Cell_Invariants(value.End, namespace)
+}
+
+// Finding_Entries holds the findings of one file, past the fill.
+type Finding_Entries []Finding_Entry
+
+// Finding_Entries_Invariants fixes the store.
+func Finding_Entries_Invariants(value Finding_Entries, _ aver.Namespace) {
+  aver.Always(len(value) == FINDING_COUNT_MAXIMUM, "A naming finding table has complete length.")
+  aver.Always(cap(value) == FINDING_COUNT_MAXIMUM, "A naming finding table cannot grow.")
+}
+
+// Finding_Text holds the messages of those findings.
+type Finding_Text []byte
+
+// Finding_Text_Invariants fixes the store.
+func Finding_Text_Invariants(value Finding_Text, _ aver.Namespace) {
+  aver.Always(len(value) == FINDING_TEXT_SIZE_MAXIMUM, "A naming finding text has complete length.")
+  aver.Always(cap(value) == FINDING_TEXT_SIZE_MAXIMUM, "A naming finding text cannot grow.")
+}
 
 // IMPURITY_PROBE_SIZE is the widest import path and name the impurity lists name, joined.
 const IMPURITY_PROBE_SIZE = 32
 
-// RECORD_COUNT_MAXIMUM bounds the names Record lists: each node once, and each function name a
-// second time in the call graph.
-const RECORD_COUNT_MAXIMUM = 2 * ast.NODE_COUNT_MAXIMUM
+// RECORD_COUNT_MAXIMUM bounds the names Record lists. The widest file this repository keeps
+// records under six thousand, thus the bound stands past that with room to grow.
+const RECORD_COUNT_MAXIMUM = 1 << 15
+
+// SCOPE_NAME_COUNT_MAXIMUM bounds the names the scopes of the shadow walk hold at once: the file's
+// top-level names and those of the scopes around one name.
+const SCOPE_NAME_COUNT_MAXIMUM = 1 << 13
 
 // FRAME_COUNT is the scopes one walk holds at once: the file, the function, and one for each depth
 // the parse holds.
@@ -476,8 +553,8 @@ type Scope_Names []Scope_Name
 
 // Scope_Names_Invariants fixes the store.
 func Scope_Names_Invariants(value Scope_Names, _ aver.Namespace) {
-  aver.Always(len(value) == ast.NODE_COUNT_MAXIMUM, "A naming scope store has complete length.")
-  aver.Always(cap(value) == ast.NODE_COUNT_MAXIMUM, "A naming scope store cannot grow.")
+  aver.Always(len(value) == SCOPE_NAME_COUNT_MAXIMUM, "A naming scope store has complete length.")
+  aver.Always(cap(value) == SCOPE_NAME_COUNT_MAXIMUM, "A naming scope store cannot grow.")
 }
 
 // Scope_Frame is one scope of the shadow walk: the statement it reads next, and the first of the
@@ -531,6 +608,10 @@ type Checker struct {
   Names Scope_Names
   // Frames holds the scopes of the shadow walk, the file first.
   Frames Frame_Stack
+  // Findings holds each finding of the file, which a check commits one by one.
+  Findings Finding_Entries
+  // Finding_Text holds their messages.
+  Finding_Text Finding_Text
   // Cells holds the check's state.
   Cells State_Cells
 }
@@ -549,6 +630,8 @@ func Checker_Invariants(value *Checker, namespace aver.Namespace) {
   Record_Table_Invariants(value.Records, namespace)
   Scope_Names_Invariants(value.Names, namespace)
   Frame_Stack_Invariants(value.Frames, namespace)
+  Finding_Entries_Invariants(value.Findings, namespace)
+  Finding_Text_Invariants(value.Finding_Text, namespace)
   State_Cells_Invariants(value.Cells, namespace)
 }
 
@@ -629,8 +712,43 @@ func Words_Build(words Word_Table, decoded configuration.Configuration_Handle) {
   }
 }
 
-// Checks the file the stores hold and states whether it breaks a rule. A finding leaves the byte it
-// stands at in CELL_OFFSET and its message in the message store.
+// Empties the findings store for one file.
+func Findings_Open(checker Checker_Handle) {
+  Checker_Handle_Invariants(checker, "findings_open.checker")
+  checker.Findings[FINDING_HEADER] = Finding_Entry{Offset: FINDING_FIRST}
+}
+
+// Commits the finding the cells and the message store hold, when one stands, and clears them for
+// the next: the byte CELL_OFFSET names, the kind CELL_KIND names, and the message up to
+// CELL_WRITTEN, cut at the store. A findings store past its bound takes no more.
+func Finding_Commit(checker Checker_Handle) {
+  Checker_Handle_Invariants(checker, "finding_commit.checker")
+  cells := checker.Cells
+  if cells[CELL_FOUND] == 0 {
+    return
+  }
+  header := checker.Findings[FINDING_HEADER]
+  size := min(int(cells[CELL_WRITTEN]), MESSAGE_SIZE_MAXIMUM-1)
+  fill := int(header.Start)
+  if int(header.Offset) < FINDING_COUNT_MAXIMUM {
+    if fill+size < FINDING_TEXT_SIZE_MAXIMUM+1 {
+      copy(checker.Finding_Text[fill:], checker.Message[:size])
+      checker.Findings[header.Offset] = Finding_Entry{
+        Offset: cells[CELL_OFFSET],
+        Kind:   cells[CELL_KIND],
+        Start:  State_Cell(fill),
+        End:    State_Cell(fill + size),
+      }
+      checker.Findings[FINDING_HEADER].Offset++
+      checker.Findings[FINDING_HEADER].Start = State_Cell(fill + size)
+    }
+  }
+  cells[CELL_FINDING_COUNT]++
+  cells[CELL_FOUND], cells[CELL_KIND], cells[CELL_WRITTEN] = 0, FINDING_KIND_NAME, 0
+}
+
+// Checks the file the stores hold and commits each finding of each rule into the findings store,
+// in source order, the shadows past the rest, and states whether it committed one.
 func Check(checker Checker_Handle) (found Found) {
   defer func() { Found_Invariants(found, "check.found") }()
   Checker_Handle_Invariants(checker, "check.checker")
@@ -642,21 +760,15 @@ func Check(checker Checker_Handle) (found Found) {
   stem_check(checker)
   cells[CELL_NODE], cells[CELL_ROOT] = State_Cell(ast.INDEX_FIRST), State_Cell(ast.INDEX_FIRST)
   for range ast.NODE_COUNT_MAXIMUM {
-    if cells[CELL_FOUND] == 1 {
-      break
-    }
     if cells[CELL_NODE] == State_Cell(ast.INDEX_ABSENT) {
       break
     }
     node_check(checker)
+    Finding_Commit(checker)
     step(checker)
   }
   shadow_walk(checker)
-  if cells[CELL_FOUND] == 0 {
-    return false
-  }
-  message_close(checker)
-  return true
+  return Found(cells[CELL_FINDING_COUNT] > 0)
 }
 
 // Moves the walk to the node past the one it stands on in pre-order, staying inside the subtree of
@@ -828,28 +940,19 @@ func name_check(checker Checker_Handle) {
   cells[CELL_OFFSET] = State_Cell(spelled.Offset)
   style_find(checker)
   vocabulary_check(checker)
-  if cells[CELL_FOUND] == 1 {
-    return
-  }
   if cells[CELL_NAME_KIND] == NAME_PACKAGE {
     return
   }
   if checker.Terms[index] != TERM_NONE {
     quantity_check(checker)
   }
-  if cells[CELL_FOUND] == 1 {
-    return
-  }
+  Finding_Commit(checker)
   if nodes[nodes[index].Parent].Kind == ast.NODE_DEFINE {
     result_check(checker)
   }
-  if cells[CELL_FOUND] == 1 {
-    return
-  }
+  Finding_Commit(checker)
   participle_check(checker)
-  if cells[CELL_FOUND] == 1 {
-    return
-  }
+  Finding_Commit(checker)
   extremum_check(checker)
 }
 
@@ -1059,7 +1162,8 @@ func last_word(checker Checker_Handle) {
   }
 }
 
-// States the first word of the name the word table holds: its replacements, or its ban.
+// States each word of the name the word table holds: its replacements, or its ban. The rename
+// walks the name's words itself, thus the cursor stands where it stood past each message.
 func vocabulary_check(checker Checker_Handle) {
   Checker_Handle_Invariants(checker, "vocabulary_check.checker")
   cells := checker.Cells
@@ -1073,9 +1177,11 @@ func vocabulary_check(checker Checker_Handle) {
     if cells[CELL_SLOT] == State_Cell(configuration.WORD_NONE) {
       continue
     }
+    cursor, limit, text := cells[CELL_CURSOR], cells[CELL_LIMIT], cells[CELL_TEXT]
     cells[CELL_REPLACED], cells[CELL_PIECE] = State_Cell(ordinal), PIECE_CONFIGURATION
     vocabulary_message(checker)
-    return
+    Finding_Commit(checker)
+    cells[CELL_CURSOR], cells[CELL_LIMIT], cells[CELL_TEXT] = cursor, limit, text
   }
 }
 
@@ -1181,11 +1287,39 @@ func quantity_check(checker Checker_Handle) {
   cells[CELL_WRITTEN] = State_Cell(size + copy(message[size:], ". Rename "))
   name_append(checker)
   size = int(cells[CELL_WRITTEN])
-  cells[CELL_WRITTEN], cells[CELL_TERM] = State_Cell(size+copy(message[size:], " -> ")), State_Cell(
-    preferred,
-  )
-  rename_write(checker)
-  size = int(cells[CELL_WRITTEN])
+  size += copy(message[size:], " -> ")
+  // Each role names its own rename, past one that spells the name itself, and several stand listed.
+  text := []byte(checker.Source)
+  if cells[CELL_NAME_TEXT] == TEXT_PATH {
+    text = checker.Path
+  }
+  named := text[cells[CELL_NAME_START]:cells[CELL_NAME_END]]
+  opening, renames, appended := size, 0, cells[CELL_APPENDED]
+  size += copy(message[size:], "[")
+  for _, term := range [...]Term{TERM_INDEX, TERM_COUNT, TERM_SIZE, TERM_OFFSET} {
+    if terms&term == TERM_NONE {
+      continue
+    }
+    kept := size
+    if renames > 0 {
+      size += copy(message[size:], ", ")
+    }
+    cells[CELL_WRITTEN], cells[CELL_TERM] = State_Cell(size), State_Cell(term)
+    if appended != State_Cell(TERM_NONE) {
+      cells[CELL_APPENDED] = State_Cell(term)
+    }
+    rename_write(checker)
+    if string(message[size:cells[CELL_WRITTEN]]) == string(named) {
+      size = kept
+      continue
+    }
+    size, renames = int(cells[CELL_WRITTEN]), renames+1
+  }
+  if renames < 2 {
+    size = opening + copy(message[opening:], message[opening+1:size])
+  } else {
+    size += copy(message[size:], "]")
+  }
   cells[CELL_WRITTEN] = State_Cell(size + copy(message[size:], "."))
 }
 
@@ -1374,6 +1508,7 @@ func extremum_check(checker Checker_Handle) {
     default:
       continue
     }
+    cursor, limit, text := cells[CELL_CURSOR], cells[CELL_LIMIT], cells[CELL_TEXT]
     cells[CELL_REPLACED], cells[CELL_PIECE] = State_Cell(ordinal), PIECE_MOVE
     cells[CELL_APPENDED], cells[CELL_FOUND] = State_Cell(TERM_NONE), 1
     message := checker.Message
@@ -1384,7 +1519,8 @@ func extremum_check(checker Checker_Handle) {
     rename_write(checker)
     size = int(cells[CELL_WRITTEN])
     cells[CELL_WRITTEN] = State_Cell(size + copy(message[size:], "."))
-    return
+    Finding_Commit(checker)
+    cells[CELL_CURSOR], cells[CELL_LIMIT], cells[CELL_TEXT] = cursor, limit, text
   }
 }
 
@@ -1415,7 +1551,8 @@ func alias_check(checker Checker_Handle) {
     if held {
       cells[CELL_PACKAGE_START], cells[CELL_PACKAGE_END] = 0, 0
       alias_message(checker)
-      return
+      Finding_Commit(checker)
+      break
     }
   }
   import_index := cells[CELL_NODE]
@@ -1702,13 +1839,6 @@ func term_name_write(checker Checker_Handle) {
   }
   size := int(cells[CELL_WRITTEN])
   cells[CELL_WRITTEN] = State_Cell(size + copy(checker.Message[size:], name))
-}
-
-// Closes the message with a zero byte, cut at the store.
-func message_close(checker Checker_Handle) {
-  Checker_Handle_Invariants(checker, "message_close.checker")
-  size := min(int(checker.Cells[CELL_WRITTEN]), MESSAGE_SIZE_MAXIMUM-1)
-  checker.Message[size] = 0
 }
 
 // Marks the quantities the evidence of one declared function asks of the names it declares: the
@@ -2192,12 +2322,9 @@ func shadow_declare(checker Checker_Handle) {
     hash = (hash ^ Name_Hash(symbol)) * HASH_WIDE_PRIME
   }
   if cells[CELL_JUDGED] == 1 {
-    checker.Records[cells[CELL_RECORD_COUNT]] = index
-    cells[CELL_RECORD_COUNT]++
+    cells[CELL_RECORDED] = State_Cell(index)
+    record_append(checker)
     for _, outer := range names[:checker.Frames[cells[CELL_FRAME]].Start] {
-      if cells[CELL_FOUND] == 1 {
-        break
-      }
       if outer.Hash != hash {
         continue
       }
@@ -2206,10 +2333,28 @@ func shadow_declare(checker Checker_Handle) {
         continue
       }
       shadow_message(checker)
+      Finding_Commit(checker)
+      break
     }
+  }
+  if int(cells[CELL_NAME_COUNT]) == len(names) {
+    cells[CELL_SCOPE_FULL] = 1
+    return
   }
   names[cells[CELL_NAME_COUNT]] = Scope_Name{Node: index, Hash: hash}
   cells[CELL_NAME_COUNT]++
+}
+
+// Appends the node CELL_RECORDED names to the record table, or marks the table full.
+func record_append(checker Checker_Handle) {
+  Checker_Handle_Invariants(checker, "record_append.checker")
+  cells := checker.Cells
+  if int(cells[CELL_RECORD_COUNT]) == len(checker.Records) {
+    cells[CELL_RECORD_FULL] = 1
+    return
+  }
+  checker.Records[cells[CELL_RECORD_COUNT]] = ast.Index(cells[CELL_RECORDED])
+  cells[CELL_RECORD_COUNT]++
 }
 
 // Writes the message of the shadow CELL_DECLARED names.
@@ -2218,7 +2363,7 @@ func shadow_message(checker Checker_Handle) {
   cells := checker.Cells
   spelled := checker.Tokens[checker.Nodes[cells[CELL_DECLARED]].Token]
   cells[CELL_FOUND], cells[CELL_OFFSET] = 1, State_Cell(spelled.Offset)
-  cells[CELL_SHADOW] = 1
+  cells[CELL_KIND] = FINDING_KIND_SHADOW
   cells[CELL_NAME_START], cells[CELL_NAME_TEXT] = State_Cell(spelled.Offset), TEXT_SOURCE
   cells[CELL_NAME_END] = State_Cell(spelled.Offset) + State_Cell(spelled.Size)
   message := checker.Message
@@ -2246,8 +2391,8 @@ func Record(checker Checker_Handle) {
     case ast.NODE_FUNCTION, ast.NODE_TYPE:
       // A method opens on its receiver, which a function never holds.
       if nodes[name].Kind == ast.NODE_IDENTIFIER {
-        checker.Records[cells[CELL_RECORD_COUNT]] = name
-        cells[CELL_RECORD_COUNT]++
+        cells[CELL_RECORDED] = State_Cell(name)
+        record_append(checker)
       }
     case ast.NODE_CONSTANT:
       for range ast.NODE_COUNT_MAXIMUM {
@@ -2255,8 +2400,8 @@ func Record(checker Checker_Handle) {
           break
         }
         if nodes[name].Kind == ast.NODE_CONSTANT_NAME {
-          checker.Records[cells[CELL_RECORD_COUNT]] = name
-          cells[CELL_RECORD_COUNT]++
+          cells[CELL_RECORDED] = State_Cell(name)
+          record_append(checker)
         }
         name = ast.Index(nodes[name].Next)
       }
@@ -2280,8 +2425,8 @@ func imports_record(checker Checker_Handle) {
     }
     node := nodes[child]
     if node.Kind == ast.NODE_IMPORT {
-      checker.Records[cells[CELL_RECORD_COUNT]] = child
-      cells[CELL_RECORD_COUNT]++
+      cells[CELL_RECORDED] = State_Cell(child)
+      record_append(checker)
     }
     // A method opens on its receiver, thus a free function holds its name first.
     if node.Kind == ast.NODE_FUNCTION {
@@ -2420,8 +2565,8 @@ func calls_record(checker Checker_Handle) {
       for nodes[name].Kind != ast.NODE_IDENTIFIER {
         name = ast.Index(nodes[name].Next)
       }
-      checker.Records[cells[CELL_RECORD_COUNT]] = name
-      cells[CELL_RECORD_COUNT]++
+      cells[CELL_RECORDED] = State_Cell(name)
+      record_append(checker)
       cells[CELL_NODE], cells[CELL_ROOT] = State_Cell(function), State_Cell(function)
       for range ast.NODE_COUNT_MAXIMUM {
         step(checker)
@@ -2435,8 +2580,8 @@ func calls_record(checker Checker_Handle) {
         if nodes[nodes[call].First_Child].Kind != ast.NODE_IDENTIFIER {
           continue
         }
-        checker.Records[cells[CELL_RECORD_COUNT]] = ast.Index(nodes[call].First_Child)
-        cells[CELL_RECORD_COUNT]++
+        cells[CELL_RECORDED] = State_Cell(ast.Index(nodes[call].First_Child))
+        record_append(checker)
       }
     }
     function = ast.Index(nodes[function].Next)

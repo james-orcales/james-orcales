@@ -1,39 +1,24 @@
 package harness_test
 
+import "runtime"
 import "testing"
 import "unsafe"
 
 import "local/james-orcales/harness/pkg"
 import "local/james-orcales/harness/pkg/configuration"
+import "local/james-orcales/harness/pkg/naming"
 import "local/james-orcales/harness/pkg/requirements"
-import "local/james-orcales/shared/cli"
-import "local/james-orcales/shared/filepath"
-import "local/james-orcales/shared/go/ast"
-import "local/james-orcales/shared/go/format"
-import "local/james-orcales/shared/go/printer"
-import "local/james-orcales/shared/go/token"
-import "local/james-orcales/shared/sim/nbio"
-import "local/james-orcales/shared/sim/prng"
-import "local/james-orcales/shared/sim/time"
-import "local/james-orcales/shared/strings"
-import "local/james-orcales/shared/testify"
-
-func Test_Gateway_Relative_Path(t *testing.T) {
-  memory, format_state, command, directory := memory_new()
-  subject := fixture_new(t, memory, format_state, command, directory, 1)
-  fixture_file(t, subject, harness.CONFIGURATION_PATH, shared_configuration())
-  fixture_directory(t, subject, "shared")
-  fixture_directory(t, subject, "shared/os")
-  fixture_package_directory(t, subject, "shared/os/default")
-  fixture_default_contract(t, subject, "shared/os/default", "os")
-  fixture_file(t, subject, "shared/os/default/host.go", "package os\n\nimport \"syscall\"\n")
-  for _, path := range []string{"shared/os/default", "./shared/os/default"} {
-    testify.True(t, fixture_run(subject, []string{"harness", path, "-fix"}))
-    output := fixture_output(subject)
-    testify.False(t, bool(strings.Contains(strings.Text(output), "Banned import")), path, output)
-    testify.Equal(t, harness.EXIT_SUCCESS, subject.Runner.Status, path, output)
-  }
-}
+import "local/james-orcales/shared/std/cli"
+import "local/james-orcales/shared/std/filepath"
+import "local/james-orcales/shared/std/go/ast"
+import "local/james-orcales/shared/std/go/format"
+import "local/james-orcales/shared/std/go/printer"
+import "local/james-orcales/shared/std/go/token"
+import "local/james-orcales/shared/std/sim/nbio"
+import "local/james-orcales/shared/std/sim/prng"
+import "local/james-orcales/shared/std/sim/time"
+import "local/james-orcales/shared/std/strings"
+import "local/james-orcales/shared/std/testify"
 
 // Test_Diagnostics_Tier_One verifies an auto-fixable diagnostic carries its fix.
 func Test_Diagnostics_Tier_One(t *testing.T) {
@@ -49,7 +34,53 @@ func Test_Diagnostics_Tier_Two(t *testing.T) {
   testify.Equal(t, 0, len(runner.Diagnostic.Fix))
 }
 
-// Test_Command_Usage verifies a command line shared/cli refuses fails with its error, and -h
+// Test_Diagnostics_Every_Finding verifies a file whose form the check accepts states each finding
+// of each rule, in line and column order, and a refused file states each refusal its parse logged.
+func Test_Diagnostics_Every_Finding(t *testing.T) {
+  memory, format_state, command, directory := memory_new()
+  subject := fixture_new(t, memory, format_state, command, directory, 1)
+  fixture_file(t, subject, harness.CONFIGURATION_PATH, shared_configuration())
+  fixture_directory(t, subject, "shared")
+  fixture_package_directory(t, subject, "shared/a")
+  source := "package a\n\nimport \"strings\"\n\nvar util = 1\n\nfunc F() {\n  F()\n}\n\n" +
+    "var util_table = 1\n"
+  fixture_file(t, subject, "shared/a/a.go", source)
+  testify.True(t, fixture_run(subject, []string{"harness", "shared"}))
+  testify.Equal(
+    t,
+    "shared/a/a.go:3:8: Banned import \"strings\" belongs to stdlib family \"strings\". "+
+      "Use shared package.\n"+
+      "shared/a/a.go:5:5: The identifier \"util\" contains the banned substring \"util\". "+
+      "Write a different name.\n"+
+      "shared/a/a.go:8:3: The function F recurses. Write a loop instead.\n"+
+      "shared/a/a.go:11:5: The identifier \"util_table\" contains the banned substring "+
+      "\"util\". Write a different name.\n",
+    fixture_output(subject),
+  )
+  // A file the parser refuses states each refusal its parse logged, in line and column order.
+  refused := fixture_new(t, memory, format_state, command, directory, 1)
+  fixture_file(t, refused, harness.CONFIGURATION_PATH, shared_configuration())
+  fixture_directory(t, refused, "shared")
+  fixture_package_directory(t, refused, "shared/a")
+  fixture_file(t, refused, "shared/a/a.go",
+    "package a\n\nconst b = iota\n\nvar c = d && e\n")
+  testify.True(t, fixture_run(refused, []string{"harness", "shared"}))
+  testify.Equal(
+    t,
+    "shared/a/a.go:3:7: "+
+      string(ast.Failure_Message(ast.FAILURE_CONSTANT_CASE))+
+      "\n"+
+      "shared/a/a.go:3:11: "+
+      string(ast.Failure_Message(ast.FAILURE_IOTA))+
+      "\n"+
+      "shared/a/a.go:5:11: "+
+      string(ast.Failure_Message(ast.FAILURE_REFUSED_SIGN))+
+      "\n",
+    fixture_output(refused),
+  )
+}
+
+// Test_Command_Usage verifies a command line shared/std/cli refuses fails with its error, and -h
 // writes the help.
 func Test_Command_Usage(t *testing.T) {
   memory, format_state, command, directory := memory_new()
@@ -627,6 +658,20 @@ func Test_Format_Refused(t *testing.T) {
   )
 }
 
+// Test_Format_Test_Closures verifies a closure holding logic refuses a file but a test file, and a
+// test file's refusal past its closures stands where its token does.
+func Test_Format_Test_Closures(t *testing.T) {
+  memory, format_state, command, directory := memory_new()
+  runner := checked(memory, format_state, command, directory, CLOSURE_LOGIC)
+  testify.Equal(t, harness.Refusal(ast.FAILURE_CLOSURE_BODY), runner.Diagnostic.Failure)
+  tested := harness.Check(runner.Memory, runner.Syntax, runner.Source_Count, runner.Format, true)
+  testify.Equal(t, harness.TIER_NONE, tested.Tier)
+  runner = checked(memory, format_state, command, directory, CLOSURE_LOGIC+UNNAMED_RESULT)
+  tested = harness.Check(runner.Memory, runner.Syntax, runner.Source_Count, runner.Format, true)
+  testify.Equal(t, harness.Refusal(ast.FAILURE_UNNAMED_RESULT), tested.Failure)
+  testify.Equal(t, harness.Diagnostic_Line(10), tested.Line)
+}
+
 // Test_Format_Indentation verifies a file indented with tabs, and one ending without a newline,
 // each stand outside the canonical form.
 func Test_Format_Indentation(t *testing.T) {
@@ -672,6 +717,7 @@ func Test_Format_Oversized(t *testing.T) {
     runner.Syntax,
     runner.Source_Count,
     runner.Format,
+    false,
   )
   testify.Equal(t, harness.TIER_TWO, runner.Diagnostic.Tier)
   testify.Equal(t, harness.RULE_OVERSIZED, runner.Diagnostic.Rule)
@@ -737,6 +783,7 @@ func Test_Format_Unprintable(t *testing.T) {
 // Test_Format_Imports verifies a clean file importing a banned stdlib package names its first such
 // import, and a gateway or aver file importing what lint lets it does not.
 func Test_Format_Imports(t *testing.T) {
+  gateway_relative_path(t)
   memory, format_state, command, directory := memory_new()
   subject := fixture_new(t, memory, format_state, command, directory, 1)
   fixture_file(t, subject, harness.CONFIGURATION_PATH, shared_configuration())
@@ -745,16 +792,17 @@ func Test_Format_Imports(t *testing.T) {
     "shared/a",
     "shared/b",
     "shared/c",
-    "shared/os",
-    "shared/os/default",
-    "shared/sim",
-    "shared/sim/aver",
+    "shared/std",
+    "shared/std/os",
+    "shared/std/os/default",
+    "shared/std/sim",
+    "shared/std/sim/aver",
   } {
     fixture_package_directory(t, subject, path)
   }
   // The os port stands above its default tier, which the composition tier then binds.
-  fixture_file(t, subject, "shared/os/o.go", "package os\n")
-  fixture_default_contract(t, subject, "shared/os/default", "os")
+  fixture_file(t, subject, "shared/std/os/o.go", "package os\n")
+  fixture_default_contract(t, subject, "shared/std/os/default", "os")
   fixture_file(t, subject, "shared/a/a.go", "package a\n\nimport \"fmt\"\nimport \"strings\"\n")
   fixture_file(
     t,
@@ -763,8 +811,8 @@ func Test_Format_Imports(t *testing.T) {
     "package b\n\nimport \"crypto/sha256\"\nimport \"os\"\n",
   )
   fixture_file(t, subject, "shared/c/c.go", "package c\n\nimport \"math/rand/v2\"\n")
-  fixture_file(t, subject, "shared/os/default/d.go", "package os\n\nimport \"os\"\n")
-  fixture_file(t, subject, "shared/sim/aver/e.go", "package aver\n\nimport \"strings\"\n")
+  fixture_file(t, subject, "shared/std/os/default/d.go", "package os\n\nimport \"os\"\n")
+  fixture_file(t, subject, "shared/std/sim/aver/e.go", "package aver\n\nimport \"strings\"\n")
   testify.True(t, fixture_run(subject, []string{"harness", "shared"}))
   testify.Equal(t, harness.EXIT_FAILURE, subject.Runner.Status)
   testify.Equal(
@@ -773,6 +821,10 @@ func Test_Format_Imports(t *testing.T) {
       "Use shared package.\n"+
       "shared/b/b.go:3:8: Banned import \"crypto/sha256\" belongs to stdlib family \"crypto\". "+
       "Use shared package.\n"+
+      "shared/b/b.go:4:8: Banned import \"os\" belongs to stdlib family \"os\". "+
+      "Use shared package.\n"+
+      "shared/b/b.go:4:8: The stdlib import \"os\" is impure. "+
+      "See lint/README.md for the resolutions.\n"+
       "shared/c/c.go:3:8: Banned import \"math/rand/v2\" belongs to stdlib family \"rand\". "+
       "Use shared package.\n",
     fixture_output(subject),
@@ -799,11 +851,16 @@ func Test_Format_Name_Rules(t *testing.T) {
     fixture_file(t, subject, "shared/c/c.go", "package c\n\nvar table = 1\n")
     testify.True(t, fixture_run(subject, append([]string{"harness", "shared"}, flags...)))
     testify.Equal(t, harness.EXIT_FAILURE, subject.Runner.Status)
+    word := "The identifier \\\"util\\\" contains the banned substring \\\"util\\\". " +
+      "Write a different name."
     want := "shared/a/a.go:3:5: " +
       unescaped(banned) +
       "\n" +
       "shared/b/b.go:3:8: " +
       unescaped(imported) +
+      "\n" +
+      "shared/b/b.go:5:5: " +
+      unescaped(word) +
       "\n"
     if len(flags) > 0 {
       want = `{"path":"shared/a/a.go","line":3,"column":5,"tier":2,"rule":"names","message":"` +
@@ -811,22 +868,13 @@ func Test_Format_Name_Rules(t *testing.T) {
         "\"}\n" +
         `{"path":"shared/b/b.go","line":3,"column":8,"tier":2,"rule":"imports","message":"` +
         imported +
+        "\"}\n" +
+        `{"path":"shared/b/b.go","line":5,"column":5,"tier":2,"rule":"names","message":"` +
+        word +
         "\"}\n"
     }
     testify.Equal(t, want, fixture_output(subject))
   }
-}
-
-// Takes the escapes of a flat JSON message back out of it.
-func unescaped(message string) (text string) {
-  built := make([]byte, 0, len(message))
-  for index := 0; index < len(message); index++ {
-    if message[index] == '\\' {
-      index++
-    }
-    built = append(built, message[index])
-  }
-  return string(built)
 }
 
 // Test_Format_Shadows verifies a name hiding one of its own scopes, or a top-level name a sibling
@@ -943,81 +991,6 @@ func Test_Format_Lanes(t *testing.T) {
   testify.Equal(t, REFERENCE_RENAMED, fixture_read(t, subject, "package/a.go"))
   last := string(rune('a'+harness.LANE_COUNT)) + ".go"
   testify.Equal(t, DECLARATION_RENAMED, fixture_read(t, subject, "package/"+last))
-}
-
-// Held_Lanes is a spread that holds the lanes it is handed: the lanes it holds unchecked, the most
-// it held at once, and whether it checks each lane as it is handed one. One that does not checks
-// nothing until the run reaps a lane, then checks every lane it holds, the last handed first, and
-// hands back the lane the run read last, thus the run closes its lanes out of file order.
-type Held_Lanes struct {
-  // Lanes holds the lanes handed over and not yet checked.
-  Lanes []harness.Lane_Handle
-  // Deepest is the most lanes held at once.
-  Deepest int
-  // Checked is whether each lane is checked as it is handed over.
-  Checked bool
-  // Submitted is how many lanes the run handed over.
-  Submitted int
-}
-
-// Takes one lane into the spread.
-func held_submit(held *Held_Lanes, lane harness.Lane_Handle) {
-  held.Lanes = append(held.Lanes, lane)
-  held.Submitted++
-  held.Deepest = max(held.Deepest, len(held.Lanes))
-  if held.Checked {
-    harness.Check_Lane(lane)
-    held.Lanes = held.Lanes[:0]
-  }
-}
-
-// Checks every lane the spread holds, the last handed over first, and hands back a lane the run
-// holds: the one it read first when the spread checks each lane as it comes, the one it read last
-// when it does not.
-func held_reap(held *Held_Lanes, memory harness.Memory_Handle) (lane harness.Lane_Index) {
-  for index := len(held.Lanes) - 1; index > -1; index-- {
-    harness.Check_Lane(held.Lanes[index])
-  }
-  held.Lanes = held.Lanes[:0]
-  if held.Checked {
-    return harness.Lane_Oldest(memory)
-  }
-  newest := -1
-  for index := range memory.Lanes {
-    if !bool(memory.Held[index]) {
-      continue
-    }
-    if newest < 0 {
-      newest = index
-    }
-    if memory.Lanes[index].Slot > memory.Lanes[newest].Slot {
-      newest = index
-    }
-  }
-  return harness.Lane_Index(newest)
-}
-
-// ORDER_COUNT is how many orders the lanes test checks a run's lanes in: submitted, and reversed.
-const ORDER_COUNT = 2
-
-// One package of a file past the lane table: the first spells the name the last declares, and
-// every file between is clean.
-func lanes_fixture(
-  t *testing.T,
-  memory harness.Memory,
-  format_state harness.Format,
-  command harness.Command,
-  directory harness.Directory,
-) (subject *fixture) {
-  subject = fixture_new(t, memory, format_state, command, directory, 1)
-  fixture_package_directory(t, subject, "package")
-  fixture_file(t, subject, "package/a.go", REFERENCE)
-  for index := 1; index < harness.LANE_COUNT; index++ {
-    fixture_file(t, subject, "package/"+string(rune('a'+index))+".go", CLEAN)
-  }
-  last := string(rune('a'+harness.LANE_COUNT)) + ".go"
-  fixture_file(t, subject, "package/"+last, DECLARATION)
-  return subject
 }
 
 // Test_Layout_Single_Module verifies a tree holding no go.mod states it at go.mod, and a nested
@@ -1394,6 +1367,161 @@ func Test_Layout_Default_Package_Impurity(t *testing.T) {
   )
 }
 
+// Test_Memory_Budget verifies New_Memory allocates at most MEMORY_SIZE_MAXIMUM bytes.
+func Test_Memory_Budget(t *testing.T) {
+  before, after := runtime.MemStats{}, runtime.MemStats{}
+  runtime.ReadMemStats(&before)
+  harness.New_Memory()
+  runtime.ReadMemStats(&after)
+  spent := after.TotalAlloc - before.TotalAlloc
+  testify.True(t, spent < harness.MEMORY_SIZE_MAXIMUM+1, "New_Memory spent %d bytes", spent)
+}
+
+// Test_Memory_Packages verifies two packages whose names together outgrow the sibling table each
+// judge their siblings, since the next package reuses the stores.
+func Test_Memory_Packages(t *testing.T) {
+  memory, format_state, command, directory := memory_new()
+  size := Fixture_Size{Nodes: NODE_CAPACITY, Contents: WIDE_CONTENTS_BYTES, Output: OUTPUT_BYTES}
+  subject := fixture_sized(t, memory, format_state, command, directory, 1, size)
+  fixture_file(t, subject, harness.CONFIGURATION_PATH, shared_configuration())
+  fixture_package_directory(t, subject, "shared")
+  filler := locals_source(harness.SIBLING_TEXT_SIZE_MAXIMUM / 2)
+  for _, name := range []string{"a", "b"} {
+    path := "shared/" + name
+    fixture_package_directory(t, subject, path)
+    fixture_file(t, subject, path+"/a.go", "package a\n\nfunc value() {}\n")
+    fixture_file(t, subject, path+"/b.go", "package a\n\nfunc F() {\n  value := 1\n}\n")
+    fixture_file(t, subject, path+"/c.go", "package a\n\n"+filler)
+  }
+  testify.True(t, fixture_run(subject, []string{"harness", "shared"}))
+  message := "The variable \"value\" shadows a variable in an outer scope. Write a different name."
+  want := "shared/a/b.go:4:3: " + message + "\nshared/b/b.go:4:3: " + message + "\n"
+  testify.Equal(t, want, fixture_output(subject))
+}
+
+// Test_Memory_Capacity verifies a file past the sibling table, the naming finding table, the
+// report table, or the declaration table states the store it outgrew.
+func Test_Memory_Capacity(t *testing.T) {
+  memory, format_state, command, directory := memory_new()
+  size := Fixture_Size{Nodes: NODE_CAPACITY, Contents: WIDE_CONTENTS_BYTES, Output: OUTPUT_BYTES}
+  subject := fixture_sized(t, memory, format_state, command, directory, 1, size)
+  fixture_file(t, subject, harness.CONFIGURATION_PATH, shared_configuration())
+  fixture_package_directory(t, subject, "shared")
+  fixture_package_directory(t, subject, "shared/a")
+  filler := locals_source(harness.SIBLING_TEXT_SIZE_MAXIMUM / 2)
+  fixture_file(t, subject, "shared/a/a.go", "package a\n\n"+filler)
+  fixture_file(t, subject, "shared/a/b.go", "package a\n\n"+filler)
+  testify.True(t, fixture_run(subject, []string{"harness", "shared"}))
+  testify.Equal(t, harness.EXIT_FAILURE, subject.Runner.Status)
+  testify.Equal(
+    t,
+    "shared/a/b.go: The file outgrows the sibling table. Its shadows across files, recursion, "+
+      "and layout stand unjudged.\n",
+    fixture_output(subject),
+  )
+  size.Output = REPORT_OUTPUT_BYTES
+  subject = fixture_sized(t, memory, format_state, command, directory, 1, size)
+  fixture_file(t, subject, harness.CONFIGURATION_PATH, shared_configuration())
+  fixture_package_directory(t, subject, "shared")
+  fixture_package_directory(t, subject, "shared/a")
+  fixture_file(
+    t,
+    subject,
+    "shared/a/a.go",
+    "package a\n\n"+variables_source("util", naming.FINDING_COUNT_MAXIMUM),
+  )
+  testify.True(t, fixture_run(subject, []string{"harness", "shared"}))
+  output := fixture_output(subject)
+  naming_full := "shared/a/a.go: The file outgrows the naming finding table. Its findings past it " +
+    "stand unstated.\n"
+  testify.Equal(t, 1, strings_count(output, naming_full))
+  testify.Equal(t, naming.FINDING_COUNT_MAXIMUM, strings_count(output, "\n"))
+  subject = fixture_sized(t, memory, format_state, command, directory, 1, size)
+  fixture_file(t, subject, harness.CONFIGURATION_PATH, shared_configuration())
+  fixture_package_directory(t, subject, "shared")
+  fixture_package_directory(t, subject, "shared/a")
+  scoped := variables_source("table", naming.SCOPE_NAME_COUNT_MAXIMUM+1)
+  fixture_file(t, subject, "shared/a/a.go", "package a\n\n"+scoped)
+  testify.True(t, fixture_run(subject, []string{"harness", "shared"}))
+  testify.Equal(
+    t,
+    "shared/a/a.go: The file outgrows the scope table. Its shadows past it stand unjudged.\n",
+    fixture_output(subject),
+  )
+  subject = fixture_sized(t, memory, format_state, command, directory, 1, size)
+  fixture_file(t, subject, harness.CONFIGURATION_PATH, shared_configuration())
+  fixture_package_directory(t, subject, "shared")
+  fixture_package_directory(t, subject, "shared/a")
+  banned := variables_source("util", naming.FINDING_COUNT_MAXIMUM-naming.FINDING_FIRST)
+  files := harness.REPORT_COUNT_MAXIMUM/(naming.FINDING_COUNT_MAXIMUM-naming.FINDING_FIRST) + 1
+  for index := range files {
+    fixture_file(t, subject, "shared/a/"+string(rune('a'+index))+".go", "package a\n\n"+banned)
+  }
+  testify.True(t, fixture_run(subject, []string{"harness", "shared"}))
+  output = fixture_output(subject)
+  reports_full := ": The run outgrows the report table. Its findings past this one stand unstated.\n"
+  testify.Equal(t, 1, strings_count(output, reports_full))
+  testify.Equal(t, harness.REPORT_COUNT_MAXIMUM-harness.REPORT_FIRST, strings_count(output, "\n"))
+  size = Fixture_Size{
+    Nodes:    DECLARED_NODE_COUNT,
+    Contents: DECLARED_CONTENTS_BYTES,
+    Output:   REPORT_OUTPUT_BYTES,
+  }
+  subject = fixture_sized(t, memory, format_state, command, directory, 1, size)
+  fixture_file(t, subject, harness.CONFIGURATION_PATH, shared_configuration())
+  fixture_package_directory(t, subject, "shared")
+  declared := declared_source(requirements.HEADING_COUNT_MAXIMUM)
+  packages := harness.DECLARATION_COUNT_MAXIMUM/requirements.HEADING_COUNT_MAXIMUM + 1
+  for index := range packages {
+    path := "shared/p" + decimal(index)
+    fixture_directory(t, subject, path)
+    fixture_file(t, subject, path+"/REQUIREMENTS.md", CONTRACT_MARKDOWN)
+    fixture_file(t, subject, path+"/requirements_test.go", declared)
+  }
+  testify.True(t, fixture_run(subject, []string{"harness", "shared"}))
+  // The walk decides which packages read last, thus which ones outgrow the table.
+  declarations_full := "/requirements_test.go: The file outgrows the declaration table. Its " +
+    "declarations past it stand unchecked.\n"
+  testify.True(
+    t,
+    strings_count(fixture_output(subject), declarations_full) > 0,
+    fixture_errors(subject),
+  )
+  // A tree of long paths outgrows the walk text store before any check reads a file.
+  spelled := make([]byte, WIDE_COMPONENT_BYTES)
+  for index := range spelled {
+    spelled[index] = 'd'
+  }
+  long := string(spelled)
+  deep := "shared/" + long + "/" + long + "/" + long
+  size = Fixture_Size{
+    Nodes:    WALK_NODE_COUNT,
+    Contents: NODE_CONTENTS_BYTES,
+    Output:   OUTPUT_BYTES,
+  }
+  subject = fixture_sized(t, memory, format_state, command, directory, 1, size)
+  fixture_file(t, subject, harness.CONFIGURATION_PATH, shared_configuration())
+  fixture_package_directory(t, subject, "shared")
+  fixture_directory(t, subject, "shared/"+long)
+  fixture_directory(t, subject, "shared/"+long+"/"+long)
+  fixture_directory(t, subject, deep)
+  for index := range WALK_FILE_COUNT {
+    fixture_file(t, subject, deep+"/"+decimal(index)+long[:WIDE_COMPONENT_BYTES-8]+".go", CLEAN)
+  }
+  testify.True(t, fixture_run(subject, []string{"harness", "shared"}))
+  testify.Equal(t, harness.EXIT_FAILURE, subject.Runner.Status)
+  testify.True(
+    t,
+    bool(
+      strings.Contains(
+        strings.Text(fixture_errors(subject)),
+        ": more than 131072 path bytes held\n",
+      ),
+    ),
+    fixture_errors(subject),
+  )
+}
+
 // Test_Allocation verifies a whole run, walk and checks and report, allocates nothing.
 func Test_Allocation(t *testing.T) {
   memory, format_state, command, directory := memory_new()
@@ -1607,6 +1735,7 @@ func checked(
     runner.Syntax,
     runner.Source_Count,
     runner.Format,
+    false,
   )
   return runner
 }
@@ -1622,11 +1751,36 @@ func fixture_new(
   seed uint64,
 ) (subject *fixture) {
   t.Helper()
+  size := Fixture_Size{Nodes: NODE_CAPACITY, Contents: NODE_CONTENTS_BYTES, Output: OUTPUT_BYTES}
+  return fixture_sized(t, memory, format_state, command, directory, seed, size)
+}
+
+// Fixture_Size is how many files a fixture tree holds, the bytes of each, and of its output.
+type Fixture_Size struct {
+  // Nodes is how many files and directories the tree holds.
+  Nodes int
+  // Contents is the bytes one file holds.
+  Contents int
+  // Output is the bytes the output holds.
+  Output int
+}
+
+// Builds one fixture over a tree of the given size.
+func fixture_sized(
+  t *testing.T,
+  memory harness.Memory,
+  format_state harness.Format,
+  command harness.Command,
+  directory harness.Directory,
+  seed uint64,
+  size Fixture_Size,
+) (subject *fixture) {
+  t.Helper()
   subject = &fixture{}
-  nodes := make([]nbio.Sim_Node, NODE_CAPACITY)
+  nodes := make([]nbio.Sim_Node, size.Nodes)
   for index := range nodes {
     nodes[index].Name = make([]byte, nbio.SIM_PATH_COMPONENT_BYTES_MAXIMUM)
-    nodes[index].Contents = make([]byte, NODE_CONTENTS_BYTES)
+    nodes[index].Contents = make([]byte, size.Contents)
   }
   descriptors := make([]nbio.Sim_Descriptor, DESCRIPTOR_CAPACITY)
   for index := range descriptors {
@@ -1651,7 +1805,7 @@ func fixture_new(
       Clocks:      clocks,
     },
   )
-  subject.Output = nbio.Stream_Memory{Memory: make([]byte, OUTPUT_BYTES)}
+  subject.Output = nbio.Stream_Memory{Memory: make([]byte, size.Output)}
   subject.Errors = nbio.Stream_Memory{Memory: make([]byte, OUTPUT_BYTES)}
   subject.Runner = harness.Runner{
     Runner_Fields: harness.Runner_Fields{
@@ -1699,6 +1853,7 @@ func syntax_new() (syntax requirements.Syntax) {
   tree.Parents.Values = make(ast.Parents, ast.DEPTH_MAXIMUM)
   tree.Last_Children.Values = make(ast.Last_Children, ast.DEPTH_MAXIMUM)
   tree.Earlier_Children.Values = make(ast.Earlier_Children, ast.DEPTH_MAXIMUM)
+  tree.Errors.Values = make(ast.Errors, ast.ERROR_COUNT_MAXIMUM)
   starts := make(token.Line_Starts, token.LINE_COUNT_MAXIMUM)
   syntax.Syntax_Tree = &tree
   syntax.Lines = &token.Line_Index{Starts: starts}
@@ -1737,13 +1892,9 @@ func memory_new() (
   format_state.Printer = &print
   memory.Form = make(harness.Form_Bytes, harness.FORM_STORAGE_SIZE)
   memory.Paths = make(harness.Path_Table, harness.FILE_COUNT_MAXIMUM)
-  for index := range memory.Paths {
-    memory.Paths[index] = make(filepath.Slice, 0, filepath.PATH_SIZE_MAXIMUM)
-  }
   memory.Directories = make(harness.Directory_Paths, harness.DIRECTORY_COUNT_MAXIMUM)
-  for index := range memory.Directories {
-    memory.Directories[index] = make(filepath.Slice, 0, filepath.PATH_SIZE_MAXIMUM)
-  }
+  memory.Path_Text = make(harness.Path_Text_Store, harness.WALK_TEXT_SIZE)
+  memory.Directory_Text = make(harness.Directory_Text, harness.WALK_TEXT_SIZE)
   directory.Current = make(harness.Current_Path, 0, filepath.PATH_SIZE_MAXIMUM)
   memory.Entries = make(harness.Entry_Table, harness.ENTRY_COUNT_MAXIMUM)
   memory.Directory_Buffer = make(
@@ -1764,11 +1915,11 @@ func memory_new() (
   command.Failure = make(harness.Failure_Bytes, cli.FAILURE_SIZE_MAXIMUM)
   command.Help = make(harness.Help_Bytes, strings.TEXT_SIZE_MAXIMUM)
   memory.Packages = make(harness.Packages, harness.PACKAGE_COUNT_MAXIMUM)
+  memory.Declaration_Pool = make(harness.Declaration_Pool, harness.DECLARATION_POOL_SIZE)
   for index := range memory.Packages {
-    size := filepath.PATH_SIZE_MAXIMUM
-    memory.Packages[index].Path = make(harness.Package_Path, 0, size)
-    count := requirements.HEADING_COUNT_MAXIMUM
-    memory.Packages[index].Declarations = make(requirements.Declarations, count)
+    end := harness.DECLARATION_FIRST + requirements.HEADING_COUNT_MAXIMUM
+    window := memory.Declaration_Pool[harness.DECLARATION_FIRST:end:end]
+    memory.Packages[index].Declarations = requirements.Declarations(window)
   }
   memory.File_Packages = make(harness.Package_Indices, harness.FILE_COUNT_MAXIMUM)
   memory.History_Output = make(harness.History_Output, harness.HISTORY_OUTPUT_SIZE)
@@ -1779,6 +1930,7 @@ func memory_new() (
   memory_diagnostics(&memory)
   memory.Siblings = harness.New_Siblings()
   memory.Layout = harness.New_Layout()
+  memory.Reports = harness.New_Reports()
   memory.Graph = make(harness.Graph_Store, harness.GRAPH_STORE_SIZE)
   memory.Glob = make(harness.Glob_Storage, harness.GLOB_STORAGE_SIZE)
   memory.Requirements = checker_new(memory)
@@ -2574,14 +2726,11 @@ func memory_diagnostics(memory harness.Memory_Handle) {
   memory.Diagnostics = make(harness.File_Diagnostics, harness.FILE_COUNT_MAXIMUM)
   memory.Sizes = make(harness.File_Sizes, harness.SIZE_TABLE_SIZE)
   memory.Order = make(harness.File_Order, harness.FILE_COUNT_MAXIMUM)
-  memory.Notices = make(harness.Notice_Table, harness.FILE_COUNT_MAXIMUM)
-  for slot := range memory.Notices {
-    memory.Notices[slot] = make(harness.Notice_Store, harness.MESSAGE_SIZE_MAXIMUM)
-  }
 }
 
 // Builds the lane table, which views every other store, thus past them.
 func memory_lanes(memory harness.Memory_Handle, format_state harness.Format) {
+  memory.Checked = make(harness.Lane_Checks, harness.LANE_COUNT)
   memory.Lanes, memory.Held = make(harness.Lane_Table, harness.LANE_COUNT), make(
     harness.Lane_Marks,
     harness.LANE_COUNT,
@@ -2612,4 +2761,224 @@ func strings_replace(source string, old string, new string) (replaced string) {
     }
   }
   return source
+}
+
+// WIDE_COMPONENT_BYTES is one wide name of a path, inside what one simulated name holds.
+const WIDE_COMPONENT_BYTES = 200
+
+// WALK_FILE_COUNT is how many Go files of wide paths outgrow the walk text store.
+const WALK_FILE_COUNT = harness.WALK_TEXT_SIZE/(4*WIDE_COMPONENT_BYTES) + 1
+
+// WALK_NODE_COUNT holds those files, their directories, and the fixture's own files.
+const WALK_NODE_COUNT = WALK_FILE_COUNT + NODE_CAPACITY
+
+// WIDE_CONTENTS_BYTES holds a Go file as wide as a run reads.
+const WIDE_CONTENTS_BYTES = requirements.SOURCE_SIZE_MAXIMUM
+
+// REPORT_OUTPUT_BYTES holds a line for each slot of the report table.
+const REPORT_OUTPUT_BYTES = harness.REPORT_COUNT_MAXIMUM * 256
+
+// DECLARED_NODE_COUNT holds the tree of the declaration case: a directory, a contract, and a test
+// file for each package past the declaration table.
+const DECLARED_NODE_COUNT = 3*
+  (harness.DECLARATION_COUNT_MAXIMUM/requirements.HEADING_COUNT_MAXIMUM+1) +
+  NODE_CAPACITY
+
+// DECLARED_CONTENTS_BYTES holds one test file of HEADING_COUNT_MAXIMUM declarations.
+const DECLARED_CONTENTS_BYTES = 64 * requirements.HEADING_COUNT_MAXIMUM
+
+// Builds one function declaring, in one statement, clean locals of WIDE_NAME_WORDS words each
+// until their bytes pass the given size.
+func locals_source(size int) (source string) {
+  built := []byte("func G() {\n  ")
+  spelled := 0
+  for index := 0; spelled < size+1; index++ {
+    if index > 0 {
+      built = append(built, ", "...)
+    }
+    opening_size := len(built)
+    for range WIDE_NAME_WORDS {
+      built = append(built, "table_"...)
+    }
+    built = append(built, decimal(index)...)
+    spelled += len(built) - opening_size
+  }
+  return string(append(built, " := 0\n}\n"...))
+}
+
+// WIDE_NAME_WORDS is how many words one wide name spells, thus few names fill the sibling text.
+const WIDE_NAME_WORDS = 160
+
+// Builds top-level variables of the given count of names, each the word and a number, a few
+// names to a declaration.
+func variables_source(word string, count int) (source string) {
+  built := []byte{}
+  for index := range count {
+    separator := ", "
+    if index%VARIABLE_NAME_COUNT == 0 {
+      separator = "var "
+    }
+    built = append(built, separator...)
+    built = append(built, word...)
+    built = append(built, "_"...)
+    built = append(built, decimal(index)...)
+    if index%VARIABLE_NAME_COUNT == VARIABLE_NAME_COUNT-1 {
+      built = append(built, " int\n"...)
+    }
+  }
+  if count%VARIABLE_NAME_COUNT != 0 {
+    built = append(built, " int\n"...)
+  }
+  return string(built)
+}
+
+// VARIABLE_NAME_COUNT is how many names one declaration of variables_source holds.
+const VARIABLE_NAME_COUNT = 32
+
+// Builds a test file of the given count of declarations, each a type, the fewest tokens one
+// declaration spends.
+func declared_source(count int) (source string) {
+  built := []byte("package a\n\n")
+  for index := range count {
+    built = append(built, "type T_"...)
+    built = append(built, decimal(index)...)
+    built = append(built, " int\n"...)
+  }
+  return string(built)
+}
+
+// Spells a count in decimal digits.
+func decimal(value int) (text string) {
+  digits := []byte{byte('0' + value%10)}
+  for value > 9 {
+    value /= 10
+    digits = append([]byte{byte('0' + value%10)}, digits...)
+  }
+  return string(digits)
+}
+
+// Counts the times one text stands in another.
+func strings_count(text string, part string) (count int) {
+  for index := 0; index+len(part) < len(text)+1; index++ {
+    if text[index:index+len(part)] == part {
+      count++
+    }
+  }
+  return count
+}
+
+// CLOSURE_LOGIC is a file whose closure declares a local before it calls.
+const CLOSURE_LOGIC = "package a\n\nfunc f() {\n  g(func() {\n    x := 1\n    h(x)\n  })\n}\n"
+
+// UNNAMED_RESULT is a function past CLOSURE_LOGIC whose result is unnamed.
+const UNNAMED_RESULT = "\nfunc k() int {\n  return 1\n}\n"
+
+// A gateway named by a relative path, with its leading current directory or none, stays exempt.
+func gateway_relative_path(t *testing.T) {
+  t.Helper()
+  memory, format_state, command, directory := memory_new()
+  subject := fixture_new(t, memory, format_state, command, directory, 1)
+  fixture_file(t, subject, harness.CONFIGURATION_PATH, shared_configuration())
+  fixture_directory(t, subject, "shared")
+  fixture_directory(t, subject, "shared/std")
+  fixture_directory(t, subject, "shared/std/os")
+  fixture_package_directory(t, subject, "shared/std/os/default")
+  fixture_default_contract(t, subject, "shared/std/os/default", "os")
+  fixture_file(t, subject, "shared/std/os/default/host.go", "package os\n\nimport \"syscall\"\n")
+  for _, path := range []string{"shared/std/os/default", "./shared/std/os/default"} {
+    testify.True(t, fixture_run(subject, []string{"harness", path, "-fix"}))
+    output := fixture_output(subject)
+    testify.False(t, bool(strings.Contains(strings.Text(output), "Banned import")), path, output)
+    testify.Equal(t, harness.EXIT_SUCCESS, subject.Runner.Status, path, output)
+  }
+}
+
+// Takes the escapes of a flat JSON message back out of it.
+func unescaped(message string) (text string) {
+  built := make([]byte, 0, len(message))
+  for index := 0; index < len(message); index++ {
+    if message[index] == '\\' {
+      index++
+    }
+    built = append(built, message[index])
+  }
+  return string(built)
+}
+
+// Held_Lanes is a spread that holds the lanes it is handed: the lanes it holds unchecked, the most
+// it held at once, and whether it checks each lane as it is handed one. One that does not checks
+// nothing until the run reaps a lane, then checks every lane it holds, the last handed first, and
+// hands back the lane the run read last, thus the run closes its lanes out of file order.
+type Held_Lanes struct {
+  // Lanes holds the lanes handed over and not yet checked.
+  Lanes []harness.Lane_Handle
+  // Deepest is the most lanes held at once.
+  Deepest int
+  // Checked is whether each lane is checked as it is handed over.
+  Checked bool
+  // Submitted is how many lanes the run handed over.
+  Submitted int
+}
+
+// Takes one lane into the spread.
+func held_submit(held *Held_Lanes, lane harness.Lane_Handle) {
+  held.Lanes = append(held.Lanes, lane)
+  held.Submitted++
+  held.Deepest = max(held.Deepest, len(held.Lanes))
+  if held.Checked {
+    harness.Check_Lane(lane)
+    held.Lanes = held.Lanes[:0]
+  }
+}
+
+// Checks every lane the spread holds, the last handed over first, and hands back a lane the run
+// holds and has not handed back: the one it read first when the spread checks each lane as it
+// comes, the one it read last when it does not.
+func held_reap(held *Held_Lanes, memory harness.Memory_Handle) (lane harness.Lane_Index) {
+  for index := len(held.Lanes) - 1; index > -1; index-- {
+    harness.Check_Lane(held.Lanes[index])
+  }
+  held.Lanes = held.Lanes[:0]
+  if held.Checked {
+    return harness.Lane_Oldest(memory)
+  }
+  newest := -1
+  for index := range memory.Lanes {
+    if !bool(memory.Held[index]) {
+      continue
+    }
+    if bool(memory.Checked[index]) {
+      continue
+    }
+    if newest < 0 {
+      newest = index
+    }
+    if memory.Lanes[index].Slot > memory.Lanes[newest].Slot {
+      newest = index
+    }
+  }
+  return harness.Lane_Index(newest)
+}
+
+// ORDER_COUNT is how many orders the lanes test checks a run's lanes in: submitted, and reversed.
+const ORDER_COUNT = 2
+
+// One package of a file past the lane table: the first spells the name the last declares, and
+// every file between is clean.
+func lanes_fixture(
+  t *testing.T,
+  memory harness.Memory,
+  format_state harness.Format,
+  command harness.Command,
+  directory harness.Directory,
+) (subject *fixture) {
+  subject = fixture_new(t, memory, format_state, command, directory, 1)
+  fixture_package_directory(t, subject, "package")
+  fixture_file(t, subject, "package/a.go", REFERENCE)
+  for index := 1; index < harness.LANE_COUNT; index++ {
+    fixture_file(t, subject, "package/"+string(rune('a'+index))+".go", CLEAN)
+  }
+  last := string(rune('a'+harness.LANE_COUNT)) + ".go"
+  fixture_file(t, subject, "package/"+last, DECLARATION)
+  return subject
 }

@@ -8,13 +8,13 @@
 // never ran.
 package requirements
 
-import "local/james-orcales/shared/go/ast"
-import "local/james-orcales/shared/go/token"
-import "local/james-orcales/shared/math/bits"
-import "local/james-orcales/shared/path"
-import "local/james-orcales/shared/sim/aver/default"
-import "local/james-orcales/shared/unicode/ucd"
-import "local/james-orcales/shared/unicode/utf8"
+import "local/james-orcales/shared/std/go/ast"
+import "local/james-orcales/shared/std/go/token"
+import "local/james-orcales/shared/std/math/bits"
+import "local/james-orcales/shared/std/path"
+import "local/james-orcales/shared/std/sim/aver/default"
+import "local/james-orcales/shared/std/unicode/ucd"
+import "local/james-orcales/shared/std/unicode/utf8"
 
 // MARKDOWN_NAME is the exact-cased contract file; a differently cased file on a case-insensitive
 // disk is no contract.
@@ -1768,18 +1768,22 @@ const PARSED_SOURCE_SIZE_MINIMUM = len("package a")
 
 // Collect reads the leading declarations of requirements_test.go out of the caller's own clean
 // parse of it, the name each states and the line it stands on, into the table, and states how
-// many it read. The file is parsed once, by the caller, thus Collect parses nothing.
+// many it read. The file is parsed once, by the caller, thus Collect parses nothing. It indexes
+// the file's lines into the caller's store itself, since that store holds another file's before.
 func Collect(
-  syntax Syntax,
+  tree ast.Syntax_Tree_Handle,
+  starts token.Line_Starts,
   source Parsed_Source,
   declarations Declarations,
 ) (count Declaration_Count) {
   defer func() { Declaration_Count_Invariants(count, "collect.count") }()
-  Syntax_Invariants(&syntax, "collect.syntax")
+  ast.Syntax_Tree_Handle_Invariants(tree, "collect.tree")
+  token.Line_Starts_Invariants(starts, "collect.starts")
   Parsed_Source_Invariants(source, "collect.source")
   Declarations_Invariants(declarations, "collect.declarations")
-  state := &ast.Parse_State{Syntax_Tree: *syntax.Syntax_Tree}
-  indexed := token.Index_Lines(syntax.Lines, token.Source(source))
+  state := &ast.Parse_State{Syntax_Tree: *tree}
+  lines := token.Line_Index{Starts: starts}
+  indexed := token.Index_Lines(&lines, token.Source(source))
   // A clean parse roots the file at the first slot.
   child := ast.Index(ast.Node_At(state, ast.INDEX_FIRST).First_Child)
   for range ast.NODE_COUNT_MAXIMUM {
@@ -1818,7 +1822,7 @@ func Collect(
     held := ast.Token_At(state, ast.Token_Index(named))
     line := Number(0)
     if indexed {
-      line = Number(token.Position_Of(syntax.Lines, held.Offset).Line)
+      line = Number(token.Position_Of(&lines, held.Offset).Line)
     }
     declarations[count] = Declaration{
       Start: Declaration_Start(held.Offset),

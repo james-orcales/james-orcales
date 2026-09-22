@@ -4,10 +4,9 @@ import "testing"
 
 import "local/james-orcales/harness/pkg/configuration"
 import "local/james-orcales/harness/pkg/naming"
-import "local/james-orcales/shared/bytes"
-import "local/james-orcales/shared/go/ast"
-import "local/james-orcales/shared/go/token"
-import "local/james-orcales/shared/testify"
+import "local/james-orcales/shared/std/go/ast"
+import "local/james-orcales/shared/std/go/token"
+import "local/james-orcales/shared/std/testify"
 
 // Test_Naming_Name_Style verifies a name splits into words as lint splits it, and a rename keeps
 // the case of the name it renames.
@@ -120,7 +119,7 @@ func Test_Naming_Quantity_Suffixes(t *testing.T) {
     subject,
     "package a\n\nfunc F() {\n  items := len(a)\n}\n",
     "items",
-    "The name items has the role count or size. Rename items -> items_count.",
+    "The name items has the role count or size. Rename items -> [items_count, items_size].",
   )
   expect(
     t,
@@ -401,6 +400,7 @@ func Test_Naming_Records(t *testing.T) {
   result := ast.Parse(subject.State, token.Source(source))
   testify.True(t, bool(result.OK), source)
   copy(subject.Source, source)
+  naming.Findings_Open(subject.Checker)
   testify.False(t, bool(naming.Check(subject.Checker)), source)
   naming.Record(subject.Checker)
   recorded := []string{}
@@ -421,6 +421,7 @@ func Test_Naming_Calls(t *testing.T) {
   result := ast.Parse(subject.State, token.Source(source))
   testify.True(t, bool(result.OK), source)
   copy(subject.Source, source)
+  naming.Findings_Open(subject.Checker)
   testify.False(t, bool(naming.Check(subject.Checker)), source)
   naming.Record(subject.Checker)
   graph := subject.Cells[naming.CELL_GRAPH_START]
@@ -442,6 +443,7 @@ func Test_Naming_Impurity(t *testing.T) {
   result := ast.Parse(subject.State, token.Source(source))
   testify.True(t, bool(result.OK), source)
   copy(subject.Source, source)
+  naming.Findings_Open(subject.Checker)
   // The alias states its own naming finding, which leaves what Record lists as it stands.
   naming.Check(subject.Checker)
   naming.Record(subject.Checker)
@@ -493,10 +495,38 @@ func Test_Naming_Order(t *testing.T) {
     subject,
     "package a\n\nfunc F() {\n  max_parsing := len(a)\n}\n",
     "max_parsing",
-    "The name max_parsing has the role count or size. Rename max_parsing -> max_parsing_count.",
+    "The name max_parsing has the role count or size. Rename max_parsing -> [max_parsing_count, max_parsing_size].",
   )
   subject.Cells[naming.CELL_PATH_SIZE] = naming.State_Cell(copy(subject.Path, "buf.go"))
   expect(t, subject, "package buf\n", "", "Rename buf -> buffer.")
+}
+
+// Test_Naming_Every verifies Check commits every finding of a file in source order, several at
+// one name, the shadows past the rest.
+func Test_Naming_Every(t *testing.T) {
+  subject := subject_new(t)
+  source := "package a\n\nvar buf_parsing = 1\n\nfunc F(value int) {\n  {\n    value := 1\n  }\n}\n\n" +
+    "var max_line = 1\n"
+  result := ast.Parse(subject.State, token.Source(source))
+  testify.True(t, bool(result.OK), source)
+  copy(subject.Source, source)
+  naming.Findings_Open(subject.Checker)
+  testify.True(t, bool(naming.Check(subject.Checker)), source)
+  header := subject.Findings[naming.FINDING_HEADER]
+  messages := []string{}
+  for _, entry := range subject.Findings[naming.FINDING_FIRST:header.Offset] {
+    messages = append(messages, string(subject.Finding_Text[entry.Start:entry.End]))
+  }
+  testify.Equal(
+    t,
+    []string{
+      "Rename buf_parsing -> buffer_parsing.",
+      "The name \"parsing\" is a present participle. Rename it to a noun form.",
+      "Rename max_line -> line_max.",
+      "The variable \"value\" shadows a variable in an outer scope. Write a different name.",
+    },
+    messages,
+  )
 }
 
 // Test_Naming_Bounds verifies a message past the store stands cut, and a byte below a space in a
@@ -521,6 +551,36 @@ func Test_Naming_Bounds(t *testing.T) {
     "Package import alias \"x\" is unnecessary. Remove alias because no other imported package "+
       "is named \"c?\".",
   )
+  // A name past the scope store and one past the record store each mark the store full.
+  locals := []byte("package a\n\nfunc F() {\n  a0")
+  for index := 1; index < naming.RECORD_COUNT_MAXIMUM+1; index++ {
+    locals = append(locals, ", a"...)
+    locals = append(locals, decimal(index)...)
+  }
+  source := string(append(locals, " := 0\n}\n"...))
+  result := ast.Parse(subject.State, token.Source(source))
+  testify.True(t, bool(result.OK))
+  copy(subject.Source, source)
+  naming.Findings_Open(subject.Checker)
+  naming.Check(subject.Checker)
+  naming.Record(subject.Checker)
+  testify.Equal(t, naming.State_Cell(1), subject.Cells[naming.CELL_SCOPE_FULL])
+  testify.Equal(t, naming.State_Cell(1), subject.Cells[naming.CELL_RECORD_FULL])
+  testify.Equal(
+    t,
+    naming.State_Cell(naming.RECORD_COUNT_MAXIMUM),
+    subject.Cells[naming.CELL_RECORD_COUNT],
+  )
+}
+
+// Spells a count in decimal digits.
+func decimal(value int) (text string) {
+  digits := []byte{byte('0' + value%10)}
+  for value > 9 {
+    value /= 10
+    digits = append([]byte{byte('0' + value%10)}, digits...)
+  }
+  return string(digits)
 }
 
 // WORDS is the word table the tests check against.
@@ -550,20 +610,23 @@ func subject_new(t *testing.T) (subject Subject) {
   tree.Parents.Values = make(ast.Parents, ast.DEPTH_MAXIMUM)
   tree.Last_Children.Values = make(ast.Last_Children, ast.DEPTH_MAXIMUM)
   tree.Earlier_Children.Values = make(ast.Earlier_Children, ast.DEPTH_MAXIMUM)
+  tree.Errors.Values = make(ast.Errors, ast.ERROR_COUNT_MAXIMUM)
   state := &ast.Parse_State{Syntax_Tree: tree}
   subject = Subject{
     Checker: &naming.Checker{
-      Nodes:   naming.Node_View(state.Nodes.Values),
-      Tokens:  naming.Token_View(state.Tokens.Values),
-      Source:  make(naming.Source_Store, naming.SOURCE_STORAGE_SIZE),
-      Path:    make(naming.Path_Store, naming.PATH_SIZE_MAXIMUM),
-      Words:   make(naming.Word_Table, naming.WORD_SLOT_COUNT),
-      Terms:   make(naming.Terms, ast.NODE_COUNT_MAXIMUM),
-      Message: make(naming.Message_Store, naming.MESSAGE_SIZE_MAXIMUM),
-      Records: make(naming.Record_Table, naming.RECORD_COUNT_MAXIMUM),
-      Names:   make(naming.Scope_Names, ast.NODE_COUNT_MAXIMUM),
-      Frames:  make(naming.Frame_Stack, naming.FRAME_COUNT),
-      Cells:   make(naming.State_Cells, naming.CELL_COUNT),
+      Nodes:        naming.Node_View(state.Nodes.Values),
+      Tokens:       naming.Token_View(state.Tokens.Values),
+      Source:       make(naming.Source_Store, naming.SOURCE_STORAGE_SIZE),
+      Path:         make(naming.Path_Store, naming.PATH_SIZE_MAXIMUM),
+      Words:        make(naming.Word_Table, naming.WORD_SLOT_COUNT),
+      Terms:        make(naming.Terms, ast.NODE_COUNT_MAXIMUM),
+      Message:      make(naming.Message_Store, naming.MESSAGE_SIZE_MAXIMUM),
+      Records:      make(naming.Record_Table, naming.RECORD_COUNT_MAXIMUM),
+      Findings:     make(naming.Finding_Entries, naming.FINDING_COUNT_MAXIMUM),
+      Finding_Text: make(naming.Finding_Text, naming.FINDING_TEXT_SIZE_MAXIMUM),
+      Names:        make(naming.Scope_Names, naming.SCOPE_NAME_COUNT_MAXIMUM),
+      Frames:       make(naming.Frame_Stack, naming.FRAME_COUNT),
+      Cells:        make(naming.State_Cells, naming.CELL_COUNT),
     },
     State: state,
   }
@@ -600,19 +663,20 @@ func expect(t *testing.T, subject Subject, source string, name string, message s
   result := ast.Parse(subject.State, token.Source(source))
   testify.True(t, bool(result.OK), source)
   copy(subject.Source, source)
+  naming.Findings_Open(subject.Checker)
   found := naming.Check(subject.Checker)
   if message == "" {
     testify.False(t, bool(found), source)
     return
   }
   testify.True(t, bool(found), source)
-  held := subject.Message[:bytes.Index_Byte(bytes.Slice(subject.Message), 0)]
-  testify.Equal(t, message, string(held), source)
+  first := subject.Findings[naming.FINDING_FIRST]
+  testify.Equal(t, message, string(subject.Finding_Text[first.Start:first.End]), source)
   offset := 0
   if name != "" {
     offset = offset_of(source, name)
   }
-  testify.Equal(t, offset, int(subject.Cells[naming.CELL_OFFSET]), source)
+  testify.Equal(t, offset, int(first.Offset), source)
 }
 
 // Checks one source and expects the finding at the second whole spelling of the name.
@@ -621,13 +685,14 @@ func subject_second(t *testing.T, subject Subject, source string, name string, m
   result := ast.Parse(subject.State, token.Source(source))
   testify.True(t, bool(result.OK), source)
   copy(subject.Source, source)
+  naming.Findings_Open(subject.Checker)
   testify.True(t, bool(naming.Check(subject.Checker)), source)
-  held := subject.Message[:bytes.Index_Byte(bytes.Slice(subject.Message), 0)]
-  testify.Equal(t, message, string(held), source)
+  entry := subject.Findings[naming.FINDING_FIRST]
+  testify.Equal(t, message, string(subject.Finding_Text[entry.Start:entry.End]), source)
   first := offset_of(source, name)
   rest := source[first+len(name)-PACKAGE_CLAUSE_SIZE:]
   second := first + len(name) + offset_of(rest, name) - PACKAGE_CLAUSE_SIZE
-  testify.Equal(t, second, int(subject.Cells[naming.CELL_OFFSET]), source)
+  testify.Equal(t, second, int(entry.Offset), source)
 }
 
 // States the text of the token that names one node of the parse.
