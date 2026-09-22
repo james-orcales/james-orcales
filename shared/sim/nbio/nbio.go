@@ -1474,9 +1474,6 @@ var sim_directory_full = errors.New("io: directory entry limit exceeded")
 // storage without accepting path that real backend rejects.
 const SIM_PATH_COMPONENT_BYTES_MAXIMUM = int(bits.WORD_8_MAXIMUM)
 
-// SIM_FILE_BYTES_MAXIMUM bounds one simulated file at generated distribution maximum.
-const SIM_FILE_BYTES_MAXIMUM = SIM_SIZE_P100
-
 // SIM_UMASK is permission mask simulated kernel apply at creation. Real kernel consult process
 // umask, which this surface cannot read and must not. Simulator therefore state one value, thus
 // run stay pure function of its seed rather than of ambient process state.
@@ -1512,7 +1509,8 @@ type Sim_Node struct {
 	Name []byte
 	// Name_Count bounds valid bytes without making a slice escape.
 	Name_Count int
-	// Contents keeps file bytes inline so writes cannot grow heap storage. A symbolic link
+	// Contents keeps file bytes inline so writes cannot grow heap storage. Its length is the
+	// file capacity: a write past it fails, the way a full device refuses. A symbolic link
 	// stores its target here, the way POSIX filesystems already do, thus link needs no second
 	// buffer and lstat size stays target length.
 	Contents []byte
@@ -1815,8 +1813,6 @@ func sim_memory_initialize(memory Sim_Memory) {
 		node := &memory.Nodes[index]
 		aver.Always(len(node.Name) == SIM_PATH_COMPONENT_BYTES_MAXIMUM,
 			"A simulated node has component-name storage.")
-		aver.Always(len(node.Contents) == SIM_FILE_BYTES_MAXIMUM,
-			"A simulated node has file-content storage.")
 		sim_node_reset(node)
 	}
 	for index := range memory.Descriptors {
@@ -3131,14 +3127,14 @@ func sim_node_write(node *Sim_Node, buffer []byte, offset int64) (err error) {
 	if offset < 0 {
 		return sim_file_offset_invalid
 	}
-	if offset > int64(SIM_FILE_BYTES_MAXIMUM) {
+	if offset > int64(len(node.Contents)) {
 		return sim_file_offset_invalid
 	}
 	end := offset + int64(len(buffer))
 	if end < offset {
 		return sim_file_capacity_exceeded
 	}
-	if end > int64(SIM_FILE_BYTES_MAXIMUM) {
+	if end > int64(len(node.Contents)) {
 		return sim_file_capacity_exceeded
 	}
 	if int(offset) > node.Contents_Count {
@@ -3220,8 +3216,14 @@ func sim_generate_child(state *Sim, parent int, entry_index int, directory bool)
 		"Generated nodes fit reserved caller-owned node storage.")
 	node := &state.Nodes[child]
 	if File_Mode_Is_Symbolic_Link(node.Mode) {
-		node.Contents_Count = sim_generated_name(entry_index-1, node.Contents[:])
-		return
+		target := [SIM_PATH_COMPONENT_BYTES_MAXIMUM]byte{}
+		count := sim_generated_name(entry_index-1, target[:])
+		if count <= len(node.Contents) {
+			node.Contents_Count = copy(node.Contents, target[:count])
+			return
+		}
+		// Storage too small for the target leaves a regular file, thus no link dangles.
+		node.Mode &^= FILE_MODE_SYMBOLIC_LINK
 	}
 	if directory {
 		return
@@ -3308,6 +3310,8 @@ func sim_generate_bytes(generator *prng.Xoshiro, node *Sim_Node) {
 	} else if roll < 99 {
 		size = SIM_SIZE_P99
 	}
+	// Caller storage is the file capacity, thus a draw past it lands as a file filled to it.
+	size = min(size, len(node.Contents))
 	node.Contents_Count = size
 	for index := 0; index < size; index++ {
 		node.Contents[index] = byte(prng.Xoshiro_Next(generator))

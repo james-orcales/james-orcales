@@ -223,6 +223,33 @@ func Test_Sim_Holes(t *testing.T) {
 	nbio.IO_Deinit(loop)
 }
 
+// Test_Sim_Capacity verify node storage the caller hands in is the file capacity: a write
+// that ends at it lands, and one byte past it fails and leaves the file unchanged.
+func Test_Sim_Capacity(t *testing.T) {
+	memory := &sim_memory{}
+	view := sim_memory_view(memory)
+	for index := range view.Nodes {
+		contents := view.Nodes[index].Contents
+		view.Nodes[index].Contents = contents[:SIM_CAPACITY_BYTES:SIM_CAPACITY_BYTES]
+	}
+	loop, driver := nbio.New_Simulated_IO(&memory.Sim, 0, time.NANOSECOND, view)
+	file, err := sim_open_options(t, loop, driver, "file", nbio.Open_At_Options{
+		Access: nbio.OPEN_READ_WRITE, Create: true, Truncate: true, Permissions: 0o644,
+	})
+	if !testify.No_Error(t, err) {
+		return
+	}
+	data, write_err := sim_write_at(t, loop, driver, file, []byte("abcd"), 0)
+	testify.No_Error(t, write_err)
+	testify.Equal(t, SIM_CAPACITY_BYTES, data)
+	data, write_err = sim_write_at(t, loop, driver, file, []byte("e"), SIM_CAPACITY_BYTES)
+	testify.Error(t, write_err)
+	testify.Zero(t, data)
+	testify.Equal(t, "abcd", sim_storage_read(t, loop, driver, file, SIM_CAPACITY_BYTES))
+	sim_close(t, loop, driver, file)
+	nbio.IO_Deinit(loop)
+}
+
 // Test_Sim_Cursor verify FILE_POSITION_CURRENT write append at descriptor position, while
 // positioned write leave that position alone.
 func Test_Sim_Cursor(t *testing.T) {
@@ -3071,12 +3098,12 @@ func sim_memory_initialize(memory *sim_memory) {
 	}
 	memory.Nodes = make([]nbio.Sim_Node, SIM_NODE_CAPACITY)
 	memory.Node_Names = make([]byte, SIM_NODE_CAPACITY*nbio.SIM_PATH_COMPONENT_BYTES_MAXIMUM)
-	memory.Node_Contents = make([]byte, SIM_NODE_CAPACITY*nbio.SIM_FILE_BYTES_MAXIMUM)
+	memory.Node_Contents = make([]byte, SIM_NODE_CAPACITY*SIM_NODE_CONTENTS_BYTES)
 	for index := range memory.Nodes {
 		name_start := index * nbio.SIM_PATH_COMPONENT_BYTES_MAXIMUM
 		name_end := name_start + nbio.SIM_PATH_COMPONENT_BYTES_MAXIMUM
-		content_start := index * nbio.SIM_FILE_BYTES_MAXIMUM
-		content_end := content_start + nbio.SIM_FILE_BYTES_MAXIMUM
+		content_start := index * SIM_NODE_CONTENTS_BYTES
+		content_end := content_start + SIM_NODE_CONTENTS_BYTES
 		memory.Nodes[index].Name = memory.Node_Names[name_start:name_end:name_end]
 		contents := memory.Node_Contents[content_start:content_end]
 		memory.Nodes[index].Contents = contents[:len(contents):len(contents)]
@@ -3114,6 +3141,9 @@ func sim_memory_initialize(memory *sim_memory) {
 const SIM_CONCURRENT_OPERATION_CAPACITY = 2
 const SIM_COMPLETION_PER_OPERATION = 2
 const SIM_TIMELINE_CAPACITY = SIM_CONCURRENT_OPERATION_CAPACITY * SIM_COMPLETION_PER_OPERATION
+
+// SIM_NODE_CONTENTS_BYTES is the storage each simulated node holds, thus the file capacity.
+const SIM_NODE_CONTENTS_BYTES = 1024
 
 // Simulator memory leaves room for generated fixture and paths each test creates.
 const SIM_NODE_CAPACITY = 32
@@ -4073,7 +4103,7 @@ func sim_create_no_follow(
 	t *testing.T, loop nbio.IO, driver nbio.Driver, path string, truncate bool,
 ) {
 	t.Helper()
-	before := [nbio.SIM_FILE_BYTES_MAXIMUM]byte{}
+	before := [SIM_NODE_CONTENTS_BYTES]byte{}
 	count, err := nbio.Storage_Read_Link(loop.Storage, path, before[:])
 	testify.No_Error(t, err)
 	file, err := sim_open_options(t, loop, driver, path, nbio.Open_At_Options{
@@ -4084,7 +4114,7 @@ func sim_create_no_follow(
 	if err == nil {
 		sim_close(t, loop, driver, file)
 	}
-	after := [nbio.SIM_FILE_BYTES_MAXIMUM]byte{}
+	after := [SIM_NODE_CONTENTS_BYTES]byte{}
 	after_count, err := nbio.Storage_Read_Link(loop.Storage, path, after[:])
 	testify.No_Error(t, err)
 	testify.Equal(t, string(before[:count]), string(after[:after_count]))
@@ -4114,7 +4144,7 @@ func sim_create_follows_link(
 	path string, truncate bool,
 ) (checked bool) {
 	t.Helper()
-	text := [nbio.SIM_FILE_BYTES_MAXIMUM]byte{}
+	text := [SIM_NODE_CONTENTS_BYTES]byte{}
 	count, err := nbio.Storage_Read_Link(loop.Storage, path, text[:])
 	testify.No_Error(t, err)
 	target := sim_node_directory(nodes, path) + string(text[:count])
@@ -4151,9 +4181,12 @@ func sim_create_follows_link(
 	}
 	testify.Equal(t, "next", sim_storage_read(t, loop, driver, file, 4))
 	sim_close(t, loop, driver, file)
-	after := [nbio.SIM_FILE_BYTES_MAXIMUM]byte{}
+	after := [SIM_NODE_CONTENTS_BYTES]byte{}
 	after_count, err := nbio.Storage_Read_Link(loop.Storage, path, after[:])
 	testify.No_Error(t, err)
 	testify.Equal(t, string(text[:count]), string(after[:after_count]))
 	return true
 }
+
+// SIM_CAPACITY_BYTES is node storage small enough that one short write reaches its end.
+const SIM_CAPACITY_BYTES = 4

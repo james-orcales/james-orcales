@@ -45,6 +45,11 @@ Empty transfers succeed without access checks, matching real backend's skipped k
 Write beyond file end fills gap with zero bytes, including after truncation. Empty write leaves
 file size and contents unchanged.
 
+### Capacity
+
+Node contents storage the caller hands in is the file capacity. A write that ends at it lands; a
+write past it reports an error with zero bytes and leaves the file unchanged.
+
 ### Cursor
 
 Storage.Write at FILE_POSITION_CURRENT writes at descriptor file position and advances it by bytes
