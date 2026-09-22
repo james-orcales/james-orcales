@@ -1,9 +1,9 @@
 // Package myers renders bounded diffs into caller-owned storage.
 package myers
 
-import "local/james-orcales/shared/sim/aver/default"
-import "local/james-orcales/shared/strings"
-import "local/james-orcales/shared/unicode/utf8"
+import "local/james-orcales/shared/std/sim/aver/default"
+import "local/james-orcales/shared/std/strings"
+import "local/james-orcales/shared/std/unicode/utf8"
 
 // TEXT_SIZE_MAXIMUM reuses repository text boundary.
 const TEXT_SIZE_MAXIMUM = strings.TEXT_SIZE_MAXIMUM

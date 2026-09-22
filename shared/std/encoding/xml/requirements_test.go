@@ -2,8 +2,8 @@ package xml_test
 
 import "testing"
 
-import "local/james-orcales/shared/encoding/xml"
-import "local/james-orcales/shared/testify"
+import "local/james-orcales/shared/std/encoding/xml"
+import "local/james-orcales/shared/std/testify"
 
 // Test_Validate protects document structure instead of accepting lexical fragments.
 func Test_Validate(t *testing.T) {

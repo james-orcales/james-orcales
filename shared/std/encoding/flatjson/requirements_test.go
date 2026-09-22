@@ -4,9 +4,9 @@ import "reflect"
 import "regexp"
 import "testing"
 
-import "local/james-orcales/shared/encoding/flatjson"
-import "local/james-orcales/shared/strconv"
-import "local/james-orcales/shared/testify"
+import "local/james-orcales/shared/std/encoding/flatjson"
+import "local/james-orcales/shared/std/strconv"
+import "local/james-orcales/shared/std/testify"
 
 // Test_Allocation proves both public caller-storage paths own no hidden storage.
 func Test_Allocation(t *testing.T) {

@@ -1,10 +1,10 @@
 // Package sha256 computes FIPS 180-4 SHA-224 and SHA-256 with caller-owned state.
 package sha256
 
-import "local/james-orcales/shared/bytes"
-import "local/james-orcales/shared/encoding/binary"
-import "local/james-orcales/shared/math/bits"
-import "local/james-orcales/shared/sim/aver/default"
+import "local/james-orcales/shared/std/bytes"
+import "local/james-orcales/shared/std/encoding/binary"
+import "local/james-orcales/shared/std/math/bits"
+import "local/james-orcales/shared/std/sim/aver/default"
 
 // STATE_LANE_COUNT stores full SHA-2 chaining state.
 const STATE_LANE_COUNT = binary.BITS_PER_BYTE

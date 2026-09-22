@@ -4,8 +4,8 @@ package nbio_test
 
 import "testing"
 
-import "local/james-orcales/shared/sim/nbio"
-import "local/james-orcales/shared/testify"
+import "local/james-orcales/shared/std/sim/nbio"
+import "local/james-orcales/shared/std/testify"
 
 // Test_Simulated_Statx_Heap_Allocation keeps Linux-only surface inside allocation proof.
 func Test_Simulated_Statx_Heap_Allocation(t *testing.T) {

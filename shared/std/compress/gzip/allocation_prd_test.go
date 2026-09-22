@@ -5,7 +5,7 @@ package gzip_test
 import "runtime"
 import "testing"
 
-import "local/james-orcales/shared/compress/gzip"
+import "local/james-orcales/shared/std/compress/gzip"
 
 // Benchmark_Cold_Allocation prevents lazy process-global state from hiding behind allocation-test
 // warmup. Benchmark mode also keeps invariant coverage bookkeeping outside this production check.

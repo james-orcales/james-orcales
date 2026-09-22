@@ -6,10 +6,10 @@ import "runtime"
 import "syscall"
 import "unsafe"
 
-import "local/james-orcales/shared/math/bits"
-import "local/james-orcales/shared/sim/aver/default"
-import "local/james-orcales/shared/strconv"
-import "local/james-orcales/shared/strings"
+import "local/james-orcales/shared/std/math/bits"
+import "local/james-orcales/shared/std/sim/aver/default"
+import "local/james-orcales/shared/std/strconv"
+import "local/james-orcales/shared/std/strings"
 
 // Linux exposes execve through its native syscall table.
 func system_execve(workspace_pointer unsafe.Pointer) (err error) {

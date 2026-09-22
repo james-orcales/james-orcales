@@ -2,8 +2,8 @@ package list_test
 
 import "testing"
 
-import "local/james-orcales/shared/container/list"
-import "local/james-orcales/shared/testify"
+import "local/james-orcales/shared/std/container/list"
+import "local/james-orcales/shared/std/testify"
 
 // Test_Construction verifies caller-owned storage and Initialize.
 func Test_Construction(t *testing.T) {

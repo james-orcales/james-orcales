@@ -2,7 +2,7 @@ package ring
 
 import "testing"
 
-import "local/james-orcales/shared/testify"
+import "local/james-orcales/shared/std/testify"
 
 // Test_Standard_Library_Corner_Cases ports the upstream TestCornerCases. An empty ring, a link
 // to an empty ring, and an Unlink of zero nodes each change nothing.

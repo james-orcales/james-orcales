@@ -2,8 +2,8 @@ package ring_test
 
 import "testing"
 
-import "local/james-orcales/shared/container/ring"
-import "local/james-orcales/shared/testify"
+import "local/james-orcales/shared/std/container/ring"
+import "local/james-orcales/shared/std/testify"
 
 // Test_Construction verifies caller-owned storage, Initialize, and each New count.
 func Test_Construction(t *testing.T) {

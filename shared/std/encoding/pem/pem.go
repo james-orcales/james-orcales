@@ -1,9 +1,9 @@
 // Package pem implements bounded Privacy-Enhanced Mail encoding on caller-owned storage.
 package pem
 
-import "local/james-orcales/shared/bytes"
-import "local/james-orcales/shared/encoding/base64"
-import "local/james-orcales/shared/sim/aver/default"
+import "local/james-orcales/shared/std/bytes"
+import "local/james-orcales/shared/std/encoding/base64"
+import "local/james-orcales/shared/std/sim/aver/default"
 
 // BEGIN_PREFIX opens one line-bound block.
 const BEGIN_PREFIX = "-----BEGIN "

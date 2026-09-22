@@ -5,10 +5,10 @@ package build
 
 import "unsafe"
 
-import "local/james-orcales/shared/go/token"
-import "local/james-orcales/shared/sim/aver/default"
-import "local/james-orcales/shared/sim/nbio"
-import "local/james-orcales/shared/sim/time"
+import "local/james-orcales/shared/std/go/token"
+import "local/james-orcales/shared/std/sim/aver/default"
+import "local/james-orcales/shared/std/sim/nbio"
+import "local/james-orcales/shared/std/sim/time"
 
 // TEXT_SIZE_MAXIMUM is the widest constraint one read admits, which is wider than any constraint
 // the toolchain itself writes.

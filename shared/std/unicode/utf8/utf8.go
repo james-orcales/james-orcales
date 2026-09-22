@@ -1,10 +1,10 @@
 // Package utf8 supplies native UTF-8 encoding, decoding, counting, and validation.
 package utf8
 
-import "local/james-orcales/shared/bytes"
-import "local/james-orcales/shared/math/bits"
-import "local/james-orcales/shared/sim/aver/default"
-import "local/james-orcales/shared/unicode/ucd"
+import "local/james-orcales/shared/std/bytes"
+import "local/james-orcales/shared/std/math/bits"
+import "local/james-orcales/shared/std/sim/aver/default"
+import "local/james-orcales/shared/std/unicode/ucd"
 
 // REPLACEMENT_CHARACTER is the result for an invalid encoding or character.
 const REPLACEMENT_CHARACTER Decoded_Character = '\uFFFD'

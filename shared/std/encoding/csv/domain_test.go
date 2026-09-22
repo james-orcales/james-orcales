@@ -2,7 +2,7 @@ package csv
 
 import "testing"
 
-import "local/james-orcales/shared/unicode/utf8"
+import "local/james-orcales/shared/std/unicode/utf8"
 
 // DOMAIN_STORAGE_SIZE reaches zero, one, and two positions.
 const DOMAIN_STORAGE_SIZE = 3

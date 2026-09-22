@@ -3,8 +3,8 @@ package bytes_test
 import "reflect"
 import "testing"
 
-import "local/james-orcales/shared/bytes"
-import "local/james-orcales/shared/testify"
+import "local/james-orcales/shared/std/bytes"
+import "local/james-orcales/shared/std/testify"
 
 // Test_Allocation proves each exported operation owns no heap storage.
 func Test_Allocation(t *testing.T) {

@@ -6,10 +6,10 @@ package sort_test
 import "cmp"
 import "testing"
 
-import "local/james-orcales/shared/sim/prng"
-import "local/james-orcales/shared/slices"
-import "local/james-orcales/shared/sort"
-import "local/james-orcales/shared/testify"
+import "local/james-orcales/shared/std/sim/prng"
+import "local/james-orcales/shared/std/slices"
+import "local/james-orcales/shared/std/sort"
+import "local/james-orcales/shared/std/testify"
 
 // Test_Ordering covers unstable, stable, reverse, and sorted-query contracts.
 func Test_Ordering(t *testing.T) {

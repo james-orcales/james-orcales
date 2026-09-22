@@ -5,9 +5,9 @@ package ucd_test
 
 import "testing"
 
-import "local/james-orcales/shared/math/bits"
-import "local/james-orcales/shared/testify"
-import "local/james-orcales/shared/unicode/ucd"
+import "local/james-orcales/shared/std/math/bits"
+import "local/james-orcales/shared/std/testify"
+import "local/james-orcales/shared/std/unicode/ucd"
 
 // Test_Range_Tables preserves the upstream behavior coverage.
 func Test_Range_Tables(t *testing.T) {
@@ -426,15 +426,15 @@ func conversion_allocation_cases(state *allocation_state) (cases []allocation_ca
   return []allocation_case{
     {Name: "Special_Case_Of", Run: func() {
       state.Special = ucd.Special_Case_Of(
-          1,
-          ucd.Case_Range{
-            Minimum: 'a', Maximum: 'z',
-            Deltas: case_delta(-32, 0, -32),
-          },
-          ucd.Case_Range{},
-          ucd.Case_Range{},
-          ucd.Case_Range{},
-        )
+        1,
+        ucd.Case_Range{
+          Minimum: 'a', Maximum: 'z',
+          Deltas: case_delta(-32, 0, -32),
+        },
+        ucd.Case_Range{},
+        ucd.Case_Range{},
+        ucd.Case_Range{},
+      )
     }},
     {Name: "Named_Table", Run: func() {
       allocation_named_table(state)

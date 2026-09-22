@@ -1,4 +1,4 @@
-// Package nbio is operating-system backend of shared/sim/nbio.
+// Package nbio is operating-system backend of shared/std/sim/nbio.
 //
 // Darwin ride kqueue, Linux ride io_uring. No generic Cancel. Descriptor owner do Shutdown, join
 // submitted operations, then asynchronous Close.
@@ -9,11 +9,11 @@ import "runtime"
 import "syscall"
 import "unsafe"
 
-import "local/james-orcales/shared/filepath"
-import "local/james-orcales/shared/math/bits"
-import "local/james-orcales/shared/sim/aver/default"
-import "local/james-orcales/shared/sim/nbio"
-import "local/james-orcales/shared/sim/time"
+import "local/james-orcales/shared/std/filepath"
+import "local/james-orcales/shared/std/math/bits"
+import "local/james-orcales/shared/std/sim/aver/default"
+import "local/james-orcales/shared/std/sim/nbio"
+import "local/james-orcales/shared/std/sim/time"
 
 // Poll_forever, passed as idle gap, block wait until event arrive, not for fixed span — the
 // unbounded wait a run with no deadline need, thus loop sleep exactly until there is work,
@@ -303,7 +303,7 @@ func spawn_reset(slot *Spawn) {
 }
 
 // Arm completion through idle-to-armed lifecycle edge, same edge virtual timeline stamp
-// (shared/sim/time/time.go:535-540), thus both backend read alike.
+// (shared/std/sim/time/time.go:535-540), thus both backend read alike.
 func operating_system_submit(completion *nbio.Completion) {
   original := completion.Self == nil
   if completion.Self == completion {

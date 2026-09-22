@@ -55,7 +55,7 @@ import (
 	"fmt"
 	"internal/godebug"
 	"io"
-	"local/james-orcales/shared/sim/prng"
+	"local/james-orcales/shared/std/sim/prng"
 	"math"
 	"math/big"
 )

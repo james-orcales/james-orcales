@@ -4,8 +4,8 @@ import "errors"
 import "testing"
 import "unsafe"
 
-import "local/james-orcales/shared/sim/aver"
-import "local/james-orcales/shared/snap"
+import "local/james-orcales/shared/std/sim/aver"
+import "local/james-orcales/shared/std/snap"
 
 // Test_Equal_Match verifies a matching value returns true and emits no output.
 func Test_Equal_Match(t *testing.T) {

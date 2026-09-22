@@ -20,9 +20,9 @@ package os
 import "errors"
 import "unsafe"
 
-import "local/james-orcales/shared/math/bits"
-import "local/james-orcales/shared/sim/aver/default"
-import "local/james-orcales/shared/slices"
+import "local/james-orcales/shared/std/math/bits"
+import "local/james-orcales/shared/std/sim/aver/default"
+import "local/james-orcales/shared/std/slices"
 
 // PROCESS_IDENTIFIER_MINIMUM is first kernel-valid process identity.
 const PROCESS_IDENTIFIER_MINIMUM = slices.COUNT_MINIMUM + 1

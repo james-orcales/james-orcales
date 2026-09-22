@@ -3,11 +3,11 @@ package cli
 import "errors"
 import "testing"
 
-import "local/james-orcales/shared/diff/levenshtein"
-import "local/james-orcales/shared/math/bits"
-import "local/james-orcales/shared/sim/nbio"
-import "local/james-orcales/shared/slices"
-import "local/james-orcales/shared/strings"
+import "local/james-orcales/shared/std/diff/levenshtein"
+import "local/james-orcales/shared/std/math/bits"
+import "local/james-orcales/shared/std/sim/nbio"
+import "local/james-orcales/shared/std/slices"
+import "local/james-orcales/shared/std/strings"
 
 // Test_Parse_Error_Operation_Boundaries covers each borrowed diagnostic boundary.
 func Test_Parse_Error_Operation_Boundaries(t *testing.T) {

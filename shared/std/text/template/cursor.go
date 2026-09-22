@@ -1,10 +1,10 @@
 // Package template keeps every lexer role one parse step reads through.
 package template
 
-import "local/james-orcales/shared/bytes"
-import "local/james-orcales/shared/math/bits"
-import "local/james-orcales/shared/sim/aver/default"
-import "local/james-orcales/shared/unicode/utf8"
+import "local/james-orcales/shared/std/bytes"
+import "local/james-orcales/shared/std/math/bits"
+import "local/james-orcales/shared/std/sim/aver/default"
+import "local/james-orcales/shared/std/unicode/utf8"
 
 // Quoted_Eof_Token is the empty token one lexer holds while a literal remains.
 type Quoted_Eof_Token Eof_Token

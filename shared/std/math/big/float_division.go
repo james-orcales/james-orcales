@@ -1,10 +1,10 @@
 // Package big keeps large arithmetic bounded without hidden allocation.
 package big
 
-import "local/james-orcales/shared/bytes"
-import "local/james-orcales/shared/encoding/binary"
-import "local/james-orcales/shared/math/bits"
-import "local/james-orcales/shared/sim/aver/default"
+import "local/james-orcales/shared/std/bytes"
+import "local/james-orcales/shared/std/encoding/binary"
+import "local/james-orcales/shared/std/math/bits"
+import "local/james-orcales/shared/std/sim/aver/default"
 
 // INT_DIVISION_GENERAL_DIVISOR_WORD_COUNT_MAXIMUM leaves one higher dividend word.
 const INT_DIVISION_GENERAL_DIVISOR_WORD_COUNT_MAXIMUM = WORD_COUNT_MAXIMUM -

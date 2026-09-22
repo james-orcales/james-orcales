@@ -2,7 +2,7 @@ package prng
 
 import "testing"
 
-import "local/james-orcales/shared/sim/aver/default"
+import "local/james-orcales/shared/std/sim/aver/default"
 
 // TestMain registers this package's assertions with the invariant coverage recorder and reports any
 // gaps after the suite runs.

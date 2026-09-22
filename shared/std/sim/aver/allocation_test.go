@@ -3,8 +3,8 @@ package aver_test
 import "fmt"
 import "testing"
 
-import "local/james-orcales/shared/sim/aver"
-import "local/james-orcales/shared/testify"
+import "local/james-orcales/shared/std/sim/aver"
+import "local/james-orcales/shared/std/testify"
 
 // Allocation_Subject keeps plan lookup shape real without sharing mode-specific test fixtures.
 type Allocation_Subject int

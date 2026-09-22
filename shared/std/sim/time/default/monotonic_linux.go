@@ -5,8 +5,8 @@ package time
 import "syscall"
 import "unsafe"
 
-import "local/james-orcales/shared/sim/aver/default"
-import "local/james-orcales/shared/sim/time"
+import "local/james-orcales/shared/std/sim/aver/default"
+import "local/james-orcales/shared/std/sim/time"
 
 // CLOCK_BOOTTIME differ from CLOCK_MONOTONIC: it count time spent in system suspend (VM
 // migration, or laptop sleep). Monotonic clock that measure real elapsed time must do that.

@@ -3,7 +3,7 @@
 // the subset this repository's linter permits, so an identifier is ASCII and nothing else.
 package token
 
-import "local/james-orcales/shared/sim/aver/default"
+import "local/james-orcales/shared/std/sim/aver/default"
 
 // SOURCE_SIZE_MINIMUM admits the empty source, which scans to KIND_END_OF_FILE at once.
 const SOURCE_SIZE_MINIMUM = 0

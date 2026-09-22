@@ -1,9 +1,9 @@
 // Package asn1 implements bounded DER elements on caller-owned storage.
 package asn1
 
-import "local/james-orcales/shared/bytes"
-import "local/james-orcales/shared/math/bits"
-import "local/james-orcales/shared/sim/aver/default"
+import "local/james-orcales/shared/std/bytes"
+import "local/james-orcales/shared/std/math/bits"
+import "local/james-orcales/shared/std/sim/aver/default"
 
 // ENCODED_SIZE_MAXIMUM follows the repository byte-slice boundary.
 const ENCODED_SIZE_MAXIMUM = bytes.SLICE_SIZE_MAXIMUM

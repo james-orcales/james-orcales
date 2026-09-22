@@ -3,9 +3,9 @@ package heap
 import "cmp"
 import "testing"
 
-import "local/james-orcales/shared/sim/prng"
-import "local/james-orcales/shared/slices"
-import "local/james-orcales/shared/testify"
+import "local/james-orcales/shared/std/sim/prng"
+import "local/james-orcales/shared/std/slices"
+import "local/james-orcales/shared/std/testify"
 
 // STANDARD_HEAP_ELEMENT_COUNT preserves upstream workload while caller owns fixed storage.
 const STANDARD_HEAP_ELEMENT_COUNT = 20

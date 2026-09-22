@@ -2,10 +2,10 @@ package strconv_test
 
 import "testing"
 
-import "local/james-orcales/shared/math/bits"
-import "local/james-orcales/shared/math/fixedpoint"
-import "local/james-orcales/shared/strconv"
-import "local/james-orcales/shared/testify"
+import "local/james-orcales/shared/std/math/bits"
+import "local/james-orcales/shared/std/math/fixedpoint"
+import "local/james-orcales/shared/std/strconv"
+import "local/james-orcales/shared/std/testify"
 
 // Test_Allocation proves every exported operation owns no heap storage.
 func Test_Allocation(t *testing.T) {

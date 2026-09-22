@@ -2,9 +2,9 @@ package bzip2
 
 import "testing"
 
-import "local/james-orcales/shared/hash/crc32"
-import "local/james-orcales/shared/math/bits"
-import "local/james-orcales/shared/testify"
+import "local/james-orcales/shared/std/hash/crc32"
+import "local/james-orcales/shared/std/math/bits"
+import "local/james-orcales/shared/std/testify"
 
 // Test_Checksum_Boundaries protects full bzip2 CRC and decoded-block domains.
 func Test_Checksum_Boundaries(t *testing.T) {

@@ -7,11 +7,11 @@ import "regexp"
 import "testing"
 import "unsafe"
 
-import "local/james-orcales/shared/math/fixedpoint"
-import "local/james-orcales/shared/sim/aver/default"
-import "local/james-orcales/shared/sim/nbio"
-import "local/james-orcales/shared/sim/time"
-import "local/james-orcales/shared/testify"
+import "local/james-orcales/shared/std/math/fixedpoint"
+import "local/james-orcales/shared/std/sim/aver/default"
+import "local/james-orcales/shared/std/sim/nbio"
+import "local/james-orcales/shared/std/sim/time"
+import "local/james-orcales/shared/std/testify"
 
 // Test_Equality checks the equality family passes on equal operands and its predicates
 // decide both ways.

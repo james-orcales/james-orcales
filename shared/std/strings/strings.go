@@ -2,10 +2,10 @@
 // caller-independent storage cannot remain zero allocation.
 package strings
 
-import "local/james-orcales/shared/math/bits"
-import "local/james-orcales/shared/sim/aver/default"
-import "local/james-orcales/shared/unicode/ucd"
-import "local/james-orcales/shared/unicode/utf8"
+import "local/james-orcales/shared/std/math/bits"
+import "local/james-orcales/shared/std/sim/aver/default"
+import "local/james-orcales/shared/std/unicode/ucd"
+import "local/james-orcales/shared/std/unicode/utf8"
 
 // TEXT_SIZE_MINIMUM keeps empty text valid.
 const TEXT_SIZE_MINIMUM = utf8.SEQUENCE_SIZE_MINIMUM

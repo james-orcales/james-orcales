@@ -2,7 +2,7 @@ package list
 
 import "testing"
 
-import "local/james-orcales/shared/testify"
+import "local/james-orcales/shared/std/testify"
 
 // Test_Standard_Library_List ports the upstream TestList over one element. It drives the
 // single-element list through each move and each removal.

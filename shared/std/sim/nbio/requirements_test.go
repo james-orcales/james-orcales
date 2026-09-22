@@ -4,11 +4,11 @@ import "fmt"
 import "testing"
 import "unsafe"
 
-import "local/james-orcales/shared/math/bits"
-import "local/james-orcales/shared/sim/nbio"
-import "local/james-orcales/shared/sim/time"
-import "local/james-orcales/shared/snap/default"
-import "local/james-orcales/shared/testify"
+import "local/james-orcales/shared/std/math/bits"
+import "local/james-orcales/shared/std/sim/nbio"
+import "local/james-orcales/shared/std/sim/time"
+import "local/james-orcales/shared/std/snap/default"
+import "local/james-orcales/shared/std/testify"
 
 // Test_Sim_Read verify read on opened file return bytes earlier write store — real-bytes path of
 // file descriptor, distinct from socket byte count.

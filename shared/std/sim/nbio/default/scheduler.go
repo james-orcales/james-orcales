@@ -7,10 +7,10 @@ import "os/signal"
 import "runtime"
 import "syscall"
 
-import "local/james-orcales/shared/path"
-import "local/james-orcales/shared/sim/aver/default"
-import "local/james-orcales/shared/sim/nbio"
-import "local/james-orcales/shared/sim/time"
+import "local/james-orcales/shared/std/path"
+import "local/james-orcales/shared/std/sim/aver/default"
+import "local/james-orcales/shared/std/sim/nbio"
+import "local/james-orcales/shared/std/sim/time"
 
 // Operating_System_Signal_Channel keeps the standard signal type out of the simulation OS file.
 type Operating_System_Signal_Channel struct {

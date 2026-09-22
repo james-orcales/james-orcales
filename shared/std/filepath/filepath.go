@@ -4,12 +4,12 @@ package filepath
 import "errors"
 import "unsafe"
 
-import "local/james-orcales/shared/bytes"
-import "local/james-orcales/shared/math/bits"
-import "local/james-orcales/shared/path"
-import "local/james-orcales/shared/sim/aver/default"
-import "local/james-orcales/shared/sim/nbio"
-import "local/james-orcales/shared/unicode/utf8"
+import "local/james-orcales/shared/std/bytes"
+import "local/james-orcales/shared/std/math/bits"
+import "local/james-orcales/shared/std/path"
+import "local/james-orcales/shared/std/sim/aver/default"
+import "local/james-orcales/shared/std/sim/nbio"
+import "local/james-orcales/shared/std/unicode/utf8"
 
 // Error_Path_Absent gives injected Status same missing-path result on every backend.
 var Error_Path_Absent = errors.New("filepath: path does not exist")

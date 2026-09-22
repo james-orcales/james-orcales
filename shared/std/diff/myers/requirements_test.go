@@ -2,8 +2,8 @@ package myers_test
 
 import "testing"
 
-import "local/james-orcales/shared/diff/myers"
-import "local/james-orcales/shared/testify"
+import "local/james-orcales/shared/std/diff/myers"
+import "local/james-orcales/shared/std/testify"
 
 // Test_Diff_Into_Cases covers minimal rune scripts, escaping, bounds, and allocation.
 func Test_Diff_Into_Cases(t *testing.T) {

@@ -2,9 +2,9 @@
 // hidden slice growth. Values own fixed storage, while operations write caller destinations.
 package big
 
-import "local/james-orcales/shared/bytes"
-import "local/james-orcales/shared/math/bits"
-import "local/james-orcales/shared/sim/aver/default"
+import "local/james-orcales/shared/std/bytes"
+import "local/james-orcales/shared/std/math/bits"
+import "local/james-orcales/shared/std/sim/aver/default"
 
 // WORD_BIT_COUNT follows target word width instead of restating machine architecture here.
 const WORD_BIT_COUNT = bits.WORD_SIZE

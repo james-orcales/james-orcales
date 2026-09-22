@@ -2,8 +2,8 @@ package hex_test
 
 import "testing"
 
-import "local/james-orcales/shared/encoding/hex"
-import "local/james-orcales/shared/testify"
+import "local/james-orcales/shared/std/encoding/hex"
+import "local/james-orcales/shared/std/testify"
 
 // Test_Encode preserves lowercase hexadecimal with exact caller capacity.
 func Test_Encode(t *testing.T) {

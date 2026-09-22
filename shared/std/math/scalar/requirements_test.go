@@ -2,10 +2,10 @@ package scalar_test
 
 import "testing"
 
-import "local/james-orcales/shared/math/bits"
-import "local/james-orcales/shared/math/fixedpoint"
-import "local/james-orcales/shared/math/scalar"
-import "local/james-orcales/shared/testify"
+import "local/james-orcales/shared/std/math/bits"
+import "local/james-orcales/shared/std/math/fixedpoint"
+import "local/james-orcales/shared/std/math/scalar"
+import "local/james-orcales/shared/std/testify"
 
 // Test_Integer_Arithmetic verifies the magnitude of a signed integer and the two ordering
 // selections, at the ends of the domain and around zero.

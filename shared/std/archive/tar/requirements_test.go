@@ -2,12 +2,12 @@ package tar_test
 
 import "testing"
 
-import "local/james-orcales/shared/archive/tar"
-import "local/james-orcales/shared/bytes"
-import "local/james-orcales/shared/math/bits"
-import "local/james-orcales/shared/sim/nbio"
-import "local/james-orcales/shared/sim/time"
-import "local/james-orcales/shared/strconv"
+import "local/james-orcales/shared/std/archive/tar"
+import "local/james-orcales/shared/std/bytes"
+import "local/james-orcales/shared/std/math/bits"
+import "local/james-orcales/shared/std/sim/nbio"
+import "local/james-orcales/shared/std/sim/time"
+import "local/james-orcales/shared/std/strconv"
 
 // Test_Constants proves every constant formula.
 func Test_Constants(t *testing.T) {

@@ -4,8 +4,8 @@
 // holds, thus no operation allocates.
 package integer
 
-import "local/james-orcales/shared/math/bits"
-import "local/james-orcales/shared/sim/aver/default"
+import "local/james-orcales/shared/std/math/bits"
+import "local/james-orcales/shared/std/sim/aver/default"
 
 // LIMB_BIT_COUNT is the bit width of one limb.
 const LIMB_BIT_COUNT = 64

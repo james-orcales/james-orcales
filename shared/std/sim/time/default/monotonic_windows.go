@@ -4,8 +4,8 @@ package time
 
 import "syscall"
 
-import "local/james-orcales/shared/sim/aver/default"
-import "local/james-orcales/shared/sim/time"
+import "local/james-orcales/shared/std/sim/aver/default"
+import "local/james-orcales/shared/std/sim/time"
 
 // Stub: system clock not yet supported on Windows. Faithful backend is
 // QueryPerformanceCounter, which count across suspend. This stub keep package building on

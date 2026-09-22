@@ -2,12 +2,12 @@ package big_test
 
 import "testing"
 
-import "local/james-orcales/shared/bytes"
-import "local/james-orcales/shared/encoding/binary"
-import "local/james-orcales/shared/math/big"
-import "local/james-orcales/shared/math/bits"
-import "local/james-orcales/shared/sim/prng"
-import "local/james-orcales/shared/testify"
+import "local/james-orcales/shared/std/bytes"
+import "local/james-orcales/shared/std/encoding/binary"
+import "local/james-orcales/shared/std/math/big"
+import "local/james-orcales/shared/std/math/bits"
+import "local/james-orcales/shared/std/sim/prng"
+import "local/james-orcales/shared/std/testify"
 
 // Test_Representation keeps zero-value behavior tied to Representation specification.
 func Test_Representation(t *testing.T) {

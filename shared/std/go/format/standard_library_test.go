@@ -2,8 +2,8 @@ package format_test
 
 import "testing"
 
-import "local/james-orcales/shared/sim/aver/default"
-import "local/james-orcales/shared/testify"
+import "local/james-orcales/shared/std/sim/aver/default"
+import "local/james-orcales/shared/std/testify"
 
 // TestMain lets production entry points prove every registered format domain.
 func TestMain(m *testing.M) {

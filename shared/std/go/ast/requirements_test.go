@@ -3,9 +3,9 @@ package ast_test
 import "testing"
 import "unsafe"
 
-import "local/james-orcales/shared/go/ast"
-import "local/james-orcales/shared/go/token"
-import "local/james-orcales/shared/testify"
+import "local/james-orcales/shared/std/go/ast"
+import "local/james-orcales/shared/std/go/token"
+import "local/james-orcales/shared/std/testify"
 
 // Test_Parse binds the Parse specification leaf before fixture declarations.
 func Test_Parse(t *testing.T) {

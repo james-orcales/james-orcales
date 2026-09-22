@@ -5,9 +5,9 @@ package nbio
 import "syscall"
 import "unsafe"
 
-import "local/james-orcales/shared/sim/aver/default"
-import "local/james-orcales/shared/sim/nbio"
-import "local/james-orcales/shared/sim/time"
+import "local/james-orcales/shared/std/sim/aver/default"
+import "local/james-orcales/shared/std/sim/nbio"
+import "local/james-orcales/shared/std/sim/time"
 
 // SOCKET_RECEIVE_BUFFER_SIZE fix socket profile platform tests verify.
 const SOCKET_RECEIVE_BUFFER_SIZE = 4 * 1024 * 1024

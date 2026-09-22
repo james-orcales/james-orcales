@@ -2,15 +2,15 @@ package hmac_test
 
 import "testing"
 
-import "local/james-orcales/shared/crypto/hmac"
-import "local/james-orcales/shared/crypto/md5"
-import "local/james-orcales/shared/crypto/sha1"
-import "local/james-orcales/shared/crypto/sha256"
-import "local/james-orcales/shared/crypto/sha512"
-import "local/james-orcales/shared/encoding/binary"
-import "local/james-orcales/shared/encoding/hex"
-import "local/james-orcales/shared/math/bits"
-import "local/james-orcales/shared/testify"
+import "local/james-orcales/shared/std/crypto/hmac"
+import "local/james-orcales/shared/std/crypto/md5"
+import "local/james-orcales/shared/std/crypto/sha1"
+import "local/james-orcales/shared/std/crypto/sha256"
+import "local/james-orcales/shared/std/crypto/sha512"
+import "local/james-orcales/shared/std/encoding/binary"
+import "local/james-orcales/shared/std/encoding/hex"
+import "local/james-orcales/shared/std/math/bits"
+import "local/james-orcales/shared/std/testify"
 
 // Test_Package_Owned_State checks kind-selected state without shared hash dispatch.
 func Test_Package_Owned_State(t *testing.T) {

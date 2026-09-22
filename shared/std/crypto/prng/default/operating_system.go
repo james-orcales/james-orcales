@@ -3,8 +3,8 @@
 // alias, while the composition root retains the operating-system entropy reader.
 package prng
 
-import "local/james-orcales/shared/crypto/prng"
-import "local/james-orcales/shared/sim/aver/default"
+import "local/james-orcales/shared/std/crypto/prng"
+import "local/james-orcales/shared/std/sim/aver/default"
 
 // SEED_BYTE_COUNT lets root storage match one complete ChaCha20 key.
 const SEED_BYTE_COUNT = 32

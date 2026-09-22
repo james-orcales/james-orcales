@@ -2,9 +2,9 @@ package time_test
 
 import "testing"
 
-import library "local/james-orcales/shared/sim/time"
-import "local/james-orcales/shared/sim/time/default"
-import "local/james-orcales/shared/testify"
+import library "local/james-orcales/shared/std/sim/time"
+import "local/james-orcales/shared/std/sim/time/default"
+import "local/james-orcales/shared/std/testify"
 
 // Test_Operating_System_Smoke check host clock never read monotonic backward, and report
 // positive wall-clock time. Real time is not deterministic, thus this is smoke test, not

@@ -3,9 +3,9 @@ package json
 
 import "unsafe"
 
-import "local/james-orcales/shared/bytes"
-import "local/james-orcales/shared/sim/aver/default"
-import "local/james-orcales/shared/unicode/utf8"
+import "local/james-orcales/shared/std/bytes"
+import "local/james-orcales/shared/std/sim/aver/default"
+import "local/james-orcales/shared/std/unicode/utf8"
 
 // STORAGE_SIZE_MAXIMUM bounds each caller-owned JSON byte buffer to 64 KiB.
 const STORAGE_SIZE_MAXIMUM = 64 * 1024

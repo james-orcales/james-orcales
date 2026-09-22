@@ -2,8 +2,8 @@ package ascii85_test
 
 import "testing"
 
-import "local/james-orcales/shared/encoding/ascii85"
-import "local/james-orcales/shared/testify"
+import "local/james-orcales/shared/std/encoding/ascii85"
+import "local/james-orcales/shared/std/testify"
 
 // Test_Encode keeps upstream wire forms while caller storage owns every result.
 func Test_Encode(t *testing.T) {

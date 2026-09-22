@@ -2,8 +2,8 @@ package pem_test
 
 import "testing"
 
-import "local/james-orcales/shared/encoding/pem"
-import "local/james-orcales/shared/testify"
+import "local/james-orcales/shared/std/encoding/pem"
+import "local/james-orcales/shared/std/testify"
 
 // Test_Encode preserves canonical PEM framing and explicit header order.
 func Test_Encode(t *testing.T) {

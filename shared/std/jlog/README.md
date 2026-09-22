@@ -33,7 +33,7 @@ narrow buys:
 
 - **Barebones.** Roughly 6× less code — ≈1.1k lines of Go source against zerolog's
   ≈6.5k — and zero third-party dependencies, only the standard library and
-  `shared/sim/time`, and `shared/sim/nbio`. No hooks, sampling, or CBOR, and the
+  `shared/std/sim/time`, and `shared/std/sim/nbio`. No hooks, sampling, or CBOR, and the
   zero-allocation core is just the encoder. A pretty console writer does exist —
   `Console` — but it is opt-in and reads *finished* JSON lines back as an `nbio.Stream`,
   so the hot path never carries console work.
@@ -50,13 +50,13 @@ narrow buys:
   stays borrowed until the Stream retires it; an emit while it is borrowed drops and counts.
   jlog neither waits for nor drives that retirement — the root does, per `inject_io`.
   Buffering, ordering across goroutines, and dropping under a slow sink belong to the Stream
-  below: put a `shared/sync/diode` in front of any sink that can fall behind, and have the
+  below: put a `shared/std/sync/diode` in front of any sink that can fall behind, and have the
   root loop `diode.Writer_Rearm`. No drain goroutine and no sleep.
 
-- **Pure, separable core.** The library tier (`shared/jlog`) is pure —
+- **Pure, separable core.** The library tier (`shared/std/jlog`) is pure —
   the clock, caller lookup, and sink all arrive as fields, so it is directly testable
   and holds no globals. The one ambient binding — the `os.Stderr` default logger — lives
-  in the composition tier (`shared/jlog/default`); a console logger takes whatever sink it
+  in the composition tier (`shared/std/jlog/default`); a console logger takes whatever sink it
   is given, and conventionally that is `os.Stderr` too, so stdout stays clean for program
   output. zerolog wires `os.Stderr` and a package-global logger in directly.
 
@@ -94,7 +94,7 @@ case is a sub-nanosecond wash. Both never allocate.
 Reproduce:
 
 ```
-go test ./shared/jlog/ -run='^$' -bench=Benchmark_ -benchmem
+go test ./shared/std/jlog/ -run='^$' -bench=Benchmark_ -benchmem
 ```
 
 (The zerolog column is produced by copying the matching `Benchmark*` workloads
@@ -103,7 +103,7 @@ inside this repo.)
 
 ## Default stream
 
-`shared/jlog/default`'s `Default` is one `jlog.Logger` the package-level functions (`Info`,
+`shared/std/jlog/default`'s `Default` is one `jlog.Logger` the package-level functions (`Info`,
 `Error`, ...) write through, with one owner like any other. It is the zero Logger until the
 root assigns `jlog.Default = jlog.New_Default_Logger(&state, loop.Storage, stderr)` over a
 `jlog.Default_Logger` state it owns, with its `Line` storage filled; from then on

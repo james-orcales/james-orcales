@@ -2,9 +2,9 @@ package fixedpoint_test
 
 import "testing"
 
-import "local/james-orcales/shared/math/bits"
-import "local/james-orcales/shared/math/fixedpoint"
-import "local/james-orcales/shared/testify"
+import "local/james-orcales/shared/std/math/bits"
+import "local/james-orcales/shared/std/math/fixedpoint"
+import "local/james-orcales/shared/std/testify"
 
 // Test_Conversion verifies the lift to fixed-point, the truncating round trip, and the
 // whole-number predicate.

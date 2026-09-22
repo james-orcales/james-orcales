@@ -2,8 +2,8 @@ package bzip2_test
 
 import "testing"
 
-import "local/james-orcales/shared/compress/bzip2"
-import "local/james-orcales/shared/testify"
+import "local/james-orcales/shared/std/compress/bzip2"
+import "local/james-orcales/shared/std/testify"
 
 // Test_Bounded_Decompression protects caller-owned output and workspace bounds.
 func Test_Bounded_Decompression(t *testing.T) {

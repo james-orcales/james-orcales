@@ -2,9 +2,9 @@ package gob_test
 
 import "testing"
 
-import "local/james-orcales/shared/encoding/gob"
-import "local/james-orcales/shared/math/bits"
-import "local/james-orcales/shared/testify"
+import "local/james-orcales/shared/std/encoding/gob"
+import "local/james-orcales/shared/std/math/bits"
+import "local/james-orcales/shared/std/testify"
 
 // Test_Integer protects gob's complement-based signed mapping and scalar boundaries.
 func Test_Integer(t *testing.T) {

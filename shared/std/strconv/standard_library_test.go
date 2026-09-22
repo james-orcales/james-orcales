@@ -2,7 +2,7 @@ package strconv
 
 import "testing"
 
-import "local/james-orcales/shared/testify"
+import "local/james-orcales/shared/std/testify"
 
 // The tables below hold the cases of the Go standard library conversion tests, which the
 // BSD-3 license beside this file covers. Three kinds of case differ from the source: a
@@ -1471,7 +1471,7 @@ func misquoted_cases() (cases []string) {
 // that it ports. Run them with the tag that makes an assertion inert, because an
 // ordinary build records coverage and measures the recorder as well:
 //
-//	go test -tags invariant_noop ./shared/strconv/ -run '^$' -bench . -count 8
+//	go test -tags invariant_noop ./shared/std/strconv/ -run '^$' -bench . -count 8
 //
 // The empty name pattern matches no test, thus the run holds the benchmarks alone.
 //

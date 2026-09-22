@@ -2,9 +2,9 @@ package aver_flatjson_test
 
 import "testing"
 
-import "local/james-orcales/shared/sim/aver/default"
-import "local/james-orcales/shared/sim/aver/flatjson"
-import "local/james-orcales/shared/testify"
+import "local/james-orcales/shared/std/sim/aver/default"
+import "local/james-orcales/shared/std/sim/aver/flatjson"
+import "local/james-orcales/shared/std/testify"
 
 // TestMain runs this assertion seam through the default test entrypoint.
 func TestMain(m *testing.M) {

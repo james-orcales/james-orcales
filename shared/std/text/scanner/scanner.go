@@ -1,12 +1,12 @@
 // Package scanner tokenizes bounded UTF-8 text without owned storage or implicit IO.
 package scanner
 
-import "local/james-orcales/shared/math/bits"
-import "local/james-orcales/shared/sim/aver/default"
-import "local/james-orcales/shared/strconv"
-import "local/james-orcales/shared/strings"
-import "local/james-orcales/shared/unicode/ucd"
-import "local/james-orcales/shared/unicode/utf8"
+import "local/james-orcales/shared/std/math/bits"
+import "local/james-orcales/shared/std/sim/aver/default"
+import "local/james-orcales/shared/std/strconv"
+import "local/james-orcales/shared/std/strings"
+import "local/james-orcales/shared/std/unicode/ucd"
+import "local/james-orcales/shared/std/unicode/utf8"
 
 // SOURCE_SIZE_MINIMUM keeps empty input valid.
 const SOURCE_SIZE_MINIMUM = strings.TEXT_SIZE_MINIMUM

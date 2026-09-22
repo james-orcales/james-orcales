@@ -1,9 +1,9 @@
 // Package ascii85 encodes and decodes Adobe ASCII85 through bounded caller-owned storage.
 package ascii85
 
-import "local/james-orcales/shared/bytes"
-import "local/james-orcales/shared/math/bits"
-import "local/james-orcales/shared/sim/aver/default"
+import "local/james-orcales/shared/std/bytes"
+import "local/james-orcales/shared/std/math/bits"
+import "local/james-orcales/shared/std/sim/aver/default"
 
 // DECODED_GROUP_SIZE follows ASCII85's 32-bit source word.
 const DECODED_GROUP_SIZE = bits.BIT_COUNT_32_MAXIMUM / bits.BIT_COUNT_8_MAXIMUM

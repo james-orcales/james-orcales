@@ -9,8 +9,8 @@ import "strings"
 import "testing"
 import "testing/fstest"
 
-import "local/james-orcales/shared/sim/aver"
-import "local/james-orcales/shared/testify"
+import "local/james-orcales/shared/std/sim/aver"
+import "local/james-orcales/shared/std/testify"
 
 // Excluded declarations must not create obligations or poison registration checks.
 func registration_build_constraints(t *testing.T) {

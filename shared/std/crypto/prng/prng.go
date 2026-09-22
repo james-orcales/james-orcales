@@ -28,8 +28,8 @@
 // ChaCha20 is by Daniel J. Bernstein; the construction and vectors follow RFC 8439.
 package prng
 
-import "local/james-orcales/shared/math/bits"
-import "local/james-orcales/shared/sim/aver/default"
+import "local/james-orcales/shared/std/math/bits"
+import "local/james-orcales/shared/std/sim/aver/default"
 
 // CHACHA_CONSTANT_FIRST is the little-endian word for ASCII "expa", first of the four constants
 // that fix ChaCha's top row and domain-separate the 256-bit-key cipher (RFC 8439 2.3).

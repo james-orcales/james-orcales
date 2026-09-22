@@ -1,15 +1,15 @@
 // Package hkdf derives bounded caller-owned keys through RFC 5869 HMAC expansion.
 package hkdf
 
-import "local/james-orcales/shared/bytes"
-import "local/james-orcales/shared/crypto/hmac"
-import "local/james-orcales/shared/crypto/md5"
-import "local/james-orcales/shared/crypto/sha1"
-import "local/james-orcales/shared/crypto/sha256"
-import "local/james-orcales/shared/crypto/sha512"
-import "local/james-orcales/shared/encoding/binary"
-import "local/james-orcales/shared/math/bits"
-import "local/james-orcales/shared/sim/aver/default"
+import "local/james-orcales/shared/std/bytes"
+import "local/james-orcales/shared/std/crypto/hmac"
+import "local/james-orcales/shared/std/crypto/md5"
+import "local/james-orcales/shared/std/crypto/sha1"
+import "local/james-orcales/shared/std/crypto/sha256"
+import "local/james-orcales/shared/std/crypto/sha512"
+import "local/james-orcales/shared/std/encoding/binary"
+import "local/james-orcales/shared/std/math/bits"
+import "local/james-orcales/shared/std/sim/aver/default"
 
 // INPUT_SIZE_MINIMUM admits absent optional salt and info.
 const INPUT_SIZE_MINIMUM = bytes.SLICE_SIZE_MINIMUM

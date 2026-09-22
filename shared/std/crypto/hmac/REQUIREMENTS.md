@@ -2,7 +2,7 @@
 # Package Owned State
 
 Digest operations use caller-owned bounded state. Kind selects every hash available under
-`shared/crypto`.
+`shared/std/crypto`.
 
 # Reference Values
 

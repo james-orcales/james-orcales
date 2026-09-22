@@ -3,12 +3,12 @@ package driver_test
 import "testing"
 import "unsafe"
 
-import "local/james-orcales/shared/database/driver"
-import "local/james-orcales/shared/math/bits"
-import "local/james-orcales/shared/sim/time"
-import "local/james-orcales/shared/slices"
-import "local/james-orcales/shared/strings"
-import "local/james-orcales/shared/testify"
+import "local/james-orcales/shared/std/database/driver"
+import "local/james-orcales/shared/std/math/bits"
+import "local/james-orcales/shared/std/sim/time"
+import "local/james-orcales/shared/std/slices"
+import "local/james-orcales/shared/std/strings"
+import "local/james-orcales/shared/std/testify"
 
 // Test_Values protects closed typed value union and hostile value bounds.
 func Test_Values(t *testing.T) {

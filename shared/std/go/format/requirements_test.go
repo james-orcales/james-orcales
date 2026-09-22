@@ -2,11 +2,11 @@ package format_test
 
 import "testing"
 
-import "local/james-orcales/shared/go/ast"
-import "local/james-orcales/shared/go/format"
-import "local/james-orcales/shared/go/printer"
-import "local/james-orcales/shared/go/token"
-import "local/james-orcales/shared/testify"
+import "local/james-orcales/shared/std/go/ast"
+import "local/james-orcales/shared/std/go/format"
+import "local/james-orcales/shared/std/go/printer"
+import "local/james-orcales/shared/std/go/token"
+import "local/james-orcales/shared/std/testify"
 
 // Test_Format binds the Format specification leaf before fixture declarations.
 func Test_Format(t *testing.T) {
@@ -654,16 +654,16 @@ func test_imports(t *testing.T) {
     {
       Source: "package one\n\nimport \"other.example/held\"\n\n" +
         "import \"unsafe\"\n" +
-        "import \"local/james-orcales/shared/go/ast\"\nimport \"fmt\"\n",
+        "import \"local/james-orcales/shared/std/go/ast\"\nimport \"fmt\"\n",
       Form: "package one\n\nimport \"fmt\"\nimport \"unsafe\"\n\n" +
-        "import \"local/james-orcales/shared/go/ast\"\n\n" +
+        "import \"local/james-orcales/shared/std/go/ast\"\n\n" +
         "import \"other.example/held\"\n",
     },
     {
-      Source: "package one\n\nimport \"local/james-orcales/shared/go/ast\"\n" +
+      Source: "package one\n\nimport \"local/james-orcales/shared/std/go/ast\"\n" +
         "import \"errors\"\n",
       Form: "package one\n\nimport \"errors\"\n\n" +
-        "import \"local/james-orcales/shared/go/ast\"\n",
+        "import \"local/james-orcales/shared/std/go/ast\"\n",
     },
     {
       Source: "package one\n\nimport \"zz\"\n\nvar one = 1\n",

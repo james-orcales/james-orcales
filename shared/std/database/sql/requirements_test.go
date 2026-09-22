@@ -3,12 +3,12 @@ package sql_test
 import "testing"
 import "unsafe"
 
-import "local/james-orcales/shared/database/driver"
-import "local/james-orcales/shared/database/sql"
-import "local/james-orcales/shared/math/bits"
-import "local/james-orcales/shared/slices"
-import "local/james-orcales/shared/strings"
-import "local/james-orcales/shared/testify"
+import "local/james-orcales/shared/std/database/driver"
+import "local/james-orcales/shared/std/database/sql"
+import "local/james-orcales/shared/std/math/bits"
+import "local/james-orcales/shared/std/slices"
+import "local/james-orcales/shared/std/strings"
+import "local/james-orcales/shared/std/testify"
 
 // Test_Initialization protects fixed caller capacity and injected driver.
 func Test_Initialization(t *testing.T) {

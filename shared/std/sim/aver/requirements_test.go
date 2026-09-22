@@ -13,9 +13,9 @@ import "sync"
 import "testing"
 import "testing/fstest"
 
-import core "local/james-orcales/shared/sim/aver"
-import "local/james-orcales/shared/sim/aver/default"
-import "local/james-orcales/shared/testify"
+import core "local/james-orcales/shared/std/sim/aver"
+import "local/james-orcales/shared/std/sim/aver/default"
+import "local/james-orcales/shared/std/testify"
 
 // Test_Always_Violation prevents a false guard from returning.
 func Test_Always_Violation(t *testing.T) {
@@ -74,11 +74,11 @@ func variable(value bool) { aver.Always(value, "variable") }
     t.Fatalf("exit=%d output=%q", code, output.String())
   }
   want := "🚨 5 constant Always conditions 🚨\n" +
-    "/sim/aver_test/check.go:4  Always condition is constant true\n" +
-    "/sim/aver_test/check.go:5  Always condition is constant true\n" +
-    "/sim/aver_test/check.go:6  Always condition is constant true\n" +
-    "/sim/aver_test/check.go:7  Always condition is constant true\n" +
-    "/sim/aver_test/check.go:8  Always condition is constant true\n" +
+    "/std/sim/aver_test/check.go:4  Always condition is constant true\n" +
+    "/std/sim/aver_test/check.go:5  Always condition is constant true\n" +
+    "/std/sim/aver_test/check.go:6  Always condition is constant true\n" +
+    "/std/sim/aver_test/check.go:7  Always condition is constant true\n" +
+    "/std/sim/aver_test/check.go:8  Always condition is constant true\n" +
     "🚨 5 constant Always conditions 🚨\n"
   if output.String() != want {
     t.Fatalf("output=%q, want %q", output.String(), want)
@@ -98,7 +98,7 @@ func second(ok bool) { aver.Always(ok, "duplicate") }
     t.Fatalf("exit=%d output=%q", code, output.String())
   }
   want := "🚨 1 duplicate messages 🚨\n" +
-    "/sim/aver_test/check.go:3  duplicate message: \"duplicate\"\n" +
+    "/std/sim/aver_test/check.go:3  duplicate message: \"duplicate\"\n" +
     "🚨 1 duplicate messages 🚨\n"
   if output.String() != want {
     t.Fatalf("output=%q, want %q", output.String(), want)
@@ -512,10 +512,10 @@ func alias() {
     t.Fatalf("exit=%d output=%q", code, output.String())
   }
   want := "🚨 4 test assertion callsites 🚨\n" +
-    "/sim/aver_test/check_test.go:4  test source calls Always\n" +
-    "/sim/aver_test/check_test.go:5  test source calls Tree\n" +
-    "/sim/aver_test/check_test.go:6  test source calls Int_Invariants\n" +
-    "/sim/aver_test/check_test.go:9  test source references Int_Invariants\n" +
+    "/std/sim/aver_test/check_test.go:4  test source calls Always\n" +
+    "/std/sim/aver_test/check_test.go:5  test source calls Tree\n" +
+    "/std/sim/aver_test/check_test.go:6  test source calls Int_Invariants\n" +
+    "/std/sim/aver_test/check_test.go:9  test source references Int_Invariants\n" +
     "🚨 4 test assertion callsites 🚨\n"
   if output.String() != want {
     t.Fatalf("output=%q, want %q", output.String(), want)
@@ -912,10 +912,10 @@ func second(value Number) { Number_Invariants(value, "number") }
     t.Fatalf("reuse exit=%d output=%q", code, output.String())
   }
   want := "🚨 1 duplicate bundle namespaces 🚨\n" +
-    "/sim/aver_test/check.go:7  banned: duplicate namespace \"number\"\n" +
+    "/std/sim/aver_test/check.go:7  banned: duplicate namespace \"number\"\n" +
     "🚨 1 duplicate bundle namespaces 🚨\n" +
     "🚨 1 repeated subject types 🚨\n" +
-    "/sim/aver_test/check.go:7  repeated subject type \"Number\"" +
+    "/std/sim/aver_test/check.go:7  repeated subject type \"Number\"" +
     " under namespace \"number\"\n" +
     "🚨 1 repeated subject types 🚨\n"
   if output.String() != want {
@@ -1818,7 +1818,7 @@ func Fixture_Subject_Invariants(value Fixture_Subject, namespace aver.Namespace)
 }
 func check(value Fixture_Subject) { Fixture_Subject_Invariants(value, "summary") }
 `)
-  want := "✓ sim/aver_test: tested \033[34m21\033[0m properties, " +
+  want := "✓ std/sim/aver_test: tested \033[34m21\033[0m properties, " +
     "of which \033[33m5\033[0m are panic-able"
   if summary := core.Recorder_Assertion_Summary(recorder); summary != want {
     t.Fatalf("summary = %q, want %q", summary, want)
@@ -2793,7 +2793,7 @@ func registered_fixture(source string) (
 
 // FIXTURE_PACKAGE is the import path registered_fixture gives its one package. It suits a test
 // that only registers, because no runtime chain has to agree with it.
-const FIXTURE_PACKAGE = "local/james-orcales/shared/sim/aver_test"
+const FIXTURE_PACKAGE = "local/james-orcales/shared/std/sim/aver_test"
 
 // Pair mirrors the enum-width fixture's two-member subject, so a runtime chain resolves the same
 // plan that fixture registered. Triple and Quartet do the same for three and four members.
@@ -2860,14 +2860,14 @@ func registered_fixture_with_test(
       "go.mod": &fstest.MapFile{
         Data: []byte("module local/james-orcales/shared\n"),
       },
-      "sim/aver_test/check.go": &fstest.MapFile{
+      "std/sim/aver_test/check.go": &fstest.MapFile{
         Data: []byte(source),
       },
-      "sim/aver_test/check_test.go": &fstest.MapFile{
+      "std/sim/aver_test/check_test.go": &fstest.MapFile{
         Data: []byte(test_source),
       },
     },
-    Packages_To_Analyze: []string{"/sim/aver_test"},
+    Packages_To_Analyze: []string{"/std/sim/aver_test"},
     Output:              output,
     Exit:                func(status int) { store_result(&code, status) },
     Is_Test:             true,
@@ -2889,9 +2889,9 @@ func registered_fixture_options(
       "go.mod": &fstest.MapFile{
         Data: []byte("module local/james-orcales/shared\n"),
       },
-      "sim/aver_test/check.go": &fstest.MapFile{Data: []byte(source)},
+      "std/sim/aver_test/check.go": &fstest.MapFile{Data: []byte(source)},
     },
-    Packages_To_Analyze: []string{"/sim/aver_test"},
+    Packages_To_Analyze: []string{"/std/sim/aver_test"},
     Output:              output,
     Exit:                func(status int) { store_result(&code, status) },
     Is_Test:             true,

@@ -6,10 +6,10 @@ import "errors"
 import "reflect"
 import "unsafe"
 
-import "local/james-orcales/shared/bytes"
-import "local/james-orcales/shared/sim/aver/default"
-import "local/james-orcales/shared/strconv"
-import "local/james-orcales/shared/strings"
+import "local/james-orcales/shared/std/bytes"
+import "local/james-orcales/shared/std/sim/aver/default"
+import "local/james-orcales/shared/std/strconv"
+import "local/james-orcales/shared/std/strings"
 
 // KEY_SEPARATOR preserves the external flat-json path convention.
 const KEY_SEPARATOR = "_"

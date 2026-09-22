@@ -3,11 +3,11 @@ package cli_test
 import "fmt"
 import "testing"
 
-import "local/james-orcales/shared/cli"
-import "local/james-orcales/shared/sim/aver/default"
-import library "local/james-orcales/shared/snap"
-import "local/james-orcales/shared/snap/default"
-import "local/james-orcales/shared/strings"
+import "local/james-orcales/shared/std/cli"
+import "local/james-orcales/shared/std/sim/aver/default"
+import library "local/james-orcales/shared/std/snap"
+import "local/james-orcales/shared/std/snap/default"
+import "local/james-orcales/shared/std/strings"
 
 func TestMain(m *testing.M) {
   aver.Run_Test_Main(m)

@@ -2,7 +2,7 @@ package template_test
 
 import "testing"
 
-import "local/james-orcales/shared/sim/aver/default"
+import "local/james-orcales/shared/std/sim/aver/default"
 
 // TestMain keeps allocation proof on enforcing runtime paths.
 func TestMain(m *testing.M) {

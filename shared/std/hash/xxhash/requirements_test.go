@@ -2,10 +2,10 @@ package xxhash_test
 
 import "testing"
 
-import "local/james-orcales/shared/hash/xxhash"
-import "local/james-orcales/shared/math/bits"
-import "local/james-orcales/shared/sim/prng"
-import "local/james-orcales/shared/testify"
+import "local/james-orcales/shared/std/hash/xxhash"
+import "local/james-orcales/shared/std/math/bits"
+import "local/james-orcales/shared/std/sim/prng"
+import "local/james-orcales/shared/std/testify"
 
 // Test_Hash_Matches_Reference_Vectors checks the one-shot Hash against the published XXH64 vectors.
 func Test_Hash_Matches_Reference_Vectors(t *testing.T) {

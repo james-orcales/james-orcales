@@ -12,7 +12,7 @@ data, _ := flatjson.Marshal(Place{Name: "cafe", Addr: Address{City: "nyc", Zip: 
 // {"name":"cafe","addr_city":"nyc","addr_zip":10001}
 ```
 
-It fills the gap between `shared/jlog` (flat output, but a fixed field-list API, not arbitrary
+It fills the gap between `shared/std/jlog` (flat output, but a fixed field-list API, not arbitrary
 structs) and `encoding/json` (arbitrary structs, but nested output). The shape rationale — flat
 objects, or a top-level array of them, queried with `jq` and indexed by log backends — is the
 kellybrazil resource (`documentation/resources/kellybrazil.*`), shared with jlog.

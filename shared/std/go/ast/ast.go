@@ -5,8 +5,8 @@
 // every read position and every arena count at a call site that never meets most of them.
 package ast
 
-import "local/james-orcales/shared/go/token"
-import "local/james-orcales/shared/sim/aver/default"
+import "local/james-orcales/shared/std/go/token"
+import "local/james-orcales/shared/std/sim/aver/default"
 
 // TOKEN_COUNT_MAXIMUM caps the token run. The densest first-party file in this repository
 // spends 50,875 tokens, so this is two and a half times the largest run measured, and a source

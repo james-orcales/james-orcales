@@ -3,21 +3,21 @@
 // operating-system clock, and runtime.Caller — in the one Default logger, exposes
 // package-level convenience functions that log to it, and forwards library operations:
 //
-//	import jlog "local/james-orcales/shared/jlog/default"
+//	import jlog "local/james-orcales/shared/std/jlog/default"
 //
 //	jlog.Info("hello", jlog.String("user", name))
 //
-// Explicit logger, configuration, and field types belong to shared/jlog.
+// Explicit logger, configuration, and field types belong to shared/std/jlog.
 package jlog
 
 import "runtime"
 import "unsafe"
 
-import "local/james-orcales/shared/jlog"
-import "local/james-orcales/shared/sim/aver/default"
-import "local/james-orcales/shared/sim/nbio"
-import "local/james-orcales/shared/sim/time"
-import system_time "local/james-orcales/shared/sim/time/default"
+import "local/james-orcales/shared/std/jlog"
+import "local/james-orcales/shared/std/sim/aver/default"
+import "local/james-orcales/shared/std/sim/nbio"
+import "local/james-orcales/shared/std/sim/time"
+import system_time "local/james-orcales/shared/std/sim/time/default"
 
 // LEVEL_TRACE re-exports jlog.LEVEL_TRACE.
 const LEVEL_TRACE = jlog.LEVEL_TRACE

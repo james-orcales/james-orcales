@@ -5,9 +5,9 @@
 // Nothing here advance time; that is the loop's job, and the loop live in sim/nbio.
 package time
 
-import "local/james-orcales/shared/math/bits"
-import "local/james-orcales/shared/math/fixedpoint"
-import "local/james-orcales/shared/sim/aver/default"
+import "local/james-orcales/shared/std/math/bits"
+import "local/james-orcales/shared/std/math/fixedpoint"
+import "local/james-orcales/shared/std/sim/aver/default"
 
 // Moment is a clock reading in nanoseconds. Its epoch is arbitrary and belongs to one clock.
 // Only the difference between two Moments from the SAME clock has a meaning. A monotonic

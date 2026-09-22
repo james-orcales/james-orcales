@@ -2,9 +2,9 @@ package rational_test
 
 import "testing"
 
-import "local/james-orcales/shared/math/integer"
-import "local/james-orcales/shared/math/rational"
-import "local/james-orcales/shared/testify"
+import "local/james-orcales/shared/std/math/integer"
+import "local/james-orcales/shared/std/math/rational"
+import "local/james-orcales/shared/std/testify"
 
 // Test_Representation binds the Representation leaf before fixture declarations.
 func Test_Representation(t *testing.T) {

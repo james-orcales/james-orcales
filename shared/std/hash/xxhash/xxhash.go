@@ -9,10 +9,10 @@
 // The algorithm and constants follow the xxHash specification; XXH64 is by Yann Collet.
 package xxhash
 
-import "local/james-orcales/shared/bytes"
-import "local/james-orcales/shared/encoding/binary"
-import "local/james-orcales/shared/math/bits"
-import "local/james-orcales/shared/sim/aver/default"
+import "local/james-orcales/shared/std/bytes"
+import "local/james-orcales/shared/std/encoding/binary"
+import "local/james-orcales/shared/std/math/bits"
+import "local/james-orcales/shared/std/sim/aver/default"
 
 // PRIME64_1 is the primary multiplier, applied after every rotate to spread bits (xxHash spec).
 const PRIME64_1 = 0x9E3779B185EBCA87

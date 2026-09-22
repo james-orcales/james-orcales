@@ -2,11 +2,11 @@ package glob_test
 
 import "testing"
 
-import "local/james-orcales/shared/bytes"
-import "local/james-orcales/shared/math/bits"
-import "local/james-orcales/shared/testify"
-import "local/james-orcales/shared/text/glob"
-import "local/james-orcales/shared/unicode/utf8"
+import "local/james-orcales/shared/std/bytes"
+import "local/james-orcales/shared/std/math/bits"
+import "local/james-orcales/shared/std/testify"
+import "local/james-orcales/shared/std/text/glob"
+import "local/james-orcales/shared/std/unicode/utf8"
 
 // Test_Compile prevents compiled patterns from owning hidden heap state.
 func Test_Compile(t *testing.T) {

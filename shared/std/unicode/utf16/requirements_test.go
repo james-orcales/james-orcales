@@ -5,9 +5,9 @@ package utf16_test
 
 import "testing"
 
-import "local/james-orcales/shared/math/bits"
-import "local/james-orcales/shared/testify"
-import "local/james-orcales/shared/unicode/utf16"
+import "local/james-orcales/shared/std/math/bits"
+import "local/james-orcales/shared/std/testify"
+import "local/james-orcales/shared/std/unicode/utf16"
 
 // Test_Surrogates verifies the complete surrogate interval and its adjacent values.
 func Test_Surrogates(t *testing.T) {
@@ -307,8 +307,8 @@ func allocation_cases(state *allocation_state) (cases []allocation_case) {
     }},
     {Name: "Append_Character", Run: func() {
       state.Words = utf16.Words(utf16.Append_Character(
-          state.Word_Storage[:0], '\U00010000',
-        ))
+        state.Word_Storage[:0], '\U00010000',
+      ))
     }},
     {Name: "Decode", Run: func() {
       state.Characters = utf16.Decode(

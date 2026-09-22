@@ -6,9 +6,9 @@ import "syscall"
 import "testing"
 import "unsafe"
 
-import "local/james-orcales/shared/sim/nbio"
-import "local/james-orcales/shared/sim/time"
-import "local/james-orcales/shared/testify"
+import "local/james-orcales/shared/std/sim/nbio"
+import "local/james-orcales/shared/std/sim/time"
+import "local/james-orcales/shared/std/testify"
 
 // One profile keeps platform checks comparable instead of letting each kernel test weaker values.
 func socket_test_tcp_options() (options nbio.TCP_Options) {

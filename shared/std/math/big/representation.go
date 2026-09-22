@@ -1,8 +1,8 @@
 package big
 
-import "local/james-orcales/shared/bytes"
-import "local/james-orcales/shared/math/bits"
-import "local/james-orcales/shared/sim/aver/default"
+import "local/james-orcales/shared/std/bytes"
+import "local/james-orcales/shared/std/math/bits"
+import "local/james-orcales/shared/std/sim/aver/default"
 
 // Float_Gob_Version excludes unsupported wire versions before decoding fields.
 type Float_Gob_Version byte

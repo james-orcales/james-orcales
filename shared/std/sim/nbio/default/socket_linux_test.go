@@ -5,9 +5,9 @@ package nbio
 import "syscall"
 import "testing"
 
-import "local/james-orcales/shared/sim/nbio"
-import "local/james-orcales/shared/sim/time"
-import "local/james-orcales/shared/testify"
+import "local/james-orcales/shared/std/sim/nbio"
+import "local/james-orcales/shared/std/sim/time"
+import "local/james-orcales/shared/std/testify"
 
 // Cap wait of sysctl read, thus hang fail test, not block package.
 const SYSCTL_READ_DEADLINE = 5 * time.SECOND

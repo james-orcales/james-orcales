@@ -3,7 +3,7 @@ package ed25519
 import (
 	"crypto/internal/rand"
 	"io"
-	"local/james-orcales/shared/sim/prng"
+	"local/james-orcales/shared/std/sim/prng"
 )
 
 // entropy returns rand.Reader for a nil generator, and a reader that advances generator

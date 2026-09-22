@@ -2,10 +2,10 @@ package uuid_test
 
 import "testing"
 
-import "local/james-orcales/shared/crypto/prng"
-import "local/james-orcales/shared/sim/aver/default"
-import "local/james-orcales/shared/sim/time"
-import "local/james-orcales/shared/uuid"
+import "local/james-orcales/shared/std/crypto/prng"
+import "local/james-orcales/shared/std/sim/aver/default"
+import "local/james-orcales/shared/std/sim/time"
+import "local/james-orcales/shared/std/uuid"
 
 // TestMain register UUID invariant roots before specification run.
 func TestMain(m *testing.M) {

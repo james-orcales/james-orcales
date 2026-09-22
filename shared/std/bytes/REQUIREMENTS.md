@@ -8,7 +8,7 @@ Storage-owning returns, iterator closures, append growth, and hidden scratch all
 # Constant Facts
 
 Constants with same domain fact use one definition. Primitive-width bounds come from
-shared/math/bits. Equal numbers with different meanings remain separate definitions.
+shared/std/math/bits. Equal numbers with different meanings remain separate definitions.
 
 # Comparison
 

@@ -6,9 +6,9 @@ package prng
 
 import "testing"
 
-import "local/james-orcales/shared/bytes"
-import "local/james-orcales/shared/encoding/hex"
-import "local/james-orcales/shared/math/bits"
+import "local/james-orcales/shared/std/bytes"
+import "local/james-orcales/shared/std/encoding/hex"
+import "local/james-orcales/shared/std/math/bits"
 
 // Test_Seed_Expands_To_State checks Chacha_Init is deterministic and seed-sensitive.
 func Test_Seed_Expands_To_State(t *testing.T) {

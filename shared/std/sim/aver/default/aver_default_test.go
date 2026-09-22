@@ -8,8 +8,8 @@ import "strings"
 import "testing"
 import "testing/fstest"
 
-import core "local/james-orcales/shared/sim/aver"
-import "local/james-orcales/shared/sim/aver/default"
+import core "local/james-orcales/shared/std/sim/aver"
+import "local/james-orcales/shared/std/sim/aver/default"
 
 // Compiled target must select same source when registration starts.
 func Test_Default_Build_Target(t *testing.T) {

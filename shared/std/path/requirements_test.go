@@ -3,10 +3,10 @@ package path_test
 import "runtime"
 import "testing"
 
-import "local/james-orcales/shared/bytes"
-import "local/james-orcales/shared/math/bits"
-import "local/james-orcales/shared/path"
-import "local/james-orcales/shared/testify"
+import "local/james-orcales/shared/std/bytes"
+import "local/james-orcales/shared/std/math/bits"
+import "local/james-orcales/shared/std/path"
+import "local/james-orcales/shared/std/testify"
 
 // Test_Clean binds Clean specification leaf before fixture declarations.
 func Test_Clean(t *testing.T) {

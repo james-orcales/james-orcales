@@ -2,11 +2,11 @@ package pkix_test
 
 import "testing"
 
-import "local/james-orcales/shared/crypto/pkix"
-import "local/james-orcales/shared/encoding/asn1"
-import "local/james-orcales/shared/encoding/binary"
-import "local/james-orcales/shared/math/bits"
-import "local/james-orcales/shared/testify"
+import "local/james-orcales/shared/std/crypto/pkix"
+import "local/james-orcales/shared/std/encoding/asn1"
+import "local/james-orcales/shared/std/encoding/binary"
+import "local/james-orcales/shared/std/math/bits"
+import "local/james-orcales/shared/std/testify"
 
 // Test_Algorithm_Identifier recognizes every supported public and signature OID.
 func Test_Algorithm_Identifier(t *testing.T) {

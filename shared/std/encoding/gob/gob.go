@@ -1,9 +1,9 @@
 // Package gob implements bounded gob scalar framing on caller-owned storage.
 package gob
 
-import "local/james-orcales/shared/bytes"
-import "local/james-orcales/shared/math/bits"
-import "local/james-orcales/shared/sim/aver/default"
+import "local/james-orcales/shared/std/bytes"
+import "local/james-orcales/shared/std/math/bits"
+import "local/james-orcales/shared/std/sim/aver/default"
 
 // PREFIX_SIZE is the signed byte-count prefix before multi-byte integers.
 const PREFIX_SIZE = bytes.SLICE_SIZE_MINIMUM + 1

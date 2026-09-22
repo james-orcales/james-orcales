@@ -3,10 +3,10 @@ package filepath_test
 import "testing"
 import "unsafe"
 
-import "local/james-orcales/shared/bytes"
-import "local/james-orcales/shared/filepath"
-import "local/james-orcales/shared/sim/nbio"
-import "local/james-orcales/shared/testify"
+import "local/james-orcales/shared/std/bytes"
+import "local/james-orcales/shared/std/filepath"
+import "local/james-orcales/shared/std/sim/nbio"
+import "local/james-orcales/shared/std/testify"
 
 // Test_Clean stays first because specification leaf order is declaration-sensitive.
 func Test_Clean(t *testing.T) {

@@ -15,8 +15,8 @@ import "strconv"
 import "strings"
 import "testing"
 
-import "local/james-orcales/shared/sim/aver"
-import "local/james-orcales/shared/sim/aver/flatjson"
+import "local/james-orcales/shared/std/sim/aver"
+import "local/james-orcales/shared/std/sim/aver/flatjson"
 
 // Sugar_Package_Marker gives registration an import identity without a hard-coded module path.
 type Sugar_Package_Marker struct{}

@@ -2,9 +2,9 @@ package prng_test
 
 import "testing"
 
-import "local/james-orcales/shared/crypto/prng"
-import system_prng "local/james-orcales/shared/crypto/prng/default"
-import "local/james-orcales/shared/testify"
+import "local/james-orcales/shared/std/crypto/prng"
+import system_prng "local/james-orcales/shared/std/crypto/prng/default"
+import "local/james-orcales/shared/std/testify"
 
 // Test_Entropy rejects missing readers and incomplete seed reads.
 func Test_Entropy(t *testing.T) {

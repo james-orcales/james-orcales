@@ -4,7 +4,7 @@ import "fmt"
 import "runtime"
 import "testing"
 
-import "local/james-orcales/shared/math/bits"
+import "local/james-orcales/shared/std/math/bits"
 
 func test_equal(
   t *testing.T, expected any, actual any, message_and_arguments ...any,

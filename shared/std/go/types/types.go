@@ -4,10 +4,10 @@
 // size costs one tree at a time.
 package types
 
-import "local/james-orcales/shared/go/ast"
-import "local/james-orcales/shared/go/constant"
-import "local/james-orcales/shared/go/token"
-import "local/james-orcales/shared/sim/aver/default"
+import "local/james-orcales/shared/std/go/ast"
+import "local/james-orcales/shared/std/go/constant"
+import "local/james-orcales/shared/std/go/token"
+import "local/james-orcales/shared/std/sim/aver/default"
 
 // FILE_COUNT_MAXIMUM caps the files one module holds.
 const FILE_COUNT_MAXIMUM = 1024

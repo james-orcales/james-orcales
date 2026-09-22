@@ -3,13 +3,13 @@ package tar
 
 import "unsafe"
 
-import "local/james-orcales/shared/bytes"
-import "local/james-orcales/shared/math/bits"
-import "local/james-orcales/shared/sim/aver/default"
-import "local/james-orcales/shared/sim/nbio"
-import "local/james-orcales/shared/sim/time"
-import "local/james-orcales/shared/strconv"
-import "local/james-orcales/shared/unicode/utf8"
+import "local/james-orcales/shared/std/bytes"
+import "local/james-orcales/shared/std/math/bits"
+import "local/james-orcales/shared/std/sim/aver/default"
+import "local/james-orcales/shared/std/sim/nbio"
+import "local/james-orcales/shared/std/sim/time"
+import "local/james-orcales/shared/std/strconv"
+import "local/james-orcales/shared/std/unicode/utf8"
 
 // NAME_FIELD_SIZE is V7 path field width.
 const NAME_FIELD_SIZE = 100

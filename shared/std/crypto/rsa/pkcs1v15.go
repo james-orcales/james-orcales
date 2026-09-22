@@ -12,7 +12,7 @@ import (
 	"crypto/subtle"
 	"errors"
 	"io"
-	"local/james-orcales/shared/sim/prng"
+	"local/james-orcales/shared/std/sim/prng"
 )
 
 // This file implements encryption and decryption using PKCS #1 v1.5 padding.

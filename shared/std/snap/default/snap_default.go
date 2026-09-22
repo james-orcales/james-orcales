@@ -2,7 +2,7 @@
 // the snap library to the real OS (the filesystem and stderr through the os gateway,
 // runtime.Caller) and re-exports the surface so callers can write:
 //
-//	import snap "local/james-orcales/shared/snap/default"
+//	import snap "local/james-orcales/shared/std/snap/default"
 //
 // and use snap.Init / snap.Edit / snap.Expect / … as if no split had happened.
 package snap
@@ -11,8 +11,8 @@ import "runtime"
 import "testing"
 import "unsafe"
 
-import "local/james-orcales/shared/os/default"
-import "local/james-orcales/shared/snap"
+import "local/james-orcales/shared/std/os/default"
+import "local/james-orcales/shared/std/snap"
 
 // Default is the Snapper the package-level Init / Edit / … convenience
 // functions bind to, wired to the host OS: the local filesystem, standard

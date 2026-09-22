@@ -2,7 +2,7 @@
 
 package aver
 
-import "local/james-orcales/shared/sim/aver"
+import "local/james-orcales/shared/std/sim/aver"
 
 // The noop build states each entry point with an empty body rather than a call the library
 // answers with an empty body, and it states the builder and every link of its own. A caller that

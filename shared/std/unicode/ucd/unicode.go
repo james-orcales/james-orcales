@@ -2,8 +2,8 @@
 // standard library algorithms and data into repository domain types and immutable constants.
 package ucd
 
-import "local/james-orcales/shared/math/bits"
-import "local/james-orcales/shared/sim/aver/default"
+import "local/james-orcales/shared/std/math/bits"
+import "local/james-orcales/shared/std/sim/aver/default"
 
 // VERSION is the Unicode edition from which the tables derive.
 const VERSION = "15.0.0"

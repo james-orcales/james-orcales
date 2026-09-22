@@ -3,9 +3,9 @@
 // exact value is a ratio and never a float. Every value is fixed storage the caller holds.
 package constant
 
-import "local/james-orcales/shared/math/integer"
-import "local/james-orcales/shared/math/rational"
-import "local/james-orcales/shared/sim/aver/default"
+import "local/james-orcales/shared/std/math/integer"
+import "local/james-orcales/shared/std/math/rational"
+import "local/james-orcales/shared/std/sim/aver/default"
 
 // KIND_UNKNOWN names a value the grammar could not fold.
 const KIND_UNKNOWN Kind = 0

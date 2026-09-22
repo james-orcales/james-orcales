@@ -2,9 +2,9 @@ package base64_test
 
 import "testing"
 
-import "local/james-orcales/shared/encoding/base64"
-import "local/james-orcales/shared/math/bits"
-import "local/james-orcales/shared/testify"
+import "local/james-orcales/shared/std/encoding/base64"
+import "local/james-orcales/shared/std/math/bits"
+import "local/james-orcales/shared/std/testify"
 
 // Test_Configuration protects standard, URL, custom, and rejected alphabets.
 func Test_Configuration(t *testing.T) {

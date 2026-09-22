@@ -2,12 +2,12 @@ package uuid_test
 
 import "testing"
 
-import "local/james-orcales/shared/bytes"
-import "local/james-orcales/shared/crypto/prng"
-import "local/james-orcales/shared/math/bits"
-import "local/james-orcales/shared/testify"
-import "local/james-orcales/shared/uuid"
-import system_uuid "local/james-orcales/shared/uuid/default"
+import "local/james-orcales/shared/std/bytes"
+import "local/james-orcales/shared/std/crypto/prng"
+import "local/james-orcales/shared/std/math/bits"
+import "local/james-orcales/shared/std/testify"
+import "local/james-orcales/shared/std/uuid"
+import system_uuid "local/james-orcales/shared/std/uuid/default"
 
 // Test_Operating_System_Generator_Smoke checks the host-wired generator mints valid,
 // distinct V4 and V7 UUIDs. Real entropy is non-deterministic, so this is a smoke test.

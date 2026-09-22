@@ -2,7 +2,7 @@ package prng_test
 
 import "testing"
 
-import "local/james-orcales/shared/sim/aver/default"
+import "local/james-orcales/shared/std/sim/aver/default"
 
 // TestMain makes bounded random domains fail when public tests miss a witness.
 func TestMain(m *testing.M) {

@@ -2,9 +2,9 @@ package scalar
 
 import "testing"
 
-import "local/james-orcales/shared/math/bits"
-import "local/james-orcales/shared/math/fixedpoint"
-import "local/james-orcales/shared/testify"
+import "local/james-orcales/shared/std/math/bits"
+import "local/james-orcales/shared/std/math/fixedpoint"
+import "local/james-orcales/shared/std/testify"
 
 // Sweeps the ends of the fixed-point storage domain and the small values around zero.
 func sweep_storage() (values []int64) {

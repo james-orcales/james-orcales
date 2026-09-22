@@ -26,16 +26,16 @@
 // caller-owned, and the variadic Field slice stays on the caller's stack. The price is
 // ownership: a Logger belongs to one goroutine. Goroutines share a Logger_Configuration and each
 // keep their own Logger; ordering and concurrency toward the sink belong to the Stream below
-// (shared/sync/diode).
+// (shared/std/sync/diode).
 package jlog
 
 import "unsafe"
 
-import "local/james-orcales/shared/sim/aver/default"
-import "local/james-orcales/shared/sim/nbio"
-import "local/james-orcales/shared/sim/time"
-import "local/james-orcales/shared/strconv"
-import "local/james-orcales/shared/unicode/utf8"
+import "local/james-orcales/shared/std/sim/aver/default"
+import "local/james-orcales/shared/std/sim/nbio"
+import "local/james-orcales/shared/std/sim/time"
+import "local/james-orcales/shared/std/strconv"
+import "local/james-orcales/shared/std/unicode/utf8"
 
 // LINE_BYTES_MAXIMUM bounds the line storage a caller may hand a Logger; a line that outgrows
 // its storage is dropped and counted.

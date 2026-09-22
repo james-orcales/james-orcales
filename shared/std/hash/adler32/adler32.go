@@ -1,10 +1,10 @@
 // Package adler32 computes the Adler-32 checksum with bounded caller-owned state and output.
 package adler32
 
-import "local/james-orcales/shared/bytes"
-import "local/james-orcales/shared/encoding/binary"
-import "local/james-orcales/shared/math/bits"
-import "local/james-orcales/shared/sim/aver/default"
+import "local/james-orcales/shared/std/bytes"
+import "local/james-orcales/shared/std/encoding/binary"
+import "local/james-orcales/shared/std/math/bits"
+import "local/james-orcales/shared/std/sim/aver/default"
 
 // MODULUS is the largest prime below one 16-bit word, selected by RFC 1950.
 const MODULUS = 65521

@@ -4,11 +4,11 @@ import "sync"
 import "testing"
 import "unsafe"
 
-import "local/james-orcales/shared/sim/nbio"
-import "local/james-orcales/shared/sim/time"
-import "local/james-orcales/shared/strconv"
-import "local/james-orcales/shared/sync/diode"
-import "local/james-orcales/shared/testify"
+import "local/james-orcales/shared/std/sim/nbio"
+import "local/james-orcales/shared/std/sim/time"
+import "local/james-orcales/shared/std/strconv"
+import "local/james-orcales/shared/std/sync/diode"
+import "local/james-orcales/shared/std/testify"
 
 // Test_Write_Forwards_To_Sink checks that a written line reaches the inner Stream once the root
 // rearms.

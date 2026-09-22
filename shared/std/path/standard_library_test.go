@@ -7,7 +7,7 @@ import "fmt"
 import "runtime"
 import "testing"
 
-import "local/james-orcales/shared/testify"
+import "local/james-orcales/shared/std/testify"
 
 type standard_path_case struct {
   Path   Text

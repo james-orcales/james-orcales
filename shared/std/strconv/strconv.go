@@ -9,12 +9,12 @@ package strconv
 
 import "errors"
 
-import "local/james-orcales/shared/math/bits"
-import "local/james-orcales/shared/math/fixedpoint"
-import "local/james-orcales/shared/sim/aver/default"
-import "local/james-orcales/shared/strings"
-import "local/james-orcales/shared/unicode/ucd"
-import "local/james-orcales/shared/unicode/utf8"
+import "local/james-orcales/shared/std/math/bits"
+import "local/james-orcales/shared/std/math/fixedpoint"
+import "local/james-orcales/shared/std/sim/aver/default"
+import "local/james-orcales/shared/std/strings"
+import "local/james-orcales/shared/std/unicode/ucd"
+import "local/james-orcales/shared/std/unicode/utf8"
 
 // MACHINE_INTEGER_BITS is the width in bits of an int or a uint on this platform.
 const MACHINE_INTEGER_BITS = bits.WORD_SIZE

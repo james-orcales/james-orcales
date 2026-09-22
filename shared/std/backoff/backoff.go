@@ -15,12 +15,12 @@ package backoff
 import "errors"
 import "unsafe"
 
-import "local/james-orcales/shared/math/bits"
-import "local/james-orcales/shared/sim/aver/default"
-import "local/james-orcales/shared/sim/nbio"
-import "local/james-orcales/shared/sim/prng"
-import "local/james-orcales/shared/sim/time"
-import "local/james-orcales/shared/slices"
+import "local/james-orcales/shared/std/math/bits"
+import "local/james-orcales/shared/std/sim/aver/default"
+import "local/james-orcales/shared/std/sim/nbio"
+import "local/james-orcales/shared/std/sim/prng"
+import "local/james-orcales/shared/std/sim/time"
+import "local/james-orcales/shared/std/slices"
 
 // STOP is the delay a Policy's Next returns to signal that no more retries should be made.
 const STOP Delay = -1

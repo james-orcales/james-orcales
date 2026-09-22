@@ -19,9 +19,9 @@ import "errors"
 import "sync/atomic"
 import "unsafe"
 
-import "local/james-orcales/shared/sim/aver/default"
-import "local/james-orcales/shared/sim/nbio"
-import "local/james-orcales/shared/sim/time"
+import "local/james-orcales/shared/std/sim/aver/default"
+import "local/james-orcales/shared/std/sim/nbio"
+import "local/james-orcales/shared/std/sim/time"
 
 // Ring slot count a root should size its storage to when it has no better number; 1000 lines
 // of slack absorbs typical bursts before the drain has to drop anything.

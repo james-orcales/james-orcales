@@ -3,13 +3,13 @@ package template_test
 import "testing"
 import "text/template/parse"
 
-import "local/james-orcales/shared/bytes"
-import "local/james-orcales/shared/math/big"
-import "local/james-orcales/shared/math/bits"
-import "local/james-orcales/shared/strconv"
-import "local/james-orcales/shared/testify"
-import "local/james-orcales/shared/text/template"
-import "local/james-orcales/shared/unicode/utf8"
+import "local/james-orcales/shared/std/bytes"
+import "local/james-orcales/shared/std/math/big"
+import "local/james-orcales/shared/std/math/bits"
+import "local/james-orcales/shared/std/strconv"
+import "local/james-orcales/shared/std/testify"
+import "local/james-orcales/shared/std/text/template"
+import "local/james-orcales/shared/std/unicode/utf8"
 
 // Test_Compile prevents hidden parser ownership or source copying.
 func Test_Compile(t *testing.T) {

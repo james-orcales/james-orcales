@@ -23,7 +23,7 @@ import (
 	"crypto/subtle"
 	"errors"
 	"io"
-	"local/james-orcales/shared/sim/prng"
+	"local/james-orcales/shared/std/sim/prng"
 	"strconv"
 )
 

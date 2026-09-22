@@ -4,10 +4,10 @@ package network_test
 
 import "testing"
 
-import "local/james-orcales/shared/crypto/prng"
-import "local/james-orcales/shared/net"
-import "local/james-orcales/shared/sim/nbio"
-import "local/james-orcales/shared/sim/time"
+import "local/james-orcales/shared/std/crypto/prng"
+import "local/james-orcales/shared/std/net"
+import "local/james-orcales/shared/std/sim/nbio"
+import "local/james-orcales/shared/std/sim/time"
 
 // Test_Invariants reaches boundaries through ownership APIs because direct helper calls would
 // prove the assertion machinery instead of the resolver path.

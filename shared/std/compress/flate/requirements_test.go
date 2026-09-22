@@ -2,9 +2,9 @@ package flate_test
 
 import "testing"
 
-import "local/james-orcales/shared/compress/flate"
-import "local/james-orcales/shared/math/bits"
-import "local/james-orcales/shared/testify"
+import "local/james-orcales/shared/std/compress/flate"
+import "local/james-orcales/shared/std/math/bits"
+import "local/james-orcales/shared/std/testify"
 
 // Test_Raw_DEFLATE protects independent stored, fixed, and dynamic wire forms.
 func Test_Raw_DEFLATE(t *testing.T) {

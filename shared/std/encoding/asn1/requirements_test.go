@@ -2,9 +2,9 @@ package asn1_test
 
 import "testing"
 
-import "local/james-orcales/shared/encoding/asn1"
-import "local/james-orcales/shared/math/bits"
-import "local/james-orcales/shared/testify"
+import "local/james-orcales/shared/std/encoding/asn1"
+import "local/james-orcales/shared/std/math/bits"
+import "local/james-orcales/shared/std/testify"
 
 // Test_Element protects raw encode fields from leaking into decoded values.
 func Test_Element(t *testing.T) {

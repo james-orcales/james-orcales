@@ -5,11 +5,11 @@ package utf8_test
 
 import "testing"
 
-import "local/james-orcales/shared/bytes"
-import "local/james-orcales/shared/math/bits"
-import "local/james-orcales/shared/testify"
-import "local/james-orcales/shared/unicode/ucd"
-import "local/james-orcales/shared/unicode/utf8"
+import "local/james-orcales/shared/std/bytes"
+import "local/james-orcales/shared/std/math/bits"
+import "local/james-orcales/shared/std/testify"
+import "local/james-orcales/shared/std/unicode/ucd"
+import "local/james-orcales/shared/std/unicode/utf8"
 
 // Test_Complete_Sequences verifies complete, incomplete, and invalid first encodings.
 func Test_Complete_Sequences(t *testing.T) {
@@ -1548,8 +1548,10 @@ func text_search_allocation_cases(
     }},
     {Name: "Fields_Function_Into", Run: func() {
       fixture.Field_Count = utf8.Fields_Function_Into(
-          fixture.Field_Slots, fixture.Source, text_is_space,
-        )
+        fixture.Field_Slots,
+        fixture.Source,
+        text_is_space,
+      )
     }},
   }
 }
@@ -1574,23 +1576,29 @@ func text_transform_allocation_cases(
     }},
     {Name: "To_Upper_Special_Into", Run: func() {
       fixture.Byte_Count = utf8.To_Upper_Special_Into(
-          fixture.Storage, fixture.Special, fixture.Source,
-        )
+        fixture.Storage,
+        fixture.Special,
+        fixture.Source,
+      )
     }},
     {Name: "To_Lower_Special_Into", Run: func() {
       fixture.Byte_Count = utf8.To_Lower_Special_Into(
-          fixture.Storage, fixture.Special, fixture.Source,
-        )
+        fixture.Storage,
+        fixture.Special,
+        fixture.Source,
+      )
     }},
     {Name: "To_Title_Special_Into", Run: func() {
       fixture.Byte_Count = utf8.To_Title_Special_Into(
-          fixture.Storage, fixture.Special, fixture.Source,
-        )
+        fixture.Storage,
+        fixture.Special,
+        fixture.Source,
+      )
     }},
     {Name: "To_Valid_UTF8_Into", Run: func() {
       fixture.Byte_Count = utf8.To_Valid_UTF8_Into(
-          fixture.Storage, fixture.Source, utf8.Bytes("?"),
-        )
+        fixture.Storage, fixture.Source, utf8.Bytes("?"),
+      )
     }},
     {Name: "Title_Into", Run: func() {
       fixture.Byte_Count = utf8.Title_Into(fixture.Storage, fixture.Source)
@@ -1634,8 +1642,10 @@ func text_trim_allocation_cases(
     }},
     {Name: "Fields_Function_Sequence", Run: func() {
       fixture.Field_Count = utf8.Fields_Function_Sequence(
-          fixture.Source, text_is_space, text_accept,
-        )
+        fixture.Source,
+        text_is_space,
+        text_accept,
+      )
     }},
   }
 }

@@ -4,8 +4,8 @@ import "cmp"
 import "reflect"
 import "testing"
 
-import "local/james-orcales/shared/slices"
-import "local/james-orcales/shared/testify"
+import "local/james-orcales/shared/std/slices"
+import "local/james-orcales/shared/std/testify"
 
 // Test_Equality protects nil equivalence and cross-type comparison.
 func Test_Equality(t *testing.T) {

@@ -4,8 +4,8 @@ package time
 
 import "syscall"
 
-import "local/james-orcales/shared/sim/aver/default"
-import "local/james-orcales/shared/sim/time"
+import "local/james-orcales/shared/std/sim/aver/default"
+import "local/james-orcales/shared/std/sim/time"
 
 // NANOSECONDS_PER_SECOND converts the host timeval seconds field to repository duration units.
 const NANOSECONDS_PER_SECOND = 1_000_000_000

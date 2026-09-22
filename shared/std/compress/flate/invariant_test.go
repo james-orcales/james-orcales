@@ -2,8 +2,8 @@ package flate
 
 import "testing"
 
-import "local/james-orcales/shared/math/bits"
-import "local/james-orcales/shared/testify"
+import "local/james-orcales/shared/std/math/bits"
+import "local/james-orcales/shared/std/testify"
 
 // INVARIANT_BIT_STORAGE_COUNT fits widest field without unrelated capacity.
 const INVARIANT_BIT_STORAGE_COUNT = BLOCK_KIND_BIT_COUNT

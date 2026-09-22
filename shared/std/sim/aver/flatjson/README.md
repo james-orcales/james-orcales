@@ -1,7 +1,7 @@
 # aver flatjson
 
-`shared/encoding/flatjson` imports this package for its internal `Always` assertions.
-`shared/sim/aver/default` imports the encoder to write JSON coverage reports. Thus, the
+`shared/std/encoding/flatjson` imports this package for its internal `Always` assertions.
+`shared/std/sim/aver/default` imports the encoder to write JSON coverage reports. Thus, the
 encoder cannot import the default package.
 
 This package enforces the encoder assertions. It does not own process configuration or a recorder.

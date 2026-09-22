@@ -3,8 +3,8 @@ package flate
 
 import "unsafe"
 
-import "local/james-orcales/shared/math/bits"
-import "local/james-orcales/shared/sim/aver/default"
+import "local/james-orcales/shared/std/math/bits"
+import "local/james-orcales/shared/std/sim/aver/default"
 
 // BYTE_COUNT_MEBIBYTE_EXPONENT states caller-storage policy as binary scale.
 const BYTE_COUNT_MEBIBYTE_EXPONENT = 6

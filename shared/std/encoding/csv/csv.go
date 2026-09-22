@@ -1,11 +1,11 @@
 // Package csv implements bounded comma-separated records on caller-owned storage.
 package csv
 
-import "local/james-orcales/shared/bytes"
-import "local/james-orcales/shared/math/bits"
-import "local/james-orcales/shared/sim/aver/default"
-import "local/james-orcales/shared/unicode/ucd"
-import "local/james-orcales/shared/unicode/utf8"
+import "local/james-orcales/shared/std/bytes"
+import "local/james-orcales/shared/std/math/bits"
+import "local/james-orcales/shared/std/sim/aver/default"
+import "local/james-orcales/shared/std/unicode/ucd"
+import "local/james-orcales/shared/std/unicode/utf8"
 
 // ENCODED_SIZE_MAXIMUM follows the repository byte-slice boundary.
 const ENCODED_SIZE_MAXIMUM = bytes.SLICE_SIZE_MAXIMUM

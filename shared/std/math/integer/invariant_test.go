@@ -2,7 +2,7 @@ package integer
 
 import "testing"
 
-import "local/james-orcales/shared/math/bits"
+import "local/james-orcales/shared/std/math/bits"
 
 // Test_Internal_Invariant_Domains feeds opaque storage edges through production entry points,
 // because ordinary arithmetic cannot make constant constructors return every machine word.

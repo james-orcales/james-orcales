@@ -2,9 +2,9 @@ package crc32_test
 
 import "testing"
 
-import "local/james-orcales/shared/hash/crc32"
-import "local/james-orcales/shared/math/bits"
-import "local/james-orcales/shared/testify"
+import "local/james-orcales/shared/std/hash/crc32"
+import "local/james-orcales/shared/std/math/bits"
+import "local/james-orcales/shared/std/testify"
 
 // Test_Package_Owned_State verifies streaming operations need no common dispatcher.
 func Test_Package_Owned_State(t *testing.T) {

@@ -2,8 +2,8 @@ package tabwriter_test
 
 import "testing"
 
-import "local/james-orcales/shared/sim/aver/default"
-import "local/james-orcales/shared/text/tabwriter"
+import "local/james-orcales/shared/std/sim/aver/default"
+import "local/james-orcales/shared/std/text/tabwriter"
 
 // TestMain keeps allocation probes on production assertion paths.
 func TestMain(m *testing.M) {

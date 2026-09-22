@@ -3,8 +3,8 @@ package build
 import "testing"
 import "unsafe"
 
-import "local/james-orcales/shared/sim/nbio"
-import "local/james-orcales/shared/testify"
+import "local/james-orcales/shared/std/sim/nbio"
+import "local/james-orcales/shared/std/testify"
 
 // States one loop whose halves carry one backend, which is the loop a read stands on.
 func storage_loop(state unsafe.Pointer) (loop nbio.IO) {

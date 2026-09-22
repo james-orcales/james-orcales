@@ -1,5 +1,5 @@
 // Package aver_flatjson owns invariant reporting's flat JSON copy. It stays separate because
-// shared/encoding/flatjson depends on shared/sim/aver/default for its own checked
+// shared/std/encoding/flatjson depends on shared/std/sim/aver/default for its own checked
 // implementation.
 package aver_flatjson
 

@@ -4,11 +4,11 @@ import "errors"
 import "testing"
 import "unsafe"
 
-import "local/james-orcales/shared/backoff"
-import "local/james-orcales/shared/sim/nbio"
-import "local/james-orcales/shared/sim/prng"
-import "local/james-orcales/shared/sim/time"
-import "local/james-orcales/shared/testify"
+import "local/james-orcales/shared/std/backoff"
+import "local/james-orcales/shared/std/sim/nbio"
+import "local/james-orcales/shared/std/sim/prng"
+import "local/james-orcales/shared/std/sim/time"
+import "local/james-orcales/shared/std/testify"
 
 // Test_Constant_Waits_Fixed checks Constant returns a fixed interval and Reset is inert.
 func Test_Constant_Waits_Fixed(t *testing.T) {

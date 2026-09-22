@@ -1,9 +1,9 @@
 // Package bzip2 decodes bzip2 streams into fixed caller storage.
 package bzip2
 
-import "local/james-orcales/shared/hash/crc32"
-import "local/james-orcales/shared/math/bits"
-import "local/james-orcales/shared/sim/aver/default"
+import "local/james-orcales/shared/std/hash/crc32"
+import "local/james-orcales/shared/std/math/bits"
+import "local/james-orcales/shared/std/sim/aver/default"
 
 // FILE_MAGIC identifies bzip2 container.
 const FILE_MAGIC = 0x425a

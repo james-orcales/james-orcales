@@ -2,7 +2,7 @@
 
 package aver
 
-import "local/james-orcales/shared/sim/aver"
+import "local/james-orcales/shared/std/sim/aver"
 
 // Always is an eager guard, so its enforcement and reachability stay independent of any chain.
 func Always[T ~bool](condition T, message string) {

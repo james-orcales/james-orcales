@@ -7,7 +7,7 @@ import "strings"
 import "sync"
 import "testing"
 
-import "local/james-orcales/shared/sim/aver"
+import "local/james-orcales/shared/std/sim/aver"
 
 // Fixture_Subject stands in for a bundle subject where the test drives the builder directly.
 // This build resolves no plan, so the chain type only has to compile.

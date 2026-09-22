@@ -2,8 +2,8 @@ package json_test
 
 import "testing"
 
-import "local/james-orcales/shared/encoding/json"
-import "local/james-orcales/shared/testify"
+import "local/james-orcales/shared/std/encoding/json"
+import "local/james-orcales/shared/std/testify"
 
 // Test_Validate protects the parser boundary from partial-value acceptance.
 func Test_Validate(t *testing.T) {

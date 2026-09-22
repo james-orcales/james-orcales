@@ -65,7 +65,7 @@ can permit an empty value, can have a default, and can restrict the value to an 
 
 ### Secrets
 
-A secret has ordered absolute paths inside shared/filepath host bound. Paths use one uppercase base
+A secret has ordered absolute paths inside shared/std/filepath host bound. Paths use one uppercase base
 filename as key. Parser starts secrets in parallel, accepts regular files of at most 64 KiB,
 rejects final link, removes one final LF or CRLF, converts value, and closes each opened file.
 

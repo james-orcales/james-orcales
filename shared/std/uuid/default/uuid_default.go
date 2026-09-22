@@ -1,4 +1,4 @@
-// Package uuid is the composition tier for shared/uuid: it wires the host's
+// Package uuid is the composition tier for shared/std/uuid: it wires the host's
 // entropy and clock into a Generator. It declares package uuid so callers import
 // ".../uuid/default" and read it as the library with no alias, mirroring time/default.
 //
@@ -8,12 +8,12 @@
 // sidesteps the MAC-address privacy leak that has long dogged UUID version 1.
 package uuid
 
-import "local/james-orcales/shared/crypto/prng"
-import system_prng "local/james-orcales/shared/crypto/prng/default"
-import "local/james-orcales/shared/sim/aver/default"
-import sim_time "local/james-orcales/shared/sim/time"
-import "local/james-orcales/shared/sim/time/default"
-import "local/james-orcales/shared/uuid"
+import "local/james-orcales/shared/std/crypto/prng"
+import system_prng "local/james-orcales/shared/std/crypto/prng/default"
+import "local/james-orcales/shared/std/sim/aver/default"
+import sim_time "local/james-orcales/shared/std/sim/time"
+import "local/james-orcales/shared/std/sim/time/default"
+import "local/james-orcales/shared/std/uuid"
 
 // Generator is host constructor output before caller claims mutable ownership.
 type Generator uuid.Generator

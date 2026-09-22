@@ -5,11 +5,11 @@ import "os/exec"
 import "syscall"
 import "testing"
 
-import "local/james-orcales/shared/math/bits"
-import shared_os "local/james-orcales/shared/os"
-import "local/james-orcales/shared/os/default"
-import "local/james-orcales/shared/slices"
-import "local/james-orcales/shared/testify"
+import "local/james-orcales/shared/std/math/bits"
+import shared_os "local/james-orcales/shared/std/os"
+import "local/james-orcales/shared/std/os/default"
+import "local/james-orcales/shared/std/slices"
+import "local/james-orcales/shared/std/testify"
 
 // Test_Operating_System_Smoke verifies the host answers every ambient reader. The values a
 // machine supplies are not deterministic, so this checks their shape, not their content. The

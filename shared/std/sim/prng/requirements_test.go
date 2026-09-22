@@ -3,9 +3,9 @@ package prng_test
 import "reflect"
 import "testing"
 
-import crypto_prng "local/james-orcales/shared/crypto/prng"
-import "local/james-orcales/shared/sim/prng"
-import "local/james-orcales/shared/testify"
+import crypto_prng "local/james-orcales/shared/std/crypto/prng"
+import "local/james-orcales/shared/std/sim/prng"
+import "local/james-orcales/shared/std/testify"
 
 // Test_Seed_Expands_To_State checks New is deterministic and seed-sensitive.
 func Test_Seed_Expands_To_State(t *testing.T) {

@@ -2,10 +2,10 @@ package printer_test
 
 import "testing"
 
-import "local/james-orcales/shared/go/ast"
-import "local/james-orcales/shared/go/printer"
-import "local/james-orcales/shared/go/token"
-import "local/james-orcales/shared/testify"
+import "local/james-orcales/shared/std/go/ast"
+import "local/james-orcales/shared/std/go/printer"
+import "local/james-orcales/shared/std/go/token"
+import "local/james-orcales/shared/std/testify"
 
 // Test_Printer binds the Printer specification leaf before fixture declarations.
 func Test_Printer(t *testing.T) {
@@ -758,9 +758,9 @@ func test_elision_imports(t *testing.T) {
     },
     {
       Source: "package one\n\nimport invariant " +
-        "\"local/james-orcales/shared/sim/aver/default\"\n",
+        "\"local/james-orcales/shared/std/sim/aver/default\"\n",
       Form: "package one\n\nimport " +
-        "\"local/james-orcales/shared/sim/aver/default\"\n",
+        "\"local/james-orcales/shared/std/sim/aver/default\"\n",
     },
   } {
     testify.Equal(

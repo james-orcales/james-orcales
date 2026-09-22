@@ -3,9 +3,9 @@ package path
 
 import "errors"
 
-import "local/james-orcales/shared/bytes"
-import "local/james-orcales/shared/sim/aver/default"
-import "local/james-orcales/shared/unicode/utf8"
+import "local/james-orcales/shared/std/bytes"
+import "local/james-orcales/shared/std/sim/aver/default"
+import "local/james-orcales/shared/std/unicode/utf8"
 
 // ELEMENT_COUNT_MINIMUM keeps zero-element Join_Into valid.
 const ELEMENT_COUNT_MINIMUM = 0

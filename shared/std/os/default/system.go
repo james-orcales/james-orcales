@@ -12,10 +12,10 @@ import process "os"
 import "syscall"
 import "unsafe"
 
-import "local/james-orcales/shared/math/bits"
-import "local/james-orcales/shared/os"
-import "local/james-orcales/shared/sim/aver/default"
-import "local/james-orcales/shared/slices"
+import "local/james-orcales/shared/std/math/bits"
+import "local/james-orcales/shared/std/os"
+import "local/james-orcales/shared/std/sim/aver/default"
+import "local/james-orcales/shared/std/slices"
 
 // SELF_EXEC_TEXT_TERMINATOR_BYTES is one trailing NUL.
 const SELF_EXEC_TEXT_TERMINATOR_BYTES = 1

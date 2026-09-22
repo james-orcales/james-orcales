@@ -2,14 +2,14 @@ package zip_test
 
 import "testing"
 
-import "local/james-orcales/shared/archive/zip"
-import "local/james-orcales/shared/bytes"
-import "local/james-orcales/shared/compress/flate"
-import "local/james-orcales/shared/encoding/binary"
-import "local/james-orcales/shared/hash/crc32"
-import "local/james-orcales/shared/sim/nbio"
-import "local/james-orcales/shared/sim/time"
-import "local/james-orcales/shared/testify"
+import "local/james-orcales/shared/std/archive/zip"
+import "local/james-orcales/shared/std/bytes"
+import "local/james-orcales/shared/std/compress/flate"
+import "local/james-orcales/shared/std/encoding/binary"
+import "local/james-orcales/shared/std/hash/crc32"
+import "local/james-orcales/shared/std/sim/nbio"
+import "local/james-orcales/shared/std/sim/time"
+import "local/james-orcales/shared/std/testify"
 
 // Test_Bounded_Archive verifies stored and deflated bounded members.
 func Test_Bounded_Archive(t *testing.T) {

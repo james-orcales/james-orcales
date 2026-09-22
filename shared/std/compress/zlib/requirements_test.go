@@ -2,8 +2,8 @@ package zlib_test
 
 import "testing"
 
-import "local/james-orcales/shared/compress/zlib"
-import "local/james-orcales/shared/testify"
+import "local/james-orcales/shared/std/compress/zlib"
+import "local/james-orcales/shared/std/testify"
 
 // Test_Bounded_Decompression protects caller-owned output bound.
 func Test_Bounded_Decompression(t *testing.T) {

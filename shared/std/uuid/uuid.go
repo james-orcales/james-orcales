@@ -14,17 +14,17 @@ package uuid
 
 import "unsafe"
 
-import "local/james-orcales/shared/bytes"
-import "local/james-orcales/shared/crypto/md5"
-import "local/james-orcales/shared/crypto/prng"
-import "local/james-orcales/shared/crypto/sha1"
-import "local/james-orcales/shared/database/driver"
-import "local/james-orcales/shared/encoding/binary"
-import "local/james-orcales/shared/encoding/hex"
-import "local/james-orcales/shared/math/bits"
-import "local/james-orcales/shared/sim/aver/default"
-import "local/james-orcales/shared/sim/time"
-import "local/james-orcales/shared/strings"
+import "local/james-orcales/shared/std/bytes"
+import "local/james-orcales/shared/std/crypto/md5"
+import "local/james-orcales/shared/std/crypto/prng"
+import "local/james-orcales/shared/std/crypto/sha1"
+import "local/james-orcales/shared/std/database/driver"
+import "local/james-orcales/shared/std/encoding/binary"
+import "local/james-orcales/shared/std/encoding/hex"
+import "local/james-orcales/shared/std/math/bits"
+import "local/james-orcales/shared/std/sim/aver/default"
+import "local/james-orcales/shared/std/sim/time"
+import "local/james-orcales/shared/std/strings"
 
 // UUID_BIT_COUNT is RFC 9562 binary width.
 const UUID_BIT_COUNT = bits.BIT_COUNT_64_MAXIMUM * 2

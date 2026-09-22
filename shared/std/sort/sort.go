@@ -5,9 +5,9 @@
 // algorithms. Caller owns element and search state storage.
 package sort
 
-import "local/james-orcales/shared/math/bits"
-import "local/james-orcales/shared/sim/aver/default"
-import "local/james-orcales/shared/slices"
+import "local/james-orcales/shared/std/math/bits"
+import "local/james-orcales/shared/std/sim/aver/default"
+import "local/james-orcales/shared/std/slices"
 
 // ELEMENT_COUNT_MAXIMUM matches shared slice boundary, so one count limits all operations.
 const ELEMENT_COUNT_MAXIMUM = slices.SLICE_COUNT_MAXIMUM

@@ -2,8 +2,8 @@ package myers
 
 import "testing"
 
-import "local/james-orcales/shared/strings"
-import "local/james-orcales/shared/unicode/utf8"
+import "local/james-orcales/shared/std/strings"
+import "local/james-orcales/shared/std/unicode/utf8"
 
 // Test_Internal_Diff_Boundaries avoids quadratic public runs for writer states.
 func Test_Internal_Diff_Boundaries(t *testing.T) {

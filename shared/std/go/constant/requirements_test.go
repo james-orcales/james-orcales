@@ -2,9 +2,9 @@ package constant_test
 
 import "testing"
 
-import "local/james-orcales/shared/go/constant"
-import "local/james-orcales/shared/math/integer"
-import "local/james-orcales/shared/testify"
+import "local/james-orcales/shared/std/go/constant"
+import "local/james-orcales/shared/std/math/integer"
+import "local/james-orcales/shared/std/testify"
 
 // Test_Values binds the Values specification leaf before fixture declarations.
 func Test_Values(t *testing.T) {

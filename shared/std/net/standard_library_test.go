@@ -5,11 +5,11 @@ package network_test
 
 import "testing"
 
-import "local/james-orcales/shared/crypto/prng"
-import "local/james-orcales/shared/net"
-import "local/james-orcales/shared/sim/aver/default"
-import "local/james-orcales/shared/sim/nbio"
-import "local/james-orcales/shared/sim/time"
+import "local/james-orcales/shared/std/crypto/prng"
+import "local/james-orcales/shared/std/net"
+import "local/james-orcales/shared/std/sim/aver/default"
+import "local/james-orcales/shared/std/sim/nbio"
+import "local/james-orcales/shared/std/sim/time"
 
 // TestMain registers resolver invariant roots before all tests.
 func TestMain(m *testing.M) {
@@ -17,7 +17,8 @@ func TestMain(m *testing.M) {
 }
 
 // Test_Standard_Library_Resolver_Injected_IO ports A and AAAA parts of net.TestResolverDialFunc.
-// SRV has no shared/net API. Two results prove injected transport preserves complete answer set.
+// SRV has no shared/std/net API. Two results prove injected transport preserves complete answer
+// set.
 func Test_Standard_Library_Resolver_Injected_IO(t *testing.T) {
   for _, record_type := range [...]network.Record_Type{
     network.RECORD_TYPE_A,

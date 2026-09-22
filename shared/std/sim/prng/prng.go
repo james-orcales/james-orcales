@@ -17,9 +17,9 @@
 // xoshiro256++ and splitmix64 are public domain (Blackman and Vigna).
 package prng
 
-import "local/james-orcales/shared/crypto/prng"
-import "local/james-orcales/shared/math/bits"
-import "local/james-orcales/shared/sim/aver/default"
+import "local/james-orcales/shared/std/crypto/prng"
+import "local/james-orcales/shared/std/math/bits"
+import "local/james-orcales/shared/std/sim/aver/default"
 
 // The splitmix64 increment, derived from the golden ratio, strides the seed state.
 const SPLIT_MIX_INCREMENT = 0x9e3779b97f4a7c15

@@ -4,8 +4,8 @@ import "reflect"
 import "testing"
 import "unsafe"
 
-import "local/james-orcales/shared/strings"
-import "local/james-orcales/shared/testify"
+import "local/james-orcales/shared/std/strings"
+import "local/james-orcales/shared/std/testify"
 
 // Test_Write_Text_Maximum protects the fragment bound independently from JSON framing overhead.
 func Test_Write_Text_Maximum(t *testing.T) {

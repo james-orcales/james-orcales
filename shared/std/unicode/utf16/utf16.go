@@ -1,8 +1,8 @@
 // Package utf16 supplies native UTF-16 character and sequence conversion.
 package utf16
 
-import "local/james-orcales/shared/math/bits"
-import "local/james-orcales/shared/sim/aver/default"
+import "local/james-orcales/shared/std/math/bits"
+import "local/james-orcales/shared/std/sim/aver/default"
 
 // REPLACEMENT_CHARACTER substitutes for invalid characters and surrogate sequences.
 const REPLACEMENT_CHARACTER Character = '\uFFFD'

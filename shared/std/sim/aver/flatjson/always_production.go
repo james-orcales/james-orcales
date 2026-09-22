@@ -2,7 +2,7 @@
 
 package aver_flatjson
 
-import "local/james-orcales/shared/sim/aver"
+import "local/james-orcales/shared/std/sim/aver"
 
 // Always preserves lazy production failure formatting without adding recorder ownership.
 func Always[T ~bool](condition T, message string) {

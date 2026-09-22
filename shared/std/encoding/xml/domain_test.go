@@ -2,8 +2,8 @@ package xml
 
 import "testing"
 
-import "local/james-orcales/shared/math/bits"
-import "local/james-orcales/shared/unicode/utf8"
+import "local/james-orcales/shared/std/math/bits"
+import "local/james-orcales/shared/std/unicode/utf8"
 
 // Test_Internal_Character_Boundaries reaches scalar XML boundaries through production code.
 func Test_Internal_Character_Boundaries(_ *testing.T) {

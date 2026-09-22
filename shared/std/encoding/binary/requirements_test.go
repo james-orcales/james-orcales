@@ -3,9 +3,9 @@ package binary_test
 import "testing"
 import "unsafe"
 
-import "local/james-orcales/shared/encoding/binary"
-import "local/james-orcales/shared/sim/nbio"
-import "local/james-orcales/shared/testify"
+import "local/james-orcales/shared/std/encoding/binary"
+import "local/james-orcales/shared/std/sim/nbio"
+import "local/james-orcales/shared/std/testify"
 
 // Test_Allocation keeps public data paths free from hidden heap ownership.
 func Test_Allocation(t *testing.T) {

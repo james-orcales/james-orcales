@@ -4,9 +4,9 @@
 // the caller owns, thus a print allocates nothing.
 package printer
 
-import "local/james-orcales/shared/go/ast"
-import "local/james-orcales/shared/go/token"
-import "local/james-orcales/shared/sim/aver/default"
+import "local/james-orcales/shared/std/go/ast"
+import "local/james-orcales/shared/std/go/token"
+import "local/james-orcales/shared/std/sim/aver/default"
 
 // FORM_SIZE_MINIMUM admits no output.
 const FORM_SIZE_MINIMUM = 0

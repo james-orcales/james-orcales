@@ -3,9 +3,9 @@ package base64
 
 import "unsafe"
 
-import "local/james-orcales/shared/bytes"
-import "local/james-orcales/shared/math/bits"
-import "local/james-orcales/shared/sim/aver/default"
+import "local/james-orcales/shared/std/bytes"
+import "local/james-orcales/shared/std/math/bits"
+import "local/james-orcales/shared/std/sim/aver/default"
 
 // ALPHABET_SIZE follows the base64 radix.
 const ALPHABET_SIZE = bits.BIT_COUNT_64_MAXIMUM

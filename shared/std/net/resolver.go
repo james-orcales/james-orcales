@@ -4,11 +4,11 @@ package network
 import "errors"
 import "unsafe"
 
-import "local/james-orcales/shared/bytes"
-import "local/james-orcales/shared/crypto/prng"
-import "local/james-orcales/shared/sim/aver/default"
-import "local/james-orcales/shared/sim/nbio"
-import "local/james-orcales/shared/sim/time"
+import "local/james-orcales/shared/std/bytes"
+import "local/james-orcales/shared/std/crypto/prng"
+import "local/james-orcales/shared/std/sim/aver/default"
+import "local/james-orcales/shared/std/sim/nbio"
+import "local/james-orcales/shared/std/sim/time"
 
 // DNS_LABEL_SIZE_BITS is width available to one ordinary DNS label size.
 const DNS_LABEL_SIZE_BITS = 6

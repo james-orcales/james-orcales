@@ -27,9 +27,9 @@ UTF-8 encodings. Valid_Character rejects negative values, surrogates, and values
 
 # Raw Storage Extensions
 
-Buffer and Reader character operations decode or encode UTF-8 while borrowing shared/bytes cursor
+Buffer and Reader character operations decode or encode UTF-8 while borrowing shared/std/bytes cursor
 storage. Character unread restores the complete encoded boundary. Raw byte ownership remains in
-shared/bytes.
+shared/std/bytes.
 
 # Search
 
@@ -45,7 +45,7 @@ views. Sequence forms synchronously yield those views and stop when callback rej
 # Transform
 
 Map, case conversion, legacy title conversion, invalid UTF-8 repair, and rune decoding write
-caller-owned storage. Case operations use shared/unicode/ucd. Special variants accept
+caller-owned storage. Case operations use shared/std/unicode/ucd. Special variants accept
 ucd.Special_Case directly. Byte destinations never overlap source.
 
 # Trim

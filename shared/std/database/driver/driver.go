@@ -3,14 +3,14 @@ package driver
 
 import "unsafe"
 
-import "local/james-orcales/shared/bytes"
-import "local/james-orcales/shared/math/bits"
-import "local/james-orcales/shared/sim/aver/default"
-import "local/james-orcales/shared/sim/time"
-import "local/james-orcales/shared/slices"
-import "local/james-orcales/shared/strings"
-import "local/james-orcales/shared/unicode/ucd"
-import "local/james-orcales/shared/unicode/utf8"
+import "local/james-orcales/shared/std/bytes"
+import "local/james-orcales/shared/std/math/bits"
+import "local/james-orcales/shared/std/sim/aver/default"
+import "local/james-orcales/shared/std/sim/time"
+import "local/james-orcales/shared/std/slices"
+import "local/james-orcales/shared/std/strings"
+import "local/james-orcales/shared/std/unicode/ucd"
+import "local/james-orcales/shared/std/unicode/utf8"
 
 // Status keeps driver outcomes scalar and allocation-free.
 type Status uint8

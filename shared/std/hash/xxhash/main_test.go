@@ -2,7 +2,7 @@ package xxhash_test
 
 import "testing"
 
-import "local/james-orcales/shared/sim/aver/default"
+import "local/james-orcales/shared/std/sim/aver/default"
 
 // TestMain makes public operations prove invariant paths.
 func TestMain(m *testing.M) {

@@ -11,8 +11,8 @@ package time
 */
 import "C"
 
-import "local/james-orcales/shared/sim/aver/default"
-import "local/james-orcales/shared/sim/time"
+import "local/james-orcales/shared/std/sim/aver/default"
+import "local/james-orcales/shared/std/sim/time"
 
 func monotonic_now() (moment time.Monotonic_Moment) {
   defer func() { time.Monotonic_Moment_Invariants(moment, "monotonic_now.moment") }()

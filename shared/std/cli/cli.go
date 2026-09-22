@@ -41,16 +41,16 @@ package cli
 
 import "errors"
 
-import "local/james-orcales/shared/diff/levenshtein"
-import "local/james-orcales/shared/filepath"
-import "local/james-orcales/shared/math/bits"
-import "local/james-orcales/shared/path"
-import "local/james-orcales/shared/sim/aver/default"
-import "local/james-orcales/shared/sim/nbio"
-import "local/james-orcales/shared/sim/time"
-import "local/james-orcales/shared/slices"
-import "local/james-orcales/shared/strconv"
-import "local/james-orcales/shared/strings"
+import "local/james-orcales/shared/std/diff/levenshtein"
+import "local/james-orcales/shared/std/filepath"
+import "local/james-orcales/shared/std/math/bits"
+import "local/james-orcales/shared/std/path"
+import "local/james-orcales/shared/std/sim/aver/default"
+import "local/james-orcales/shared/std/sim/nbio"
+import "local/james-orcales/shared/std/sim/time"
+import "local/james-orcales/shared/std/slices"
+import "local/james-orcales/shared/std/strconv"
+import "local/james-orcales/shared/std/strings"
 
 // HELP_REQUESTED identifies -h or -help without interface identity.
 // Help has priority over an absent argument. Compare returned text with this constant.

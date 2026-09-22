@@ -2,13 +2,13 @@ package pbkdf2_test
 
 import "testing"
 
-import "local/james-orcales/shared/crypto/hmac"
-import "local/james-orcales/shared/crypto/pbkdf2"
-import "local/james-orcales/shared/crypto/sha1"
-import "local/james-orcales/shared/crypto/sha512"
-import "local/james-orcales/shared/encoding/binary"
-import "local/james-orcales/shared/math/bits"
-import "local/james-orcales/shared/testify"
+import "local/james-orcales/shared/std/crypto/hmac"
+import "local/james-orcales/shared/std/crypto/pbkdf2"
+import "local/james-orcales/shared/std/crypto/sha1"
+import "local/james-orcales/shared/std/crypto/sha512"
+import "local/james-orcales/shared/std/encoding/binary"
+import "local/james-orcales/shared/std/math/bits"
+import "local/james-orcales/shared/std/testify"
 
 // Test_Reference_Value binds derivation to RFC 6070 test vector three.
 func Test_Reference_Value(t *testing.T) {

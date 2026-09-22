@@ -3,10 +3,10 @@ package sql
 
 import "unsafe"
 
-import "local/james-orcales/shared/database/driver"
-import "local/james-orcales/shared/math/bits"
-import "local/james-orcales/shared/sim/aver/default"
-import "local/james-orcales/shared/slices"
+import "local/james-orcales/shared/std/database/driver"
+import "local/james-orcales/shared/std/math/bits"
+import "local/james-orcales/shared/std/sim/aver/default"
+import "local/james-orcales/shared/std/slices"
 
 // Status keeps pool and operation outcomes scalar and allocation-free.
 type Status uint8

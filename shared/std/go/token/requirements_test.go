@@ -2,8 +2,8 @@ package token_test
 
 import "testing"
 
-import "local/james-orcales/shared/go/token"
-import "local/james-orcales/shared/testify"
+import "local/james-orcales/shared/std/go/token"
+import "local/james-orcales/shared/std/testify"
 
 // Test_Scan binds the Scan specification leaf before fixture declarations.
 func Test_Scan(t *testing.T) {

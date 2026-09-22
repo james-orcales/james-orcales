@@ -2,7 +2,7 @@ package prng_test
 
 import "testing"
 
-import "local/james-orcales/shared/crypto/prng"
+import "local/james-orcales/shared/std/crypto/prng"
 
 // SEED_BYTE_COUNT keeps the benchmark input equal to one ChaCha20 key.
 const SEED_BYTE_COUNT = 32

@@ -1,15 +1,15 @@
 // Package hmac computes keyed message authentication codes with bounded caller-owned state.
 package hmac
 
-import "local/james-orcales/shared/bytes"
-import "local/james-orcales/shared/crypto/md5"
-import "local/james-orcales/shared/crypto/sha1"
-import "local/james-orcales/shared/crypto/sha256"
-import "local/james-orcales/shared/crypto/sha512"
-import "local/james-orcales/shared/crypto/subtle"
-import "local/james-orcales/shared/encoding/binary"
-import "local/james-orcales/shared/math/bits"
-import "local/james-orcales/shared/sim/aver/default"
+import "local/james-orcales/shared/std/bytes"
+import "local/james-orcales/shared/std/crypto/md5"
+import "local/james-orcales/shared/std/crypto/sha1"
+import "local/james-orcales/shared/std/crypto/sha256"
+import "local/james-orcales/shared/std/crypto/sha512"
+import "local/james-orcales/shared/std/crypto/subtle"
+import "local/james-orcales/shared/std/encoding/binary"
+import "local/james-orcales/shared/std/math/bits"
+import "local/james-orcales/shared/std/sim/aver/default"
 
 // KIND_MD5 selects RFC 1321 compression.
 const KIND_MD5 Kind = Kind(bits.WORD_8_MINIMUM)

@@ -2,7 +2,7 @@ package hex_test
 
 import "testing"
 
-import "local/james-orcales/shared/sim/aver/default"
+import "local/james-orcales/shared/std/sim/aver/default"
 
 // TestMain registers production paths so generated inputs cannot bypass public contracts.
 func TestMain(m *testing.M) {

@@ -5,7 +5,7 @@
 // what it does, with the value it acts on first.
 package bits
 
-import "local/james-orcales/shared/sim/aver/default"
+import "local/james-orcales/shared/std/sim/aver/default"
 
 // WORD_SIZE is the bit width of a machine word. This repository builds for 64-bit targets
 // only, thus the width is a plain constant and no operation branches on it.

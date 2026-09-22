@@ -2,10 +2,10 @@
 // and output.
 package fnv
 
-import "local/james-orcales/shared/bytes"
-import "local/james-orcales/shared/encoding/binary"
-import "local/james-orcales/shared/math/bits"
-import "local/james-orcales/shared/sim/aver/default"
+import "local/james-orcales/shared/std/bytes"
+import "local/james-orcales/shared/std/encoding/binary"
+import "local/james-orcales/shared/std/math/bits"
+import "local/james-orcales/shared/std/sim/aver/default"
 
 // DIGEST_32_SIZE is one 32-bit value in bytes.
 const DIGEST_32_SIZE = bits.BIT_COUNT_32_MAXIMUM / binary.BITS_PER_BYTE

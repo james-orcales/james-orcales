@@ -2,11 +2,11 @@ package tabwriter_test
 
 import "testing"
 
-import "local/james-orcales/shared/bytes"
-import "local/james-orcales/shared/math/bits"
-import "local/james-orcales/shared/testify"
-import "local/james-orcales/shared/text/tabwriter"
-import "local/james-orcales/shared/unicode/utf8"
+import "local/james-orcales/shared/std/bytes"
+import "local/james-orcales/shared/std/math/bits"
+import "local/james-orcales/shared/std/testify"
+import "local/james-orcales/shared/std/text/tabwriter"
+import "local/james-orcales/shared/std/unicode/utf8"
 
 // Test_Configuration rejects policy before bounded work can multiply.
 func Test_Configuration(t *testing.T) {

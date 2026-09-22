@@ -2,9 +2,9 @@ package base32_test
 
 import "testing"
 
-import "local/james-orcales/shared/encoding/base32"
-import "local/james-orcales/shared/math/bits"
-import "local/james-orcales/shared/testify"
+import "local/james-orcales/shared/std/encoding/base32"
+import "local/james-orcales/shared/std/math/bits"
+import "local/james-orcales/shared/std/testify"
 
 // Test_Configuration protects custom alphabets without hidden pointer ownership.
 func Test_Configuration(t *testing.T) {

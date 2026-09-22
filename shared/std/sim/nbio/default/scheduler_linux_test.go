@@ -6,9 +6,9 @@ import "syscall"
 import "testing"
 import "unsafe"
 
-import "local/james-orcales/shared/sim/nbio"
-import "local/james-orcales/shared/sim/time"
-import "local/james-orcales/shared/testify"
+import "local/james-orcales/shared/std/sim/nbio"
+import "local/james-orcales/shared/std/sim/time"
+import "local/james-orcales/shared/std/testify"
 
 // PLATFORM_TEST_CAPACITY holds both primary and linked-deadline test operations.
 const PLATFORM_TEST_CAPACITY = 2 * nbio.IPV4_ADDRESS_BYTES

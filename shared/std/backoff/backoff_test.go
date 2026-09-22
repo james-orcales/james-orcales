@@ -2,10 +2,10 @@ package backoff_test
 
 import "testing"
 
-import "local/james-orcales/shared/backoff"
-import "local/james-orcales/shared/sim/aver/default"
-import "local/james-orcales/shared/sim/nbio"
-import "local/james-orcales/shared/sim/time"
+import "local/james-orcales/shared/std/backoff"
+import "local/james-orcales/shared/std/sim/aver/default"
+import "local/james-orcales/shared/std/sim/nbio"
+import "local/james-orcales/shared/std/sim/time"
 
 // TestMain makes public operations prove their invariant paths.
 func TestMain(m *testing.M) {

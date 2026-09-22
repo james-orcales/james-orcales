@@ -3,7 +3,7 @@ package snap
 import "runtime"
 import "testing"
 
-import "local/james-orcales/shared/snap"
+import "local/james-orcales/shared/std/snap"
 
 func Test_Host(t *testing.T) {
   path := t.TempDir() + "/snapshot"

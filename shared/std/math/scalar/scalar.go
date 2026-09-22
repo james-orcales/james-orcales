@@ -6,9 +6,9 @@
 // linter bans methods, so every operation is a free function named for what it does.
 package scalar
 
-import "local/james-orcales/shared/math/bits"
-import "local/james-orcales/shared/math/fixedpoint"
-import "local/james-orcales/shared/sim/aver/default"
+import "local/james-orcales/shared/std/math/bits"
+import "local/james-orcales/shared/std/math/fixedpoint"
+import "local/james-orcales/shared/std/sim/aver/default"
 
 // SCALE is the count of fixed-point units in one whole, repeated from fixedpoint so the
 // bounds below stay literal constant expressions the assertion analyzer can resolve.

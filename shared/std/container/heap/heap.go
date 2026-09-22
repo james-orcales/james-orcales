@@ -4,8 +4,8 @@
 // exchanges its two operands gives a maximum heap.
 package heap
 
-import "local/james-orcales/shared/sim/aver/default"
-import "local/james-orcales/shared/slices"
+import "local/james-orcales/shared/std/sim/aver/default"
+import "local/james-orcales/shared/std/slices"
 
 // ELEMENT_COUNT_MAXIMUM caps each element slice that crosses this deterministic package
 // boundary. It matches the repository slice boundary, so one common element count applies.

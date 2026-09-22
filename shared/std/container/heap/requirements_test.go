@@ -3,9 +3,9 @@ package heap_test
 import "cmp"
 import "testing"
 
-import "local/james-orcales/shared/container/heap"
-import "local/james-orcales/shared/slices"
-import "local/james-orcales/shared/testify"
+import "local/james-orcales/shared/std/container/heap"
+import "local/james-orcales/shared/std/slices"
+import "local/james-orcales/shared/std/testify"
 
 // Test_Initialization verifies the heap order after Initialize, its idempotence, and an
 // empty input.

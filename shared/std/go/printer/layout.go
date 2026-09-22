@@ -6,9 +6,9 @@
 // domain of each cursor rather than a part of it.
 package printer
 
-import "local/james-orcales/shared/go/ast"
-import "local/james-orcales/shared/go/token"
-import "local/james-orcales/shared/sim/aver/default"
+import "local/james-orcales/shared/std/go/ast"
+import "local/james-orcales/shared/std/go/token"
+import "local/james-orcales/shared/std/sim/aver/default"
 
 // Layout_Place is one step of the layout program.
 type Layout_Place int32

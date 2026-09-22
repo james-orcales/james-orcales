@@ -6,8 +6,8 @@
 // operation is a free function named for what it does, with the value it acts on first.
 package fixedpoint
 
-import "local/james-orcales/shared/math/bits"
-import "local/james-orcales/shared/sim/aver/default"
+import "local/james-orcales/shared/std/math/bits"
+import "local/james-orcales/shared/std/sim/aver/default"
 
 // FRACTION_DIGITS_MAXIMUM is how many fraction digits a parse reads. Ten digits scaled by
 // the fraction width would leave the signed range, thus the parse stops at nine.

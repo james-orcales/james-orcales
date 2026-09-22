@@ -6,9 +6,9 @@ import "runtime"
 import "syscall"
 import "unsafe"
 
-import "local/james-orcales/shared/encoding/binary"
-import "local/james-orcales/shared/sim/aver/default"
-import "local/james-orcales/shared/slices"
+import "local/james-orcales/shared/std/encoding/binary"
+import "local/james-orcales/shared/std/sim/aver/default"
+import "local/james-orcales/shared/std/slices"
 
 // Darwin exposes execve through its BSD syscall table.
 func system_execve(workspace_pointer unsafe.Pointer) (err error) {

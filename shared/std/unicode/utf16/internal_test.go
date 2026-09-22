@@ -6,7 +6,7 @@ package utf16
 import "runtime"
 import "testing"
 
-import "local/james-orcales/shared/slices"
+import "local/james-orcales/shared/std/slices"
 
 func upstream_character_size(character rune) (size int) {
   return int(Character_Size(Character(character)))

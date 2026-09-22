@@ -5,9 +5,9 @@ package nbio
 import "syscall"
 import "testing"
 
-import "local/james-orcales/shared/sim/nbio"
-import "local/james-orcales/shared/sim/time"
-import "local/james-orcales/shared/testify"
+import "local/james-orcales/shared/std/sim/nbio"
+import "local/james-orcales/shared/std/sim/time"
+import "local/james-orcales/shared/std/testify"
 
 // Darwin reports the applied byte quantity without the Linux accounting multiplier.
 func socket_test_default_buffers(

@@ -1,10 +1,10 @@
 // Package sha512 computes four FIPS 180-4 SHA-2 functions with caller-owned state.
 package sha512
 
-import "local/james-orcales/shared/bytes"
-import "local/james-orcales/shared/encoding/binary"
-import "local/james-orcales/shared/math/bits"
-import "local/james-orcales/shared/sim/aver/default"
+import "local/james-orcales/shared/std/bytes"
+import "local/james-orcales/shared/std/encoding/binary"
+import "local/james-orcales/shared/std/math/bits"
+import "local/james-orcales/shared/std/sim/aver/default"
 
 // STATE_LANE_COUNT stores full SHA-512 chaining state.
 const STATE_LANE_COUNT = binary.BITS_PER_BYTE

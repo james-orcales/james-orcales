@@ -2,10 +2,10 @@ package gzip_test
 
 import "testing"
 
-import "local/james-orcales/shared/compress/gzip"
-import "local/james-orcales/shared/hash/crc32"
-import "local/james-orcales/shared/math/bits"
-import "local/james-orcales/shared/testify"
+import "local/james-orcales/shared/std/compress/gzip"
+import "local/james-orcales/shared/std/hash/crc32"
+import "local/james-orcales/shared/std/math/bits"
+import "local/james-orcales/shared/std/testify"
 
 // Test_Gzip_Members protects stdlib interoperability and iterative concatenation.
 func Test_Gzip_Members(t *testing.T) {

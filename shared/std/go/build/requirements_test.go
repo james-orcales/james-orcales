@@ -3,12 +3,12 @@ package build_test
 import "errors"
 import "testing"
 
-import "local/james-orcales/shared/go/build"
-import "local/james-orcales/shared/go/token"
-import "local/james-orcales/shared/sim/nbio"
-import "local/james-orcales/shared/sim/time"
-import "local/james-orcales/shared/strconv"
-import "local/james-orcales/shared/testify"
+import "local/james-orcales/shared/std/go/build"
+import "local/james-orcales/shared/std/go/token"
+import "local/james-orcales/shared/std/sim/nbio"
+import "local/james-orcales/shared/std/sim/time"
+import "local/james-orcales/shared/std/strconv"
+import "local/james-orcales/shared/std/testify"
 
 // Test_Build binds the Build specification leaf before fixture declarations.
 func Test_Build(t *testing.T) {
@@ -206,7 +206,7 @@ func test_imports(t *testing.T) {
     {"xy", true, true},
     {"package one\n", true, true},
     {"package one\n\nimport \"unsafe\"\n", true, true},
-    {"package one\n\nimport \"local/james-orcales/shared/go/token\"\n", true, true},
+    {"package one\n\nimport \"local/james-orcales/shared/std/go/token\"\n", true, true},
     {"package one\n\nimport \"github.com/x/y\"\n", false, true},
     {"package one\n\nimport \"gopkg.in/yaml.v3\"\n", false, true},
     {"package one\n\nimport one \"github.com/x/y\"\n", false, true},

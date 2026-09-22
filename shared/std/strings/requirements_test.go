@@ -3,10 +3,10 @@ package strings_test
 import "testing"
 import "unsafe"
 
-import "local/james-orcales/shared/strings"
-import "local/james-orcales/shared/testify"
-import "local/james-orcales/shared/unicode/ucd"
-import "local/james-orcales/shared/unicode/utf8"
+import "local/james-orcales/shared/std/strings"
+import "local/james-orcales/shared/std/testify"
+import "local/james-orcales/shared/std/unicode/ucd"
+import "local/james-orcales/shared/std/unicode/utf8"
 
 // Test_Allocation proves each retained operation owns no heap storage.
 func Test_Allocation(t *testing.T) {

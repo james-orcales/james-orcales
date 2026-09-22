@@ -2,8 +2,8 @@ package bits_test
 
 import "testing"
 
-import "local/james-orcales/shared/math/bits"
-import "local/james-orcales/shared/testify"
+import "local/james-orcales/shared/std/math/bits"
+import "local/james-orcales/shared/std/testify"
 
 // Test_Word_Size verifies that the machine word width is one of the two widths Go
 // defines, and that it agrees with the size of a machine word.

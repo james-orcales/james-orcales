@@ -2,13 +2,13 @@ package hkdf_test
 
 import "testing"
 
-import "local/james-orcales/shared/crypto/hkdf"
-import "local/james-orcales/shared/crypto/hmac"
-import "local/james-orcales/shared/crypto/sha256"
-import "local/james-orcales/shared/crypto/sha512"
-import "local/james-orcales/shared/encoding/binary"
-import "local/james-orcales/shared/math/bits"
-import "local/james-orcales/shared/testify"
+import "local/james-orcales/shared/std/crypto/hkdf"
+import "local/james-orcales/shared/std/crypto/hmac"
+import "local/james-orcales/shared/std/crypto/sha256"
+import "local/james-orcales/shared/std/crypto/sha512"
+import "local/james-orcales/shared/std/encoding/binary"
+import "local/james-orcales/shared/std/math/bits"
+import "local/james-orcales/shared/std/testify"
 
 // Test_Reference_Values binds extract and expand to RFC 5869 test case one.
 func Test_Reference_Values(t *testing.T) {

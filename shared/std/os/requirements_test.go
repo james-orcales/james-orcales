@@ -2,10 +2,10 @@ package os_test
 
 import "testing"
 
-import "local/james-orcales/shared/math/bits"
-import "local/james-orcales/shared/os"
-import "local/james-orcales/shared/slices"
-import "local/james-orcales/shared/testify"
+import "local/james-orcales/shared/std/math/bits"
+import "local/james-orcales/shared/std/os"
+import "local/james-orcales/shared/std/slices"
+import "local/james-orcales/shared/std/testify"
 
 // Test_Virtual_OS_Arguments verifies caller storage cannot reach backend state.
 func Test_Virtual_OS_Arguments(t *testing.T) {

@@ -7,10 +7,10 @@ package nbio
 import "errors"
 import "unsafe"
 
-import "local/james-orcales/shared/math/bits"
-import "local/james-orcales/shared/sim/aver/default"
-import "local/james-orcales/shared/sim/prng"
-import "local/james-orcales/shared/sim/time"
+import "local/james-orcales/shared/std/math/bits"
+import "local/james-orcales/shared/std/sim/aver/default"
+import "local/james-orcales/shared/std/sim/prng"
+import "local/james-orcales/shared/std/sim/time"
 
 // State carries caller-owned procedure state without an unsafe pointer or captured closure.
 type State interface{}
@@ -1000,7 +1000,7 @@ func address_hexadecimal(character byte) (value byte, valid bool) {
   return 0, false
 }
 
-// These low-level readers stay here because shared/strings depends on the stream layer that
+// These low-level readers stay here because shared/std/strings depends on the stream layer that
 // nbio defines, so importing it would make the dependency cycle back into this package.
 func text_contains(source string, fragment string) (contained bool) {
   _, _, contained = text_cut(source, fragment)

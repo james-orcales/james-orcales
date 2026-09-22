@@ -5,8 +5,8 @@ import "reflect"
 import "testing"
 import "unsafe"
 
-import "local/james-orcales/shared/sim/nbio"
-import "local/james-orcales/shared/testify"
+import "local/james-orcales/shared/std/sim/nbio"
+import "local/james-orcales/shared/std/testify"
 
 // TEST_PREFIX_SIZE exposes preservation before appended bytes.
 const TEST_PREFIX_SIZE = 3

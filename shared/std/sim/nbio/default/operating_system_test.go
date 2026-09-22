@@ -10,12 +10,12 @@ import "syscall"
 import "testing"
 import "unsafe"
 
-import "local/james-orcales/shared/bytes"
-import "local/james-orcales/shared/filepath"
-import "local/james-orcales/shared/math/bits"
-import "local/james-orcales/shared/sim/nbio"
-import "local/james-orcales/shared/sim/time"
-import "local/james-orcales/shared/testify"
+import "local/james-orcales/shared/std/bytes"
+import "local/james-orcales/shared/std/filepath"
+import "local/james-orcales/shared/std/math/bits"
+import "local/james-orcales/shared/std/sim/nbio"
+import "local/james-orcales/shared/std/sim/time"
+import "local/james-orcales/shared/std/testify"
 
 // Run_Until cap of real-backend tests: generous, since completion return pump instant it fire —
 // this bound only bite genuine hang, and fail test instead of block until package timeout.

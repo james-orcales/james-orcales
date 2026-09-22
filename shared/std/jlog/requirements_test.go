@@ -4,11 +4,11 @@ import "errors"
 import "testing"
 import "unsafe"
 
-import "local/james-orcales/shared/encoding/json"
-import "local/james-orcales/shared/jlog"
-import "local/james-orcales/shared/sim/nbio"
-import "local/james-orcales/shared/sim/time"
-import "local/james-orcales/shared/testify"
+import "local/james-orcales/shared/std/encoding/json"
+import "local/james-orcales/shared/std/jlog"
+import "local/james-orcales/shared/std/sim/nbio"
+import "local/james-orcales/shared/std/sim/time"
+import "local/james-orcales/shared/std/testify"
 
 // Test_Message_Renders_Level_And_Message covers the minimal line: a level field
 // then the trailing message field, terminated by a newline.
@@ -84,7 +84,7 @@ func Test_Auto_Timestamp(t *testing.T) {
   assert_output(t, buffer, "{\"level\":\"info\",\"time\":\"2023-11-14T22:13:20Z\"}\n")
 }
 
-// Test_Time_And_Duration covers the shared/sim/time value encoders.
+// Test_Time_And_Duration covers the shared/std/sim/time value encoders.
 func Test_Time_And_Duration(t *testing.T) {
   buffer := &recording_buffer{}
   jlog.Logger_Info(

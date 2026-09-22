@@ -32,7 +32,7 @@ import (
 	"crypto/subtle"
 	"errors"
 	"io"
-	"local/james-orcales/shared/sim/prng"
+	"local/james-orcales/shared/std/sim/prng"
 	"math/big"
 
 	"golang.org/x/crypto/cryptobyte"

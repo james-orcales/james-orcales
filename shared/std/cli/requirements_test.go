@@ -3,15 +3,15 @@ package cli_test
 import "errors"
 import "testing"
 
-import "local/james-orcales/shared/cli"
-import "local/james-orcales/shared/filepath"
-import "local/james-orcales/shared/math/bits"
-import "local/james-orcales/shared/sim/nbio"
-import "local/james-orcales/shared/sim/time"
-import "local/james-orcales/shared/slices"
-import "local/james-orcales/shared/strconv"
-import "local/james-orcales/shared/strings"
-import "local/james-orcales/shared/testify"
+import "local/james-orcales/shared/std/cli"
+import "local/james-orcales/shared/std/filepath"
+import "local/james-orcales/shared/std/math/bits"
+import "local/james-orcales/shared/std/sim/nbio"
+import "local/james-orcales/shared/std/sim/time"
+import "local/james-orcales/shared/std/slices"
+import "local/james-orcales/shared/std/strconv"
+import "local/james-orcales/shared/std/strings"
+import "local/james-orcales/shared/std/testify"
 
 // Test_Parse_Commands verifies named, default, and unknown command resolution.
 func Test_Parse_Commands(t *testing.T) {
@@ -2376,7 +2376,7 @@ func drive_sim_operation(
   }
 }
 
-// The test root drives the parser because shared/cli cannot own the application timeline.
+// The test root drives the parser because shared/std/cli cannot own the application timeline.
 func drive_parser(
   t *testing.T,
   driver nbio.Driver,
@@ -6822,11 +6822,11 @@ func Test_Program_Constructors_Zero_Allocation(t *testing.T) {
     },
     func() {
       program = cli.New(
-          cli.New_Input{
-            Mode:  cli.PROGRAM_MODE_MULTICALL,
-            Label: "program", Commands: commands,
-          },
-        )
+        cli.New_Input{
+          Mode:  cli.PROGRAM_MODE_MULTICALL,
+          Label: "program", Commands: commands,
+        },
+      )
     },
   }
   for _, operation := range operations {
@@ -6846,56 +6846,56 @@ func Test_Option_Constructors_Zero_Allocation(t *testing.T) {
     func() { result = cli.New_Option(cli.New_Option_Input{Label: "x"}) },
     func() {
       result = cli.New_Option(cli.New_Option_Input{
-          Label: "x", Type: cli.OPTION_TYPE_INTEGER,
-        })
+        Label: "x", Type: cli.OPTION_TYPE_INTEGER,
+      })
     },
     func() {
       result = cli.New_Option(cli.New_Option_Input{
-          Label: "x", Type: cli.OPTION_TYPE_BOOLEAN,
-        })
+        Label: "x", Type: cli.OPTION_TYPE_BOOLEAN,
+      })
     },
     func() {
       result = cli.New_Option(cli.New_Option_Input{
-          Label: "x", Type: cli.OPTION_TYPE_STRINGS,
-        })
+        Label: "x", Type: cli.OPTION_TYPE_STRINGS,
+      })
     },
     func() {
       result = cli.New_Option(cli.New_Option_Input{
-          Label: "x", Type: cli.OPTION_TYPE_INTEGERS,
-        })
+        Label: "x", Type: cli.OPTION_TYPE_INTEGERS,
+      })
     },
     func() { result = cli.New_Option(cli.New_Option_Input{Label: "x", Is_Flag: true}) },
     func() {
       result = cli.New_Option(
-          cli.New_Option_Input{
-            Label: "x", Type: cli.OPTION_TYPE_INTEGER, Is_Flag: true,
-          },
-        )
+        cli.New_Option_Input{
+          Label: "x", Type: cli.OPTION_TYPE_INTEGER, Is_Flag: true,
+        },
+      )
     },
     func() {
       result = cli.New_Option(
-          cli.New_Option_Input{
-            Label: "x", Type: cli.OPTION_TYPE_BOOLEAN, Is_Flag: true,
-          },
-        )
+        cli.New_Option_Input{
+          Label: "x", Type: cli.OPTION_TYPE_BOOLEAN, Is_Flag: true,
+        },
+      )
     },
     func() {
       result = cli.New_Option(
-          cli.New_Option_Input{
-            Label: "x", String: "x", String_Enum: strings, Is_Flag: true,
-          },
-        )
+        cli.New_Option_Input{
+          Label: "x", String: "x", String_Enum: strings, Is_Flag: true,
+        },
+      )
     },
     func() {
       result = cli.New_Option(
-          cli.New_Option_Input{
-            Label:        "x",
-            Integer:      1,
-            Integer_Enum: integers,
-            Type:         cli.OPTION_TYPE_INTEGER,
-            Is_Flag:      true,
-          },
-        )
+        cli.New_Option_Input{
+          Label:        "x",
+          Integer:      1,
+          Integer_Enum: integers,
+          Type:         cli.OPTION_TYPE_INTEGER,
+          Is_Flag:      true,
+        },
+      )
     },
     func() {
       result = cli.New_Option(cli.New_Option_Input{
@@ -6904,10 +6904,10 @@ func Test_Option_Constructors_Zero_Allocation(t *testing.T) {
     },
     func() {
       result = cli.New_Option(
-          cli.New_Option_Input{
-            Label: "x", Integer_Enum: integers, Type: cli.OPTION_TYPE_INTEGER,
-          },
-        )
+        cli.New_Option_Input{
+          Label: "x", Integer_Enum: integers, Type: cli.OPTION_TYPE_INTEGER,
+        },
+      )
     },
   }
   for _, operation := range operations {
@@ -6928,50 +6928,50 @@ func Test_External_Constructors_Zero_Allocation(t *testing.T) {
   operations := [...]func(){
     func() {
       environment = cli.New_Environment_Variable(
-          cli.New_Environment_Variable_Input{
-            Key: "X", Type: cli.OPTION_TYPE_INTEGER,
-          },
-        )
+        cli.New_Environment_Variable_Input{
+          Key: "X", Type: cli.OPTION_TYPE_INTEGER,
+        },
+      )
     },
     func() {
       environment = cli.New_Environment_Variable(
-          cli.New_Environment_Variable_Input{
-            Key: "X", Type: cli.OPTION_TYPE_BOOLEAN,
-          },
-        )
+        cli.New_Environment_Variable_Input{
+          Key: "X", Type: cli.OPTION_TYPE_BOOLEAN,
+        },
+      )
     },
     func() {
       environment = cli.New_Environment_Variable(
-          cli.New_Environment_Variable_Input{Key: "X"},
-        )
+        cli.New_Environment_Variable_Input{Key: "X"},
+      )
     },
     func() {
       environment = cli.New_Environment_Variable(
-          cli.New_Environment_Variable_Input{
-            Key: "X", String: "x", String_Enum: strings,
-          },
-        )
+        cli.New_Environment_Variable_Input{
+          Key: "X", String: "x", String_Enum: strings,
+        },
+      )
     },
     func() {
       environment = cli.New_Environment_Variable(
-          cli.New_Environment_Variable_Input{
-            Key:          "X",
-            Type:         cli.OPTION_TYPE_INTEGER,
-            Integer:      1,
-            Integer_Enum: integers,
-          },
-        )
+        cli.New_Environment_Variable_Input{
+          Key:          "X",
+          Type:         cli.OPTION_TYPE_INTEGER,
+          Integer:      1,
+          Integer_Enum: integers,
+        },
+      )
     },
     func() { secret = cli.New_Secret(cli.New_Secret_Input{Paths: paths}) },
     func() {
       secret = cli.New_Secret(cli.New_Secret_Input{
-          Paths: paths, Type: cli.OPTION_TYPE_INTEGER,
-        })
+        Paths: paths, Type: cli.OPTION_TYPE_INTEGER,
+      })
     },
     func() {
       secret = cli.New_Secret(cli.New_Secret_Input{
-          Paths: paths, Type: cli.OPTION_TYPE_BOOLEAN,
-        })
+        Paths: paths, Type: cli.OPTION_TYPE_BOOLEAN,
+      })
     },
     func() {
       secret = cli.New_Secret(cli.New_Secret_Input{
@@ -6980,11 +6980,11 @@ func Test_External_Constructors_Zero_Allocation(t *testing.T) {
     },
     func() {
       secret = cli.New_Secret(
-          cli.New_Secret_Input{
-            Paths: paths, Type: cli.OPTION_TYPE_INTEGER,
-            Integer_Enum: integers,
-          },
-        )
+        cli.New_Secret_Input{
+          Paths: paths, Type: cli.OPTION_TYPE_INTEGER,
+          Integer_Enum: integers,
+        },
+      )
     },
   }
   for _, operation := range operations {
@@ -7964,8 +7964,8 @@ func Test_Completion_Zero_Allocation(t *testing.T) {
   testify.Zero_Allocation(t, func() {
     cli.Output_Reset(cli_output_reference(&output))
     handled = cli.Handle_Completion(
-        program, args, cli_output_reference(&output), storage[:],
-      )
+      program, args, cli_output_reference(&output), storage[:],
+    )
   })
   if !handled {
     t.Fatal("allocation completion request was not handled")

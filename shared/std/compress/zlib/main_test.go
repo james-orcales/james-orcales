@@ -2,7 +2,7 @@ package zlib_test
 
 import "testing"
 
-import "local/james-orcales/shared/sim/aver/default"
+import "local/james-orcales/shared/std/sim/aver/default"
 
 // TestMain registers package invariant roots before the specification runs.
 func TestMain(m *testing.M) {

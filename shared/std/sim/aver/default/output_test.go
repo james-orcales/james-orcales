@@ -8,7 +8,7 @@ import "os"
 import "strings"
 import "testing"
 
-import "local/james-orcales/shared/sim/aver"
+import "local/james-orcales/shared/std/sim/aver"
 
 // OVERFLOW_FIXTURE_BYTES_MAX bounds the fixture read. Two records fit far inside it, thus a short
 // read is what proves the whole artifact was taken.

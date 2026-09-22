@@ -2,9 +2,9 @@ package aver_test
 
 import "testing"
 
-import core "local/james-orcales/shared/sim/aver"
-import "local/james-orcales/shared/sim/aver/default"
-import "local/james-orcales/shared/testify"
+import core "local/james-orcales/shared/std/sim/aver"
+import "local/james-orcales/shared/std/sim/aver/default"
+import "local/james-orcales/shared/std/testify"
 
 // Default_Allocation_Subject keeps Tree's type lookup real in each enforcing build.
 type Default_Allocation_Subject int

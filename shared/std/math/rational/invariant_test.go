@@ -2,8 +2,8 @@ package rational
 
 import "testing"
 
-import "local/james-orcales/shared/math/bits"
-import "local/james-orcales/shared/math/integer"
+import "local/james-orcales/shared/std/math/bits"
+import "local/james-orcales/shared/std/math/integer"
 
 // Test_Internal_Invariant_Domains feeds storage edges through production entry points, because
 // normalised ratios cannot preserve every machine word in every limb.

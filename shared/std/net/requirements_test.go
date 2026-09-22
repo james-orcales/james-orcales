@@ -2,11 +2,11 @@ package network_test
 
 import "testing"
 
-import "local/james-orcales/shared/crypto/prng"
-import "local/james-orcales/shared/encoding/binary"
-import "local/james-orcales/shared/net"
-import "local/james-orcales/shared/sim/nbio"
-import "local/james-orcales/shared/sim/time"
+import "local/james-orcales/shared/std/crypto/prng"
+import "local/james-orcales/shared/std/encoding/binary"
+import "local/james-orcales/shared/std/net"
+import "local/james-orcales/shared/std/sim/nbio"
+import "local/james-orcales/shared/std/sim/time"
 
 // Test_Name protects host grammar before untrusted text reaches wire encoder.
 func Test_Name(t *testing.T) {

@@ -2,9 +2,9 @@ package time_test
 
 import "testing"
 
-import "local/james-orcales/shared/math/bits"
-import "local/james-orcales/shared/sim/time"
-import "local/james-orcales/shared/testify"
+import "local/james-orcales/shared/std/math/bits"
+import "local/james-orcales/shared/std/sim/time"
+import "local/james-orcales/shared/std/testify"
 
 // Test_Civil_Calendar converts Unix-relative days across leap-century boundaries and returns each
 // exact input through inverse conversion.

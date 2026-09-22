@@ -3,10 +3,10 @@ package types_test
 import "fmt"
 import "testing"
 
-import "local/james-orcales/shared/go/ast"
-import "local/james-orcales/shared/go/token"
-import "local/james-orcales/shared/go/types"
-import "local/james-orcales/shared/testify"
+import "local/james-orcales/shared/std/go/ast"
+import "local/james-orcales/shared/std/go/token"
+import "local/james-orcales/shared/std/go/types"
+import "local/james-orcales/shared/std/testify"
 
 // Test_Module binds the Module specification leaf before fixture declarations.
 func Test_Module(t *testing.T) {
@@ -2151,8 +2151,8 @@ func allocation_type_checks(t *testing.T, state allocation_state) {
     }},
     {Name: "Type_Element_Count_Of", Call: func() {
       state.Held.Element_Count = types.Type_Element_Count_Of(
-          state.Subject, state.Type,
-        )
+        state.Subject, state.Type,
+      )
     }},
     {Name: "Type_Symbol_Of", Call: func() {
       state.Held.Type_Symbol = types.Type_Symbol_Of(state.Subject, state.Type)
@@ -2168,8 +2168,8 @@ func allocation_type_checks(t *testing.T, state allocation_state) {
     }},
     {Name: "Member_Symbol_Of", Call: func() {
       state.Held.Member_Symbol = types.Member_Symbol_Of(
-          state.Subject, state.Member,
-        )
+        state.Subject, state.Member,
+      )
     }},
     {Name: "Member_Next_Of", Call: func() {
       state.Held.Member_Next = types.Member_Next_Of(state.Subject, state.Member)

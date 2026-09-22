@@ -1,10 +1,10 @@
 # aver
 
-`shared/sim/aver` contains the pure assertion engine.
-`shared/sim/aver/default` supplies the OS-backed recorder. It also supplies the
+`shared/std/sim/aver` contains the pure assertion engine.
+`shared/std/sim/aver/default` supplies the OS-backed recorder. It also supplies the
 package-level API for application code.
 
-Application code and canonical `TestMain` functions import `shared/sim/aver/default`.
+Application code and canonical `TestMain` functions import `shared/std/sim/aver/default`.
 The complete API, registration rules, coverage rules, build modes, and output contract are in
 [`SPECIFICATION.md`](SPECIFICATION.md).
 

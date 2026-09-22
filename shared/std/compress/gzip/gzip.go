@@ -1,11 +1,11 @@
 // Package gzip bounds RFC 1952 members with caller-owned storage.
 package gzip
 
-import "local/james-orcales/shared/compress/flate"
-import "local/james-orcales/shared/encoding/binary"
-import "local/james-orcales/shared/hash/crc32"
-import "local/james-orcales/shared/sim/aver/default"
-import "local/james-orcales/shared/unicode/utf8"
+import "local/james-orcales/shared/std/compress/flate"
+import "local/james-orcales/shared/std/encoding/binary"
+import "local/james-orcales/shared/std/hash/crc32"
+import "local/james-orcales/shared/std/sim/aver/default"
+import "local/james-orcales/shared/std/unicode/utf8"
 
 // BYTE_COUNT_MAXIMUM keeps wrapper storage inside raw DEFLATE boundary.
 const BYTE_COUNT_MAXIMUM = flate.BYTE_COUNT_MAXIMUM

@@ -2,9 +2,9 @@ package levenshtein_test
 
 import "testing"
 
-import "local/james-orcales/shared/diff/levenshtein"
-import "local/james-orcales/shared/strings"
-import "local/james-orcales/shared/testify"
+import "local/james-orcales/shared/std/diff/levenshtein"
+import "local/james-orcales/shared/std/strings"
+import "local/james-orcales/shared/std/testify"
 
 // Test_Distance_Cases covers equality, edits, symmetry, Unicode, and bounds.
 func Test_Distance_Cases(t *testing.T) {

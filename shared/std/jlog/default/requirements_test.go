@@ -3,13 +3,13 @@ package jlog_test
 import "errors"
 import "testing"
 
-import library "local/james-orcales/shared/jlog"
-import "local/james-orcales/shared/jlog/default"
-import "local/james-orcales/shared/math/bits"
-import "local/james-orcales/shared/sim/nbio"
-import system_io "local/james-orcales/shared/sim/nbio/default"
-import "local/james-orcales/shared/sim/time"
-import system_time "local/james-orcales/shared/sim/time/default"
+import library "local/james-orcales/shared/std/jlog"
+import "local/james-orcales/shared/std/jlog/default"
+import "local/james-orcales/shared/std/math/bits"
+import "local/james-orcales/shared/std/sim/nbio"
+import system_io "local/james-orcales/shared/std/sim/nbio/default"
+import "local/james-orcales/shared/std/sim/time"
+import system_time "local/james-orcales/shared/std/sim/time/default"
 
 // Test_Default_Floor_Is_Info covers New_Default_Logger building with an Info floor, so trace and
 // debug noise stays out of the stderr stream unless a caller raises verbosity explicitly.

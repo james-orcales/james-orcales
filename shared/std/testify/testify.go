@@ -2,7 +2,7 @@
 // assert/require surface (MIT, Mat Ryer and Tyler Bunnell; see LICENSE.mit.stretchr).
 // It keeps testify's assertion vocabulary but rebuilds the internals and calling
 // convention in the house idiom, so it drops into deterministic tests the way
-// shared/snap and shared/lru do.
+// shared/std/snap and shared/lru do.
 //
 // Every deviation from upstream is deliberate:
 //   - There is one flat package, not assert plus require. Every assertion reports through
@@ -21,9 +21,9 @@
 //     keeps the plain call shape. Only the arithmetic and ordering assertions, whose two
 //     operands share one concrete type, use an input struct, exactly as fixedpoint does.
 //   - Failure values render with fmt, not the vendored go-spew, and diffs render with
-//     shared/diff/myers, not the vendored go-difflib.
+//     shared/std/diff/myers, not the vendored go-difflib.
 //   - InDelta and InEpsilon were float64, which a deterministic package bans, so they are
-//     rebuilt on shared/math/fixedpoint. WithinDuration compares shared/sim/time moments.
+//     rebuilt on shared/std/math/fixedpoint. WithinDuration compares shared/std/sim/time moments.
 //   - The environment-dependent assertions take an injected Asserter: File_Exists reads an
 //     file-stat procedure, and Eventually and Never poll on an injected io loop the caller drives.
 //   - HTTP assertions, YAMLEq (JSON_Eq stays), and the mock, suite, and http sub-packages
@@ -38,12 +38,12 @@ import "regexp"
 import "testing"
 import "unsafe"
 
-import "local/james-orcales/shared/diff/myers"
-import "local/james-orcales/shared/encoding/json"
-import "local/james-orcales/shared/math/fixedpoint"
-import "local/james-orcales/shared/sim/aver/default"
-import "local/james-orcales/shared/sim/nbio"
-import "local/james-orcales/shared/sim/time"
+import "local/james-orcales/shared/std/diff/myers"
+import "local/james-orcales/shared/std/encoding/json"
+import "local/james-orcales/shared/std/math/fixedpoint"
+import "local/james-orcales/shared/std/sim/aver/default"
+import "local/james-orcales/shared/std/sim/nbio"
+import "local/james-orcales/shared/std/sim/time"
 
 // Asserter carries the ambient collaborators the environment-dependent assertions need.
 // The pure assertions ignore it and take only the testing handle; only the File and

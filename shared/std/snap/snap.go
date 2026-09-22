@@ -18,9 +18,9 @@ import "sync"
 import "testing"
 import "unsafe"
 
-import "local/james-orcales/shared/diff/myers"
-import "local/james-orcales/shared/path"
-import "local/james-orcales/shared/sim/aver/default"
+import "local/james-orcales/shared/std/diff/myers"
+import "local/james-orcales/shared/std/path"
+import "local/james-orcales/shared/std/sim/aver/default"
 
 // Keys the diff colors so readers can map - / + to red / green without
 // consulting docs. Embedded in every Snapshot mismatch header.

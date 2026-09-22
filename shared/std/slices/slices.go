@@ -4,8 +4,8 @@ package slices
 import "cmp"
 import "unsafe"
 
-import "local/james-orcales/shared/math/bits"
-import "local/james-orcales/shared/sim/aver/default"
+import "local/james-orcales/shared/std/math/bits"
+import "local/james-orcales/shared/std/sim/aver/default"
 
 // SLICE_COUNT_MAXIMUM caps each slice that crosses this deterministic package boundary.
 // It matches the repository text and buffer boundary, so one common element count applies.

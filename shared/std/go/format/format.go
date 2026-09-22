@@ -4,10 +4,10 @@
 // the policy above it, thus one place states the form and every caller reads the same answer.
 package format
 
-import "local/james-orcales/shared/go/ast"
-import "local/james-orcales/shared/go/printer"
-import "local/james-orcales/shared/go/token"
-import "local/james-orcales/shared/sim/aver/default"
+import "local/james-orcales/shared/std/go/ast"
+import "local/james-orcales/shared/std/go/printer"
+import "local/james-orcales/shared/std/go/token"
+import "local/james-orcales/shared/std/sim/aver/default"
 
 // IMPORT_HEAD is the text one import declaration opens with.
 const IMPORT_HEAD = "import "

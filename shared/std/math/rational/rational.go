@@ -3,8 +3,8 @@
 // float. Every value is two fixed arrays the caller holds, thus no operation allocates.
 package rational
 
-import "local/james-orcales/shared/math/integer"
-import "local/james-orcales/shared/sim/aver/default"
+import "local/james-orcales/shared/std/math/integer"
+import "local/james-orcales/shared/std/sim/aver/default"
 
 // TEXT_SIZE_MINIMUM admits no output.
 const TEXT_SIZE_MINIMUM = 0
