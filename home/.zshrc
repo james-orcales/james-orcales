@@ -4,6 +4,11 @@ plugin_dir=${${(%):-%x}:A:h}
 
 # Per-host feature branch. `set -q BRANCH; or set -gx BRANCH james` in fish.
 export BRANCH="${BRANCH:-james}"
+_branch_base="$BRANCH"
+_branch_from_pwd() { [[ $PWD == *2 ]] && BRANCH=james2 || BRANCH=$_branch_base; }
+autoload -Uz add-zsh-hook
+add-zsh-hook chpwd _branch_from_pwd
+_branch_from_pwd
 
 # Force emacs keybindings. Without this, zsh auto-selects VI mode because
 # $EDITOR=nvim matches *vi*. Must precede every bindkey below (they attach to
@@ -109,7 +114,7 @@ typeset -A abbreviations=(
         gc1n  'git clone --depth=1 --no-single-branch'
         gcfb  'git clone --filter=blob:none'
 
-        ghpr 'jj git push --bookmark $BRANCH && gh pr create --title="!!" --fill-verbose --base main --head $BRANCH; gh pr view --web $BRANCH'
+        ghpr $'jj git push --bookmark $BRANCH && gh pr create --title=\'!!\' --fill-verbose --base main --head $BRANCH; gh pr view --web $BRANCH'
 
         stdrs 'cd $(rustc --print sysroot)/lib/rustlib/src/rust/library/ && nvim .'
         stdgo 'cd $(go env GOROOT)/src/ && nvim .'

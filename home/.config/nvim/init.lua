@@ -71,9 +71,9 @@ vim.opt.ignorecase = true
 vim.opt.number = true
 vim.opt.relativenumber = true
 
-vim.opt.tabstop = 8
-vim.opt.softtabstop = 8
-vim.opt.shiftwidth = 8
+vim.opt.tabstop = 2
+vim.opt.softtabstop = 2
+vim.opt.shiftwidth = 2
 vim.opt.expandtab = true
 
 vim.opt.smartindent = true
@@ -241,15 +241,19 @@ xplat_set("n", ";", "mzA;<ESC>`z")
 
 -- Insert a comment header in this format: // === MY HEADER ========================================================================================
 vim.keymap.set("n", "==", function()
-	local ok, header = pcall(vim.fn.input, "Header: ")
-	if not ok or header == "" then
-		return
-	end
-	header = string.upper(header)
-	local comment = "// === " .. header .. " "
-	comment = comment .. string.rep("=", 200)
-	vim.api.nvim_put({ comment }, "l", true, true)
-	vim.cmd("normal! kV=0161|D_")
+  local ok, header = pcall(vim.fn.input, "Header: ")
+  if not ok or header == "" then
+      return
+  end
+  local row = vim.api.nvim_win_get_cursor(0)[1]
+  vim.api.nvim_buf_set_lines(0, row, row, true, { "//" })
+  vim.api.nvim_win_set_cursor(0, { row + 1, 0 })
+  vim.cmd("normal! ==")
+  local lead = vim.api.nvim_get_current_line():match("^%s*")
+  local room = math.max(0, 100 - vim.fn.strdisplaywidth(lead) - #"// === " - #" ===")
+  local line = lead .. "// === " .. string.upper(header):sub(1, room) .. " "
+  line = line .. string.rep("=", 100 - vim.fn.strdisplaywidth(line))
+  vim.api.nvim_set_current_line(line)
 end)
 
 vim.keymap.set({ "v", "x" }, "gw", function()
