@@ -92,28 +92,36 @@ func TestMain(m *testing.M) { return }
 	}
 }
 
-// Test_Line_Character_Count_Tabs verifies that tabs count as TAB_WIDTH chars (not 1)
-// when measuring line length against the LINE_CHARS_MAX limit.
+// Test_Line_Character_Count_Tabs verifies that a tab counts as TAB_WIDTH (2)
+// columns when measuring line length against the LINE_CHARS_MAX limit: a line
+// of exactly LINE_CHARS_MAX columns passes, one column more is flagged.
 func Test_Line_Character_Count_Tabs(t *testing.T) {
 	t.Parallel()
-	// 18 tabs * 8 = 144 column width; far under the 140 limit if tabs count
-	// as 1, well over if tabs count as 8. Inline comments are exempt from
-	// comment-sentence rules, so this stays a pure line-length test.
-	tabs := ""
-	for range 18 {
-		tabs += "\t"
+	// Inline comments are exempt from comment-sentence rules, so this stays a
+	// pure line-length test. 18 tabs are 36 columns at width 2, 144 at width 8.
+	prefix := "func f() (result int) { return 1 } //" + strings.Repeat("\t", 18)
+	line := func(columns int) (source string) {
+		tail := strings.Repeat("x", columns-len(prefix)+18-18*2)
+		return "package main\n" + prefix + tail + "\n"
 	}
-	source := "package main\nfunc f() (result int) { return 1 } //" + tabs + "tail\n"
-	fsys_map := fstest.MapFS{"test.go": &fstest.MapFile{
-		Data: []byte(source)}}
-	stdout := &strings.Builder{}
-	code := lint_main(t, &lint.Main_Input{
-		Fsys: fsys_map, Stdout: stdout, Stderr: &strings.Builder{}})
-	if code == 0 {
-		t.Fatalf("expected line-length diagnostic, got exit 0; output: %s", stdout.String())
+	cases := []struct {
+		columns int
+		flagged bool
+	}{
+		{columns: 100, flagged: false},
+		{columns: 101, flagged: true},
 	}
-	if !strings.Contains(stdout.String(), "The line has") {
-		t.Errorf("expected line-length diagnostic, got: %s", stdout.String())
+	for _, c := range cases {
+		stdout := &strings.Builder{}
+		lint_main(t, &lint.Main_Input{
+			Fsys: fstest.MapFS{"test.go": &fstest.MapFile{
+				Data: []byte(line(c.columns))}},
+			Stdout: stdout, Stderr: &strings.Builder{}})
+		got := strings.Contains(stdout.String(), "The line has")
+		if got != c.flagged {
+			t.Errorf("columns %d: flagged %v, want %v; output: %s",
+				c.columns, got, c.flagged, stdout.String())
+		}
 	}
 }
 
@@ -2387,6 +2395,29 @@ func Test_Stream_Markdown_Display_Width(t *testing.T) {
 	output := run_stream(t, map[string]string{"docs.md": wide})
 	if !strings.Contains(output, "The markdown line has") {
 		t.Errorf("expected width diag for wide runes, got: %s", output)
+	}
+}
+
+// A tab counts as two display columns in markdown: 40 tabs and 20 runes fill
+// exactly 100 columns and pass, one more rune is flagged.
+func Test_Stream_Markdown_Tab_Width(t *testing.T) {
+	t.Parallel()
+	tabs := strings.Repeat("\t", 40)
+	cases := []struct {
+		tail    int
+		flagged bool
+	}{
+		{tail: 20, flagged: false},
+		{tail: 21, flagged: true},
+	}
+	for _, c := range cases {
+		source := "```\n" + tabs + strings.Repeat("x", c.tail) + "\n```\n"
+		output := run_stream(t, map[string]string{"docs.md": source})
+		got := strings.Contains(output, "The markdown line has")
+		if got != c.flagged {
+			t.Errorf("tail %d: flagged %v, want %v; output: %s",
+				c.tail, got, c.flagged, output)
+		}
 	}
 }
 

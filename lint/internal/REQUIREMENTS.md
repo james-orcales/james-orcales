@@ -68,8 +68,8 @@ These rules govern every tracked Markdown file; the Line Width cap also binds so
 
 ### Line Width
 
-A line spans at most 100 display columns, a wide rune counting two, a tab expanding to the next
-eight-column stop, a combining or zero-width mark none. Outside fenced code a sole URL or a table
+A line spans at most 100 display columns, a wide rune counting two, a tab counting two, a
+combining or zero-width mark none. Outside fenced code a sole URL or a table
 row is exempt (neither can wrap), as is a source line in a backtick raw string literal.
 
 ### Whitespace

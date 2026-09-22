@@ -35,7 +35,7 @@ import (
 const LINE_CHARS_MAX = 100
 
 // TAB_WIDTH is the display-column advance the line-length check charges for each tab.
-const TAB_WIDTH = 8
+const TAB_WIDTH = 2
 
 // Hi bounds for Distinct_Boundary axes on string lengths. Each constant
 // encodes the realistic upper bound for the semantic domain that the
@@ -8916,9 +8916,8 @@ func check_symlink_entry(
 // rationales evaporate — the line is literal code — so no exemption applies and
 // every line is held to the cap.
 // Display width approximates what a fixed-width terminal renders, the property
-// "visual limit" always meant but rune count only approximated: a tab advances
-// to the next eight-column stop, an East Asian wide or fullwidth rune occupies
-// two columns, a nonspacing or enclosing mark occupies none, every other rune
+// "visual limit" always meant but rune count only approximated: a tab occupies
+// TAB_WIDTH columns, an East Asian wide or fullwidth rune occupies two columns, a nonspacing or enclosing mark occupies none, every other rune
 // one. The wide ranges are a stdlib-only stand-in for the exhaustive East Asian
 // Width property (golang.org/x/text/width), which this package forgoes to stay
 // dependency-free.
@@ -8926,7 +8925,7 @@ func display_width(text string) (width int) {
 	for _, glyph := range text {
 		switch {
 		case glyph == '\t':
-			width += 8 - width%8
+			width += TAB_WIDTH
 		case character_is_mark(glyph):
 		case display_glyph_wide(glyph):
 			width += 2
