@@ -16,9 +16,9 @@ import (
 	"sync"
 	"unicode/utf8"
 
-	"local/james-orcales/shared/cli"
-	"local/james-orcales/shared/encoding/flatjson"
 	invariant "local/james-orcales/shared/invariant/default"
+	"local/james-orcales/shared/std/cli"
+	"local/james-orcales/shared/std/encoding/flatjson"
 )
 
 // EXIT_SUCCESS is the status of a run that counted and rendered without fault.
