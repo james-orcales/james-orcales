@@ -17,8 +17,8 @@ import (
 	"strings"
 	"testing"
 
-	"local/james-orcales/shared/cli"
-	"local/james-orcales/shared/math/fixedpoint"
+	"local/james-orcales/shared/std/cli"
+	"local/james-orcales/shared/std/math/fixedpoint"
 )
 
 // Test_Pdf_Fixedpoint_Adapters protects the typed boundary because all parsed PDF coordinates

@@ -23,9 +23,9 @@ import (
 	"unicode/utf16"
 	"unicode/utf8"
 
-	"local/james-orcales/shared/cli"
-	bounded_zlib "local/james-orcales/shared/compress/zlib"
-	"local/james-orcales/shared/math/fixedpoint"
+	"local/james-orcales/shared/std/cli"
+	bounded_zlib "local/james-orcales/shared/std/compress/zlib"
+	"local/james-orcales/shared/std/math/fixedpoint"
 )
 
 // Main_Input keeps all host access outside the command policy.
