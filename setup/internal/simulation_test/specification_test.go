@@ -4,7 +4,8 @@ import (
 	"fmt"
 	"testing"
 
-	snap "local/james-orcales/shared/snap/default"
+	snap "local/james-orcales/shared/std/snap/default"
+	library "local/james-orcales/shared/std/snap"
 )
 
 // Test_Main_Reproduces_Each_Stream freezes each named stream before the harness consumes it.
@@ -12,7 +13,7 @@ func Test_Main_Reproduces_Each_Stream(t *testing.T) {
 	t.Parallel()
 	entries := []struct {
 		Name     string
-		Snapshot snap.Snapshot
+		Snapshot library.Snapshot
 	}{
 		{Name: "configuration_home", Snapshot: snap.Init(`[4583841352596227090 10276703781306274186 3382288581075887249]`)},
 		{Name: "configuration_operating_system", Snapshot: snap.Init(`[16521629639822800165 2736766839171971727 8218131234678978069]`)},

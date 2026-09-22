@@ -10,13 +10,13 @@ import (
 	"testing"
 
 	setup "local/james-orcales/setup/internal"
-	shared_bytes "local/james-orcales/shared/bytes"
+	shared_bytes "local/james-orcales/shared/std/bytes"
 	invariant "local/james-orcales/shared/invariant/default"
 	sysio "local/james-orcales/shared/io"
 	"local/james-orcales/shared/random/prng"
-	shared_slices "local/james-orcales/shared/slices"
-	shared_strconv "local/james-orcales/shared/strconv"
-	shared_strings "local/james-orcales/shared/strings"
+	shared_slices "local/james-orcales/shared/std/slices"
+	shared_strconv "local/james-orcales/shared/std/strconv"
+	shared_strings "local/james-orcales/shared/std/strings"
 	systime "local/james-orcales/shared/time"
 )
 

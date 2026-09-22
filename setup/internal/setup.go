@@ -13,12 +13,12 @@ import (
 	"fmt"
 	"path/filepath"
 
-	shared_bytes "local/james-orcales/shared/bytes"
+	shared_bytes "local/james-orcales/shared/std/bytes"
 	invariant "local/james-orcales/shared/invariant/default"
 	sysio "local/james-orcales/shared/io"
-	"local/james-orcales/shared/jlog"
-	shared_slices "local/james-orcales/shared/slices"
-	shared_strings "local/james-orcales/shared/strings"
+	"local/james-orcales/shared/std/jlog"
+	shared_slices "local/james-orcales/shared/std/slices"
+	shared_strings "local/james-orcales/shared/std/strings"
 	systime "local/james-orcales/shared/time"
 )
 

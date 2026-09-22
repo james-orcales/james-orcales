@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	setup "local/james-orcales/setup/internal"
-	shared_bytes "local/james-orcales/shared/bytes"
+	shared_bytes "local/james-orcales/shared/std/bytes"
 	sysio "local/james-orcales/shared/io"
 	systime "local/james-orcales/shared/time"
 )
