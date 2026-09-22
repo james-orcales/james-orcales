@@ -1,9 +1,9 @@
 
 # Host
 
-Host composition supplies process identity, executable path, working directory, hostname,
-arguments, and environment. Arguments and environment reflect live process state; copied
-arguments cannot mutate runtime storage, and self exec distinguishes nil from empty environment.
+Host supplies process identity, executable path, working directory, hostname, and live arguments
+and environment; copied arguments cannot mutate runtime storage. Self exec tells nil from empty
+environment, and a host that lends it no workspace holds none and refuses it.
 
 # Exit
 

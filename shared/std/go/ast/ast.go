@@ -1,6 +1,7 @@
 // Package ast parses Go source into a node arena. The caller owns one Parse_State and every
 // node is a slot in caller storage, thus a parse allocates nothing. The grammar reads all of Go,
-// and logs each form this repository's linter refuses. The grammar is a program of small steps rather than a
+// and logs each form this repository's linter refuses. The grammar is a program of small steps
+// rather than a
 // function for each rule, because a rule function runs only where its syntax stands and would owe
 // every read position and every arena count at a call site that never meets most of them.
 package ast
@@ -598,7 +599,11 @@ type Precedence int
 // states.
 func Precedence_Invariants(value Precedence, namespace aver.Namespace) {
   aver.Tree(value, namespace).
-    Range_Int(int(value), int(PRECEDENCE_NONE), int(PRECEDENCE_MULTIPLICATION)).
+    Range_Int(
+    int(value),
+    int(PRECEDENCE_NONE),
+    int(PRECEDENCE_MULTIPLICATION),
+  ).
     Ensure()
 }
 
@@ -1537,7 +1542,11 @@ type Held_Level Precedence
 // states.
 func Held_Level_Invariants(value Held_Level, namespace aver.Namespace) {
   aver.Tree(value, namespace).
-    Range_Int(int(value), int(PRECEDENCE_NONE), int(PRECEDENCE_MULTIPLICATION)).
+    Range_Int(
+    int(value),
+    int(PRECEDENCE_NONE),
+    int(PRECEDENCE_MULTIPLICATION),
+  ).
     Ensure()
 }
 
@@ -1548,7 +1557,11 @@ type Callee_Level Precedence
 // Go states.
 func Callee_Level_Invariants(value Callee_Level, namespace aver.Namespace) {
   aver.Tree(value, namespace).
-    Range_Int(int(value), int(PRECEDENCE_NONE), int(PRECEDENCE_MULTIPLICATION)).
+    Range_Int(
+    int(value),
+    int(PRECEDENCE_NONE),
+    int(PRECEDENCE_MULTIPLICATION),
+  ).
     Ensure()
 }
 
@@ -1676,7 +1689,7 @@ func Parse(subject Parse_State_Handle, source token.Source) (tree Parse_Result) 
       Cursors:          opened,
     },
     Flags: Machine_Flags{Plain_Brace: false, Type_Assertion: false},
-    Log: log,
+    Log:   log,
   }
   if !bool(scanned) {
     log_error(log, FAILURE_TOKEN_COUNT, 0)
@@ -1765,7 +1778,6 @@ func log_result(log Error_Storage_Handle) (count Error_Count, first Refusal) {
   }
   return count, first
 }
-
 
 // Empties every token past the run one parse wrote, up to the first slot no parse wrote. A parse
 // before this one may have written a longer run, and a token it left would read as part of this

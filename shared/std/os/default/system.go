@@ -229,7 +229,8 @@ type Host struct {
   Working_Directory os.Working_Directory_Path
   // Hostname is caller-captured machine name.
   Hostname os.Hostname
-  // Self_Exec holds large caller-owned syscall workspace.
+  // Self_Exec holds large caller-owned syscall workspace, or nil for a process that never replaces
+  // its image, whose self exec then refuses.
   Self_Exec Self_Exec_Workspace_Pointer
 }
 
@@ -239,7 +240,6 @@ func Host_Invariants(host *Host, namespace aver.Namespace) {
   os.Working_Directory_Path_Invariants(host.Working_Directory, namespace)
   os.Hostname_Invariants(host.Hostname, namespace)
   Self_Exec_Workspace_Pointer_Invariants(host.Self_Exec, namespace)
-  aver.Always(host.Self_Exec != nil, "Host has caller-owned self-exec workspace.")
 }
 
 // Host_Pointer names caller-owned ambient process state.
@@ -326,6 +326,9 @@ func system_self_exec(
     environment = syscall.Environ()
   }
   workspace := (*Host)(state).Self_Exec
+  if workspace == nil {
+    return Self_Exec_Absent
+  }
   if len(path) > len(*workspace.Path)-SELF_EXEC_TEXT_TERMINATOR_BYTES {
     return syscall.E2BIG
   }
@@ -685,6 +688,9 @@ func File_Permission_Invariants(value File_Permission, namespace aver.Namespace)
   ).
     Ensure()
 }
+
+// Self_Exec_Absent is the refusal of a host that lent no self-exec workspace.
+var Self_Exec_Absent = errors.New("os: the host lent no self-exec workspace")
 
 // File_Too_Large reports a file past FILE_BYTES_MAXIMUM rather than reading part of it.
 var File_Too_Large = errors.New("os: file exceeds the synchronous read bound")

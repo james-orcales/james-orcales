@@ -515,12 +515,24 @@ func test_functions(t *testing.T) {
   state := parse_state()
   // A receiver that names no parameter may still name a generic type, because the bracket run
   // behind the type closes the list rather than opening an element type.
-  accepts(t, state, TEST_HEAD+"func (Pair[T]) f() (a A) {\n}\n",
-    []ast.Node_Kind{ast.NODE_RECEIVER, ast.NODE_GENERIC})
-  accepts(t, state, TEST_HEAD+"func (Map[K, V]) f() (a A) {\n}\n",
-    []ast.Node_Kind{ast.NODE_RECEIVER, ast.NODE_GENERIC})
-  accepts(t, state, TEST_HEAD+"func f(a [SIZE]T) {\n}\n",
-    []ast.Node_Kind{ast.NODE_PARAMETER_NAME, ast.NODE_ARRAY_TYPE})
+  accepts(
+    t,
+    state,
+    TEST_HEAD+"func (Pair[T]) f() (a A) {\n}\n",
+    []ast.Node_Kind{ast.NODE_RECEIVER, ast.NODE_GENERIC},
+  )
+  accepts(
+    t,
+    state,
+    TEST_HEAD+"func (Map[K, V]) f() (a A) {\n}\n",
+    []ast.Node_Kind{ast.NODE_RECEIVER, ast.NODE_GENERIC},
+  )
+  accepts(
+    t,
+    state,
+    TEST_HEAD+"func f(a [SIZE]T) {\n}\n",
+    []ast.Node_Kind{ast.NODE_PARAMETER_NAME, ast.NODE_ARRAY_TYPE},
+  )
   accepts(t, state, TEST_HEAD+"func f() {\n}\n",
     []ast.Node_Kind{ast.NODE_FUNCTION, ast.NODE_BLOCK})
   accepts(t, state, TEST_HEAD+"func f(a A, b B) (c C) {\n}\n",
@@ -701,8 +713,13 @@ func refuses(
     return
   }
   kinds := walk_kinds(state, ast.Index(tree.Root), nil)
-  testify.Not_Contains(t, kinds, ast.NODE_ERROR,
-    "the valid Go of %.24q parses whole under its refusal", text)
+  testify.Not_Contains(
+    t,
+    kinds,
+    ast.NODE_ERROR,
+    "the valid Go of %.24q parses whole under its refusal",
+    text,
+  )
   for index := range int(tree.Error_Count) {
     one := state.Errors.Values[index]
     testify.False(t, bool(stops(one.Code)),
@@ -736,8 +753,12 @@ func logged(
     if one.Code == code {
       found = true
     }
-    testify.False(t, one.Token < tree.Failure_Token,
-      "the result of %.24q names the earliest refusal", text)
+    testify.False(
+      t,
+      one.Token < tree.Failure_Token,
+      "the result of %.24q names the earliest refusal",
+      text,
+    )
   }
   testify.True(t, found, "the log of %.24q names code %d", text, int(code))
 }
@@ -848,7 +869,10 @@ func test_interface_methods(t *testing.T) {
   ast.Parse(state, token.Source(TEST_HEAD+"type R interface {\nRead(p []byte) (n int)\n}\n"))
   kinds := walk_kinds(state, ast.INDEX_FIRST, nil)
   for _, one := range []ast.Node_Kind{
-    ast.NODE_FIELD, ast.NODE_FIELD_NAME, ast.NODE_FUNCTION_TYPE, ast.NODE_RESULT,
+    ast.NODE_FIELD,
+    ast.NODE_FIELD_NAME,
+    ast.NODE_FUNCTION_TYPE,
+    ast.NODE_RESULT,
   } {
     testify.Contains(t, kinds, one, "the method holds kind %d", int(one))
   }
@@ -881,8 +905,12 @@ func test_wide_identifiers(t *testing.T) {
   source := TEST_HEAD + "var aé1 = 1\n"
   ast.Parse(state, token.Source(source))
   run := ast.Parse_State_Token_Run(state)
-  testify.Equal(t, "aé1", string(token.Text(token.Source(source), run[4])),
-    "the wide name scans as one token")
+  testify.Equal(
+    t,
+    "aé1",
+    string(token.Text(token.Source(source), run[4])),
+    "the wide name scans as one token",
+  )
   accepts(t, state, TEST_HEAD+"var a = \"é\"\n", []ast.Node_Kind{ast.NODE_STRING})
   accepts(t, state, TEST_HEAD+"// é\nvar a = 1\n", []ast.Node_Kind{ast.NODE_COMMENT})
 }
@@ -1597,7 +1625,8 @@ func test_error_log(t *testing.T) {
   state := parse_state()
   // Each refused form the source states lands in the log in the order the parse met it, and
   // the result names the earliest.
-  source := TEST_HEAD + "import . \"io\"\n" +
+  source := TEST_HEAD +
+    "import . \"io\"\n" +
     "type T = U\n" +
     "const a = iota\n" +
     "func f() A {\nif b && c {\nd()\n}\n}\n"

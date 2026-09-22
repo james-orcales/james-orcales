@@ -368,7 +368,10 @@ func test_identifiers(t *testing.T) {
   testify.Equal(
     t,
     []token.Kind{
-      token.KIND_ILLEGAL, token.KIND_ILLEGAL, token.KIND_IDENTIFIER, token.KIND_SEMICOLON,
+      token.KIND_ILLEGAL,
+      token.KIND_ILLEGAL,
+      token.KIND_IDENTIFIER,
+      token.KIND_SEMICOLON,
     },
     scan_kinds("١a"),
     "a wide digit opens no identifier",

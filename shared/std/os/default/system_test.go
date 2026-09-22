@@ -299,6 +299,14 @@ func test_operating_system_self_exec_environment(t *testing.T) {
   err = os.OS_Self_Exec(host, "/missing", nil, shared_os.Environment{})
   testify.Error(t, err)
   testify.False(t, (*state.Self_Exec.Environment_Pointers)[0] != nil)
+  // A host that never replaces its image lends no workspace, and self exec refuses.
+  bare := test_host()
+  bare.Self_Exec = nil
+  testify.Equal(
+    t,
+    os.Self_Exec_Absent,
+    os.OS_Self_Exec(os.New_Operating_System(&bare), "/bin/true", nil, nil),
+  )
 }
 
 // Test_Operating_System_Memory verifies kernel region is zeroed, writable to its last byte, and
