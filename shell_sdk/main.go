@@ -30,6 +30,7 @@ func main() {
         Read_File:          main_read_file,
         Stdout_Is_Terminal: main_is_terminal(),
         Link:               main_link,
+        Unlink:             main_unlink,
       },
     ),
   )
@@ -116,4 +117,22 @@ func main_link(destination string) (err error) {
     }
   }
   return os.Symlink(source, destination)
+}
+
+func main_unlink(destination string) (err error) {
+  source, executable_err := os.Executable()
+  if executable_err != nil {
+    return executable_err
+  }
+  target, readlink_err := os.Readlink(destination)
+  if os.IsNotExist(readlink_err) {
+    return nil
+  }
+  if readlink_err != nil {
+    return readlink_err
+  }
+  if target != source {
+    return fmt.Errorf("%s points at %s, not %s", destination, target, source)
+  }
+  return os.Remove(destination)
 }
