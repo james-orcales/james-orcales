@@ -1,273 +1,200 @@
-// Package main is the maddox command: it benchmarks two or more commands on
-// macOS/Apple Silicon and writes a JSON or table report comparing them. It parses
-// the command line with shared/cli, wires the cgo measurer and the operating-system
-// clock, and hands them to the pure maddox library, which does the sampling,
-// statistics, and report.
+// Package main is the maddox command: the thin composition root over the internal library tier,
+// and the one place allowed to bind the real loop, the clock, and the host, and pump.
 package main
 
 import (
-	"errors"
-	"fmt"
-	"os"
-	"strconv"
-	"strings"
-
 	"local/james-orcales/maddox/internal"
-	"local/james-orcales/shared/cli"
-	invariant "local/james-orcales/shared/invariant/default"
-	"local/james-orcales/shared/io"
-	"local/james-orcales/shared/time"
+	"local/james-orcales/shared/std/jlog/default"
+	shared_os "local/james-orcales/shared/std/os"
+	"local/james-orcales/shared/std/os/default"
+	"local/james-orcales/shared/std/sim/nbio"
+	system_nbio "local/james-orcales/shared/std/sim/nbio/default"
+	"local/james-orcales/shared/std/sim/time"
+	system_time "local/james-orcales/shared/std/sim/time/default"
+	"local/james-orcales/shared/std/slices"
 )
 
-// EXIT_USAGE marks a malformed command line, kept distinct from a benchmark
-// failure so a caller can tell "you invoked me wrong" from "a command failed".
-const EXIT_USAGE = 2
+// STANDARD_OUTPUT is the descriptor the report is written to.
+const STANDARD_OUTPUT nbio.File = 1
 
-// DURATION_SECONDS_DEFAULT is the default per-command time budget: sample each
-// command for up to five seconds, or until the run cap, whichever comes first.
-const DURATION_SECONDS_DEFAULT = 30
+// STANDARD_ERROR is the descriptor progress and diagnostics are written to.
+const STANDARD_ERROR nbio.File = 2
 
-// RUNS_DEFAULT is the default per-command run cap: thirty samples, the
-// central-limit-theorem rule-of-thumb where the t-test is well-behaved, so a fast
-// command stops there rather than burning the whole time budget.
-const RUNS_DEFAULT = 1000
+// SPAWN_CAPACITY is one: the benchmark runs one command at a time.
+const SPAWN_CAPACITY = 1
 
-// WARMUP_DEFAULT is the default number of discarded warmup runs: three, to prime
-// caches and the filesystem so the measured runs reflect warm steady state.
-const WARMUP_DEFAULT = 5
+// OPERATION_CAPACITY covers one child's pipe reads, exit watch, deadline, pipe drain, a progress
+// write, and a report write, with slack.
+const OPERATION_CAPACITY = 16
+
+// DESCRIPTOR_CAPACITY covers the child's three pipes, both ends each, with slack.
+const DESCRIPTOR_CAPACITY = 8
+
+// SCHEDULER_ENTRY_COUNT sizes the kernel queue; it only has to hold OPERATION_CAPACITY.
+const SCHEDULER_ENTRY_COUNT = 32
+
+// PUMP_DURATION caps one pump pass. A pass that ends without progress starts the next one.
+const PUMP_DURATION = 1 * time.MINUTE
 
 func main() {
-	program := main_program()
-	if cli.Handle_Completion(program, os.Args, os.Stdout) {
-		os.Exit(0)
+	system := os.New_Operating_System(&os.Host{Self_Exec: main_self_exec_workspace()})
+	clock := system_time.New_Operating_System_Clock()
+	state := system_nbio.Operating_System{}
+	loop, driver, loop_err := system_nbio.New_Operating_System_IO(
+		&state, main_memory(), clock, SCHEDULER_ENTRY_COUNT, 0)
+	if loop_err != nil {
+		main_fail(system, loop_err)
 	}
-	command, parse_err := cli.Program_Parse(&program, os.Args)
-	if errors.Is(parse_err, cli.Help_Requested) {
-		cli.Print_Requested_Help(os.Stdout, program, command)
-		os.Exit(0)
-	}
-	if parse_err != nil {
-		fmt.Fprintln(os.Stderr, parse_err)
-		cli.Print_Help(os.Stderr, program)
-		os.Exit(EXIT_USAGE)
-	}
-	command_strings := cli.Get_Option(command.Arguments, "command").Value.([]string)
-	if len(command_strings) == 0 {
-		cli.Print_Help(os.Stderr, program)
-		os.Exit(EXIT_USAGE)
-	}
-	commands, build_err := commands_from_strings(command_strings)
-	if build_err != nil {
-		fmt.Fprintln(os.Stderr, "maddox: "+build_err.Error())
-		os.Exit(EXIT_USAGE)
-	}
-
-	format := maddox.OUTPUT_FORMAT_TABLE
-	if cli.Get_Option(command.Flags, "json").Value.(bool) {
-		format = maddox.OUTPUT_FORMAT_JSON
-	}
-	duration_seconds := cli.Get_Option(command.Flags, "duration").Value.(int)
-	runs := cli.Get_Option(command.Flags, "runs").Value.(int)
-	warmup := cli.Get_Option(command.Flags, "warmup").Value.(int)
-	allow_failures := cli.Get_Option(command.Flags, "allow-failures").Value.(bool)
-	color_mode := cli.Get_Option(command.Flags, "color").Value.(string)
-	progress_mode := cli.Get_Option(command.Flags, "progress").Value.(string)
-
-	input := &maddox.Main_Input{
-		Commands:       commands,
-		Sampler:        system_sampler(),
-		Duration_Max:   time.Duration(duration_seconds) * time.SECOND,
-		Runs_Max:       runs,
-		Warmup_Count:   warmup,
-		Allow_Failures: allow_failures,
-		Format:         format,
-		Color:          resolve_stream(Stream_Mode(color_mode), os.Stdout),
-		Progress:       resolve_stream(Stream_Mode(progress_mode), os.Stderr),
-		Output:         os.Stdout,
-		Stderr:         os.Stderr,
-		Machine:        acquire_machine_specs(),
-	}
-	os.Exit(int(maddox.Main(*input)))
-}
-
-// Main_program declares the maddox command line: a variadic list of commands to
-// benchmark, plus the sampling and output flags.
-func main_program() (program cli.Program) {
-	return cli.New_Single(cli.New_Single_Input{
-		Label:       "maddox",
-		Description: "benchmark and compare commands on macOS",
-		Arguments: []cli.Option{
-			cli.New_Variadic[string](cli.New_Variadic_Input{
-				Label:       "command",
-				Description: "a command to benchmark (whitespace-split, no shell)",
-			}),
-		},
-		Flags: []cli.Option{
-			cli.New_Flag[int](cli.New_Flag_Input[int]{
-				Label:       "duration",
-				Value:       DURATION_SECONDS_DEFAULT,
-				Description: "per-command time budget in seconds",
-			}),
-			cli.New_Flag[int](cli.New_Flag_Input[int]{
-				Label:       "runs",
-				Value:       RUNS_DEFAULT,
-				Description: "stop after this many runs (0 = only -duration)",
-			}),
-			cli.New_Flag[int](cli.New_Flag_Input[int]{
-				Label:       "warmup",
-				Value:       WARMUP_DEFAULT,
-				Description: "runs to discard before sampling",
-			}),
-			cli.New_Flag[bool](cli.New_Flag_Input[bool]{
-				Label:       "allow-failures",
-				Value:       false,
-				Description: "keep benchmarking a command that exits non-zero",
-			}),
-			cli.New_Flag[bool](cli.New_Flag_Input[bool]{
-				Label:       "json",
-				Value:       false,
-				Description: "emit JSON instead of the table",
-			}),
-			cli.New_Enum_Flag(cli.New_Enum_Flag_Input[string]{
-				Label:       "color",
-				Enum:        []string{"auto", "never", "always"},
-				Value:       "auto",
-				Description: "colorize the table",
-			}),
-			cli.New_Enum_Flag(cli.New_Enum_Flag_Input[string]{
-				Label:       "progress",
-				Enum:        []string{"auto", "never", "always"},
-				Value:       "auto",
-				Description: "live progress on stderr",
-			}),
-		},
+	output := jlog.Stream_File{Storage: loop.Storage, File: STANDARD_OUTPUT}
+	error_output := jlog.Stream_File{Storage: loop.Storage, File: STANDARD_ERROR}
+	environment := make(shared_os.Environment, slices.COUNT_MAXIMUM)
+	environment = environment[:os.OS_Environment(system, environment)]
+	arguments := make(shared_os.Arguments, slices.COUNT_MAXIMUM)
+	arguments = arguments[:os.OS_Arguments(system, arguments)]
+	start := maddox.Main(maddox.Main_Input{
+		Arguments:   maddox.Arguments(arguments),
+		Environment: maddox.Inherited_Environment(environment),
+		Output_Is_Terminal: maddox.Output_Terminal_Status(
+			main_terminal(os.Descriptor(STANDARD_OUTPUT))),
+		Error_Output_Is_Terminal: maddox.Error_Output_Terminal_Status(
+			main_terminal(os.Descriptor(STANDARD_ERROR))),
 	})
-}
-
-// BOUND_MIN and BOUND_MAX bound the command-tier defined types' lengths; min is vacuous
-// and max is eager, so the bounds hold for any real command line without observation.
-const BOUND_MIN = -1
-const BOUND_MAX = 1 << 16
-
-// Cli_Commands is the raw command strings from the command line, each one a command to
-// benchmark before it is parsed into words.
-type Cli_Commands []string
-
-// Cli_Commands_Invariants bounds the command-string count.
-func Cli_Commands_Invariants(commands Cli_Commands, namespace invariant.Namespace) {
-	invariant.Always(len(commands) <= BOUND_MAX, "A command list is at most its max.")
-	invariant.Always(len(commands) >= BOUND_MIN, "A command list is at least its min.")
-	invariant.Always(len(commands) != BOUND_MIN, "A command list never reaches its min.")
-	invariant.Always(len(commands) != BOUND_MAX, "A command list is below its max.")
-	invariant.Dot_Product(namespace,
-		invariant.Sometimes(len(commands) == 0, "A command list is empty."),
-		invariant.Sometimes(len(commands) == 1, "A command list has one."),
-		invariant.Sometimes(len(commands) == 2, "A command list has two."),
-		invariant.Sometimes(len(commands) == BOUND_MIN, "A command list is at its min."),
-		invariant.Sometimes(len(commands) == BOUND_MAX, "A command list is at its max."),
-		invariant.Impossible(
-			invariant.Event_True("A command list is empty."),
-			invariant.Event_True("A command list has one."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("A command list is empty."),
-			invariant.Event_True("A command list has two."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("A command list has one."),
-			invariant.Event_True("A command list has two."),
-		),
-	)
-}
-
-// Stream_Mode is a color/progress toggle from the command line: never, always, or auto.
-type Stream_Mode string
-
-// Stream_Mode_Invariants bounds the mode word's length.
-func Stream_Mode_Invariants(mode Stream_Mode, namespace invariant.Namespace) {
-	invariant.Always(len(mode) <= BOUND_MAX, "A stream mode is at most its max.")
-	invariant.Always(len(mode) >= BOUND_MIN, "A stream mode is at least its min.")
-	invariant.Always(len(mode) != BOUND_MIN, "A stream mode never reaches its min.")
-	invariant.Always(len(mode) != BOUND_MAX, "A stream mode is below its max.")
-	invariant.Dot_Product(namespace,
-		invariant.Sometimes(len(mode) == 0, "A stream mode is empty."),
-		invariant.Sometimes(len(mode) == 1, "A stream mode is one byte."),
-		invariant.Sometimes(len(mode) == 2, "A stream mode is two bytes."),
-		invariant.Sometimes(len(mode) == BOUND_MIN, "A stream mode is at its min."),
-		invariant.Sometimes(len(mode) == BOUND_MAX, "A stream mode is at its max."),
-		invariant.Impossible(
-			invariant.Event_True("A stream mode is empty."),
-			invariant.Event_True("A stream mode is one byte."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("A stream mode is empty."),
-			invariant.Event_True("A stream mode is two bytes."),
-		),
-		invariant.Impossible(
-			invariant.Event_True("A stream mode is one byte."),
-			invariant.Event_True("A stream mode is two bytes."),
-		),
-	)
-}
-
-// Commands_from_strings turns each command string into an io.Process_Request,
-// splitting it on whitespace and partitioning leading KEY=VALUE assignments off as the
-// process environment. It errors on a string with no executable.
-func commands_from_strings(command_strings Cli_Commands) (commands maddox.Commands, err error) {
-	defer func() { maddox.Commands_Invariants(commands, "commands_from_strings.commands") }()
-	Cli_Commands_Invariants(command_strings, "commands_from_strings.command_strings")
-	commands = make(maddox.Commands, 0, len(command_strings))
-	for _, text := range command_strings {
-		fields := strings.Fields(text)
-		// A leading KEY=VALUE is an environment assignment: its '=' sits past index 0 so
-		// the key is non-empty (IndexByte returns -1 with no '=', also <= 0). The first
-		// field failing this is the executable, so stop partitioning there.
-		var environment []string
-		cut := 0
-		for _, field := range fields {
-			if strings.IndexByte(field, '=') <= 0 {
-				break
-			}
-			environment = append(environment, field)
-			cut++
-		}
-		remainder := fields[cut:]
-		if len(remainder) == 0 {
-			return nil, errors.New("empty command: " + strconv.Quote(text))
-		}
-		if remainder[0] == "" {
-			return nil, errors.New("empty command: " + strconv.Quote(text))
-		}
-		command := io.Process_Request{Environment: environment, Path: remainder[0]}
-		if len(remainder) > 1 {
-			command.Arguments = remainder[1:]
-		}
-		commands = append(commands, command)
+	runner := maddox.Runner{
+		IO:           loop,
+		Clock:        clock,
+		Output:       jlog.File_To_Stream(&output),
+		Error_Output: jlog.File_To_Stream(&error_output),
+		Machine:      main_machine(os.Machine_Read()),
+		Start:        start,
 	}
-	return commands, nil
+	// Built once: a closure literal inside the pump would allocate on every pass.
+	done := func() (finished bool) { return bool(main_pump_done(&runner)) }
+	for !maddox.Stopped(&runner) {
+		main_pump(system, driver, &runner, done)
+	}
+	os.OS_Exit(system, shared_os.Exit_Code(runner.Status))
 }
 
-// Resolve_stream turns an auto/never/always mode into a decision: always or never as
-// named, auto when the stream is a terminal.
-func resolve_stream(mode Stream_Mode, file *os.File) (enabled bool) {
-	defer func() { invariant.Boolean_Invariants(enabled, "resolve_stream.enabled") }()
-	Stream_Mode_Invariants(mode, "resolve_stream.mode")
-	if mode == "always" {
+// Runs every recorded continuation, then makes one pump pass. A failed drive leaves work in
+// flight, so it ends the process without Deinit, which would assert every operation retired.
+func main_pump(
+	system shared_os.OS, driver nbio.Driver, runner maddox.Runner_Handle, done Pump_Done,
+) {
+	shared_os.OS_Invariants(&system, "main_pump.system")
+	for maddox.Rearm(runner) {
+	}
+	if maddox.Stopped(runner) {
+		return
+	}
+	_, drive_err := nbio.Driver_Run_Until(driver, PUMP_DURATION, done)
+	if drive_err != nil {
+		main_fail(system, drive_err)
+	}
+}
+
+// Pump_Done reports whether one pump pass may end.
+type Pump_Done func() (finished bool)
+
+// A pass ends once the run stops or a callback recorded work only Rearm can act on.
+func main_pump_done(runner maddox.Runner_Handle) (finished maddox.Queue_State) {
+	defer func() { maddox.Queue_State_Invariants(finished, "main_pump_done.finished") }()
+	if maddox.Stopped(runner) {
 		return true
 	}
-	if mode == "never" {
-		return false
-	}
-	return is_terminal(file)
+	return maddox.Work_Queued(runner)
 }
 
-// Is_terminal reports whether the file is a character device, so color and progress
-// are suppressed when the stream is piped or redirected to a file.
-func is_terminal(file *os.File) (terminal bool) {
-	defer func() { invariant.Boolean_Invariants(terminal, "is_terminal.terminal") }()
-	stat, stat_err := file.Stat()
-	if stat_err != nil {
-		return false
+// The loop is gone or broken, so the diagnostic bypasses it.
+func main_fail(system shared_os.OS, err error) {
+	shared_os.OS_Invariants(&system, "main_fail.system")
+	os.Standard_Error_Write([]byte("maddox: " + err.Error() + "\n"))
+	os.OS_Exit(system, shared_os.Exit_Code(maddox.EXIT_FAILURE))
+}
+
+// Reports a descriptor as a terminal status, so color and progress are suppressed when the
+// stream is piped or redirected to a file.
+func main_terminal(descriptor os.Descriptor) (status maddox.Terminal_Status) {
+	os.Descriptor_Invariants(descriptor, "main_terminal.descriptor")
+	if os.Descriptor_Terminal(descriptor) {
+		return maddox.Terminal_Status(maddox.TERMINAL_STATUS_TERMINAL)
 	}
-	return stat.Mode()&os.ModeCharDevice != 0
+	return maddox.Terminal_Status(maddox.TERMINAL_STATUS_NOT_TERMINAL)
+}
+
+// Converts the host description into the report's snapshot.
+func main_machine(machine os.Machine) (specs maddox.Machine_Specs) {
+	os.Machine_Invariants(&machine, "main_machine.machine")
+	return maddox.Machine_Specs{
+		CPU_Model: maddox.Processor_Model(machine.Processor_Model),
+		CPU_Arch: maddox.Processor_Architecture(
+			machine.Processor_Architecture),
+		Physical_Cores: maddox.Physical_Core_Count(machine.Physical_Core_Count),
+		Logical_Cores:  maddox.Logical_Core_Count(machine.Logical_Core_Count),
+		Performance_Cores: maddox.Performance_Core_Count(
+			machine.Performance_Core_Count),
+		Efficiency_Cores: maddox.Efficiency_Core_Count(
+			machine.Efficiency_Core_Count),
+		CPU_Frequency_Hz_Max: maddox.Processor_Frequency(machine.Processor_Frequency),
+		Cache_L1_Bytes:       maddox.Level_1_Cache_Size(machine.Level_1_Cache_Size),
+		Cache_L2_Bytes:       maddox.Level_2_Cache_Size(machine.Level_2_Cache_Size),
+		Cache_L3_Bytes:       maddox.Level_3_Cache_Size(machine.Level_3_Cache_Size),
+		RAM_Total_Bytes:      maddox.Memory_Size(machine.Physical_Memory_Size),
+		Storage_Total_Bytes:  maddox.Storage_Size(machine.Storage_Size),
+		Operating_System_Name: maddox.Operating_System_Name(
+			machine.Operating_System_Name),
+		Operating_System_Version: maddox.Operating_System_Version(
+			machine.Operating_System_Version),
+		Kernel_Version: maddox.Kernel_Version(machine.Kernel_Version),
+	}
+}
+
+// The host vtable requires exec storage. Maddox never replaces its image, so the pages stay
+// untouched.
+func main_self_exec_workspace() (workspace os.Self_Exec_Workspace_Pointer) {
+	defer func() {
+		os.Self_Exec_Workspace_Pointer_Invariants(workspace,
+			"main_self_exec_workspace.workspace")
+	}()
+	path := make(os.Self_Exec_Path_Bytes, os.SELF_EXEC_PATH_STORAGE_BYTES)
+	arguments := make(os.Self_Exec_Argument_Bytes, os.SELF_EXEC_VECTOR_STORAGE_BYTES)
+	environment := make(os.Self_Exec_Environment_Bytes, os.SELF_EXEC_VECTOR_STORAGE_BYTES)
+	argument_pointers := make(
+		os.Self_Exec_Argument_Pointer_Vector, os.SELF_EXEC_VECTOR_POINTER_COUNT)
+	environment_pointers := make(
+		os.Self_Exec_Environment_Pointer_Vector, os.SELF_EXEC_VECTOR_POINTER_COUNT)
+	return &os.Self_Exec_Workspace{
+		Path: &path, Arguments: &arguments, Environment: &environment,
+		Argument_Pointers: &argument_pointers, Environment_Pointers: &environment_pointers,
+	}
+}
+
+// Sizes every bounded queue the backend retains for one child, its output, and the writes.
+func main_memory() (memory system_nbio.Operating_System_Memory) {
+	return system_nbio.Operating_System_Memory{
+		Timeouts:   make([]*nbio.Completion, OPERATION_CAPACITY),
+		Completed:  make([]*nbio.Completion, OPERATION_CAPACITY),
+		Operations: make([]system_nbio.Operating_System_Operation, OPERATION_CAPACITY),
+		Operation_File_Paths: make(
+			[]byte, OPERATION_CAPACITY*system_nbio.OPERATING_SYSTEM_PATH_BYTES_MAXIMUM),
+		Operation_Socket_Addresses: make(
+			[]byte, OPERATION_CAPACITY*system_nbio.SOCKET_ADDRESS_BYTES),
+		Operation_Registry: make(
+			[]*system_nbio.Operating_System_Operation, OPERATION_CAPACITY),
+		Descriptors: make(
+			[]system_nbio.Operating_System_Descriptor, DESCRIPTOR_CAPACITY),
+		Signal_Waiters: make([]system_nbio.Signal_Waiter, SPAWN_CAPACITY),
+		Spawns:         make([]system_nbio.Spawn, SPAWN_CAPACITY),
+		Spawn_Registry: make([]*system_nbio.Spawn, SPAWN_CAPACITY),
+		Spawn_Pipe_Buffers: make([]byte, SPAWN_CAPACITY*
+			system_nbio.PROCESS_PIPE_BUFFER_COUNT*system_nbio.PROCESS_PIPE_BYTES),
+		Spawn_Paths: make([]byte, SPAWN_CAPACITY*system_nbio.PROCESS_PATH_BYTES),
+		Spawn_Arguments: make(
+			[]string, SPAWN_CAPACITY*system_nbio.PROCESS_ARGUMENT_COUNT_MAXIMUM),
+		Spawn_Child_Files: make(
+			[]uintptr, SPAWN_CAPACITY*system_nbio.PROCESS_CHILD_DESCRIPTOR_COUNT),
+		Platform_Operations: make(
+			[]*system_nbio.Operating_System_Operation, OPERATION_CAPACITY),
+		Platform_Changes: make([]system_nbio.Kernel_Event, system_nbio.POLL_EVENTS_MAX),
+		Platform_Events:  make([]system_nbio.Kernel_Event, system_nbio.POLL_EVENTS_MAX),
+	}
 }

@@ -1,7 +1,0 @@
-[[test]]
-testTitle = 'TaskBucketCorrectness'
-
-    [[test.workload]]
-    testName = 'TaskBucketCorrectness'
-    chained = false
-    subtaskCount = 20

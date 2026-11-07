@@ -89,5 +89,5 @@ from csv < people.csv | sort-by age | final -count=2 -json
 ## Implementation
 
 `main.go` is the only impure file: it binds stdin, the filesystem, and the
-terminal, then hands them to the pure `internal` library. Command-line parsing is
-the shared `cli` package in multicall mode. See `internal/SPECIFICATION.md`.
+terminal, then hands them to the pure `pkg` library. Command-line parsing is
+the shared `cli` package in multicall mode. See `pkg/SPECIFICATION.md`.

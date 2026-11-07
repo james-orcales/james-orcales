@@ -1,0 +1,342 @@
+
+# Sim
+
+Simulated IO backend schedule each operation at now plus seed-drawn latency. New_Simulated_IO
+initializes caller-owned bounded state. Independent streams draw ordinary outcomes and timeout
+order from one seed. Thus, runs reproduce and nothing is scriptable.
+
+### Read
+
+Storage.Read requires a positive timeout. Linux and the simulator enforce it. A timeout reports
+zero with Deadline_Exceeded and leaves the buffer unchanged. Darwin ignores the timeout because
+its file path has no kernel timeout. A zero-length read uses the first grain without a draw.
+
+### Write
+
+Storage.Write requires a positive timeout. Linux and the simulator enforce it. A timeout reports
+zero with Deadline_Exceeded and leaves the file unchanged. Darwin ignores the timeout because
+its file path has no kernel timeout. A zero-length write uses the first grain without a draw.
+
+### Fsync
+
+Fsync requires a positive timeout. Linux and the simulator enforce it. A timeout reports zero and
+Deadline_Exceeded after it retires the operation. Darwin accepts the timeout but does not apply
+it because its current file path has no kernel timeout. Fsync does not transfer file ownership.
+
+### Open At
+
+Open_At asynchronously open or make file relative to DIRECTORY_CURRENT, force close-on-exec
+ownership, and return new caller-owned descriptor through its callback. Unknown flag panic.
+
+### Open Options
+
+Create makes absent file; Truncate alone controls clearing existing contents. OPEN_AT_NO_FOLLOW
+rejects final symbolic link even with Create. Without flag, creation through existing link opens
+its target and preserves link text.
+
+### Access
+
+Each descriptor retains its own Access. Nonempty read on write-only descriptor and nonempty write
+on read-only descriptor report error with zero bytes, leaving borrowed buffer and file unchanged.
+Empty transfers succeed without access checks, matching real backend's skipped kernel operation.
+
+### Holes
+
+Write beyond file end fills gap with zero bytes, including after truncation. Empty write leaves
+file size and contents unchanged.
+
+### Capacity
+
+Node contents storage the caller hands in is the file capacity. A write that ends at it lands; a
+write past it reports an error with zero bytes and leaves the file unchanged.
+
+### Cursor
+
+Storage.Write at FILE_POSITION_CURRENT writes at descriptor file position and advances it by bytes
+written. Positioned write neither reads nor moves that position. New descriptor starts at zero.
+
+### Socket
+
+Socket_TCP and Socket_UDP make non-blocking close-on-exec descriptors. Each limit is positive.
+Socket creation rejects a disabled limit. Every TCP socket enables keepalive and finite linger.
+The pure TCP profile enables TCP_NODELAY. A backend can reduce a limit for its platform.
+
+### Bind
+
+Bind enable SO_REUSEADDR before it gives the caller-owned socket its local address. The caller
+cannot omit address reuse or apply it after bind.
+
+### Accept
+
+Accept require positive finite timeout. It yields a descriptor distinct from its listener when
+inbound completion wins, or Deadline_Exceeded and no descriptor when timeout wins. A separate
+seed stream selects equal-time order because supported kernels can report either terminal event.
+
+### Connect
+
+Connect require positive finite timeout and borrow caller socket. Latency reports success or
+Connection_Refused. Timeout reports Deadline_Exceeded only when it retires the pending operation.
+Every outcome leaves descriptor in Raw_Open for caller teardown.
+
+### Receive
+
+Receive require positive finite timeout. Modeled latency reports buffer length when the operation
+wins. Timeout reports zero and Deadline_Exceeded. Both outcomes leave descriptor caller-owned.
+
+### Send
+
+Send require positive finite timeout. Modeled latency reports buffer length when the operation
+wins. Timeout reports zero and Deadline_Exceeded. Both outcomes leave descriptor caller-owned.
+
+### Shutdown
+
+Shutdown change selected receive/send halves synchronously, without take of socket ownership.
+Armed and later receive on receive-shutdown socket resolve with EOF. Armed and later send on
+send-shutdown socket resolve with Broken_Pipe. Descriptor stay open.
+
+### Close
+
+Close is asynchronous operation, and remove descriptor from Raw_Open when its completion retire.
+It neither cancel nor purge other operations: descriptor owner must join every submitted
+operation before submit of Close. It is one release for both file and socket.
+
+### Open
+
+Open return descriptor of existing file, synchronously. Absent path, or directory, error instead.
+Later Read of descriptor deliver file bytes on loop.
+
+### Create
+
+Create return fresh writable descriptor, synchronously, distinct from every other. Later Write
+persist bytes to it on loop.
+
+### Peer Address
+
+Peer_Address report remote address of connected descriptor, synchronously — getpeername has no
+completion. Unknown descriptor yield empty address.
+
+### Status
+
+Status reports path kind and size without following final symbolic link. Absent path is not-exists.
+Read_Link writes target and rejects other kinds with Not_Symbolic_Link. Directory pass accepts
+1 byte through Go Unix 8 KiB block budget and positive bounded entry storage.
+
+### Watch Signal
+
+Watch_Signal requires positive finite deadline; signal arriving first fires once, and deadline wins
+ties with Deadline_Exceeded and SIGNAL_EXPIRED. Caller retains armed signal because expired value
+identifies no watch. Simulator draws arrival grain from its own seed stream.
+
+### Spawn
+
+A spawn requires a positive finite deadline; completion returns the seed-drawn exit code, and the
+deadline wins ties with Deadline_Exceeded. Inherited stdio ends block unless Inherited_Nonblock.
+Real backend kills subprocess group, bounds pipe cleanup to 1s, returns partial output; sim none.
+
+### Spawn Inheritance
+
+Input_Inherited hands the child this process's standard input. An interrupt, termination,
+hangup, or quit this process receives while the child runs reaches the child's group unless
+Signals_Kept. Sim runs no process, ignores both, and still delivers one seed-drawn result.
+
+### Spawn Counters
+
+Usage carries the child's user-mode hardware counters: cycles, instructions, cache references and
+misses, and branch misses. A counter the host denies reads zero. Sim runs no process: all zero.
+
+### Pipe
+
+Pipe synchronously return read and write ends, always non-blocking and close-on-exec. Transfers
+name FILE_POSITION_CURRENT; read on empty pipe waits for writer and reads zero once write end is
+closed. Write whose read end is closed reports Broken_Pipe.
+
+### Deinit
+
+Deinit assert every descriptor run open is closed. Run that still hold one panic. Surface own
+leak check, thus caller need no census.
+
+### Halves
+
+IO carry one backend pointer per half, Network and Storage, and none above them. Close, Deinit,
+Pipe, Watch_Signal, Spawn, and platform operations read the Storage half. IO_Invariants assert both
+halves name one backend, thus a surface composed over two backends fail at construction.
+
+# File Mode
+
+File_Mode is portable permission and entry-kind metadata. Layout follows Go io/fs.FileMode.
+Platform mode words never leave a backend raw; each one decodes into this domain.
+
+### Portable
+
+File_Mode_From_POSIX and File_Mode_To_POSIX convert one 16-bit platform word both ways, and Linux
+and Darwin share the one decoder. Every representable kind round trips. An unsupported kind nibble
+decodes to no kind bit, and a mode naming no kind encodes as regular.
+
+### Permissions
+
+File_Permissions is creation operand Open_At and Mkdir_At take: permission, setuid, setgid, and
+sticky bits, never a kind bit. Storage_Open_At and Storage_Mkdir_At reject a kind bit before
+submit, and File_Permissions_To_POSIX emits no kind nibble.
+
+### Status
+
+Status report one File_Mode and never follow final symbolic link. Absent path report zero status,
+mode included, thus Exists is only guard caller may branch on. Simulated creation store stated
+permissions less SIM_UMASK; real kernel apply its own process umask.
+
+### Symbolic Link
+
+Seeded generation make symbolic link pointing at earlier sibling, drawn from own stream.
+Read_Link return target, and report Not_Symbolic_Link for another kind. Resolution follow link in
+earlier component, bound hops, and OPEN_AT_NO_FOLLOW report Symbolic_Link_Not_Followed.
+
+# Address
+
+Address is IP address, port, and explicit family, as plain data. It take no part of net tree.
+
+### Parse
+
+Address_Parse read dotted-quad as IPv4, and colon form as IPv6, with one "::" run and trailing
+embedded IPv4 both accepted. Leading zero in octet, zone identifier, and port outside uint16 all
+error. No DNS, thus parse never block.
+
+# Stream
+
+A Stream pairs caller-owned state with one static procedure for a bounded byte transport. Every
+operation uses a caller-owned Completion and a last callback. Completion.Data holds the
+operation result.
+
+### Callback
+
+The concrete Stream owns callback time. An immediate Stream can call back inline. A simulated or
+kernel-backed Stream can submit work and call back when that work retires.
+
+### Read
+
+Read moves bytes from the cursor and advances it. End of memory reports Stream_EOF.
+
+### Write
+
+Write stores bytes at the cursor and advances it. Bounded truncation reports Stream_Short_Write.
+
+### Read At
+
+Read_At uses an explicit offset and does not move the cursor.
+
+### Write At
+
+Write_At uses an explicit offset and does not move the cursor.
+
+### Seek
+
+Seek accepts start, current, or end origin. An unknown origin or out-of-range result errors.
+
+### Size
+
+Size reports the complete storage size, independent of the cursor.
+
+### Query
+
+Query sends STREAM_MODE_QUERY to the Stream. Its callback reports the supported mode set in
+Completion.Data.
+
+### Flush
+
+Flush submits buffered work. Memory and discard have no pending buffer and succeed.
+
+### Close
+
+Close is idempotent. Later data operations report Stream_Empty.
+
+### Destroy
+
+Destroy releases owned state where applicable. Memory treats it as Close.
+
+### Errors
+
+Empty, closed, and unsupported modes report Stream_Empty. Invalid counts and offsets report their
+specific Stream error instead of changing or fabricating bytes.
+
+### Memory
+
+Memory uses the caller-owned slice as its complete budget and never grows it.
+
+### Discard
+
+Discard accepts writes, stores no bytes, and has no read or seek capability.
+
+### Limit
+
+Limit forwards only its remaining byte budget and reports the withheld part.
+
+### Count
+
+Count forwards supported modes and tallies bytes after the inner operation retires.
+
+### Tee
+
+Tee writes to both destinations in order and reports the smaller count.
+
+### Composition
+
+Composed streams preserve each inner procedure callback policy and sequence dependent callbacks.
+
+# Timeline
+
+Timeline is third half of IO: timer and cross-thread wakeup, no endpoint. Sim own one virtual
+timeline, one queue every simulated completion retire on in Ready_At order, and return Driver
+beside IO, thus one order hold every event. Nothing hand out the queue.
+
+### Timeout
+
+Timeout fire exactly when virtual clock reach its deadline. Off same Ready_At queue IO
+completions use, thus every wait ride one timeline. Duration must be positive.
+
+### Callback Released
+
+Completion releases its callback before call, so finished operation and borrowed buffer become
+collectable. Clear-before-call lets callback arm same completion again without erasing new work.
+
+### Event
+
+Open_Event make cross-thread event primitive. Event_Listen arm one completion. Event_Trigger
+make that completion ready. Close_Event release event only after its listener drain. Handle
+zero, handle past capacity, closed event, second listener, foreign trigger, early close panic.
+
+### Capacity
+
+New_Simulated_IO receives caller-owned completion storage and event storage beside its other
+memory. This keeps construction allocation-free and gives one hard bound to every run. A full
+store rejects new work before it changes completion or event lifecycle state.
+
+### Run Until
+
+Run_Until drive loop until its predicate report true. Deliver completions each step, thus
+straight-line caller wait for own operation inline. Negative timeout panic.
+
+### Reuse
+
+Submit of completion still armed panic as illegal lifecycle transition. Only idle completion
+can be armed. Delivery return it to idle before callback run, thus reuse after callback, or
+from inside callback, is legal.
+
+### Copy
+
+Submit of by-value copy panic. Loop track completion by own address, thus copy carry identity
+of original. Fail loud, never split view of loop from view of caller.
+
+### Reentrancy
+
+Drive of loop from inside completion callback panic. Run, Run_For, Run_Until are top-level
+only. Re-entrant drive thus fail loud, never corrupt queue mid-drain.
+
+### Clocks
+
+New_Simulated_IO draw the epoch and one skew per caller-owned Sim_Clock slot from its own
+stream. Every view read the one counter the Driver advance, thus views agree in monotonic time
+and differ in realtime by skew alone. Resolution is the grain one tick advance, positive.
+
+# Allocation
+
+IO, Network, Storage, Address, and Stream allocate no heap memory. Caller supplies retained state
+and bounded queues; exhaustion fails instead of growing. Directory names borrow caller memory.

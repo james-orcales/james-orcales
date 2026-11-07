@@ -1,5 +1,0 @@
-[[test]]
-testTitle = 'UDP'
-
-    [[test.workload]]
-    testName = 'UDPWorkload'

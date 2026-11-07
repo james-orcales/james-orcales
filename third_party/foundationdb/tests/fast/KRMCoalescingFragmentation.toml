@@ -1,5 +1,0 @@
-[[test]]
-testTitle = 'KRMCoalescingFragmentation'
-
-    [[test.workload]]
-    testName = 'KRMCoalescingFragmentation'

@@ -1,0 +1,188 @@
+
+# Invariants
+
+Every type states its properties in a companion function beside it, the
+shared/std/sim/aver bundle convention made mandatory.
+
+### Presence
+
+An in-scope type declaration is immediately followed by its invariant function; only that
+function's own doc comment and blank lines may sit between them.
+
+### Casing
+
+The function takes the type name with an _Invariants suffix when the type is exported, an
+_invariants suffix when it is unexported.
+
+### Signature
+
+The function takes the type as its first parameter and an aver.Namespace as its last. A struct,
+or a type whose same-file chain of defined names ends in one, is taken by pointer, and any other
+type by value. A chain that leaves the file has an unknown kind and takes either form.
+
+### Orphan
+
+A function whose name ends in _Invariants or _invariants is itself declared directly below its
+matching type, never adrift.
+
+### Scope
+
+Structs with fields, defined non-alias types, and generic types are in scope, and their helper
+bodies carry the mandate. Aliases, function and interface types, empty structs, local types, tests,
+instrumentation packages, and opted-out packages are exempt.
+
+### Underlying Kind
+
+A defined type carries the kind of the type it stands over, and a chain of defined types resolves to
+its end. Thus a helper over a named integer owes the scalar mandate, and one over a named string,
+slice, or map owes the count mandate. A bare or qualified name hides no type from either.
+
+### Scalar Helper
+
+An integer helper uses direct singleton Always equality against a package constant, or an ensured
+exact Range or Enum builder over the converted value. A float uses direct singleton Always equality.
+A Boolean ensures a Tree whose one link is a Sometimes, because its two values are two obligations.
+
+### Count Helper
+
+A defined string, slice, or map helper uses direct singleton Always equality against a package
+constant or ensures one exact Int Range or Enum family over len(value). Another subject, suffix,
+unterminated or split builder, or unrelated Tree builder never substitutes.
+
+### Helper Constants
+
+Each Range boundary, Enum member, and singleton member is a package-level constant, named bare from
+the type's package or qualified from an imported one. An integer can use its exact primitive
+conversion. A literal, a computed operand, and another primitive never satisfy the mandate.
+
+### Cross Package Identity
+
+A bare constant belongs only to its declaring package, thus a same-spelled foreign one supplies no
+local boundary, member, or singleton. A qualified constant states the boundary it crosses and is the
+one form that shares a fact. A foreign helper never satisfies a local typed subject.
+
+### Helper Identity
+
+All canonical calls are direct shared/std/sim/aver/default statements with qualifier aver. An
+unnamed default-tier import binds parent package name. Tree root takes helper subject before
+namespace. Always uses `subject == CONSTANT` with literal message; every impersonation fails.
+
+### Builder Walk
+
+An ensured Tree builder expands to at most 70 fluent links. A longer builder is too costly for
+static analysis and is banned.
+
+### Field Composition
+
+A struct type's helper directly calls the exact package-qualified _Invariants helper of every field.
+Foreign, nested, or shadowed calls never substitute. A pointer field composes its pointee, and an
+immediate mutex is exempt.
+
+### Inherited Fields
+
+A defined type over a same-package struct, not a pointer, states each inherited scalar field
+inline, because one tree holds a type at one position. A struct field has no inline form, thus
+the defined type composes it directly or through a defined type of its own.
+
+### Inline Form
+
+An inline statement is a Range or an Enum link whose subject is the field, or a direct Always
+equating the field to a package constant. Only a Boolean field takes a Sometimes. Another link
+states nothing about the field's domain and never counts.
+
+### Defined Pointers
+
+Defined pointer helper body is exactly `if value == nil { return }` then `Base_Invariants(*value,
+namespace)`, or `Base_Invariants(value, namespace)` when Base_Invariants takes a pointer. Struct,
+non-struct, foreign pointee, type over a defined pointer: same body. Pointee without helper or
+unnamed pointee is a diagnostic. No exemption exists, none is authorized.
+
+### Embedded Fields
+
+An embedded field carries the same duty as a named one, and its name is the type it embeds. A
+pointer embeds the name of its pointee. Anonymity hides a field from a reader and never from the
+mandate.
+
+### Always Condition
+
+An Always condition holds a single term. A bound belongs in a Range, a membership belongs in an
+Enum, and any other compound belongs in separate Always calls.
+
+### Parameter Helper
+
+A named free function calls the exact helper for every input parameter whose type has one, in the
+leading block right after the output defer. Direct Always or Sometimes assertions and same-named
+foreign or shadowed functions never substitute. A helper or method is exempt.
+
+### Output Helper
+
+A named free function whose return values include one with an _Invariants directly calls each exact
+helper in a defer that is the first statement of the body. Nested, shadowed, and assertion calls
+never substitute.
+
+### Subject Isolation
+
+Each field, input, and output is a separate helper requirement. One helper call satisfies only the
+exact subject in its first argument. A call for one subject cannot satisfy another subject, even
+when both subjects have the same type and require the same helper.
+
+### Recorder Registration
+
+A non-exempt pure shared-library package's TestMain body is exactly `aver.Run_Test_Main(m)`.
+Composition packages keep assertion mandates but need no TestMain or coverage registration:
+ambient sources cannot supply deterministic coverage. A binary component uses its simulation.
+
+### Raw Types
+
+Function parameters, results, and struct fields use user-defined type identifiers, plain,
+package-qualified, or instantiated, or error. Any other type expression is raw and banned,
+predeclared identifiers included; declare a type first. An invariant function's first parameter
+may point at its type. Test files and opted-out packages are exempt.
+
+### Small Slices
+
+A defined slice type whose helper bounds len to at most 8, by the Range upper bound, the largest
+Enum member, or the Always singleton, is banned as a struct field, parameter, or result, with no
+exemption. Declare a struct with one field per member. An unresolved bound is unjudged.
+
+### Fixed Arrays
+
+A fixed [N]T array, raw or through a chain of defined types, is banned as a struct field, parameter,
+or result, whatever N and with no exemption: helper, stdlib method, test file, and opted-out package
+alike. Convert fixed arrays to slices instead.
+
+# Simulation
+
+A binary component's invariants are witnessed only by a simulation package under its internal
+directory, whose test drives internal.Main; its coverage is judged tier two.
+
+### Presence
+
+A binary component with a non-exempt internal package declares an internal/simulation_test package;
+absent one, there is no blackbox witness for its invariants. A wholly exempt internal tree needs
+none.
+
+### Contents
+
+The simulation package refers to no internal function but Main; any other is a second entry point
+that could witness an invariant without driving Main. Test shape and other declarations are free.
+
+### Test Main
+
+The simulation TestMain body is exactly `aver.Run_Test_Main(m, "../**")`. Any other body, or a
+missing TestMain, is banned.
+
+### Coverage
+
+The "../**" glob registers the internal package and every package beneath it, so all are
+witnessed in one pattern; a narrower argument that omits some is banned.
+
+### Entry
+
+The simulation references only Main among the internal tree's functions; any other internal
+function it names is a second entry point and is banned. Internal's exports are otherwise free.
+
+### Blackbox
+
+The simulation directory holds one blackbox test package and no source package: every file is a
+_test.go declaring package <name>_test.

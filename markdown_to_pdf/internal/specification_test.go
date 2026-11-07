@@ -1,11 +1,205 @@
 package markdown_to_pdf_test
 
 import (
+	"bytes"
+	"fmt"
+	"io"
+	"os"
 	"strings"
 	"testing"
 
 	"local/james-orcales/markdown_to_pdf/internal"
 )
+
+// Test_PDF_To_Markdown_Golden_Documents compares raw output bytes for every
+// PDF/Markdown pair copied from MarkItDown 0.1.7.
+func Test_PDF_To_Markdown_Golden_Documents(t *testing.T) {
+	t.Parallel()
+	fixture_names := []string{
+		"academic_paper",
+		"movie_booking",
+		"receipt",
+		"repair_estimate",
+		"sparse_table",
+		"empty_medical_scan",
+	}
+	for _, fixture_name := range fixture_names {
+		pdf := read_fixture(t, fixture_name+".pdf", 64*1024*1024)
+		want := read_fixture(t, fixture_name+".golden", 64*1024*1024)
+		markdown, convert_err := markdown_to_pdf.PDF_To_Markdown(
+			&markdown_to_pdf.PDF_To_Markdown_Input{PDF: pdf},
+		)
+		if convert_err != nil {
+			t.Errorf("%s: PDF_To_Markdown: %v", fixture_name, convert_err)
+			continue
+		}
+		if !bytes.Equal(markdown, want) {
+			difference := first_difference(&First_Difference_Input{
+				Got: markdown, Want: want,
+			})
+			t.Errorf(
+				"%s: markdown differs: got %d bytes, want %d bytes; %s",
+				fixture_name,
+				len(markdown),
+				len(want),
+				difference,
+			)
+		}
+	}
+}
+
+// Test_PDF_To_Markdown_Master_Format_Numbers verifies that the MasterFormat
+// fixture keeps its content and joins dot-prefixed numbers to their text.
+func Test_PDF_To_Markdown_Master_Format_Numbers(t *testing.T) {
+	t.Parallel()
+	pdf := read_fixture(t, "masterformat_partial_numbering.pdf", 64*1024*1024)
+	markdown, convert_err := markdown_to_pdf.PDF_To_Markdown(
+		&markdown_to_pdf.PDF_To_Markdown_Input{PDF: pdf},
+	)
+	if convert_err != nil {
+		t.Fatalf("PDF_To_Markdown: %v", convert_err)
+	}
+	text := string(markdown)
+	wanted := []string{
+		"RFP for Construction Management Services",
+		"Section 00 00 43",
+		"Instructions to Respondents",
+		"Ken Sargent House",
+		"INTENT",
+		".1 The intent",
+		".2 Available information",
+		"GRANDE PRAIRIE, ALBERTA",
+		"Section 00 00 45",
+	}
+	for _, fragment := range wanted {
+		if !strings.Contains(text, fragment) {
+			t.Errorf("missing %q", fragment)
+		}
+	}
+	for _, line := range strings.Split(text, "\n") {
+		stripped := strings.TrimSpace(strings.ReplaceAll(line, "|", ""))
+		if partial_number(stripped) {
+			t.Errorf("isolated partial numbering %q", line)
+		}
+	}
+}
+
+// Test_PDF_To_Markdown_Table_Reconstruction verifies that painted cell
+// boundaries preserve logical records without turning blank layout columns or
+// page furniture into semantic table content.
+func Test_PDF_To_Markdown_Table_Reconstruction(t *testing.T) {
+	t.Parallel()
+	content := "50 700 50 30 re f 100 700 50 30 re f " +
+		"150 700 100 30 re f 250 700 300 30 re f " +
+		"50 660 50 40 re f 100 660 50 40 re f " +
+		"150 660 100 40 re f 250 660 300 40 re f " +
+		"50 50 50 610 re f 100 50 50 610 re f " +
+		"150 50 100 610 re f 250 50 300 610 re f " +
+		"50 30 50 20 re f 100 30 50 20 re f " +
+		"150 30 100 20 re f 250 30 300 20 re f " +
+		"BT /F0 10 Tf " +
+		"1 0 0 1 55 712 Tm (Release date) Tj " +
+		"1 0 0 1 155 712 Tm (Identification) Tj " +
+		"1 0 0 1 255 712 Tm (Scope) Tj " +
+		"1 0 0 1 55 682 Tm (1986-02-15) Tj " +
+		"1 0 0 1 155 682 Tm (First release) Tj " +
+		"1 0 0 1 255 682 Tm (Guide revised) Tj " +
+		"1 0 0 1 255 670 Tm (continued text) Tj " +
+		"1 0 0 1 55 642 Tm (1987-06-01) Tj " +
+		"1 0 0 1 155 642 Tm (Change 2) Tj " +
+		"1 0 0 1 255 642 Tm (Words added) Tj " +
+		"1 0 0 1 55 42 Tm (Page 1) Tj " +
+		"1 0 0 1 255 42 Tm (History) Tj " +
+		"1 0 0 1 500 42 Tm (Issue 9) Tj ET"
+	pdf := pdf_specification_document(
+		"<< /Type /Catalog /Pages 2 0 R >>",
+		"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+		"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] "+
+			"/Resources << /Font << /F0 4 0 R >> >> /Contents 5 0 R >>",
+		"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+		fmt.Sprintf("<< /Length %d >>\nstream\n%s\nendstream", len(content), content),
+	)
+	markdown, convert_err := markdown_to_pdf.PDF_To_Markdown(
+		&markdown_to_pdf.PDF_To_Markdown_Input{PDF: pdf},
+	)
+	if convert_err != nil {
+		t.Fatalf("PDF_To_Markdown: %v", convert_err)
+	}
+	text := string(markdown)
+	if strings.Count(text, "\n| ---") != 1 {
+		t.Fatalf("source grid was not one table:\n%s", text)
+	}
+	for _, line := range strings.Split(text, "\n") {
+		if strings.HasPrefix(line, "|") {
+			if strings.Count(line, "|") != 4 {
+				t.Fatalf("blank layout column became a table column: %q", line)
+			}
+		}
+	}
+	compact := strings.ReplaceAll(text, " ", "")
+	if !strings.Contains(compact, "|1986-02-15|Firstrelease|Guiderevisedcontinuedtext|") {
+		t.Fatalf("wrapped cell did not remain in its source row:\n%s", text)
+	}
+	if !strings.Contains(compact, "|1987-06-01|Change2|Wordsadded|") {
+		t.Fatalf("source row boundaries were lost:\n%s", text)
+	}
+	if strings.Contains(text, "| Page 1") {
+		t.Fatalf("page furniture became table content:\n%s", text)
+	}
+}
+
+// Test_PDF_To_Markdown_Parser_Validation verifies invalid headers, malformed
+// objects, and encryption fail instead of producing partial Markdown.
+func Test_PDF_To_Markdown_Parser_Validation(t *testing.T) {
+	t.Parallel()
+	cases := [][]byte{
+		[]byte("not a PDF"),
+		[]byte("%PDF-1.4\n1 0 obj <<"),
+		[]byte("%PDF-1.4\n/Encrypt 2 0 R\n"),
+	}
+	for _, source := range cases {
+		markdown, convert_err := markdown_to_pdf.PDF_To_Markdown(
+			&markdown_to_pdf.PDF_To_Markdown_Input{PDF: source},
+		)
+		if convert_err == nil {
+			t.Errorf("source %q succeeded with %q", source, markdown)
+		}
+	}
+}
+
+// Test_PDF_To_Markdown_Resource_Limits pins each public parser bound and
+// exercises the input-size and nesting checks without an RSS assertion.
+func Test_PDF_To_Markdown_Resource_Limits(t *testing.T) {
+	if markdown_to_pdf.PDF_OBJECT_COUNT_MAX != 262144 {
+		t.Fatal("indirect-object limit changed")
+	}
+	if markdown_to_pdf.PDF_PAGE_COUNT_MAX != 65536 {
+		t.Fatal("page limit changed")
+	}
+	if markdown_to_pdf.PDF_DEPTH_MAX != 128 {
+		t.Fatal("depth limit changed")
+	}
+	if markdown_to_pdf.PDF_STREAM_BYTES_MAX != 64*1024*1024 {
+		t.Fatal("decoded-stream limit changed")
+	}
+	if markdown_to_pdf.PDF_DECODED_BYTES_MAX != 256*1024*1024 {
+		t.Fatal("cumulative decoded-data limit changed")
+	}
+	too_large := make([]byte, markdown_to_pdf.PDF_BYTES_MAX+1)
+	copy(too_large, "%PDF-1.4")
+	if _, convert_err := markdown_to_pdf.PDF_To_Markdown(
+		&markdown_to_pdf.PDF_To_Markdown_Input{PDF: too_large},
+	); convert_err == nil {
+		t.Fatal("oversized PDF input succeeded")
+	}
+	nested := "%PDF-1.4\n1 0 obj " + strings.Repeat("[", 130) + "null" +
+		strings.Repeat("]", 130) + " endobj\n"
+	if _, convert_err := markdown_to_pdf.PDF_To_Markdown(
+		&markdown_to_pdf.PDF_To_Markdown_Input{PDF: []byte(nested)},
+	); convert_err == nil {
+		t.Fatal("over-deep PDF value succeeded")
+	}
+}
 
 // Each leaf test feeds the renderer a Markdown fragment that exercises exactly
 // the feature its heading names and asserts on the resulting PDF bytes. The
@@ -251,23 +445,163 @@ func Test_Document_Trailer(t *testing.T) {
 	}
 }
 
-// Test_Main_Output verifies Main writes a valid PDF to its injected sink and
-// returns a zero status code.
-func Test_Main_Output(t *testing.T) {
+// Test_Main_Dependencies verifies that the temporary path and external opener
+// stay injectable because neither is deterministic process state.
+func Test_Main_Dependencies(t *testing.T) {
 	t.Parallel()
-	var output strings.Builder
-	var diagnostics strings.Builder
+	written_path := ""
+	opened_path := ""
 	status := markdown_to_pdf.Main(&markdown_to_pdf.Main_Input{
-		Markdown: []byte("# Hello"),
-		Output:   &output,
-		Stderr:   &diagnostics,
+		Arguments:    []string{"markdown_to_pdf", "golden"},
+		Output:       io.Discard,
+		Error_Output: io.Discard,
+		Write_File: func(path string, document []byte) (err error) {
+			written_path = path
+			return nil
+		},
+		Temporary_Directory: "/injected",
+		Open_Path: func(path string) (err error) {
+			opened_path = path
+			return nil
+		},
 	})
 	if status != 0 {
 		t.Fatalf("status = %d, want 0", status)
 	}
-	if !strings.HasPrefix(output.String(), "%PDF-1.") {
-		t.Fatal("Main did not write a PDF to its output")
+	want_path := "/injected/markdown_to_pdf_golden.pdf"
+	if written_path != want_path {
+		t.Fatalf("written path = %q, want %q", written_path, want_path)
 	}
+	if opened_path != want_path {
+		t.Fatalf("opened path = %q, want %q", opened_path, want_path)
+	}
+}
+
+// Test_Main_Output verifies that package main only binds capabilities because
+// the injected entry point owns the complete command policy.
+func Test_Main_Output(t *testing.T) {
+	t.Parallel()
+	var output strings.Builder
+	var diagnostics strings.Builder
+	written_path := ""
+	var written_document []byte
+	status := markdown_to_pdf.Main(&markdown_to_pdf.Main_Input{
+		Arguments:    []string{"markdown_to_pdf", "render", "source.md", "-out=result.pdf"},
+		Output:       &output,
+		Error_Output: &diagnostics,
+		Open_File: func(path string) (file io.ReadCloser, err error) {
+			if path != "source.md" {
+				t.Fatalf("opened path = %q, want source.md", path)
+			}
+			return io.NopCloser(strings.NewReader("# Hello")), nil
+		},
+		Write_File: func(path string, document []byte) (err error) {
+			written_path = path
+			written_document = append([]byte{}, document...)
+			return nil
+		},
+		Path_Exists:         func(string) (exists bool) { return false },
+		Temporary_Directory: "/tmp",
+		Open_Path:           func(string) (err error) { return nil },
+	})
+	if status != 0 {
+		t.Fatalf("status = %d, want 0", status)
+	}
+	if written_path != "result.pdf" {
+		t.Fatalf("written path = %q, want result.pdf", written_path)
+	}
+	if !bytes.HasPrefix(written_document, []byte("%PDF-1.")) {
+		t.Fatal("Main did not write a PDF document")
+	}
+	if diagnostics.Len() != 0 {
+		t.Fatalf("diagnostics = %q, want empty", diagnostics.String())
+	}
+}
+
+// First_Difference_Input groups two byte slices for mismatch reporting.
+type First_Difference_Input struct {
+	// Got is the converter output.
+	Got []byte
+	// Want is the golden output.
+	Want []byte
+}
+
+func first_difference(input *First_Difference_Input) (description string) {
+	shared_size := len(input.Got)
+	if len(input.Want) < shared_size {
+		shared_size = len(input.Want)
+	}
+	offset := 0
+	for offset < shared_size {
+		if input.Got[offset] != input.Want[offset] {
+			break
+		}
+		offset++
+	}
+	got_end := offset + 80
+	if got_end > len(input.Got) {
+		got_end = len(input.Got)
+	}
+	want_end := offset + 80
+	if want_end > len(input.Want) {
+		want_end = len(input.Want)
+	}
+	return fmt.Sprintf(
+		"offset %d: got %q, want %q",
+		offset,
+		input.Got[offset:got_end],
+		input.Want[offset:want_end],
+	)
+}
+
+func partial_number(text string) (yes bool) {
+	if len(text) < 2 {
+		return false
+	}
+	if text[0] != '.' {
+		return false
+	}
+	for index := 1; index < len(text); index++ {
+		if text[index] < '0' {
+			return false
+		}
+		if text[index] > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+func read_fixture(t *testing.T, name string, bytes_max int64) (contents []byte) {
+	t.Helper()
+	path := "testdata/" + name
+	file, open_err := os.Open(path)
+	if open_err != nil {
+		t.Fatalf("open %s: %v", path, open_err)
+	}
+	defer file.Close()
+	info, stat_err := file.Stat()
+	if stat_err != nil {
+		t.Fatalf("stat %s: %v", path, stat_err)
+	}
+	if info.Size() > bytes_max {
+		t.Fatalf("%s exceeds %d bytes", path, bytes_max)
+	}
+	contents = make([]byte, info.Size())
+	_, read_err := io.ReadFull(file, contents)
+	if read_err != nil {
+		t.Fatalf("read %s: %v", path, read_err)
+	}
+	return contents
+}
+
+func pdf_specification_document(objects ...string) (pdf []byte) {
+	var output strings.Builder
+	output.WriteString("%PDF-1.4\n")
+	for object_index, object := range objects {
+		fmt.Fprintf(&output, "%d 0 obj\n%s\nendobj\n", object_index+1, object)
+	}
+	return []byte(output.String())
 }
 
 // Renders the Markdown source to PDF bytes and returns them as a string for

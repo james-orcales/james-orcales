@@ -1,5 +1,0 @@
-[[test]]
-testTitle = 'Serializability'
-
-    [[test.workload]]
-    testName = 'Serializability'

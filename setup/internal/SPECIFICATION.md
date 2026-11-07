@@ -1,9 +1,40 @@
 
+# Main
+
+### Runs Complete Bootstrap
+
+Main validates the host facts and stops invalid input with EXIT_USAGE. Otherwise, it returns the
+complete bootstrap runner. The runner uses one shared `io.IO` value and stops with the first
+failing step status or EXIT_SUCCESS.
+
+### Injects The Process Environment
+
+Package main reads the ambient environment one time and gives it to Main. Each spawned child
+receives that value, thus no step below the root reads an ambient value.
+
+# Runner
+
+### Queues Late Duplicate Retirement
+
+A second IO callback records its failure even after the root submits the first callback's
+continuation. The runner does not require both callbacks to arrive in one loop pass.
+
+### Stops After Submitted IO Retires
+
+A terminal status does not stop the runner while a submitted IO operation remains armed. The root
+continues its pump until each callback retires, then it can deinitialize the Driver.
+
+# Bootstrap Steps
+
+Bootstrap_Steps constructs the ordered steps from host facts and one shared `io.IO` value. Setup
+submits directory, status, file, and process operations through it. It declares no second IO seam,
+accepts the longest validated source path, and rejects a completion that does not retire once.
+
 # Order of Operations
 
 The setup binary runs one bootstrap in a fixed order — direnv, dotfiles, fonts, Neovim, fzf,
-maddox, m2p, sloc, Rust, jj, ripgrep, fd, Ghostty — each announced by name, exiting on the
-first failure. direnv is first; the Go builds precede the cargo steps; Ghostty downloads last.
+maddox, m2p, sloc, timeout, Rust, jj, ripgrep, fd, Ghostty — each announced by name, exiting on
+the first failure. direnv is first; the Go builds precede the cargo steps; Ghostty downloads last.
 
 # Idempotency
 
@@ -13,21 +44,22 @@ Neovim its own way; Install_Command, for this repo's own unversioned commands, g
 
 ### Accepts A Matching Version
 
-Installed reports true when the binary's --version output starts with the wanted version.
+Installed reports true when the first line of the binary's --version output starts with the wanted
+version. The report below that line does not count.
 
 ### Rejects A Missing Or Stale Binary
 
-Installed reports false when the binary is absent or reports a different version.
+Installed reports false when the binary is absent, its probe fails or answers with a first line
+above the output bound, or it reports another version.
 
-# Main
+# Mirror
 
-Main plans the sync, writing each pending file through the loop, then on darwin applies the
-macos defaults through the injected runner. The mirror's own properties are proved by the
-simulation harness, not example cases here.
+Mirror plans the sync, writes each pending file through shared IO, and then applies
+the macos defaults on darwin. The simulation harness proves the mirror properties.
 
 ### Applies Macos Defaults
 
-On darwin the macos defaults commands run through the injected runner after the sync.
+On darwin the macos defaults commands run through `io.IO.Spawn` after the sync.
 
 ### Skips Macos Defaults Off Darwin
 
@@ -35,13 +67,23 @@ On any operating system other than darwin no defaults commands run.
 
 ### Narrates The Scan
 
-Main names each source directory as the walk reads it, so a large silent tree scan shows it
+Mirror names each source directory as the walk reads it, so a large silent tree scan shows it
 is advancing rather than looking hung, and reports an up-to-date tree when it writes nothing.
 
-### Probes Ignore In One Batch
+### Probes Each Directory In One Batch
 
-The walk classifies a directory's entries with one Is_Ignored call carrying them all, not a
-call per entry, so the gitignore probe is one subprocess per tree level rather than per file.
+The walk classifies each directory's entries with one Is_Ignored call carrying them all. It does
+not start one gitignore subprocess per entry.
+
+### Rejects A Failed Ignore Probe
+
+The walk stops before it writes a file when the gitignore probe returns an error, does not retire
+exactly one time, or exits with a fatal status.
+
+### Accepts A Probe That Excludes No Path
+
+Git exits with status 1 when it excludes none of the probed paths. That status is a
+classification, not a failure, thus the walk reads an empty ignore set and continues.
 
 # Install Neovim
 
@@ -70,13 +112,9 @@ A failing make stops the bootstrap before installing and reports a non-zero exit
 
 # Install Fonts
 
-Install_Fonts copies the vendored Iosevka TTFs from `third_party/iosevka_nerd_font_mono` into the
-per-OS user font directory, copying only the faces not already there, and on Linux refreshes the
-font cache when it copies any. A repeat bootstrap with the fonts in place does no work.
-
-### Skips Without A Font Directory
-
-An empty font directory — an operating system with no known user font location — does nothing.
+Install_Fonts copies vendored Iosevka TTFs into the per-OS user font directory and on Linux
+refreshes the font cache after a copy. A repeat with the fonts in place does no work. The
+bootstrap omits this work on a host that has no managed font destination.
 
 ### Copies Only Missing Fonts
 

@@ -1,0 +1,71 @@
+
+# Seed Expands To State
+
+New is deterministic: one seed always yields the same Xoshiro, and two distinct
+seeds yield Xoshiros whose first draws differ.
+
+# Known Sequence
+
+A fixed seed produces a frozen sequence of Next values, locking the xoshiro256++
+stream (seeded by splitmix64) against accidental change.
+
+# Below Is Bounded
+
+Below returns a value in the half-open range zero to bound, never the bound itself,
+across many draws and across small and large bounds.
+
+# Boolean Is Even
+
+Boolean returns true and false, each over a large sample roughly half the time.
+
+# Chance Matches Ratio
+
+Chance is true at a frequency tracking the integer Ratio, exactly zero at a zero
+numerator and always at a full one.
+
+# Sample Matches Weights
+
+Sample returns each outcome at a frequency tracking its integer weight, and never an
+outcome of zero weight.
+
+# Shuffle Permutes
+
+Shuffle reorders a caller-owned permutation in place, preserving its multiset of indices
+and, over many runs, reaching every permutation. The caller applies it to whatever it indexes.
+
+# Split Is Independent
+
+Split returns a child Xoshiro whose stream differs from the parent's continuation,
+so a draw in one cannot perturb the other.
+
+# Types Hold No Floating Point
+
+The Xoshiro, Ratio, and Distribution types hold only integer fields, so a run is
+reproducible bit-for-bit across machines.
+
+# Every Entry Point Is Zero Allocation
+
+No public operation performs a heap allocation: construction, every draw, table building and
+filling, shuffle, split, source binding, and a crypto/prng Source_Read through a bound Xoshiro.
+
+# Xoshiro Converts To Source
+
+Xoshiro_To_Source binds a Xoshiro into the crypto/prng Source vtable. Bytes read through it are a
+function of the seed alone: equal seeds agree, distinct seeds differ, each eight bytes spend one
+Next word little-endian, a partial tail spends a whole word, and a nil Xoshiro dies before binding.
+
+# Bimodal Distribution Has Two Modes
+
+Bimodal_Fill writes a two-mode table into caller storage from a fast value, a slow value, and
+the slow mode's chance; a Distribution over that storage draws one of the two values, never
+between.
+
+# Percentile Distribution Hits Percentiles
+
+Percentile_Fill writes a table into caller storage from the values at p25, p50, p75, p95, p99,
+and p100, weighted by the mass between them, so a Distribution over that storage reproduces
+those percentiles.
+
+# Invariant Boundaries
+
+Public operations reach every named scalar boundary without waiting for chance.

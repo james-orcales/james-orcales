@@ -2573,7 +2573,7 @@ fn ignore_set_ignores(set: &Ignore_Set, path: &str, is_directory: bool) -> bool 
 /// the current directory) and the override flags.
 fn parse_arguments(arguments: &[String]) -> Main_Scope {
     let rest = arguments.get(1..).unwrap_or(&[]);
-    // Flags carry a single leading dash (the shared/cli convention), so a token
+    // Flags carry a single leading dash (the shared/std/cli convention), so a token
     // beginning with one is a flag and anything else is a positional path.
     let paths: Vec<String> =
         rest.iter().filter(|argument| !argument.starts_with('-')).cloned().collect();

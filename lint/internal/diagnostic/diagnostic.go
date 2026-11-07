@@ -5,12 +5,12 @@ package diagnostic
 import (
 	"fmt"
 	"go/token"
-	"strings"
+	"local/james-orcales/lint/internal/strings"
 )
 
 // Diagnostic is one rule violation. Position is the offending source
-// location; Name and Want are machine-readable rule identity and
-// suggested fix; Message is the human-readable line printed to stdout.
+// location. Name is the machine-readable rule identity and Want is the
+// suggested fix. Message is the human-readable line printed to stdout.
 // Tier carries the file-check tier for print-time gating: 1 = tier-1
 // (always printed; presence anywhere suppresses tier-2 output), 2 =
 // tier-2 (printed only when no tier-1 fires globally). Diagnostics
@@ -23,7 +23,7 @@ type Diagnostic struct {
 	// Name is the machine-readable rule identity, stable for tooling that
 	// groups or suppresses by rule.
 	Name string
-	// Want is the suggested fix, phrased as the desired post-state.
+	// Want is the suggested fix, phrased as an imperative sentence.
 	Want string
 	// Message is the human-readable line printed to stdout.
 	Message string
@@ -41,13 +41,13 @@ func Within_Scope(d Diagnostic, scope string) (within bool) {
 	if scope == "" {
 		return true
 	}
-	if strings.HasPrefix(d.Position.Filename, "<") {
+	if strings.Has_Prefix(d.Position.Filename, "<") {
 		return true
 	}
 	if d.Position.Filename == scope {
 		return true
 	}
-	return strings.HasPrefix(d.Position.Filename, scope+"/")
+	return strings.Has_Prefix(d.Position.Filename, scope+"/")
 }
 
 // Reportable returns, in input order, the diagnostics that should print: those

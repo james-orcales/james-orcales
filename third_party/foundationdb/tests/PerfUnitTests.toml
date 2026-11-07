@@ -1,9 +1,0 @@
-[[test]]
-testTitle = 'PerfUnitTests'
-useDB = false
-startDelay = 0
-
-    [[test.workload]]
-    testName = 'UnitTests'
-    #maxTestCases = 1
-    testsMatching = '#'

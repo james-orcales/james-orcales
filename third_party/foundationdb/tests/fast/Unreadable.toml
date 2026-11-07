@@ -1,5 +1,0 @@
-[[test]]
-testTitle = 'Unreadable'
-
-    [[test.workload]]
-    testName = 'Unreadable'

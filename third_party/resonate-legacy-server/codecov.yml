@@ -1,5 +1,0 @@
-ignore:
-  - "cmd/*"
-  - "pkg/client"
-  - "*.pb.go"
-  - "test/*"

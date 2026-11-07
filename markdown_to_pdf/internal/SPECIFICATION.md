@@ -1,4 +1,37 @@
 
+# PDF To Markdown
+
+PDF_To_Markdown extracts positioned text from a PDF. It uses an empty password by
+default and accepts a user or owner password for the Standard Security Handler.
+It returns Markdown that follows MarkItDown 0.1.7 layout and table rules.
+
+### Golden Documents
+
+The converter produces the checked-in MarkItDown output for prose, forms,
+mixed pages, sparse tables, and image-only documents without byte changes.
+
+### Master Format Numbers
+
+A line that contains only a dot-prefixed number joins the next non-empty text
+line. The converter preserves all other content order.
+
+### Table Reconstruction
+
+Painted cells or retained blank glyphs preserve source rows, columns, and wrapped cell text.
+Blank layout columns, page furniture, headings, and prose fragments stay outside tables.
+Overlapping text is emitted once. Separate source grids produce separate Markdown tables.
+
+### Parser Validation
+
+The converter rejects malformed PDF input and unsupported security handlers. It
+supports Standard revisions 2 through 6 with RC4, AES-128-CBC, and AES-256-CBC.
+It ignores extraction permission bits. An image-only PDF produces empty Markdown.
+
+### Resource Limits
+
+The converter rejects input that exceeds its object, page, nesting, per-stream,
+cumulative decoded-data, or Markdown-output limit.
+
 # Render
 
 Render turns Markdown source into the laid out, styled text of a PDF body.
@@ -71,8 +104,12 @@ The output carries a cross reference table and ends with the end of file marker.
 
 # Main
 
-Main reads the injected Markdown and writes the PDF to the injected output.
+Main parses the injected arguments and performs one complete render, preview, or golden command.
+
+### Dependencies
+
+Main receives its streams, file operations, temporary directory, and path opener through Main_Input.
 
 ### Output
 
-A run writes a valid PDF to the output sink and returns a zero status code.
+A successful render writes the converted document and returns a zero status code.

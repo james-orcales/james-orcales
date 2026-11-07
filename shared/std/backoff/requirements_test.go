@@ -1,0 +1,852 @@
+package backoff_test
+
+import "errors"
+import "testing"
+import "unsafe"
+
+import "local/james-orcales/shared/std/backoff"
+import "local/james-orcales/shared/std/sim/nbio"
+import "local/james-orcales/shared/std/sim/prng"
+import "local/james-orcales/shared/std/sim/time"
+import "local/james-orcales/shared/std/testify"
+
+// Test_Constant_Waits_Fixed checks Constant returns a fixed interval and Reset is inert.
+func Test_Constant_Waits_Fixed(t *testing.T) {
+  var state backoff.Policy_State
+  policy := backoff.Constant(
+    &state, backoff.Initial_Interval(5*time.SECOND),
+  )
+  for draw_index := 0; draw_index < 4; draw_index++ {
+    if backoff.Policy_Next(policy) != backoff.Delay(5*time.SECOND) {
+      t.Fatalf("draw %d was not the fixed interval", draw_index)
+    }
+  }
+  backoff.Policy_Reset(policy)
+  if backoff.Policy_Next(policy) != backoff.Delay(5*time.SECOND) {
+    t.Fatalf("reset changed a constant policy")
+  }
+}
+
+// Test_Zero_Never_Waits checks Zero always yields a zero delay.
+func Test_Zero_Never_Waits(t *testing.T) {
+  var state backoff.Policy_State
+  policy := backoff.Zero(&state)
+  if backoff.Policy_Next(policy) != 0 {
+    t.Fatalf("zero policy returned a non-zero delay")
+  }
+}
+
+// Test_Stopped_Never_Retries checks Stopped always yields STOP.
+func Test_Stopped_Never_Retries(t *testing.T) {
+  var state backoff.Policy_State
+  policy := backoff.Stopped(&state)
+  if backoff.Policy_Next(policy) != backoff.STOP {
+    t.Fatalf("stopped policy did not return STOP")
+  }
+}
+
+// Test_Exponential_Grows_And_Caps checks the interval doubles and clamps at the cap.
+func Test_Exponential_Grows_And_Caps(t *testing.T) {
+  generator := prng.New(1)
+  var state backoff.Policy_State
+  policy := backoff.Exponential(
+    &state,
+    &backoff.Exponential_Input{
+      Initial_Interval: backoff.Initial_Interval(1 * time.SECOND),
+      Interval_Max:     backoff.Maximum_Interval(10 * time.SECOND),
+      Multiplier:       backoff.Multiplier{Numerator: 2, Denominator: 1},
+      Jitter:           backoff.Jitter{Numerator: 0, Denominator: 1},
+      Generator:        generator,
+    },
+  )
+  want := []time.Duration{
+    1 * time.SECOND,
+    2 * time.SECOND,
+    4 * time.SECOND,
+    8 * time.SECOND,
+    10 * time.SECOND,
+    10 * time.SECOND,
+  }
+  for index, expected := range want {
+    got := backoff.Policy_Next(policy)
+    if got != backoff.Delay(expected) {
+      t.Fatalf("Next %d = %d, want %d", index, got, expected)
+    }
+  }
+}
+
+// Test_Jitter_Stays_Within_Bounds checks a jittered delay never leaves its spread.
+func Test_Jitter_Stays_Within_Bounds(t *testing.T) {
+  generator := prng.New(2)
+  interval := 1000 * time.NANOSECOND
+  var state backoff.Policy_State
+  policy := backoff.Exponential(
+    &state,
+    &backoff.Exponential_Input{
+      Initial_Interval: backoff.Initial_Interval(interval),
+      Interval_Max:     backoff.Maximum_Interval(interval),
+      Multiplier:       backoff.Multiplier{Numerator: 1, Denominator: 1},
+      Jitter:           backoff.Jitter{Numerator: 1, Denominator: 2},
+      Generator:        generator,
+    },
+  )
+  low := interval - interval/2
+  high := interval + interval/2
+  for draw_index := 0; draw_index < 1000; draw_index++ {
+    got := backoff.Policy_Next(policy)
+    if got < backoff.Delay(low) {
+      t.Fatalf("draw %d = %d, below %d", draw_index, got, low)
+    }
+    if got > backoff.Delay(high) {
+      t.Fatalf("draw %d = %d, above %d", draw_index, got, high)
+    }
+  }
+}
+
+// Test_Exponential_Saturates_Wide_Product checks full-width terms cannot wrap interval math.
+func Test_Exponential_Saturates_Wide_Product(t *testing.T) {
+  generator := prng.New(2)
+  input := backoff.Exponential_Input{
+    Initial_Interval: backoff.INTERVAL_MAXIMUM,
+    Interval_Max:     backoff.Maximum_Interval(backoff.INTERVAL_MAXIMUM),
+    Multiplier: backoff.Multiplier{
+      Numerator:   backoff.Multiplier_Numerator(^uint64(0)),
+      Denominator: 1,
+    },
+    Jitter:    backoff.Jitter{Denominator: 1},
+    Generator: generator,
+  }
+  var state backoff.Policy_State
+  policy := backoff.Exponential(&state, &input)
+  if backoff.Policy_Next(policy) != backoff.Delay(backoff.INTERVAL_MAXIMUM) {
+    t.Fatal("wide multiplier did not saturate")
+  }
+  input.Multiplier = backoff.Multiplier{Numerator: 1, Denominator: 1}
+  input.Jitter = backoff.Jitter{
+    Numerator:   backoff.Jitter_Numerator(^uint64(0)),
+    Denominator: backoff.Jitter_Denominator(^uint64(0)),
+  }
+  policy = backoff.Exponential(&state, &input)
+  delay := backoff.Policy_Next(policy)
+  if delay < 0 {
+    t.Fatal("wide jitter escaped interval domain")
+  }
+  if delay > backoff.Delay(backoff.INTERVAL_MAXIMUM) {
+    t.Fatal("wide jitter escaped interval domain")
+  }
+}
+
+// Test_Seed_Reproduces_Delays checks one seed replays and distinct seeds diverge.
+func Test_Seed_Reproduces_Delays(t *testing.T) {
+  first := prng.New(7)
+  again := prng.New(7)
+  var state_first backoff.Policy_State
+  var state_again backoff.Policy_State
+  policy_first := backoff.New_Exponential(&state_first, first)
+  policy_again := backoff.New_Exponential(&state_again, again)
+  for draw_index := 0; draw_index < 20; draw_index++ {
+    if backoff.Policy_Next(policy_first) != backoff.Policy_Next(policy_again) {
+      t.Fatalf("draw %d diverged for the same seed", draw_index)
+    }
+  }
+  other := prng.New(8)
+  repeat := prng.New(7)
+  var state_other backoff.Policy_State
+  var state_repeat backoff.Policy_State
+  policy_other := backoff.New_Exponential(&state_other, other)
+  policy_repeat := backoff.New_Exponential(&state_repeat, repeat)
+  if backoff.Policy_Next(policy_other) == backoff.Policy_Next(policy_repeat) {
+    t.Fatalf("distinct seeds produced the same first delay")
+  }
+}
+
+// Test_Retry_Returns_First_Success checks a first-try success stops immediately.
+func Test_Retry_Returns_First_Success(t *testing.T) {
+  calls := 0
+  operation := func(_ backoff.Retry_State_Handle) (value backoff.Result, err error) {
+    return counted_result(&calls, 42, nil)
+  }
+  var state backoff.Policy_State
+  outcome := run_retry(backoff.Zero(&state), 3, operation)
+  if outcome.Error != nil {
+    t.Fatalf("error = %v, want nil", outcome.Error)
+  }
+  if outcome.Value != 42 {
+    t.Fatalf("value = %d, want 42", outcome.Value)
+  }
+  if calls != 1 {
+    t.Fatalf("operation ran %d times, want 1", calls)
+  }
+}
+
+// Test_Retry_Stops_On_Permanent checks a Permanent error ends Retry after one attempt.
+func Test_Retry_Stops_On_Permanent(t *testing.T) {
+  cause := errors.New("fatal")
+  calls := 0
+  var permanent backoff.Permanent_Error
+  operation := func(_ backoff.Retry_State_Handle) (value backoff.Result, err error) {
+    return counted_result(&calls, 0, backoff.Permanent(&permanent, cause))
+  }
+  var state backoff.Policy_State
+  outcome := run_retry(backoff.Zero(&state), 5, operation)
+  if !bool(backoff.Error_Matches(outcome.Error, backoff.Error_Permanent)) {
+    t.Fatalf("error = %v, want a permanent error", outcome.Error)
+  }
+  if !bool(backoff.Error_Matches(outcome.Error, cause)) {
+    t.Fatalf("error = %v, want it to wrap the cause", outcome.Error)
+  }
+  if calls != 1 {
+    t.Fatalf("operation ran %d times, want 1", calls)
+  }
+}
+
+// Test_Retry_Exhausts_After_Tries checks Retry gives up after Tries_Max failures.
+func Test_Retry_Exhausts_After_Tries(t *testing.T) {
+  transient := errors.New("transient")
+  calls := 0
+  operation := func(_ backoff.Retry_State_Handle) (value backoff.Result, err error) {
+    return counted_result(&calls, 0, transient)
+  }
+  var state backoff.Policy_State
+  outcome := run_retry(
+    backoff.Constant(
+      &state, backoff.Initial_Interval(time.MILLISECOND),
+    ),
+    3,
+    operation,
+  )
+  if !bool(backoff.Error_Matches(outcome.Error, backoff.Error_Exhausted)) {
+    t.Fatalf("error = %v, want exhausted", outcome.Error)
+  }
+  if !bool(backoff.Error_Matches(outcome.Error, transient)) {
+    t.Fatalf("error = %v, want it to wrap the last failure", outcome.Error)
+  }
+  if calls != 3 {
+    t.Fatalf("operation ran %d times, want 3", calls)
+  }
+}
+
+// Test_Retry_Waits_On_Timeline checks the between-attempt waits advance the io clock.
+func Test_Retry_Waits_On_Timeline(t *testing.T) {
+  interval := 5 * time.MILLISECOND
+  calls := 0
+  operation := func(_ backoff.Retry_State_Handle) (value backoff.Result, err error) {
+    return third_attempt_result(&calls)
+  }
+  var state backoff.Policy_State
+  outcome := run_retry(
+    backoff.Constant(
+      &state, backoff.Initial_Interval(interval),
+    ), 5, operation,
+  )
+  if outcome.Error != nil {
+    t.Fatalf("error = %v, want nil", outcome.Error)
+  }
+  // Two waits precede the third, successful attempt.
+  if outcome.Elapsed != 2*interval {
+    t.Fatalf("elapsed = %d, want %d", outcome.Elapsed, 2*interval)
+  }
+}
+
+// Test_Retry_After_Overrides_Delay checks Retry_After replaces the policy delay once.
+func Test_Retry_After_Overrides_Delay(t *testing.T) {
+  override := 20 * time.MILLISECOND
+  calls := 0
+  var retry_after backoff.Retry_After_Error
+  operation := func(_ backoff.Retry_State_Handle) (value backoff.Result, err error) {
+    return retry_after_result(&calls, &retry_after, override)
+  }
+  // The policy delay is a millisecond, but Retry_After overrides the single wait.
+  var state backoff.Policy_State
+  outcome := run_retry(
+    backoff.Constant(
+      &state, backoff.Initial_Interval(time.MILLISECOND),
+    ),
+    5,
+    operation,
+  )
+  if outcome.Error != nil {
+    t.Fatalf("error = %v, want nil", outcome.Error)
+  }
+  if outcome.Elapsed != override {
+    t.Fatalf("elapsed = %d, want %d", outcome.Elapsed, override)
+  }
+}
+
+func counted_result(
+  calls *int,
+  value backoff.Result,
+  err error,
+) (result backoff.Result, result_error error) {
+  *calls++
+  return value, err
+}
+
+func third_attempt_result(calls *int) (value backoff.Result, err error) {
+  *calls++
+  if *calls < 3 {
+    return 0, errors.New("transient")
+  }
+  return 1, nil
+}
+
+func retry_after_result(
+  calls *int,
+  retry_after *backoff.Retry_After_Error,
+  override time.Duration,
+) (value backoff.Result, err error) {
+  *calls++
+  if *calls == 1 {
+    return 0, backoff.Retry_After(
+      retry_after,
+      backoff.Retry_Delay(override),
+      errors.New("slow down"),
+    )
+  }
+  return 7, nil
+}
+
+// Test_Invariant_Domains reaches every bounded policy, retry, and error sentinel.
+func Test_Invariant_Domains(t *testing.T) {
+  policy_invariant_domains()
+  retry_invariant_domains()
+  error_invariant_domains(t)
+}
+
+func policy_invariant_domains() {
+  intervals := invariant_intervals()
+  states := invariant_policy_states()
+  multipliers := [...]backoff.Multiplier{
+    {Numerator: 1, Denominator: 1},
+    {Numerator: 1, Denominator: 1},
+    {Numerator: 2, Denominator: 2},
+    {
+      Numerator:   backoff.Multiplier_Numerator(^uint64(0)),
+      Denominator: backoff.Multiplier_Denominator(^uint64(0)),
+    },
+  }
+  jitters := [...]backoff.Jitter{
+    {Numerator: 0, Denominator: 1},
+    {Numerator: 1, Denominator: 2},
+    {Numerator: 2, Denominator: 2},
+    {
+      Numerator:   backoff.Jitter_Numerator(^uint64(0)),
+      Denominator: backoff.Jitter_Denominator(^uint64(0)),
+    },
+  }
+  for index := 0; index < INVARIANT_SENTINEL_COUNT; index++ {
+    generator := invariant_generator_at(index)
+    interval := interval_sentinel_at(intervals, index)
+    state := policy_state_sentinel_at(states, index)
+    policy := backoff.Constant(&state, interval)
+    backoff.Policy_Next(policy)
+    backoff.Policy_Reset(policy)
+
+    state = policy_state_sentinel_at(states, index)
+    policy = backoff.Zero(&state)
+    backoff.Policy_Next(policy)
+    backoff.Policy_Reset(policy)
+
+    state = policy_state_sentinel_at(states, index)
+    policy = backoff.Stopped(&state)
+    backoff.Policy_Next(policy)
+    backoff.Policy_Reset(policy)
+
+    state = policy_state_sentinel_at(states, index)
+    policy = backoff.Exponential(
+      &state,
+      &backoff.Exponential_Input{
+        Initial_Interval: interval,
+        Interval_Max:     backoff.Maximum_Interval(interval),
+        Multiplier:       multipliers[index],
+        Jitter:           jitters[index],
+        Generator:        generator,
+      },
+    )
+    backoff.Policy_Next(policy)
+    backoff.Policy_Reset(policy)
+
+    state = policy_state_sentinel_at(states, index)
+    policy = backoff.New_Exponential(&state, generator)
+    backoff.Policy_Next(policy)
+    backoff.Policy_Reset(policy)
+  }
+  generator := invariant_generator_at(1)
+  var exact_state backoff.Policy_State
+  exact_policy := backoff.Exponential(
+    &exact_state,
+    &backoff.Exponential_Input{
+      Initial_Interval: 2,
+      Interval_Max:     2,
+      Multiplier:       backoff.Multiplier{Numerator: 2, Denominator: 2},
+      Jitter:           backoff.Jitter{Numerator: 0, Denominator: 2},
+      Generator:        generator,
+    },
+  )
+  backoff.Policy_Next(exact_policy)
+}
+
+func retry_invariant_domains() {
+  intervals := invariant_intervals()
+  states := invariant_policy_states()
+  loop, _, host := retry_loop(time.NANOSECOND, ALLOCATION_TIMELINE_CAPACITY)
+  tries := [...]backoff.Try_Count{1, 2, 2, backoff.TRY_COUNT_MAXIMUM}
+  attempts := [...]backoff.Attempt_Count{0, 1, 2, backoff.Attempt_Count(
+    backoff.TRY_COUNT_MAXIMUM,
+  )}
+  results := [...]backoff.Result{
+    backoff.RESULT_MINIMUM, backoff.RESULT_MAXIMUM, -1, 2,
+  }
+  for index := 0; index < INVARIANT_SENTINEL_COUNT; index++ {
+    interval := interval_sentinel_at(intervals, index)
+    policy_storage := policy_state_sentinel_at(states, index)
+    policy := backoff.Zero(&policy_storage)
+    state := backoff.Retry_State{
+      Input: backoff.Retry_Input{
+        Timer:            loop,
+        Policy:           policy,
+        Tries_Max:        tries[index],
+        Clock:            host,
+        Elapsed_Time_Max: backoff.Elapsed_Limit(interval),
+      },
+      Try_Count: attempts[index],
+      Started:   backoff.Started_Moment(interval),
+      Result:    results[index],
+      Stopped:   true,
+    }
+    if index > 1 {
+      state.Exhausted.Error_Identity = backoff.Error_Exhausted
+      state.Elapsed.Error_Identity = backoff.Error_Elapsed_Max
+    }
+    backoff.Retry_Rearm(&state)
+    backoff.Retry_Work_Queued(&state)
+    state.Result = 1
+    backoff.Retry_Work_Queued(&state)
+    state.Result = results[index]
+    backoff.Retry_Stopped(&state)
+    backoff.Retry_Status(&state)
+    state.Stopped = false
+    backoff.Retry_Status(&state)
+    state.Stopped = true
+    backoff.Retry(&state, invariant_success)
+  }
+}
+
+func invariant_success(_ backoff.Retry_State_Handle) (result backoff.Result, err error) {
+  return 1, nil
+}
+
+func error_invariant_domains(t *testing.T) {
+  intervals := invariant_intervals()
+  var retry_after backoff.Retry_After_Error
+  for index := 0; index < INVARIANT_SENTINEL_COUNT; index++ {
+    interval := interval_sentinel_at(intervals, index)
+    backoff.Retry_After(
+      &retry_after, backoff.Retry_Delay(interval), backoff.Error_Exhausted,
+    )
+  }
+  backoff.Retry_After(&retry_after, 0, backoff.Error_Exhausted)
+  var permanent backoff.Permanent_Error
+  marked := backoff.Permanent(&permanent, backoff.Error_Exhausted)
+  if !bool(backoff.Error_Matches(marked, backoff.Error_Permanent)) {
+    t.Fatal("permanent marker did not match")
+  }
+  if bool(backoff.Error_Matches(marked, backoff.Error_Elapsed_Max)) {
+    t.Fatal("permanent marker matched unrelated sentinel")
+  }
+}
+
+// One field per sentinel, because a fixed array result is banned.
+type interval_sentinels struct {
+  Zero    backoff.Initial_Interval
+  One     backoff.Initial_Interval
+  Two     backoff.Initial_Interval
+  Maximum backoff.Initial_Interval
+}
+
+func invariant_intervals() (intervals interval_sentinels) {
+  return interval_sentinels{
+    Zero: 0, One: 1, Two: 2, Maximum: backoff.INTERVAL_MAXIMUM,
+  }
+}
+
+// A switch, because the domain walks pair each sentinel with parallel local arrays by index.
+func interval_sentinel_at(
+  sentinels interval_sentinels,
+  index int,
+) (interval backoff.Initial_Interval) {
+  switch index {
+  case 0:
+    return sentinels.Zero
+  case 1:
+    return sentinels.One
+  case 2:
+    return sentinels.Two
+  }
+  // INVARIANT_SENTINEL_COUNT bounds every caller's index, thus the last needs no case.
+  return sentinels.Maximum
+}
+
+// One field per sentinel, because a fixed array result is banned. Field order pairs with
+// interval_sentinels position for position.
+type policy_state_sentinels struct {
+  Zero    backoff.Policy_State
+  One     backoff.Policy_State
+  Two     backoff.Policy_State
+  Maximum backoff.Policy_State
+}
+
+func invariant_policy_states() (states policy_state_sentinels) {
+  ratio_parts := [...]uint64{0, 1, 2, ^uint64(0)}
+  return policy_state_sentinels{
+    Zero: policy_state(
+      backoff.POLICY_KIND_CONSTANT, 0, ratio_parts[0], invariant_generator_at(0),
+    ),
+    One: policy_state(
+      backoff.POLICY_KIND_STOPPED, 1, ratio_parts[1], invariant_generator_at(1),
+    ),
+    Two: policy_state(
+      backoff.POLICY_KIND_EXPONENTIAL,
+      2,
+      ratio_parts[2],
+      invariant_generator_at(2),
+    ),
+    Maximum: policy_state(
+      backoff.POLICY_KIND_CONSTANT,
+      backoff.INTERVAL_MAXIMUM,
+      ratio_parts[3],
+      invariant_generator_at(3),
+    ),
+  }
+}
+
+func invariant_generator_at(index int) (generator prng.Xoshiro) {
+  maximum := ^uint64(0)
+  switch index {
+  case 0:
+    return prng.Xoshiro{
+      First: 0, Second: 1, Third: 2, Fourth: prng.Xoshiro_Fourth(maximum),
+    }
+  case 1:
+    return prng.Xoshiro{
+      First: 1, Second: 2, Third: prng.Xoshiro_Third(maximum), Fourth: 0,
+    }
+  case 2:
+    return prng.Xoshiro{
+      First: 2, Second: prng.Xoshiro_Second(maximum), Third: 0, Fourth: 1,
+    }
+  }
+  return prng.Xoshiro{
+    First: prng.Xoshiro_First(maximum), Second: 0, Third: 1, Fourth: 2,
+  }
+}
+
+// A switch, because the domain walks pair each sentinel with parallel local arrays by index.
+func policy_state_sentinel_at(
+  sentinels policy_state_sentinels,
+  index int,
+) (state backoff.Policy_State) {
+  switch index {
+  case 0:
+    return sentinels.Zero
+  case 1:
+    return sentinels.One
+  case 2:
+    return sentinels.Two
+  }
+  // INVARIANT_SENTINEL_COUNT bounds every caller's index, thus the last needs no case.
+  return sentinels.Maximum
+}
+
+func policy_state(
+  kind backoff.Policy_Kind,
+  interval backoff.Initial_Interval,
+  ratio_part uint64,
+  generator prng.Xoshiro,
+) (state backoff.Policy_State) {
+  return backoff.Policy_State{
+    Kind:             kind,
+    Initial_Interval: interval,
+    Current_Interval: backoff.Current_Interval(interval),
+    Interval_Max:     backoff.Maximum_Interval(interval),
+    Multiplier: backoff.Stored_Multiplier{
+      Numerator:   backoff.Stored_Multiplier_Numerator(ratio_part),
+      Denominator: backoff.Stored_Multiplier_Denominator(ratio_part),
+    },
+    Jitter: backoff.Stored_Jitter{
+      Numerator:   backoff.Stored_Jitter_Numerator(ratio_part),
+      Denominator: backoff.Stored_Jitter_Denominator(ratio_part),
+    },
+    Generator: backoff.Generator_Storage(generator),
+  }
+}
+
+type Allocation_Fixture struct {
+  Generator          prng.Xoshiro
+  Input              backoff.Exponential_Input
+  Constant           backoff.Policy_State
+  Exponential        backoff.Policy_State
+  Zero               backoff.Policy_State
+  Stopped            backoff.Policy_State
+  Policy_Constant    backoff.Policy
+  Policy_Exponential backoff.Policy
+  Policy_Zero        backoff.Policy
+  Policy_Stopped     backoff.Policy
+  Delay              backoff.Delay
+  Match              backoff.Boolean
+  Permanent          backoff.Permanent_Error
+  After              backoff.Retry_After_Error
+  Error              error
+  Retry_State        backoff.Retry_State
+  Result             backoff.Result
+  Result_Error       error
+  Operation_Error    error
+  Operation_Kind     uint8
+  Operation_Count    int
+  Notify_Count       int
+  Driver             nbio.Driver
+}
+
+const ALLOCATION_TIMELINE_CAPACITY = 1
+
+const INVARIANT_SENTINEL_COUNT = 4
+
+const ALLOCATION_OPERATION_SUCCESS uint8 = 0
+
+const ALLOCATION_OPERATION_FAILURE uint8 = 1
+
+const ALLOCATION_OPERATION_PERMANENT uint8 = 2
+
+const ALLOCATION_OPERATION_RETRY_AFTER uint8 = 3
+
+func allocation_operation(
+  state backoff.Retry_State_Handle,
+) (result backoff.Result, err error) {
+  fixture := (*Allocation_Fixture)(state.Context)
+  fixture.Operation_Count++
+  switch fixture.Operation_Kind {
+  case ALLOCATION_OPERATION_FAILURE:
+    return 0, fixture.Operation_Error
+  case ALLOCATION_OPERATION_PERMANENT:
+    return 0, backoff.Permanent(&fixture.Permanent, fixture.Operation_Error)
+  case ALLOCATION_OPERATION_RETRY_AFTER:
+    if fixture.Operation_Count == 1 {
+      return 0, backoff.Retry_After(
+        &fixture.After,
+        backoff.Retry_Delay(time.NANOSECOND),
+        fixture.Operation_Error,
+      )
+    }
+  }
+  return 1, nil
+}
+
+func allocation_notify(context unsafe.Pointer, _ error, _ backoff.Delay) {
+  fixture := (*Allocation_Fixture)(context)
+  fixture.Notify_Count++
+}
+
+// Test_Allocation proves every public runtime path owns no heap storage.
+func Test_Allocation(t *testing.T) {
+  fixture := Allocation_Fixture{Generator: prng.New(1)}
+  loop, driver, host := retry_loop(time.NANOSECOND, ALLOCATION_TIMELINE_CAPACITY)
+  fixture.Input = backoff.Exponential_Input{
+    Initial_Interval: backoff.Initial_Interval(time.SECOND),
+    Interval_Max:     backoff.Maximum_Interval(10 * time.SECOND),
+    Multiplier:       backoff.Multiplier{Numerator: 2, Denominator: 1},
+    Jitter:           backoff.Jitter{Numerator: 1, Denominator: 2},
+    Generator:        fixture.Generator,
+  }
+  fixture.Retry_State.Input = backoff.Retry_Input{
+    Timer:     loop,
+    Policy:    backoff.Zero(&fixture.Constant),
+    Tries_Max: 1,
+    Clock:     host,
+    Notify:    allocation_notify,
+  }
+  fixture.Retry_State.Context = unsafe.Pointer(&fixture)
+  fixture.Driver = driver
+  fixture.Operation_Error = backoff.Error_Exhausted
+  allocation_policy_paths(t, &fixture)
+  allocation_error_paths(t, &fixture)
+  allocation_retry_paths(t, &fixture)
+}
+
+func allocation_policy_paths(t *testing.T, fixture *Allocation_Fixture) {
+  testify.Zero_Allocation(t, func() { allocation_constant(fixture) })
+  testify.Zero_Allocation(t, func() { allocation_zero(fixture) })
+  testify.Zero_Allocation(t, func() { allocation_stopped(fixture) })
+  testify.Zero_Allocation(t, func() { allocation_exponential(fixture) })
+  testify.Zero_Allocation(t, func() { allocation_new_exponential(fixture) })
+  testify.Zero_Allocation(t, func() { allocation_constant_delay(fixture) })
+  testify.Zero_Allocation(t, func() { allocation_zero_delay(fixture) })
+  testify.Zero_Allocation(t, func() { allocation_stopped_delay(fixture) })
+  testify.Zero_Allocation(t, func() { allocation_exponential_delay(fixture) })
+  testify.Zero_Allocation(t, func() { backoff.Policy_Reset(fixture.Policy_Constant) })
+  testify.Zero_Allocation(t, func() { backoff.Policy_Reset(fixture.Policy_Zero) })
+  testify.Zero_Allocation(t, func() { backoff.Policy_Reset(fixture.Policy_Stopped) })
+  testify.Zero_Allocation(t, func() {
+    backoff.Policy_Reset(fixture.Policy_Exponential)
+  })
+}
+
+func allocation_error_paths(t *testing.T, fixture *Allocation_Fixture) {
+  testify.Zero_Allocation(t, func() { allocation_permanent(fixture) })
+  testify.Zero_Allocation(t, func() { allocation_after(fixture) })
+  testify.Zero_Allocation(t, func() { allocation_matches(fixture) })
+}
+
+func allocation_retry_paths(t *testing.T, fixture *Allocation_Fixture) {
+  fixture.Operation_Kind = ALLOCATION_OPERATION_SUCCESS
+  testify.Zero_Allocation(t, func() { allocation_success(fixture) })
+  fixture.Operation_Kind = ALLOCATION_OPERATION_FAILURE
+  fixture.Retry_State.Input.Tries_Max = 1
+  testify.Zero_Allocation(t, func() { allocation_failure(fixture) })
+  fixture.Operation_Kind = ALLOCATION_OPERATION_PERMANENT
+  fixture.Retry_State.Input.Tries_Max = 2
+  testify.Zero_Allocation(t, func() { allocation_permanent_result(fixture) })
+  fixture.Operation_Kind = ALLOCATION_OPERATION_FAILURE
+  fixture.Retry_State.Input.Policy = fixture.Policy_Stopped
+  testify.Zero_Allocation(t, func() { allocation_stopped_result(fixture) })
+  fixture.Retry_State.Input.Policy = fixture.Policy_Zero
+  fixture.Retry_State.Input.Tries_Max = 2
+  testify.Zero_Allocation(t, func() { allocation_rearm(fixture) })
+  fixture.Retry_State.Input.Policy = fixture.Policy_Constant
+  fixture.Retry_State.Input.Elapsed_Time_Max = 1
+  testify.Zero_Allocation(t, func() { allocation_elapsed(fixture) })
+  fixture.Operation_Kind = ALLOCATION_OPERATION_RETRY_AFTER
+  fixture.Retry_State.Input.Elapsed_Time_Max = 0
+  testify.Zero_Allocation(t, func() { allocation_retry_after(fixture) })
+}
+
+func allocation_constant(fixture *Allocation_Fixture) {
+  fixture.Policy_Constant = backoff.Constant(
+    &fixture.Constant,
+    backoff.Initial_Interval(time.SECOND),
+  )
+}
+
+func allocation_zero(fixture *Allocation_Fixture) {
+  fixture.Policy_Zero = backoff.Zero(&fixture.Zero)
+}
+
+func allocation_stopped(fixture *Allocation_Fixture) {
+  fixture.Policy_Stopped = backoff.Stopped(&fixture.Stopped)
+}
+
+func allocation_exponential(fixture *Allocation_Fixture) {
+  fixture.Policy_Exponential = backoff.Exponential(
+    &fixture.Exponential, &fixture.Input,
+  )
+}
+
+func allocation_new_exponential(fixture *Allocation_Fixture) {
+  fixture.Policy_Exponential = backoff.New_Exponential(
+    &fixture.Exponential, fixture.Generator,
+  )
+}
+
+func allocation_constant_delay(fixture *Allocation_Fixture) {
+  fixture.Delay = backoff.Policy_Next(fixture.Policy_Constant)
+}
+
+func allocation_zero_delay(fixture *Allocation_Fixture) {
+  fixture.Delay = backoff.Policy_Next(fixture.Policy_Zero)
+}
+
+func allocation_stopped_delay(fixture *Allocation_Fixture) {
+  fixture.Delay = backoff.Policy_Next(fixture.Policy_Stopped)
+}
+
+func allocation_exponential_delay(fixture *Allocation_Fixture) {
+  fixture.Delay = backoff.Policy_Next(fixture.Policy_Exponential)
+}
+
+func allocation_permanent(fixture *Allocation_Fixture) {
+  fixture.Error = backoff.Permanent(&fixture.Permanent, backoff.Error_Exhausted)
+}
+
+func allocation_after(fixture *Allocation_Fixture) {
+  fixture.Error = backoff.Retry_After(
+    &fixture.After,
+    backoff.Retry_Delay(time.SECOND),
+    backoff.Error_Exhausted,
+  )
+}
+
+func allocation_matches(fixture *Allocation_Fixture) {
+  fixture.Error = backoff.Error_Exhausted
+  fixture.Match = backoff.Error_Matches(
+    fixture.Error, backoff.Error_Exhausted,
+  )
+  fixture.Match = backoff.Error_Matches(
+    fixture.Error, backoff.Error_Elapsed_Max,
+  )
+}
+
+func allocation_success(fixture *Allocation_Fixture) {
+  backoff.Retry(&fixture.Retry_State, allocation_operation)
+  fixture.Match, fixture.Result, fixture.Result_Error = backoff.Retry_Status(
+    &fixture.Retry_State,
+  )
+}
+
+func allocation_failure(fixture *Allocation_Fixture) {
+  backoff.Retry(&fixture.Retry_State, allocation_operation)
+  fixture.Match, fixture.Result, fixture.Result_Error = backoff.Retry_Status(
+    &fixture.Retry_State,
+  )
+}
+
+func allocation_permanent_result(fixture *Allocation_Fixture) {
+  backoff.Retry(&fixture.Retry_State, allocation_operation)
+  fixture.Match, fixture.Result, fixture.Result_Error = backoff.Retry_Status(
+    &fixture.Retry_State,
+  )
+}
+
+func allocation_stopped_result(fixture *Allocation_Fixture) {
+  backoff.Retry(&fixture.Retry_State, allocation_operation)
+  fixture.Match, fixture.Result, fixture.Result_Error = backoff.Retry_Status(
+    &fixture.Retry_State,
+  )
+}
+
+func allocation_rearm(fixture *Allocation_Fixture) {
+  backoff.Retry(&fixture.Retry_State, allocation_operation)
+  fixture.Match = backoff.Retry_Rearm(&fixture.Retry_State)
+  fixture.Match, fixture.Result, fixture.Result_Error = backoff.Retry_Status(
+    &fixture.Retry_State,
+  )
+}
+
+func allocation_elapsed(fixture *Allocation_Fixture) {
+  allocation_retry_state_reset(fixture)
+  backoff.Retry(&fixture.Retry_State, allocation_operation)
+  fixture.Match, fixture.Result, fixture.Result_Error = backoff.Retry_Status(
+    &fixture.Retry_State,
+  )
+}
+
+func allocation_retry_after(fixture *Allocation_Fixture) {
+  fixture.Operation_Count = 0
+  backoff.Retry(&fixture.Retry_State, allocation_operation)
+  fixture.Match, fixture.Result, fixture.Result_Error = backoff.Retry_Status(
+    &fixture.Retry_State,
+  )
+  nbio.Driver_Run(fixture.Driver)
+  nbio.Driver_Run(fixture.Driver)
+  fixture.Match = backoff.Retry_Work_Queued(&fixture.Retry_State)
+  fixture.Match = backoff.Retry_Rearm(&fixture.Retry_State)
+  fixture.Match = backoff.Retry_Stopped(&fixture.Retry_State)
+  fixture.Match, fixture.Result, fixture.Result_Error = backoff.Retry_Status(
+    &fixture.Retry_State,
+  )
+}
+
+func allocation_retry_state_reset(fixture *Allocation_Fixture) {
+  input := fixture.Retry_State.Input
+  fixture.Retry_State = backoff.Retry_State{
+    Input: input, Context: unsafe.Pointer(fixture),
+  }
+}

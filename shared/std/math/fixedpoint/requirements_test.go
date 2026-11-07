@@ -1,0 +1,633 @@
+package fixedpoint_test
+
+import "testing"
+
+import "local/james-orcales/shared/std/math/bits"
+import "local/james-orcales/shared/std/math/fixedpoint"
+import "local/james-orcales/shared/std/testify"
+
+// Test_Conversion verifies the lift to fixed-point, the truncating round trip, and the
+// whole-number predicate.
+func Test_Conversion(t *testing.T) {
+  t.Parallel()
+  integer := number_from_integer
+  testify.Equal_Values(
+    t,
+    5*fixedpoint.SCALE,
+    integer(5),
+    "From_Integer(5) = %d, want %d",
+    integer(5),
+    5*fixedpoint.SCALE,
+  )
+  testify.Equal_Values(
+    t,
+    5,
+    fixedpoint.Whole(integer(5)),
+    "Whole(5.0) = %d, want 5",
+    fixedpoint.Whole(integer(5)),
+  )
+  // 7/2 = 3.5 truncates toward zero to 3; the negative truncates toward zero to -3.
+  testify.Equal_Values(
+    t,
+    3,
+    fixedpoint.Whole(integer(7)/2),
+    "Whole(3.5) = %d, want 3",
+    fixedpoint.Whole(integer(7)/2),
+  )
+  testify.Equal_Values(
+    t,
+    -3,
+    fixedpoint.Whole(integer(-7)/2),
+    "Whole(-3.5) = %d, want -3",
+    fixedpoint.Whole(integer(-7)/2),
+  )
+  testify.True(t, bool(fixedpoint.Is_Integer(integer(5))),
+    "5.0 carries no fraction")
+  testify.False(t, bool(fixedpoint.Is_Integer(integer(7)/2)),
+    "3.5 carries a fraction")
+
+  // 7/2 as a ratio is 3.5; a zero denominator yields zero, not a panic.
+  ratio := fixedpoint.From_Ratio(7, 2)
+  testify.Equal_Values(t, integer(7)/2, ratio,
+    "From_Ratio(7,2) = %d, want %d", ratio, integer(7)/2)
+  testify.Equal_Values(t, 0, fixedpoint.From_Ratio(7, 0),
+    "From_Ratio(7,0) must be 0")
+}
+
+// Test_Arithmetic verifies fixed-point multiply and divide, including the sign, and the
+// native add and subtract.
+func Test_Arithmetic(t *testing.T) {
+  t.Parallel()
+  integer := number_from_integer
+  product := fixedpoint.Multiply(
+    fixedpoint.Multiplicand(integer(3)),
+    fixedpoint.Multiplier(integer(4)),
+  )
+  testify.Equal_Values(t, integer(12), product,
+    "3*4 = %d, want %d", product, integer(12))
+
+  half_times_two := fixedpoint.Multiply(
+    fixedpoint.Multiplicand(integer(7)/2),
+    fixedpoint.Multiplier(integer(2)),
+  )
+  testify.Equal_Values(
+    t,
+    integer(7),
+    half_times_two,
+    "3.5*2 = %d, want %d",
+    half_times_two,
+    integer(7),
+  )
+
+  negative := fixedpoint.Multiply(
+    fixedpoint.Multiplicand(integer(-3)),
+    fixedpoint.Multiplier(integer(4)),
+  )
+  testify.Equal_Values(t, integer(-12), negative,
+    "-3*4 = %d, want %d", negative, integer(-12))
+
+  quotient := fixedpoint.Divide(
+    fixedpoint.Dividend(integer(1)), fixedpoint.Divisor(integer(2)),
+  )
+  testify.Equal_Values(t, integer(1)/2, quotient,
+    "1/2 = %d, want %d", quotient, integer(1)/2)
+  testify.Equal_Values(t, integer(5), integer(2)+integer(3),
+    "2+3 != 5 under native addition")
+}
+
+// Test_Ratio verifies that Apply scales a value by a dimensionless fixed-point ratio.
+func Test_Ratio(t *testing.T) {
+  t.Parallel()
+  integer := number_from_integer
+  // 1.3 is not exact in base two, so 10*1.3 lands near 13 within a unit or two.
+  thirteen_tenths := fixedpoint.Ratio(13 * fixedpoint.SCALE / 10)
+  testify.In_Delta(
+    t,
+    &testify.In_Delta_Input{
+      Expected: integer(13),
+      Actual:   fixedpoint.Apply(integer(10), thirteen_tenths),
+      Delta:    16,
+    },
+    "10 scaled by thirteen tenths",
+  )
+  // One half is exact, so 10*0.5 is exactly 5.
+  halved := fixedpoint.Apply(integer(10), fixedpoint.Ratio(fixedpoint.SCALE/2))
+  testify.Equal_Values(t, integer(5), halved,
+    "10*0.5 = %d, want %d", halved, integer(5))
+}
+
+// Test_Square_Root verifies exact and floored roots, and the scaled root of a plain
+// integer sum of squares.
+func Test_Square_Root(t *testing.T) {
+  t.Parallel()
+  integer := number_from_integer
+  root_of := integer_root
+  testify.Equal_Values(
+    t,
+    integer(2),
+    fixedpoint.Number(fixedpoint.Square_Root(integer(4))),
+    "sqrt(4) = %d, want %d",
+    fixedpoint.Square_Root(integer(4)),
+    integer(2),
+  )
+
+  // The root of 2 is irrational; squaring the result returns to 2 within rounding.
+  root_two := fixedpoint.Number(fixedpoint.Square_Root(integer(2)))
+  testify.In_Delta(
+    t,
+    &testify.In_Delta_Input{
+      Expected: integer(2),
+      Actual: fixedpoint.Multiply(
+        fixedpoint.Multiplicand(root_two),
+        fixedpoint.Multiplier(root_two),
+      ),
+      Delta: 16,
+    },
+    "the square of the root of two",
+  )
+  // The sample variance of {10,20,30,40,50} is 250; squaring its root returns to 250.
+  root_variance := fixedpoint.Number(fixedpoint.Square_Root_Scaled(250))
+  squared := fixedpoint.Multiply(
+    fixedpoint.Multiplicand(root_variance),
+    fixedpoint.Multiplier(root_variance),
+  )
+  testify.In_Delta(
+    t,
+    &testify.In_Delta_Input{
+      Expected: integer(250), Actual: squared, Delta: 16,
+    },
+    "the square of the scaled root of 250",
+  )
+  // Integer_Root floors the root of a 128-bit radicand: a perfect square exactly.
+  testify.Equal_Values(t, 12, root_of(144),
+    "Integer_Root(144) = %d, want 12", root_of(144))
+
+  // The fast 64-bit path must floor exactly at every perfect-square boundary.
+  for index := 1; index < 200_000; index++ {
+    root := uint64(index)
+    square := root * root
+    testify.Equal_Values(
+      t,
+      fixedpoint.Root_Integer(root),
+      root_of(square),
+      "Integer_Root(%d^2) != %d",
+      root,
+      root,
+    )
+    testify.Equal_Values(
+      t,
+      fixedpoint.Root_Integer(root-1),
+      root_of(square-1),
+      "Integer_Root(%d^2 - 1) != %d",
+      root,
+      root-1,
+    )
+    testify.Equal_Values(
+      t,
+      fixedpoint.Root_Integer(root),
+      root_of(square+2*root),
+      "Integer_Root(just below (%d+1)^2) != %d",
+      root,
+      root,
+    )
+
+  }
+  verify_root_property(t)
+}
+
+// Test_Sine verifies the quarter-turn extremes exactly, range reduction past one turn,
+// and a midpoint within the approximation's tolerance.
+func Test_Sine(t *testing.T) {
+  t.Parallel()
+  integer := number_from_integer
+  quarter := integer(1) / 4
+  testify.Equal_Values(
+    t,
+    0,
+    fixedpoint.Number(fixedpoint.Sine_Turns(0)),
+    "sine(0) = %d, want 0",
+    fixedpoint.Sine_Turns(0),
+  )
+  testify.Equal_Values(
+    t,
+    integer(1),
+    fixedpoint.Number(fixedpoint.Sine_Turns(quarter)),
+    "sine(0.25) = %d, want %d",
+    fixedpoint.Sine_Turns(quarter),
+    integer(1),
+  )
+  testify.Equal_Values(
+    t,
+    integer(-1),
+    fixedpoint.Number(fixedpoint.Sine_Turns(3*quarter)),
+    "sine(0.75) = %d, want %d",
+    fixedpoint.Sine_Turns(3*quarter),
+    integer(-1),
+  )
+
+  // A 1.25 turn reduces to 0.25, and -0.25 reduces to 0.75.
+  full_turn := fixedpoint.Number(fixedpoint.Sine_Turns(integer(1) + quarter))
+  testify.Equal_Values(t, integer(1), full_turn,
+    "sine(1.25) = %d, want %d", full_turn, integer(1))
+  testify.Equal_Values(
+    t,
+    integer(-1),
+    fixedpoint.Number(fixedpoint.Sine_Turns(-quarter)),
+    "sine(-0.25) = %d, want %d",
+    fixedpoint.Sine_Turns(-quarter),
+    integer(-1),
+  )
+
+  // Sine of 1/12 turn equals sine of 30 degrees, 0.5, held within a small slack.
+  midpoint := fixedpoint.Number(fixedpoint.Sine_Turns(integer(1) / 12))
+  testify.In_Delta(
+    t,
+    &testify.In_Delta_Input{
+      Expected: integer(1) / 2, Actual: midpoint, Delta: 2000,
+    },
+    "the sine of one twelfth of a turn",
+  )
+}
+
+// Test_Format verifies decimal rendering, the sign, half-away rounding, and carry.
+func Test_Format(t *testing.T) {
+  t.Parallel()
+  integer := number_from_integer
+  var storage [fixedpoint.TEXT_SIZE_MAXIMUM]byte
+  cases := []format_case{
+    {Value: integer(5), Digits: 2, Want: "5.00"},
+    {Value: integer(1) / 2, Digits: 2, Want: "0.50"},
+    {Value: integer(3) / 2, Digits: 2, Want: "1.50"},
+    {Value: -integer(3) / 2, Digits: 2, Want: "-1.50"},
+    {Value: integer(1) - integer(1)/1000, Digits: 2, Want: "1.00"},
+    {Value: integer(3) / 2, Digits: 0, Want: "2"},
+  }
+  for _, one := range cases {
+    count := fixedpoint.Into_Text(storage[:], one.Value, one.Digits)
+    actual := fixedpoint.Text(storage[:count])
+    testify.Equal_Values(t, one.Want, actual,
+      "Format of %d to %d digits", one.Value, one.Digits)
+  }
+  short := [...]byte{'x'}
+  testify.Zero(t, fixedpoint.Into_Text(short[:], integer(5), 2),
+    "short output returns no text")
+  testify.Equal_Values(t, [...]byte{'x'}, short,
+    "short output stays unchanged")
+}
+
+// Test_Serialization verifies caller storage preserves a Number as a bare JSON decimal.
+func Test_Serialization(t *testing.T) {
+  t.Parallel()
+  integer := number_from_integer
+  var encoded [fixedpoint.TEXT_SIZE_MAXIMUM]byte
+  count := fixedpoint.Into_JSON(encoded[:], integer(5)/2)
+  testify.Equal_Values(
+    t,
+    `2.5`,
+    string(encoded[:count]),
+    "Into_JSON(2.5) = %s, want 2.5",
+    encoded[:count],
+  )
+
+  count = fixedpoint.Into_JSON(encoded[:], integer(3))
+  testify.Equal_Values(
+    t,
+    `3`,
+    string(encoded[:count]),
+    "Into_JSON(3.0) = %s, want 3",
+    encoded[:count],
+  )
+
+  decoded, ok := fixedpoint.From_JSON(`2.5`)
+  testify.True(t, bool(ok), "From_JSON accepts 2.5")
+  testify.Equal_Values(
+    t,
+    integer(5)/2,
+    decoded,
+    "From_JSON(2.5) = %d, want %d",
+    decoded,
+    integer(5)/2,
+  )
+  _, ok = fixedpoint.From_JSON(`no`)
+  testify.False(t, bool(ok), "From_JSON rejects non-decimal text")
+}
+
+// Test_Allocation proves each operation keeps all result storage with its caller.
+func Test_Allocation(t *testing.T) {
+  fixture := allocation_fixture{
+    Storage: make([]byte, fixedpoint.TEXT_SIZE_MAXIMUM),
+  }
+  one := number_from_integer(1)
+  two := number_from_integer(2)
+  checks := [...]struct {
+    Name string
+    Call func()
+  }{
+    {Name: "From_Integer", Call: func() { allocation_from_integer(&fixture) }},
+    {Name: "From_Ratio", Call: func() { allocation_from_ratio(&fixture) }},
+    {Name: "Whole", Call: func() { allocation_whole(&fixture, one) }},
+    {Name: "Is_Integer", Call: func() { allocation_is_integer(&fixture, one) }},
+    {Name: "Multiply", Call: func() { allocation_multiply(&fixture, one, two) }},
+    {Name: "Divide", Call: func() { allocation_divide(&fixture, one, two) }},
+    {Name: "Apply", Call: func() { allocation_apply(&fixture, one, two) }},
+    {Name: "Square_Root", Call: func() { allocation_square_root(&fixture, one) }},
+    {Name: "Square_Root_Scaled", Call: func() {
+      allocation_square_root_scaled(&fixture)
+    }},
+    {Name: "Integer_Root", Call: func() { allocation_integer_root(&fixture) }},
+    {Name: "Sine_Turns", Call: func() { allocation_sine_turns(&fixture, one) }},
+    {Name: "Into_Text", Call: func() { allocation_into_text(&fixture, two) }},
+    {Name: "Into_JSON", Call: func() { allocation_into_json(&fixture, two) }},
+    {Name: "From_JSON", Call: func() { allocation_from_json(&fixture) }},
+    {Name: "Text_Validate", Call: func() { allocation_text_validate(&fixture) }},
+  }
+  for _, check := range checks {
+    t.Run(check.Name, func(t *testing.T) {
+      testify.Zero_Allocation(t, check.Call)
+    })
+  }
+}
+
+func allocation_from_integer(fixture *allocation_fixture) {
+  fixture.Integer = fixedpoint.From_Integer(1)
+}
+
+func allocation_from_ratio(fixture *allocation_fixture) {
+  fixture.Number = fixedpoint.From_Ratio(1, 2)
+}
+
+func allocation_whole(fixture *allocation_fixture, one fixedpoint.Number) {
+  fixture.Whole = fixedpoint.Whole(one)
+}
+
+func allocation_is_integer(fixture *allocation_fixture, one fixedpoint.Number) {
+  fixture.Boolean = fixedpoint.Is_Integer(one)
+}
+
+func allocation_multiply(
+  fixture *allocation_fixture,
+  one fixedpoint.Number,
+  two fixedpoint.Number,
+) {
+  fixture.Number = fixedpoint.Multiply(
+    fixedpoint.Multiplicand(one), fixedpoint.Multiplier(two),
+  )
+}
+
+func allocation_divide(
+  fixture *allocation_fixture,
+  one fixedpoint.Number,
+  two fixedpoint.Number,
+) {
+  fixture.Number = fixedpoint.Divide(
+    fixedpoint.Dividend(one), fixedpoint.Divisor(two),
+  )
+}
+
+func allocation_apply(
+  fixture *allocation_fixture,
+  one fixedpoint.Number,
+  two fixedpoint.Number,
+) {
+  fixture.Number = fixedpoint.Apply(one, fixedpoint.Ratio(two))
+}
+
+func allocation_square_root(fixture *allocation_fixture, one fixedpoint.Number) {
+  fixture.Number_Root = fixedpoint.Square_Root(one)
+}
+
+func allocation_square_root_scaled(fixture *allocation_fixture) {
+  fixture.Scaled_Root = fixedpoint.Square_Root_Scaled(1)
+}
+
+func allocation_integer_root(fixture *allocation_fixture) {
+  fixture.Root = fixedpoint.Integer_Root(0, 1)
+}
+
+func allocation_sine_turns(fixture *allocation_fixture, one fixedpoint.Number) {
+  fixture.Sine = fixedpoint.Sine_Turns(one)
+}
+
+func allocation_into_text(fixture *allocation_fixture, two fixedpoint.Number) {
+  fixture.Count = fixedpoint.Into_Text(fixture.Storage[:], two, 2)
+}
+
+func allocation_into_json(fixture *allocation_fixture, two fixedpoint.Number) {
+  fixture.Count = fixedpoint.Into_JSON(fixture.Storage[:], two)
+}
+
+func allocation_from_json(fixture *allocation_fixture) {
+  fixture.Number, fixture.Boolean = fixedpoint.From_JSON(`2.5`)
+}
+
+func allocation_text_validate(fixture *allocation_fixture) {
+  fixture.Text, fixture.Boolean = fixedpoint.Text_Validate(`2.5`)
+}
+
+// Test_Invariant_Domains verifies the special values of each admitted scalar domain.
+func Test_Invariant_Domains(t *testing.T) {
+  t.Parallel()
+  verify_number_domains()
+  verify_integer_domains()
+  verify_format_domains()
+}
+
+// One Format expectation for the table in Test_Format.
+type format_case struct {
+  // Value is the fixed-point input.
+  Value fixedpoint.Number
+  // Digits is the requested count of fractional digits.
+  Digits fixedpoint.Digit_Count
+  // Want is the expected rendering.
+  Want fixedpoint.Text
+}
+
+// Allocation_fixture keeps measured results alive outside each callback.
+type allocation_fixture struct {
+  Boolean     fixedpoint.Boolean
+  Count       fixedpoint.Text_Count
+  Integer     fixedpoint.Integer_Number
+  Number      fixedpoint.Number
+  Number_Root fixedpoint.Number_Root
+  Root        fixedpoint.Root_Integer
+  Scaled_Root fixedpoint.Scaled_Root
+  Sine        fixedpoint.Sine
+  Storage     []byte
+  Text        fixedpoint.Text
+  Whole       fixedpoint.Whole_Integer
+}
+
+// Returns the fixedpoint root of one 64-bit radicand.
+func integer_root(radicand uint64) (floored fixedpoint.Root_Integer) {
+  return fixedpoint.Integer_Root(0, fixedpoint.Low_Word(radicand))
+}
+
+// Converts one whole integer to the general fixed-point arithmetic type.
+func number_from_integer(value fixedpoint.Whole_Integer) (number fixedpoint.Number) {
+  return fixedpoint.Number(fixedpoint.From_Integer(value))
+}
+
+// Exercises each signed special value at the fixed-point arithmetic boundaries.
+func verify_number_domains() {
+  values := [...]int64{
+    bits.INTEGER_64_MINIMUM,
+    bits.INTEGER_64_MAXIMUM,
+    0,
+    1,
+    2,
+    -1,
+  }
+  for _, value := range values {
+    number := fixedpoint.Number(value)
+    fixedpoint.Apply(number, fixedpoint.Ratio(fixedpoint.SCALE))
+    fixedpoint.Apply(0, fixedpoint.Ratio(value))
+    fixedpoint.Multiply(
+      fixedpoint.Multiplicand(number), fixedpoint.Multiplier(fixedpoint.SCALE),
+    )
+    fixedpoint.Multiply(0, fixedpoint.Multiplier(number))
+    fixedpoint.Divide(fixedpoint.Dividend(number), fixedpoint.Divisor(fixedpoint.SCALE))
+    fixedpoint.Divide(0, fixedpoint.Divisor(number))
+    var storage [fixedpoint.TEXT_SIZE_MAXIMUM]byte
+    fixedpoint.Into_Text(storage[:], number, 0)
+    fixedpoint.Into_JSON(storage[:], number)
+    fixedpoint.Is_Integer(number)
+    fixedpoint.Sine_Turns(number)
+    fixedpoint.Square_Root(number)
+    fixedpoint.Whole(number)
+  }
+  for _, value := range values[2:] {
+    fixedpoint.Whole(fixedpoint.Number(value * fixedpoint.SCALE))
+  }
+}
+
+// Exercises each integer special value at the conversion and root boundaries.
+func verify_integer_domains() {
+  whole_values := [...]fixedpoint.Whole_Integer{
+    fixedpoint.Whole_Integer(fixedpoint.WHOLE_INTEGER_MINIMUM),
+    fixedpoint.Whole_Integer(fixedpoint.WHOLE_INTEGER_MAXIMUM),
+    0,
+    1,
+    2,
+    -1,
+  }
+  for _, value := range whole_values {
+    fixedpoint.From_Integer(value)
+  }
+  values := [...]int64{
+    bits.INTEGER_64_MINIMUM,
+    bits.INTEGER_64_MAXIMUM,
+    0,
+    1,
+    2,
+    -1,
+  }
+  for _, value := range values {
+    fixedpoint.From_Ratio(fixedpoint.Numerator(value), fixedpoint.SCALE)
+    fixedpoint.From_Ratio(0, fixedpoint.Denominator(value))
+    fixedpoint.Square_Root_Scaled(fixedpoint.Radicand(value))
+  }
+  fixedpoint.Integer_Root(0, 0)
+  fixedpoint.Integer_Root(0, 1)
+  fixedpoint.Integer_Root(0, 2)
+  fixedpoint.Integer_Root(0, 4)
+  fixedpoint.Integer_Root(0, fixedpoint.Low_Word(bits.WORD_64_MAXIMUM))
+  fixedpoint.Integer_Root(1, 0)
+  fixedpoint.Integer_Root(2, 0)
+  fixedpoint.Integer_Root(fixedpoint.High_Word(fixedpoint.HIGH_WORD_MAXIMUM), 0)
+  fixedpoint.Integer_Root(
+    fixedpoint.High_Word(fixedpoint.HIGH_WORD_MAXIMUM),
+    fixedpoint.Low_Word(bits.WORD_64_MAXIMUM),
+  )
+}
+
+// Exercises each precision boundary and each special formatted text size.
+func verify_format_domains() {
+  var storage [fixedpoint.TEXT_SIZE_MAXIMUM]byte
+  fixedpoint.Into_Text(storage[:0], 0, 0)
+  fixedpoint.Into_Text(storage[:2], number_from_integer(10), 0)
+  fixedpoint.Into_Text(storage[:], 0, 0)
+  fixedpoint.Into_Text(storage[:], number_from_integer(10), 0)
+  fixedpoint.Into_Text(storage[:], 0, 1)
+  fixedpoint.Into_Text(storage[:], 0, 2)
+  fixedpoint.Into_Text(storage[:], fixedpoint.Number(bits.INTEGER_64_MINIMUM), 6)
+  fixedpoint.Into_JSON(storage[:0], 0)
+  fixedpoint.Into_JSON(storage[:1], 0)
+  fixedpoint.Into_JSON(storage[:2], number_from_integer(10))
+  fixedpoint.Into_JSON(storage[:], fixedpoint.Number(bits.INTEGER_64_MINIMUM+1))
+  json_values := [...]fixedpoint.Text_Unvalidated{
+    `-8796093022208`,
+    `8796093022207.999999046`,
+    `0`,
+    `0.000000954`,
+    `0.000001907`,
+    `-0.000000954`,
+  }
+  for _, value := range json_values {
+    fixedpoint.From_JSON(value)
+  }
+  var text [fixedpoint.JSON_TEXT_UNVALIDATED_SIZE_MAXIMUM]byte
+  for index := range text {
+    text[index] = '0'
+  }
+  fixedpoint.Text_Validate("")
+  fixedpoint.Text_Validate("0")
+  fixedpoint.Text_Validate(
+    fixedpoint.Text_Unvalidated(string(text[:fixedpoint.JSON_TEXT_SIZE_MAXIMUM])),
+  )
+  fixedpoint.Text_Validate(fixedpoint.Text_Unvalidated(string(text[:])))
+  fixedpoint.From_JSON("")
+  fixedpoint.From_JSON(
+    fixedpoint.Text_Unvalidated(string(text[:fixedpoint.JSON_TEXT_SIZE_MAXIMUM])),
+  )
+  fixedpoint.From_JSON(fixedpoint.Text_Unvalidated(string(text[:])))
+}
+
+// Verifies that the divide-free root satisfies its defining property across large,
+// scattered radicands: r^2 <= n < (r+1)^2, checked in 128 bits.
+func verify_root_property(t *testing.T) {
+  t.Helper()
+  root_of := integer_root
+  scatter := uint64(0x9E3779B97F4A7C15)
+  probe := uint64(1)
+  for index := 0; index < 500_000; index++ {
+    probe += scatter
+    root := uint64(root_of(probe))
+    low_high, low_low := bits.Multiply_64(bits.Word_64(root), bits.Multiplier_64(root))
+    testify.Equal_Values(
+      t,
+      0,
+      low_high,
+      "Integer_Root(%d) = %d, but r^2 overflows past n",
+      probe,
+      root,
+    )
+    testify.False(t, uint64(low_low) > probe,
+      "Integer_Root(%d) = %d, but r^2 > n", probe, root)
+
+    next_root := root + 1
+    next_high, next_low := bits.Multiply_64(
+      bits.Word_64(next_root), bits.Multiplier_64(next_root),
+    )
+    if next_high == 0 {
+      testify.False(
+        t,
+        !(uint64(next_low) > probe),
+        "Integer_Root(%d) = %d, but (r+1)^2 <= n",
+        probe,
+        root,
+      )
+    }
+  }
+  // A large 128-bit radicand floors exactly too: (3<<40)^2 roots back to 3<<40.
+  big_root := uint64(3) << 40
+  big_high, big_low := bits.Multiply_64(
+    bits.Word_64(big_root), bits.Multiplier_64(big_root),
+  )
+  big := fixedpoint.Integer_Root(fixedpoint.High_Word(big_high), fixedpoint.Low_Word(big_low))
+  testify.Equal_Values(
+    t,
+    fixedpoint.Root_Integer(big_root),
+    big,
+    "Integer_Root((3<<40)^2) != 3<<40",
+  )
+}

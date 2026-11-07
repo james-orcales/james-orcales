@@ -110,10 +110,9 @@ shared/
 ├── go.mod
 ├── snap/                    ← library at depth 1
 │   └── snap.go
-├── invariant/               ← library at depth 1
-│   └── invariant.go
 └── sim/
-    ├── sim.go               ← library at depth 1
+    ├── aver/                ← simulation assertion library
+    │   └── aver.go
     └── time/                ← composition tier of sim (one deeper, OK)
         └── time.go
 ```
@@ -150,17 +149,17 @@ binary, never shared library → binary.
 Within a module, non-main packages may nest **at most one level deep**:
 
 ```
-shared/snap/snap.go           ← library tier
-shared/snap/default/x.go      ← composition tier (one deeper, OK)
-shared/snap/default/y/y.go    ← too deep, flagged
+shared/std/snap/snap.go           ← library tier
+shared/std/snap/default/x.go      ← composition tier (one deeper, OK)
+shared/std/snap/default/y/y.go    ← too deep, flagged
 ```
 
 Major-version directories (`v2`, `v3`, …) are invisible to this count — they're a
 Go module-versioning convention, not a real package layer:
 
 ```
-shared/snap/v2/snap.go           ← still library tier (v2 doesn't count)
-shared/snap/v2/default/x.go      ← still composition tier
+shared/std/snap/v2/snap.go           ← still library tier (v2 doesn't count)
+shared/std/snap/v2/default/x.go      ← still composition tier
 ```
 
 The two positions differ in what they're allowed to touch:
@@ -177,7 +176,7 @@ The two positions differ in what they're allowed to touch:
 Library tier — pure, every dependency is a field:
 
 ```go
-// shared/snap/snap.go
+// shared/std/snap/snap.go
 package snap
 
 type Snapper struct {
@@ -191,7 +190,7 @@ func (s *Snapper) Run() { fmt.Fprintln(s.Output, s.Get_Caller()) }
 Composition tier — the one place where the binding to the real world lives:
 
 ```go
-// shared/snap/default/wire.go
+// shared/std/snap/default/wire.go
 package snap
 
 import (
@@ -217,14 +216,24 @@ entry in lint.json's `instrumentation_packages`, at the repo root. Everywhere el
 package absent from the list — package-level vars stay banned. This also frees composition packages
 to use a `<lib>_default` directory instead of a bare `default/`.
 
+An instrumentation package may also declare generic types and functions. One adapter can then
+observe arbitrary values without adding one concrete adapter for every production type.
+Instrumentation packages are always exempt from assertion mandate. Their exact
+`instrumentation_packages` entry must not be repeated in
+`opt_out_assertion_mandate_packages`; broader assertion opt-out globs may cover them.
+
+Composition packages remain under assertion mandate, but need no `TestMain` calling
+`aver.Run_Test_Main`. Their tests enforce assertions without registering coverage obligations,
+because ambient sources cannot supply deterministic coverage. Pure library suites still register.
+
 ## Resolving diagnostics
 
-### `impure stdlib import` / `impure stdlib call`
+### `The stdlib import … is impure` / `The stdlib call … is impure`
 
 The file is in a library-tier package and touches impure stdlib state. Example:
 
 ```go
-// shared/snap/snap.go
+// shared/std/snap/snap.go
 package snap
 
 import "os"  // ← flagged: library tier may not bind impure state
@@ -246,7 +255,7 @@ Three fixes:
 3. **Move the binding to a composition-tier sub-package:**
 
    ```
-   shared/snap/
+   shared/std/snap/
    ├── snap.go              ← pure types
    └── default/
        └── wire.go          ← package snap; imports "os", wires Default
@@ -257,17 +266,17 @@ Three fixes:
    the linter to permit the `var Default` binding, add the sub-package's directory
    to lint.json's `instrumentation_packages`.
 
-### `default package must declare 'package <X>'`
+### `The default package declares "package <X>", not "package <Y>"`
 
 A package in a directory named `default` did not declare its parent library's
 package clause. The composition-tier package re-exports its library and must
 shadow the library's name so the API reads as if no split had happened.
 
 ```go
-// flagged: shared/snap/default/wire.go
+// flagged: shared/std/snap/default/wire.go
 package wire
 
-// clean: shared/snap/default/wire.go
+// clean: shared/std/snap/default/wire.go
 package snap
 ```
 
@@ -278,7 +287,7 @@ reason beyond ergonomics: `snap.Edit`'s source-line rewriter searches for the
 literal `snap.Edit(` in the file; declaring `package snap` keeps that string
 correct so the snapshot update doesn't silently fail.
 
-### `binary module forbids package … outside of internal/`
+### `Move … -> …/internal/…`
 
 ```
 mybinary/
@@ -300,7 +309,9 @@ mybinary/
 If `helpers` is meant to be imported by *other* modules, it doesn't belong in a
 binary at all — promote it to `shared/helpers/`.
 
-### `binary module … declares no func Main in internal/` / `… declares multiple func Main`
+### `The binary component … declares no func Main in internal/`
+
+Also: `… declares more than one func Main in internal/`.
 
 Every binary module exposes its entry point as a single free `func Main` living
 directly in its top-level `internal/` package. `package main`'s `main()` is a
@@ -326,7 +337,9 @@ one. The shared library is exempt from the *requirement* — it is imported, not
 run — but it *may* still expose a `func Main` of its own to represent an
 embeddable entry point a host can call; the rule never flags it either way.
 
-### `shared library forbids internal/ directories` / `shared library forbids package main`
+### `A shared library permits no internal/ directory`
+
+Also: `The shared library … permits no package main`.
 
 ```
 shared/
@@ -341,7 +354,7 @@ Fix for `internal/`: rename it (e.g. to `snap_internal/` if it's a
 composition-tier helper), or promote the contents to a normal package. Fix for
 `package main`: move the entry point to its own binary module.
 
-### `package … exceeds library tier`
+### `The package … is below the library tier`
 
 A package may have at most one non-main package above it. The count starts at the
 module root for a shared library, and at the top-level `internal/` for a binary —

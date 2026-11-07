@@ -1,5 +1,0 @@
-testTitle=ReadAfterWriteTest
-testName=ReadAfterWrite
-testDuration=10
-waitForQuiescenceBegin=false
-waitForQuiescenceEnd=false

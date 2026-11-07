@@ -1,0 +1,100 @@
+package nbio_test
+
+import "testing"
+
+import "local/james-orcales/shared/std/math/bits"
+import "local/james-orcales/shared/std/sim/aver/default"
+import "local/james-orcales/shared/std/sim/nbio"
+import "local/james-orcales/shared/std/sim/time"
+import "local/james-orcales/shared/std/testify"
+
+// TestMain register completion-machine assertions. Thus unused legal edge fail suite.
+func TestMain(m *testing.M) {
+  aver.Run_Test_Main(m)
+}
+
+// Lock the composition because copied decimal defaults hide the limits that produce them.
+func Test_Socket_Option_Default_Formulas(t *testing.T) {
+  testify.Equal(t, uint32(128*bits.KIBIBYTE_BYTES), nbio.TCP_RECEIVE_BUFFER_BYTES_DEFAULT)
+  testify.Equal(t, uint32(128*bits.KIBIBYTE_BYTES), nbio.TCP_SEND_BUFFER_BYTES_DEFAULT)
+  testify.Equal(
+    t,
+    nbio.IPV6_SOCKET_ADDRESS_BITS/bits.BIT_COUNT_8_MAXIMUM,
+    nbio.IPV6_SOCKET_ADDRESS_BYTES,
+  )
+  testify.Equal(
+    t,
+    bits.KIBIBYTE_BYTES+nbio.IPV6_SOCKET_ADDRESS_BYTES,
+    nbio.UDP_RECEIVE_RECORD_BYTES,
+  )
+  record_count := nbio.UDP_RECEIVE_BUFFER_SCALE_DEFAULT *
+    ((nbio.UDP_RECEIVE_BUFFER_BASELINE_BYTES + nbio.UDP_RECEIVE_RECORD_BYTES - 1) /
+      nbio.UDP_RECEIVE_RECORD_BYTES)
+  testify.Equal(t, record_count, nbio.UDP_RECEIVE_RECORD_COUNT_DEFAULT)
+  testify.Equal(
+    t,
+    nbio.UDP_RECEIVE_RECORD_COUNT_DEFAULT*nbio.UDP_RECEIVE_RECORD_BYTES,
+    nbio.UDP_RECEIVE_BUFFER_BYTES_DEFAULT,
+  )
+  testify.Equal(
+    t,
+    nbio.UDP_SEND_BUFFER_KIBIBYTES_DEFAULT*bits.KIBIBYTE_BYTES,
+    nbio.UDP_SEND_BUFFER_BYTES_DEFAULT,
+  )
+  testify.Equal(
+    t,
+    nbio.IPV4_REASSEMBLY_BYTES_MINIMUM-nbio.IPV4_HEADER_BYTES_MINIMUM-
+      nbio.TCP_HEADER_BYTES_MINIMUM,
+    nbio.TCP_MAXIMUM_SEGMENT_BYTES_DEFAULT,
+  )
+  testify.Equal(t, uint32(bits.KIBIBYTE_BYTES), nbio.TCP_NOT_SENT_LOW_WATER_BYTES_DEFAULT)
+  testify.Equal(t, 2*time.HOUR, nbio.TCP_KEEPALIVE_IDLE_DEFAULT)
+  testify.Equal(t, 75*time.SECOND, nbio.TCP_KEEPALIVE_INTERVAL_DEFAULT)
+  testify.Equal(t, uint32(9), nbio.TCP_KEEPALIVE_PROBE_COUNT_DEFAULT)
+  testify.Equal(t, uint32(1), nbio.SOCKET_RECEIVE_LOW_WATER_BYTES_DEFAULT)
+  testify.Equal(t, time.SECOND, nbio.SOCKET_LINGER_TIMEOUT_DEFAULT)
+  testify.True(t, nbio.TCP_NO_DELAY_DEFAULT)
+}
+
+// Lock bit-width formulas because decimal maxima conceal signed and unsigned option domains.
+func Test_Socket_Option_Maximum_Formulas(t *testing.T) {
+  testify.Equal(t, uint32(bits.INTEGER_32_MAXIMUM), nbio.SOCKET_OPTION_INTEGER_MAXIMUM)
+  testify.Equal(t, uint32(bits.WORD_16_MAXIMUM), nbio.TCP_MAXIMUM_SEGMENT_BYTES_MAXIMUM)
+  testify.Equal(t, uint32(bits.INTEGER_8_MAXIMUM),
+    nbio.TCP_KEEPALIVE_PROBE_COUNT_MAXIMUM)
+}
+
+// Interface state must preserve allocation-free static dispatch without unsafe pointer erasure.
+func Test_Safe_State_Heap_Allocation(t *testing.T) {
+  state := safe_state{}
+  stream := nbio.Stream{State: nbio.State(&state), Procedure: safe_state_procedure}
+  completion := nbio.Completion{}
+  testify.Zero_Allocation(t, func() {
+    nbio.Flush(stream, &completion, safe_state_callback)
+  })
+  // AllocsPerRun warms once before its measured run.
+  testify.Equal(t, 2, state.Calls)
+}
+
+type safe_state struct {
+  Calls int
+}
+
+func safe_state_procedure(
+  state nbio.State,
+  completion *nbio.Completion,
+  _ nbio.Stream_Mode,
+  _ []byte,
+  _ int64,
+  _ nbio.Seek_From,
+  callback nbio.Stream_Callback,
+) {
+  state.(*safe_state).Calls++
+  nbio.Stream_Callback_Call(callback, completion)
+}
+
+func safe_state_callback(completion nbio.Completion_Handle) {
+  if completion == nil {
+    return
+  }
+}
