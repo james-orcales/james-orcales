@@ -78,11 +78,16 @@ typeset -A abbreviations=(
 
         ag    'jj git'
         agp   'jj git push --bookmark $BRANCH'
+        # `--tracked` fetches only the remote bookmarks you're tracking (`abt`), not every branch on
+        # the remote. That keeps branches from other people out of your repo and your `jj log`.
         agf   'jj git fetch --tracked'
         ah    'jj --help'
 
+        # Branch and main since they diverged, plus siblings of @.
         alf   "jj log -r 'fork_point(@|main)..(@|main) | fork_point(@|main) | (@-+ ~ (working_copies() ~ @))' --no-pager"
+        # Last 10 changes on main.
         alm   "jj log -r '::main' --no-pager --limit=10"
+        # Last 10 changes in the repo.
         al    "jj log -r 'all()' --no-pager --limit=10"
         an    'jj new'
         asp   'jj split'
@@ -112,7 +117,7 @@ typeset -A abbreviations=(
         gc1n  'git clone --depth=1 --no-single-branch'
         gcfb  'git clone --filter=blob:none'
 
-        ghpr $'jj git push --bookmark $BRANCH && gh pr create --title=\'!!\' --fill-verbose --base main --head $BRANCH; gh pr view --web $BRANCH'
+        ghpr $'jj git push --bookmark $BRANCH && gh pr create --title=\'!!\' --body="" --base main --head $BRANCH; gh pr view --web $BRANCH'
 
         stdrs 'cd $(rustc --print sysroot)/lib/rustlib/src/rust/library/ && nvim .'
         stdgo 'cd $(go env GOROOT)/src/ && nvim .'
