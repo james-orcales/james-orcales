@@ -3,9 +3,21 @@ AGENTS ARE NEVER AUTHORIZED TO COMMIT OR MAKE PULL REQUESTS.
 
 Default error-handling pattern is to log the error and continue with the zero value.
 Follow YAGNI principles
-Treat unvalidated input as intentionally malicious
-Test-Driven Development
 Do not write comments. Do not delete existing comments.
+
+## No Test-Driven Development
+
+AGENTS ARE NEVER AUTHORIZED TO WRITE TESTS unless the user asks for a specific test by name.
+
+A test checks a property after the fact. Make the property impossible to violate instead:
+
+- Encode the invariant in the type. An invalid value must not be constructible.
+- Validate at the boundary, once. Code behind the boundary receives only valid values.
+- Make the zero value valid, so there is no uninitialized state to check.
+- Replace a precondition the caller must remember with a signature that requires it.
+- Assert inside the code path, where the property holds, not in a separate test file.
+
+If a property cannot be enforced by the API, report it to the user. Do not write a test for it.
 
 ## Development VM
 
